@@ -261,6 +261,36 @@ def test_internal_ocr_disabled_image_page_uses_local_ocr(monkeypatch, paddle_sta
         assert 'Tesseract source' in text and len(tesseract_calls) == 1
 
 
+def test_low_text_page_with_numeric_warning_does_not_repeat_paddle(monkeypatch):
+    import pymupdf
+
+    from app import pdf_loader, pdf_ocr
+
+    image = io.BytesIO()
+    Image.new('RGB', (100, 60), 'white').save(image, format='PNG')
+    with pymupdf.open() as document:
+        document.new_page().insert_image(pymupdf.Rect(0, 0, 595, 842), stream=image.getvalue())
+        payload = document.tobytes()
+
+    calls = []
+    def paddle(*args, **kwargs):
+        calls.append(1)
+        return pdf_ocr.OcrResult(text='Damage 1d6+2', status='accepted')
+
+    monkeypatch.setattr(pdf_ocr, 'recognize_with_paddle', paddle)
+    monkeypatch.setattr(pdf_loader, '_pymupdf4llm_page_chunks', lambda *args: None)
+    monkeypatch.setattr(pdf_loader.pdf_quality, 'select_text',
+                        lambda *args: ('', 'native', ['numeric_pair_review']))
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *args: None)
+    monkeypatch.setattr(pdf_loader, 'analyze_page_image', lambda *args: ('', None))
+    report = {}
+    _, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report, ai_repair_limit=0)
+
+    assert calls == [1]
+    assert review == [1]
+    assert report['pages'][0]['paddle_numeric_verification']['attempted'] is False
+
+
 @pytest.mark.parametrize('failure', ['disabled', 'missing_model', 'missing_package', 'init', 'inference', 'empty', 'malformed'])
 def test_paddle_failure_preserves_existing_tesseract_import(paddle_backend, monkeypatch, failure):
     import pymupdf

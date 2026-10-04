@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Iterable
 from typing import Any, cast
 
@@ -61,6 +62,9 @@ _MIN_VECTOR_DRAWINGS = 8
 # 6 workers against a real 24-page batch still took ~60s wall time; 12 is the
 # next thing to try if that's still too slow in practice.
 _MAX_CONCURRENT_PAGE_CALLS = 12
+_NUMERIC_VERIFICATION_WARNINGS = frozenset({
+    'numeric_pair_review', 'layout_numeric_loss', 'layout_pair_mismatch', 'source_pair_unresolved',
+})
 
 # Plain-text prompt for markitdown-ocr's embedded-image OCR (see
 # _markitdown_page_texts/app/markitdown_shim.py) — that path calls a simple
@@ -315,6 +319,81 @@ def _pymupdf4llm_page_text(chunk: dict | None) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+def _numeric_lines_supported(source: str, candidate: str) -> bool:
+    """Require exact numeric-bearing source lines; retain order and slash meaning."""
+    def compact(value: str) -> str:
+        return re.sub(r'\s+', ' ', re.sub(r'\s*/\s*', '/', value)).strip().casefold()
+
+    required = Counter(compact(line) for line in source.splitlines() if any(char.isdigit() for char in line))
+    available = Counter(compact(line) for line in candidate.splitlines() if any(char.isdigit() for char in line))
+    return bool(required) and required == available
+
+
+def _pair_lines_supported(source: str, candidate: str, pairs: list[dict]) -> bool:
+    """A matched pair is not corroboration if OCR also contradicts that label."""
+    for pair in pairs:
+        label = re.compile(r'(?<!\w)' + re.escape(pair['label']) + r'(?!\w)', re.IGNORECASE)
+        source_lines = [line for line in source.splitlines() if label.search(line) and any(c.isdigit() for c in line)]
+        candidate_lines = [line for line in candidate.splitlines() if label.search(line) and any(c.isdigit() for c in line)]
+        if not source_lines or not _numeric_lines_supported('\n'.join(source_lines), '\n'.join(candidate_lines)):
+            return False
+    return bool(pairs)
+
+
+def _verify_numeric_with_paddle(page: pymupdf.Page, row: dict, canonical: str,
+                                image: bytes | None) -> dict:
+    """Record independent OCR evidence without changing selected source or warnings."""
+    checked = [warning for warning in row['warnings'] if warning in _NUMERIC_VERIFICATION_WARNINGS]
+    result: dict = {'attempted': False, 'status': 'skipped', 'warnings_checked': checked,
+                    'warnings_resolved': [], 'warnings_unresolved': checked.copy(),
+                    'matched_pair_count': 0, 'unmatched_pair_count': 0}
+    # Low-text pages already enter the ordinary Paddle/Tesseract path; do not OCR twice.
+    if len(canonical) < _LOW_TEXT_THRESHOLD or row['method'] != 'native' \
+            or canonical != row['candidates']['native']:
+        return result
+    result['attempted'] = True
+    try:
+        paddle = pdf_ocr.recognize_with_paddle(image or _render_page_png(page))
+    except Exception:  # noqa: BLE001 - optional second opinion cannot change canonical source.
+        result['status'] = 'error'
+        return result
+    if paddle.status != 'accepted':
+        result['status'] = paddle.status
+        return result
+
+    pairs = row['numeric_pairs']
+    disputed = [pair for pair, check in zip(pairs, row['layout_pair_checks'])
+                if check['status'] != 'matched']
+    pair_supported = bool(disputed) and all(
+        check['status'] == 'matched' for check in pdf_quality.check_pairs(disputed, canonical)
+    )
+    pair_checks = pdf_quality.check_pairs(disputed, paddle.text)
+    result['matched_pair_count'] = sum(check['status'] == 'matched' for check in pair_checks)
+    result['unmatched_pair_count'] = len(pair_checks) - result['matched_pair_count']
+    pair_supported = pair_supported and result['unmatched_pair_count'] == 0 \
+        and _pair_lines_supported(canonical, paddle.text, disputed)
+    resolved_pairs = [pair for pair in pairs if pair['status'] != 'unresolved']
+    all_pairs_supported = all(check['status'] == 'matched' for check in pdf_quality.check_pairs(resolved_pairs, canonical)) \
+        and all(check['status'] == 'matched' for check in pdf_quality.check_pairs(resolved_pairs, paddle.text))
+    line_supported = _numeric_lines_supported(canonical, paddle.text)
+
+    for warning in checked:
+        if warning in {'numeric_pair_review', 'layout_pair_mismatch'}:
+            confirmed = pair_supported if disputed else line_supported
+        elif warning == 'layout_numeric_loss':
+            confirmed = line_supported and all_pairs_supported
+        else:  # An unresolved source pair has no trustworthy canonical value to verify.
+            confirmed = False
+        if confirmed:
+            result['warnings_resolved'].append(warning)
+            result['warnings_unresolved'].remove(warning)
+    if result['warnings_resolved']:
+        result['status'] = 'confirmed' if not result['warnings_unresolved'] else 'partial'
+    else:
+        result['status'] = 'inconclusive'
+    return result
+
+
 def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
                           text: str, budget: list[int]) -> tuple[str, list[dict]]:
     """Crop only suspect native blocks; keep every attempt in the audit artifact."""
@@ -483,6 +562,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                     if scene_map:
                         maps[number] = scene_map
 
+        for i, row in enumerate(report['pages']):
+            if any(warning in _NUMERIC_VERIFICATION_WARNINGS for warning in row['warnings']):
+                row['paddle_numeric_verification'] = _verify_numeric_with_paddle(
+                    doc[i], row, texts[i], images.get(i + 1))
+
     review = []
     for i, text in enumerate(texts):
         row = report["pages"][i]
@@ -494,7 +578,8 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if not text.strip():
             row["warnings"].append("empty_page")
-        if any(w not in {"native_two_columns", "layout_unavailable"} for w in row["warnings"]):
+        resolved = set(row.get('paddle_numeric_verification', {}).get('warnings_resolved', []))
+        if any(w not in {"native_two_columns", "layout_unavailable"} | resolved for w in row["warnings"]):
             review.append(i + 1)
         if i and pdf_quality.continuation(texts[i - 1], text):
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})

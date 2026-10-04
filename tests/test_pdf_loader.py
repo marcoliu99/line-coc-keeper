@@ -7,8 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pymupdf
+import pytest
 
-from app import config
+from app import config, pdf_ocr
 from app.providers import registry
 
 _MODULE_SPEC = importlib.util.spec_from_file_location(
@@ -186,6 +187,61 @@ class PdfQualityRegressionTests(unittest.TestCase):
         self.assertIn(1, review)
         self.assertIn('layout_numeric_loss', report['pages'][0]['warnings'])
 
+    def test_numeric_verification_keeps_canonical_text_and_warning_history(self):
+        source = 'SAN 1/1d6\n' + ('A safe native prose sentence. ' * 12)
+        payload = self.pdf([source])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': source}}), \
+             patch.object(pdf_loader.pdf_quality, 'native_text', return_value=(source, ['native_two_columns'])), \
+             patch.object(pdf_loader.pdf_quality, 'numeric_pairs', return_value=[]), \
+             patch.object(pdf_loader.pdf_quality, 'select_text', return_value=(source, 'native', ['numeric_pair_review'])), \
+             patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                          return_value=pdf_ocr.OcrResult(text='SAN 1 / 1d6', status='accepted')) as paddle:
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report, ai_repair_limit=0)
+        self.assertEqual(review, [])
+        self.assertEqual(text, '--- 第 1 頁 ---\n' + source.strip())
+        self.assertEqual(report['pages'][0]['method'], 'native')
+        self.assertIn('numeric_pair_review', report['pages'][0]['warnings'])
+        self.assertEqual(report['pages'][0]['paddle_numeric_verification']['warnings_resolved'],
+                         ['numeric_pair_review'])
+        self.assertEqual(report['pages'][0]['paddle_numeric_verification']['warnings_checked'],
+                         ['numeric_pair_review'])
+        paddle.assert_called_once()
+
+    def test_numeric_verification_mismatch_keeps_review(self):
+        source = 'SAN 1/1d6\n' + ('A safe native prose sentence. ' * 12)
+        payload = self.pdf([source])
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': source}}), \
+             patch.object(pdf_loader.pdf_quality, 'native_text', return_value=(source, ['native_two_columns'])), \
+             patch.object(pdf_loader.pdf_quality, 'numeric_pairs', return_value=[]), \
+             patch.object(pdf_loader.pdf_quality, 'select_text', return_value=(source, 'native', ['numeric_pair_review'])), \
+             patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                          return_value=pdf_ocr.OcrResult(text='SAN 1d6/1', status='accepted')):
+            text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report, ai_repair_limit=0)
+        self.assertEqual(review, [1])
+        self.assertEqual(text, '--- 第 1 頁 ---\n' + source.strip())
+        self.assertEqual(report['pages'][0]['paddle_numeric_verification']['warnings_resolved'], [])
+
+    def test_no_numeric_warning_does_not_call_verification_paddle(self):
+        source = 'Safe narrative without mechanics. ' * 12
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': source}}), \
+             patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle') as paddle:
+            _, review, _, _, _ = pdf_loader.extract_text(self.pdf([source]), ai_repair_limit=0)
+        self.assertEqual(review, [])
+        paddle.assert_not_called()
+
+    def test_unknown_warning_still_requires_review(self):
+        source = 'Safe narrative without mechanics. ' * 12
+        report = {}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': source}}), \
+             patch.object(pdf_loader.pdf_quality, 'select_text', return_value=(source, 'native', ['unknown_warning'])), \
+             patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle') as paddle:
+            _, review, _, _, _ = pdf_loader.extract_text(self.pdf([source]), quality_report=report, ai_repair_limit=0)
+        self.assertEqual(review, [1])
+        self.assertNotIn('paddle_numeric_verification', report['pages'][0])
+        paddle.assert_not_called()
+
     def test_complete_source_is_not_cut_at_old_limit(self):
         # Every page fits, but the complete source exceeds the former 240K cap.
         payload = self.pdf(['Rule and consequence remain together. ' * 40] * 180)
@@ -339,3 +395,91 @@ class PdfQualityRegressionTests(unittest.TestCase):
         pregen = {'name': 'Alice', 'str_': 60}
         pregen_extractor._apply_pdf_unknowns(pregen, {1: text})
         self.assertEqual(pregen['str_'], 60)
+
+
+def _numeric_verification_row(source, warnings, pairs=None, layout_checks=None):
+    return {'warnings': warnings, 'method': 'native', 'candidates': {'native': source},
+            'numeric_pairs': pairs or [], 'layout_pair_checks': layout_checks or []}
+
+
+def test_layout_numeric_loss_resolves_only_with_exact_native_numeric_evidence():
+    source = 'STR 60 DEX 50\n' + ('Narrative without another value. ' * 10)
+    pairs = [{'label': 'STR', 'value': '60', 'status': 'same_row_candidate', 'block': 0},
+             {'label': 'DEX', 'value': '50', 'status': 'same_row_candidate', 'block': 0}]
+    row = _numeric_verification_row(source, ['layout_numeric_loss'], pairs)
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(text='STR 60 DEX 50', status='accepted')) as paddle:
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['attempted'] is True
+    assert result['status'] == 'confirmed'
+    assert result['warnings_resolved'] == ['layout_numeric_loss']
+    paddle.assert_called_once()
+
+
+@pytest.mark.parametrize(('warning', 'layout_status'), [
+    ('numeric_pair_review', 'candidate_pair_unverified'),
+    ('layout_pair_mismatch', 'pair_mismatch'),
+])
+@pytest.mark.parametrize(('candidate', 'confirmed'), [
+    ('STR 60 DEX 50', True),
+    ('STR 50 DEX 60', False),
+    ('STR 60 DEX 50\nSTR 70', False),
+])
+def test_disputed_pair_requires_matching_label_value_without_contradiction(
+        candidate, confirmed, warning, layout_status):
+    source = 'STR 60 DEX 50\n' + ('Narrative without another value. ' * 10)
+    pairs = [{'label': 'STR', 'value': '60', 'status': 'same_row_candidate', 'block': 0},
+             {'label': 'DEX', 'value': '50', 'status': 'same_row_candidate', 'block': 0}]
+    layout_checks = [{'label': 'STR', 'status': layout_status, 'block': 0},
+                     {'label': 'DEX', 'status': 'matched', 'block': 0}]
+    row = _numeric_verification_row(source, [warning], pairs, layout_checks)
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(text=candidate, status='accepted')):
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['warnings_resolved'] == ([warning] if confirmed else [])
+
+
+@pytest.mark.parametrize('candidate', ['STR DEX 50', 'STR 50 DEX 60', 'STR 60 DEX 50\nSTR 70'])
+def test_layout_numeric_loss_keeps_review_for_incomplete_or_conflicting_evidence(candidate):
+    source = 'STR 60 DEX 50\n' + ('Narrative without another value. ' * 10)
+    pairs = [{'label': 'STR', 'value': '60', 'status': 'same_row_candidate', 'block': 0},
+             {'label': 'DEX', 'value': '50', 'status': 'same_row_candidate', 'block': 0}]
+    row = _numeric_verification_row(source, ['layout_numeric_loss'], pairs)
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(text=candidate, status='accepted')):
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['warnings_resolved'] == []
+
+
+@pytest.mark.parametrize('status', ['unavailable', 'rejected', 'error', 'empty'])
+def test_failed_numeric_verification_retains_warning_without_tesseract(status):
+    source = 'SAN 1/1d6\n' + ('Narrative without another value. ' * 10)
+    row = _numeric_verification_row(source, ['numeric_pair_review'])
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(status=status)) as paddle, \
+         patch.object(pdf_loader.shutil, 'which', side_effect=AssertionError('Tesseract must not run')):
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['status'] == status
+    assert result['warnings_unresolved'] == ['numeric_pair_review']
+    paddle.assert_called_once()
+
+
+def test_unresolved_source_pair_cannot_be_confirmed_by_ocr_alone():
+    source = 'STR 60\n' + ('Narrative without another value. ' * 10)
+    row = _numeric_verification_row(source, ['source_pair_unresolved'],
+                                    [{'label': 'STR', 'status': 'unresolved', 'block': 0}])
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(text='STR 60', status='accepted')):
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['attempted'] is True
+    assert result['warnings_resolved'] == []
+
+
+def test_low_text_page_skips_second_verification_inference():
+    source = 'SAN 1/1d6'
+    row = _numeric_verification_row(source, ['numeric_pair_review'])
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle') as paddle:
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['attempted'] is False
+    assert result['warnings_unresolved'] == ['numeric_pair_review']
+    paddle.assert_not_called()

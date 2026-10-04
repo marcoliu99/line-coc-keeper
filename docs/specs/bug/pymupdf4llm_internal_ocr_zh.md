@@ -6,20 +6,22 @@ PyMuPDF4LLM 1.28.2 預設啟用自己的 Tesseract OCR。目前正式 `to_markdo
 
 ## 範圍
 
-只修改 `app/pdf_loader.py` 中的 PyMuPDF4LLM 呼叫及專用測試。保留 PR161 的 OCR 選用日誌。
+只在 `app/pdf_loader.py` 修改 PyMuPDF4LLM 呼叫，並增加保守、限縮的數值驗證 pass 與專用測試。保留 PR161 的 OCR 選用日誌。
 
 ## 不在範圍內
 
-不改 Paddle OCR 接受條件、Tesseract 後備、Paddle Layout 排序、待核對頁判斷、publication、provider 或遊戲流程。不修改第三方套件。
+不改 Paddle OCR 接受條件、Tesseract 後備、Paddle Layout 排序、publication、provider 或遊戲流程。不修改第三方套件。驗證不能取代 canonical 文字或解除無關 warning。
 
 ## 資料與流程
 
-不改 schema。`to_markdown(..., use_ocr=False)` 回傳原生文字及版面證據。既有低文字判斷再決定是否呼叫 `_ocr_image()`；後者仍先試 Paddle，失敗才用 Tesseract。警告與報告欄位維持原樣。
+`to_markdown(..., use_ocr=False)` 回傳原生文字及版面證據。既有低文字判斷再決定是否呼叫 `_ocr_image()`；後者仍先試 Paddle，失敗才用 Tesseract。
+
+若高文字頁選用未變動的原生文字，而且 warning 包含 `numeric_pair_review`、`layout_numeric_loss`、`layout_pair_mismatch` 或 `source_pair_unresolved`，則額外執行一次 Paddle 全頁第二證據。只用既有 pair 檢查及精確的數值行比對，解除確實得到支持的 warning。原生 pair 本身未確定時不能只靠 OCR 確認。低文字頁略過此 pass，避免重複推論。Paddle 失敗或證據不足時保留 warning；此驗證不進 Tesseract。歷史 warning 與 canonical 文字維持原樣；`paddle_numeric_verification` 只記錄是否嘗試、狀態、已檢查／已解除／未解除 warning 與 pair 計數，不保存 OCR 原文。最後待核對判定只略過明確解除的 warning。
 
 ## 測試與驗證
 
-確認正式 PyMuPDF4LLM 呼叫明確傳入 `use_ocr=False`。比較單欄、雙欄原生文字及版面選擇；確認 raster／低文字頁進 Paddle，Paddle 採用時跳過 Tesseract，被拒絕或不可用時維持後備。取得先前 log 對應的 PDF 後，用 Python 3.13 對同一檔案 smoke，僅記錄第 12、16、17 頁的 sanitized 長度、狀態及 warning。執行完整 pytest、ruff、mypy、compileall、diff check。
+確認正式 PyMuPDF4LLM 呼叫明確傳入 `use_ocr=False`。比較單欄、雙欄原生文字及版面選擇；確認 raster／低文字頁進 Paddle，Paddle 採用時跳過 Tesseract，被拒絕或不可用時維持後備。測試數值確認、不一致、缺乏證據、Paddle 各種失敗狀態、無 warning 略過、低文字略過，以及 canonical 文字不變。用 Python 3.13 對 SHA256 相符的私人 PDF smoke，僅記錄第 12、16、17 頁的 sanitized 長度、狀態及 warning。執行完整 pytest、ruff、mypy、compileall、diff check。
 
 ## 本機 smoke 證據
 
-已以 SHA256 找到與先前第 12、16、17 頁報告相符的私人來源。Python 3.13 本機重跑未出現 PyMuPDF4LLM 的 Tesseract／OCR 頁面訊息。第 12、16 頁保留原生文字且未做 OCR；第 17 頁進入 Paddle 並被採用。既有頁面 warning 仍在，不屬於這次修正。
+已以 SHA256 找到與先前第 12、16、17 頁報告相符的私人來源。Python 3.13 本機重跑未出現 PyMuPDF4LLM 的 Tesseract／OCR 頁面訊息。全書 27 頁中只有第 12、16 頁額外執行數值驗證；既有正常 Paddle 呼叫為 12 次。第 12 頁唯一有爭議的 pair 獲確認，因此最後待核對判定解除該數值 warning，但原生全文與歷史 warning 均保留。第 16 頁數值行證據不完整，warning 與待核對仍保留。第 17 頁只走原本低文字 Paddle 流程一次，未進數值驗證。
