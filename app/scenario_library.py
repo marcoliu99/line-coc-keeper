@@ -219,15 +219,33 @@ def content_similar(scenario_id: str, text: str, threshold: float = 0.75) -> boo
     return SequenceMatcher(None, text[:20000], existing_text[:20000]).ratio() >= threshold
 
 
-def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, text: str, indexes: dict, pregens: list, page_maps: dict, page_images: dict[int, bytes], scenario_id: str | None = None, reparse_candidate_id: str | None = None, parse_quality: dict | None = None) -> str:
+def _save_scenario_source(
+    source_bytes: bytes,
+    *,
+    source_name: str,
+    source_format: str,
+    title: str,
+    filename: str,
+    preview: str,
+    text: str,
+    indexes: dict,
+    pregens: list,
+    page_maps: dict,
+    page_images: dict[int, bytes],
+    scenario_id: str | None = None,
+    reparse_candidate_id: str | None = None,
+    parse_quality: dict | None = None,
+) -> str:
+    """Persist one immutable scenario source plus its derived text assets.
+
+    PDF remains the rich source format (bookmarks, page images and maps).
+    Markdown is intentionally text-only: its bytes are preserved as source.md,
+    chapter construction falls back to page markers or one main chapter, and
+    no synthetic PDF is created.
+    """
     with _LIBRARY_LOCK:
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        # /coc scenario reparse's caller passes the KP-confirmed candidate here
-        # instead of forcing scenario_id directly — content_similar re-verifies
-        # it with the now-available full text (the spec's "完整內容二次比對") so a
-        # reparse that turns out to be a genuinely different scenario still lands
-        # in a new library entry instead of overwriting an unrelated one.
         if scenario_id is None and reparse_candidate_id and content_similar(reparse_candidate_id, text):
             scenario_id = reparse_candidate_id
         scenario_id = scenario_id or f"{_slug(title)}-{content_hash[:8]}"
@@ -236,19 +254,37 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
         backup = target.with_name(f".{target.name}.backup")
         moved_previous = False
         try:
-            chapters = build_chapters(pdf_bytes, text)
+            chapter_source = source_bytes if source_format == "pdf" else b""
+            chapters = build_chapters(chapter_source, text)
             assets = _build_image_assets(page_images, page_maps, text, chapters)
             previous_manifest = _read_json(target / "manifest.json", {})
-            manifest = {"id": scenario_id, "title": title, "source_filename": filename, "created_at": previous_manifest.get("created_at", _now()), "updated_at": _now(), "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(), "content_hash": content_hash, "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1), "chapters": chapters, "image_assets": assets}
+            manifest = {
+                "id": scenario_id,
+                "title": title,
+                "source_filename": filename,
+                "source_format": source_format,
+                "source_file": source_name,
+                "created_at": previous_manifest.get("created_at", _now()),
+                "updated_at": _now(),
+                "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(),
+                "content_hash": content_hash,
+                "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1),
+                "chapters": chapters,
+                "image_assets": assets,
+            }
             (temporary / "images").mkdir()
-            (temporary / "source.pdf").write_bytes(pdf_bytes)
+            (temporary / source_name).write_bytes(source_bytes)
             (temporary / "preview.txt").write_text(preview, encoding="utf-8")
             (temporary / "scenario.txt").write_text(text, encoding="utf-8")
-            (temporary / "parse_quality.json").write_text(json.dumps(parse_quality or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+            (temporary / "parse_quality.json").write_text(
+                json.dumps(parse_quality or {}, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
             (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
             (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")
-            (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            (temporary / "manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             for page, image in page_images.items():
                 (temporary / "images" / f"page_{page}.png").write_bytes(image)
             if backup.exists():
@@ -266,6 +302,71 @@ def save_scenario(pdf_bytes: bytes, *, title: str, filename: str, preview: str, 
             shutil.rmtree(temporary, ignore_errors=True)
             raise
 
+
+def save_scenario(
+    pdf_bytes: bytes,
+    *,
+    title: str,
+    filename: str,
+    preview: str,
+    text: str,
+    indexes: dict,
+    pregens: list,
+    page_maps: dict,
+    page_images: dict[int, bytes],
+    scenario_id: str | None = None,
+    reparse_candidate_id: str | None = None,
+    parse_quality: dict | None = None,
+) -> str:
+    """Persist a PDF-backed scenario library entry."""
+    return _save_scenario_source(
+        pdf_bytes,
+        source_name="source.pdf",
+        source_format="pdf",
+        title=title,
+        filename=filename,
+        preview=preview,
+        text=text,
+        indexes=indexes,
+        pregens=pregens,
+        page_maps=page_maps,
+        page_images=page_images,
+        scenario_id=scenario_id,
+        reparse_candidate_id=reparse_candidate_id,
+        parse_quality=parse_quality,
+    )
+
+
+def save_markdown_scenario(
+    markdown_bytes: bytes,
+    *,
+    title: str,
+    filename: str,
+    preview: str,
+    text: str,
+    indexes: dict,
+    pregens: list,
+    scenario_id: str | None = None,
+    reparse_candidate_id: str | None = None,
+    parse_quality: dict | None = None,
+) -> str:
+    """Persist a text-only Markdown scenario without invoking PDF/OCR code."""
+    return _save_scenario_source(
+        markdown_bytes,
+        source_name="source.md",
+        source_format="markdown",
+        title=title,
+        filename=filename,
+        preview=preview,
+        text=text,
+        indexes=indexes,
+        pregens=pregens,
+        page_maps={},
+        page_images={},
+        scenario_id=scenario_id,
+        reparse_candidate_id=reparse_candidate_id,
+        parse_quality=parse_quality,
+    )
 
 def _filter_index(items: list[dict], pages: set[int]) -> list[dict]:
     return [item for item in items if isinstance(item, dict) and isinstance(item.get("page"), int) and item["page"] in pages]

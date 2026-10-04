@@ -2,7 +2,7 @@
 
 Moved out of app/discord_bot.py so the transport only turns a Discord message
 into Upload values (docs/specs/refactor/discord_events_through_router_design_spec.md).
-PDF upload deliberately has no KP/Host check, even with
+Scenario-file upload deliberately has no KP/Host check, even with
 SCENARIO_LIFECYCLE_KP_ONLY: any player may upload, and the first upload of a
 conversation applies at once. Only the choice buttons and /coc scenario are
 KP/Host-only.
@@ -22,6 +22,7 @@ from app.legacy_commands import (
     handle_pdf_upload,
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
+    handle_scenario_markdown_upload,
     resolve_pdf_upload_choice,
 )
 from app.repositories import state_transaction
@@ -54,6 +55,21 @@ async def handle_uploads(
         # No reply-token/time-window constraint here, so the same callback
         # serves as both the immediate ack and the final result.
         await handle_pdf_upload(conversation_id, reply, reply, await pdfs[0].read(), pdfs[0].filename)
+        await post_pdf_buttons()
+        return True
+
+    scenario_markdowns = [
+        u for u in uploads
+        if u.filename.lower().startswith("scenario") and u.filename.lower().endswith(".md")
+    ]
+    if scenario_markdowns:
+        if len(scenario_markdowns) > 1:
+            await reply("一次請只上傳一份 scenario 開頭的 Markdown 劇本。")
+            return True
+        upload = scenario_markdowns[0]
+        await handle_scenario_markdown_upload(
+            conversation_id, reply, reply, await upload.read(), upload.filename
+        )
         await post_pdf_buttons()
         return True
 

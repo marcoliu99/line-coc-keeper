@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -81,6 +82,7 @@ __all__ = [
     "handle_role_sheet_upload",
     "handle_roll_command",
     "handle_scenario_compare_upload",
+    "handle_scenario_markdown_upload",
     "handle_unsupported_message",
     "resolve_pdf_upload_choice",
 ]
@@ -95,7 +97,7 @@ async def handle_unsupported_message(conversation_id: str, reply: Reply, label: 
         active = state.active
     if active:
         await reply(
-            f"（守密人目前只讀得懂文字訊息和 PDF 檔案，收到的{label}不會被處理；"
+            f"（守密人目前只讀得懂文字訊息、PDF 劇本和 scenario 開頭的 Markdown 劇本，收到的{label}不會被處理；"
             "如果裡面有重要內容，麻煩用文字描述一下發生了什麼事。）"
         )
 
@@ -517,21 +519,199 @@ async def handle_pdf_upload(
     return True
 
 
+_MARKDOWN_PAGE_MARKER_RE = re.compile(r"(?m)^-*\s*第\s*\d+\s*頁\s*-*\s*$")
+
+
+def _markdown_scenario_title(text: str, file_name: str) -> str:
+    """Derive a useful title without retaining the routing-only scenario prefix."""
+    stem = Path(file_name).stem
+    cleaned = re.sub(r"^scenario", "", stem, flags=re.IGNORECASE).strip(" _.-")
+    if cleaned:
+        return re.sub(r"_+", " ", cleaned).strip()
+    for raw_line in text.splitlines():
+        match = re.match(r"^\s*#\s+(.+?)\s*$", raw_line)
+        if match:
+            return match.group(1).strip()
+    return pdf_loader.guess_title(text)
+
+
+@mutation_admission.guard_async_entry
+async def handle_scenario_markdown_upload(
+    conversation_id: str,
+    reply: Reply,
+    push: Reply,
+    markdown_bytes: bytes,
+    file_name: str,
+) -> bool:
+    """Load a scenario_*.md source through the normal scenario lifecycle.
+
+    Markdown is already authoritative text, so this path deliberately skips
+    PDF extraction/OCR and visual map/image generation. The original Markdown
+    bytes are preserved in the scenario library while scenario.txt receives a
+    synthetic page-1 marker only when the file has no page markers of its own.
+    """
+    lower_name = Path(file_name).name.lower()
+    if not lower_name.startswith("scenario") or not lower_name.endswith(".md"):
+        await reply("Markdown 劇本檔名需要以 scenario 開頭並使用 .md 副檔名。")
+        return False
+    try:
+        decoded = markdown_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        await reply("Markdown 劇本必須是 UTF-8 編碼，這份檔案無法安全讀取。")
+        return False
+    decoded = decoded.replace("\r\n", "\n").replace("\r", "\n")
+    if not decoded.strip():
+        await reply("這份 Markdown 劇本沒有文字內容，沒有載入。")
+        return False
+
+    text = decoded
+    if not _MARKDOWN_PAGE_MARKER_RE.search(text):
+        text = "--- 第 1 頁 ---\n" + text
+
+    existing_state = load_state(conversation_id)
+    previous_content_hash = ""
+    if existing_state.scenario_library_id:
+        try:
+            previous_content_hash = scenario_library.load_context(
+                existing_state.scenario_library_id
+            )["manifest"].get("content_hash", "")
+        except (FileNotFoundError, ValueError):
+            pass
+    if existing_state.pending_pregen_luck:
+        await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再處理新的劇本檔案。")
+        return False
+    if existing_state.pending_pdf_upload is not None:
+        await reply(
+            f"上一次上傳的《{existing_state.pending_pdf_upload['title']}》還沒選擇「全新劇本」"
+            "還是「修正目前劇本」，請先完成上一份劇本的選擇，再上傳新的 Markdown。"
+        )
+        return False
+    if existing_state.pending_scenario_upload is not None:
+        await reply("目前仍有一份相似劇本等待處理，請先完成 /coc scenario reparse 或 /coc scenario cancel。")
+        return False
+
+    await reply("收到了，正在讀取 Markdown 劇本並建立索引；這條路徑不會執行 PDF OCR。")
+    title = _markdown_scenario_title(text, file_name)
+    extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
+    pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
+    preview = text[:12_000]
+    scenario_id = await asyncio.to_thread(
+        scenario_library.save_markdown_scenario,
+        markdown_bytes,
+        title=title,
+        filename=file_name,
+        preview=preview,
+        text=text,
+        indexes=extracted_index,
+        pregens=pregens,
+        parse_quality={"source_format": "markdown", "text_only": True},
+    )
+    library_context = await asyncio.to_thread(scenario_library.load_context, scenario_id)
+    text = library_context["text"]
+    extracted_index = library_context["indexes"]
+    pregens = library_context["pregens"]
+    page_maps = library_context["scene_maps"]
+
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if state.pending_pdf_upload is not None:
+            raced = True
+        elif state.scenario_text.strip():
+            raced = False
+            state.pending_pdf_upload = {
+                "scenario_id": scenario_id,
+                "previous_content_hash": previous_content_hash,
+                "source_format": "markdown",
+                "text": text,
+                "title": library_context["manifest"]["title"],
+                "low_text_pages": [],
+                "truncated": False,
+                "npcs": extracted_index["npcs"],
+                "locations": extracted_index["locations"],
+                "page_maps": {},
+                "pregens": pregens,
+                "active_chapter_id": library_context["active_chapter_id"],
+                "context_chapter_ids": library_context["context_chapter_ids"],
+            }
+            state_transaction.commit_snapshot(state)
+            current_title = state.scenario_title
+            confirmation_pending = True
+        else:
+            raced = False
+            old_pool = list(state.pregens)
+            _apply_new_scenario(
+                state, text, library_context["manifest"]["title"], extracted_index, page_maps, pregens
+            )
+            _install_library_context(state, scenario_id, library_context)
+            install_result: dict[str, bool] = {}
+
+            def install_first(conn):
+                manual_pregens.capture_legacy(conn, conversation_id, None, old_pool)
+                state.pregens, install_result["stale"] = manual_pregens.install_pool(
+                    conn, conversation_id, scenario_id, library_context, bind_unassigned=True,
+                )
+
+            _, image_refreshed = scenario_activation.commit_and_refresh(
+                lambda: state_transaction.commit_snapshot(state, mutate_tx=install_first),
+                conversation_id,
+                scenario_id,
+                library_context,
+            )
+            confirmation_pending = False
+            final_pregen_count = len(state.pregens)
+
+    if raced:
+        await push(
+            f"這份《{title}》完成得比較慢——另一份劇本先進入待確認狀態了。"
+            "請先處理上一份，再重新上傳這份 Markdown。"
+        )
+        return False
+
+    if confirmation_pending:
+        await push(
+            f"這個群組目前正在跑《{current_title}》。新上傳的《{title}》"
+            "是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇。"
+        )
+        return True
+
+    variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
+    await push(
+        _pdf_upload_confirmation_text(
+            title,
+            text,
+            [],
+            False,
+            page_maps,
+            extracted_index,
+            final_pregen_count,
+            scenario_index.report_location_index(
+                state.scenario_location_index,
+                source="markdown_upload",
+                scenario_title=state.scenario_title,
+                scene_maps=state.scene_maps,
+            ),
+        )
+        + (f"\n{variant_notice}" if variant_notice else "")
+        + ("\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else "")
+        + ("\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else "")
+    )
+    return True
+
 def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -> str:
     """Resolve a pending upload while the caller holds the conversation lock."""
     state = load_state(conversation_id)
     pending = state.pending_pdf_upload
     if pending is None:
-        return "這個上傳選擇已經處理過了，或已經過期失效，請重新上傳 PDF。"
+        return "這個上傳選擇已經處理過了，或已經過期失效，請重新上傳劇本檔案。"
     scenario_id = pending.get("scenario_id")
     if not scenario_id:
-        return "這個待處理上傳缺少劇本庫資料，請重新上傳 PDF。"
+        return "這個待處理上傳缺少劇本庫資料，請重新上傳劇本檔案。"
     try:
         context = scenario_library.load_context(scenario_id, pending.get("active_chapter_id", ""))
     except (FileNotFoundError, ValueError):
         state.pending_pdf_upload = None
         state_transaction.commit_snapshot(state)
-        return "這個待處理劇本庫項目已不存在，請重新上傳 PDF。"
+        return "這個待處理劇本庫項目已不存在，請重新上傳劇本檔案。"
     extracted_index = context["indexes"]
     old_pool = list(state.pregens)
     old_scenario_id = state.scenario_library_id or None
@@ -599,7 +779,7 @@ async def resolve_pdf_upload_choice(
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if not permissions.may_manage_scenario_lifecycle(state, user_id):
-            await push(permissions.kp_only("處理劇本 PDF"))
+            await push(permissions.kp_only("處理劇本檔案"))
             return
         text = _resolve_pdf_upload_choice_locked(conversation_id, choice)
         state = load_state(conversation_id)
