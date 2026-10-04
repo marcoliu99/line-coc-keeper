@@ -20,12 +20,15 @@ This edition describes the current contract. Proposed work is explicitly identif
 
 5. Image/map assets have visibility and spoiler metadata. Searching or displaying assets must honor role/privacy policy, not merely detect a map-shaped image or the word map.
 
-6. Source/chapter changes invalidate incompatible Chinese variants. Activation responses surface fallback notices; manual pregen assets are reconciled with source identity rather than silently reused across unrelated scenarios.\n\n7. `scenario*.md` is routed before the generic `.md` comparison-upload path. The original bytes are preserved as `source.md`; runtime text gets a synthetic page-1 marker only when the source has no page markers. Markdown import does not synthesize PDF pages, images, OCR evidence, or floor-plan maps. When another scenario is active, Markdown uses the same new-scenario-versus-correction choice as PDF. PDF-only source-review/export tooling rejects Markdown sources explicitly.
+6. Source/chapter changes invalidate incompatible Chinese variants. Activation responses surface fallback notices; manual pregen assets are reconciled with source identity rather than silently reused across unrelated scenarios.
+
+7. `scenario*.md` is routed before the generic `.md` comparison-upload path. The original bytes are preserved as `source.md`; runtime text gets a synthetic page-1 marker only when the source has no page markers. Markdown import does not synthesize PDF pages, images, OCR evidence, or floor-plan maps. When another scenario is active, Markdown uses the same new-scenario-versus-correction choice as PDF. PDF-only source-review/export tooling rejects Markdown sources explicitly.
 
 ## Flow and interfaces
 
 ```text
-scenario*.md -> UTF-8 text ingest (no OCR) --\\\n\n                                      > library manifest/assets -> select chapter window -> install group snapshot -> gameplay\nPDF/staged PDF -> PDF/OCR parse -------/
+scenario*.md -> UTF-8 text ingest (no OCR) -> library manifest/assets -> select chapter window -> install group snapshot -> gameplay
+PDF/staged PDF -> PDF/OCR parse -> library manifest/assets -> select chapter window -> install group snapshot -> gameplay
 ```
 
 ## Implementation and verification
@@ -34,10 +37,14 @@ The linked implementation and existing regression tests are the audit evidence. 
 
 - [app/scenario_library.py](../../../app/scenario_library.py)
 - [app/pdf_loader.py](../../../app/pdf_loader.py)
-- [app/legacy_commands.py](../../../app/legacy_commands.py)\n- [app/commands/handlers/uploads.py](../../../app/commands/handlers/uploads.py)\n- [app/trusted_scenario_source.py](../../../app/trusted_scenario_source.py)
+- [app/legacy_commands.py](../../../app/legacy_commands.py)
+- [app/commands/handlers/uploads.py](../../../app/commands/handlers/uploads.py)
+- [app/trusted_scenario_source.py](../../../app/trusted_scenario_source.py)
 - [app/commands/handlers/system.py](../../../app/commands/handlers/system.py)
 - [app/scene_map.py](../../../app/scene_map.py)
-- [tests/test_scenario_library.py](../../../tests/test_scenario_library.py)\n- [tests/test_upload_routing.py](../../../tests/test_upload_routing.py)\n- [tests/test_trusted_scenario_source.py](../../../tests/test_trusted_scenario_source.py)
+- [tests/test_scenario_library.py](../../../tests/test_scenario_library.py)
+- [tests/test_upload_routing.py](../../../tests/test_upload_routing.py)
+- [tests/test_trusted_scenario_source.py](../../../tests/test_trusted_scenario_source.py)
 - [tests/test_spoiler_policy.py](../../../tests/test_spoiler_policy.py)
 
 ## Historical evidence
