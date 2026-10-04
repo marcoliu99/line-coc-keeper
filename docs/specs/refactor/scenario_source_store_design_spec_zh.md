@@ -4,7 +4,7 @@
 
 ## 狀態與目標
 
-分類：`refactor`。狀態：**已實作**。基於 `main_v2` 的 `ee23aa9`；2026-10-05 架構審查的第四項（「隱藏劇本來源的儲存細節」）。
+分類：`refactor`。狀態：**已實作**。基於 `main_v2` 的 `7ab0796`；2026-10-05 架構審查的第四項（「隱藏劇本來源的儲存細節」）。
 
 `scenario_templates` 原本會伸進 `scenario_library` 取用私有的路徑驗證與 JSON 讀取，再自己組路徑：來源的 `manifest.json` 與 `scenario.txt`、`.variants/<劇本>/<來源雜湊>/<語系>/<版本>` 目錄樹、一個版本的五個檔案，以及 `exports` 目錄。`scenario_source_review` 也呼叫 `templates._root()` 與 library 的私有頁碼正規表示式。每個呼叫者都得知道儲存結構，改動一處就要改好幾個模組。
 

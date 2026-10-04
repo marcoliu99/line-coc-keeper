@@ -4,7 +4,7 @@
 
 ## Status and goal
 
-Category: `refactor`. Status: **implemented**. Based on `main_v2` at `ee23aa9`; the fourth item of the 2026-10-05 architecture review ("Hide scenario source storage details").
+Category: `refactor`. Status: **implemented**. Based on `main_v2` at `7ab0796`; the fourth item of the 2026-10-05 architecture review ("Hide scenario source storage details").
 
 `scenario_templates` reached into `scenario_library` for its private path validator and JSON reader and then built paths itself: the source's `manifest.json` and `scenario.txt`, the `.variants/<scenario>/<source hash>/<locale>/<variant>` tree, the five files of a variant, and the `exports` directory. `scenario_source_review` also called `templates._root()` and the library's private page-marker regex. Every caller therefore knew the storage layout, and a change to it meant editing several modules.
 

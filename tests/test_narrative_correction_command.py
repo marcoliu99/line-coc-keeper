@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from app.commands import router
 from app.models import GroupState
+from app.services import narrative_corrections
 
 
 class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
@@ -137,13 +138,12 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state.narrative_corrections[0]["timeline_id"], "timeline-new-campaign")
 
     async def test_closed_reports_are_pruned_but_recent_approved_remains(self):
-        from app.commands.handlers import correct
         self.state.narrative_corrections = [
             {"id": str(index), "status": "rejected"} for index in range(30)
         ] + [
             {"id": f"a{index}", "status": "approved"} for index in range(40)
         ]
-        correct._prune_adjudicated(self.state)
+        narrative_corrections.prune_closed(self.state)
         self.assertEqual(len(self.state.narrative_corrections), 52)
         self.assertEqual(self.state.narrative_corrections[-1]["id"], "a39")
 
