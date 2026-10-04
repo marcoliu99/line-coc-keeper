@@ -30,6 +30,7 @@ def test_one_source_run_emitted_twice_keeps_paragraph_flow_and_mechanics() -> No
         native = page.get_text('text')
         new, decision = _repair(page, old)
     assert decision['status'] == 'duplicate_source_emission_repaired'
+    assert decision['source_fragment_count'] == 1
     assert decision['kept_range'] == [43, 73]
     assert new.count('The lantern sheds 1d6+2 light.') == 1
     assert 'The lantern sheds 1d6+2 light. The pier remains ahead.' in new
@@ -54,6 +55,41 @@ def test_two_source_blocks_with_identical_text_remain_distinct() -> None:
         old = ('South Dock The lantern sheds 1d6+2 light.\n\n'
                'The lantern sheds 1d6+2 light. The pier remains ahead.')
         assert _repair(page, old)[0] == old
+
+
+def test_interleaved_sidebar_does_not_hide_a_distinct_split_source() -> None:
+    doc, page = _page(body='The lantern sheds light.')
+    with doc:
+        page.insert_text((350, 300), 'The lantern sh', fontsize=9)
+        page.insert_text((70, 500), 'Unrelated sidebar text.', fontsize=9)
+        page.insert_text((350, 312), 'eds light.', fontsize=9)
+        native = page.get_text('text')
+        assert 'The lantern sh\nUnrelated sidebar text.\neds light.' in native
+        old = ('South Dock The lantern sheds light.\n\n'
+               'The lantern sheds light. The pier remains ahead.\n\n'
+               'Unrelated sidebar text.')
+        paths = pdf_quality._source_fragment_sequences(
+            page.get_text('rawdict')['blocks'], 'The lantern sheds light.')
+        new, decision = _repair(page, old)
+    assert paths is not None and len(paths) == 2
+    assert sorted(map(len, paths)) == [1, 2]
+    assert new == old
+    assert new.count('The lantern sheds light.') == 2
+    assert decision['status'] == 'duplicate_source_emission_ambiguous'
+
+
+def test_hyphenated_split_source_has_distinct_fragment_identity() -> None:
+    doc, page = _page(body='The lantern sheds light.')
+    with doc:
+        page.insert_text((350, 300), 'The lantern sh-', fontsize=9)
+        page.insert_text((70, 500), 'Unrelated sidebar text.', fontsize=9)
+        page.insert_text((350, 312), 'eds light.', fontsize=9)
+        old = ('South Dock The lantern sheds light.\n\n'
+               'The lantern sheds light. The pier remains ahead.\n\n'
+               'Unrelated sidebar text.')
+        new, decision = _repair(page, old)
+    assert new == old
+    assert decision['status'] == 'duplicate_source_emission_ambiguous'
 
 
 def test_same_sentence_in_two_columns_is_not_deduplicated() -> None:

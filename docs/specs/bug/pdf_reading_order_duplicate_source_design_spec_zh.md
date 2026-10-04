@@ -171,3 +171,12 @@ survivor 位置、模糊對齊，以及合法與重複輸出的 mechanics。
 一份。23 個 review pages、66 項 warnings 與八個 rich candidate 選擇
 均未變；沒有觀察到 mechanics 遺失。此 replay 沒有重跑外部 vision 或
 map analysis。
+
+最終 review 的加固修正：另一個真實來源區塊可能跨 raw spans 斷開，
+而 sidebar 在 native extraction order 中插入其間。因此 native 字串
+出現次數與完整單一 span 出現次數，不能證明來源唯一。修復現在列舉
+有界的來源 fragment 路徑，逐段保留 block／line／span identity、字元
+範圍與順序。只有 ledger 中唯一的路徑就是已綁定 texttrace 的來源
+序列時，layout ranges 才有資格去重；出現競爭路徑或搜尋不確定時，
+selected text 保持原狀。寬鬆的格式正規化只用來發現競爭路徑，
+不會單靠文字相似度批准刪除。

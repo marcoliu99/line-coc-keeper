@@ -563,6 +563,90 @@ def _trace_binding(page: Any, span: dict, source: str) -> tuple[int, int] | None
     return matches[0] if len(matches) == 1 else None
 
 
+def _source_fragment_sequences(raw_blocks: list[dict], source: str) -> set[tuple[tuple[int, ...], ...]] | None:
+    """Find distinct raw character paths for a layout run, ignoring formatting only to veto edits.
+
+    PDF extraction order can interleave unrelated blocks. Fragment paths therefore
+    retain each block/line/span and character interval instead of flattening
+    the page text. More than one path, or an excessive search, is ambiguous.
+    """
+    letters = ''.join(char.casefold() for char in source if char.isalnum())
+    if not letters or len(letters) > 512:
+        return None
+    fragments: list[tuple[tuple[int, int, int], str, list[int], list[str]]] = []
+    for block_index, block in enumerate(raw_blocks):
+        for line_index, line in enumerate(block.get('lines', [])):
+            for span_index, span in enumerate(line['spans']):
+                chars = [char['c'] for char in span['chars']]
+                if any(len(char) != 1 or len(char.casefold()) != 1 for char in chars):
+                    return None
+                normalized = ''.join(char.casefold() for char in chars if char.isalnum())
+                offsets = [index for index, char in enumerate(chars) if char.isalnum()]
+                if normalized:
+                    fragments.append(((block_index, line_index, span_index), normalized, offsets, chars))
+    by_initial: dict[str, list[int]] = {}
+    for index, (_, normalized, _, _) in enumerate(fragments):
+        by_initial.setdefault(normalized[0], []).append(index)
+    paths: set[tuple[tuple[int, ...], ...]] = set()
+    explored = 0
+
+    def interval(identity: tuple[int, int, int], offsets: list[int], chars: list[str],
+                 start: int, end: int) -> tuple[int, ...]:
+        first, last = offsets[start], offsets[end - 1] + 1
+        while first and not chars[first - 1].isalnum() and not chars[first - 1].isspace():
+            first -= 1
+        while last < len(chars) and not chars[last].isalnum() and not chars[last].isspace():
+            last += 1
+        return (*identity, first, last)
+
+    def add_path(path: tuple[tuple[int, ...], ...]) -> None:
+        paths.add(path)
+
+    def continue_path(position: int, used: frozenset[int], path: tuple[tuple[int, ...], ...]) -> None:
+        nonlocal explored
+        if position == len(letters) or len(paths) > 1 or explored > 10000:
+            if position == len(letters):
+                add_path(path)
+            return
+        for index in by_initial.get(letters[position], []):
+            if index in used:
+                continue
+            explored += 1
+            identity, normalized, offsets, chars = fragments[index]
+            remaining = letters[position:]
+            if remaining.startswith(normalized):
+                end = len(normalized)
+            elif normalized.startswith(remaining):
+                end = len(remaining)
+            else:
+                continue
+            fragment = interval(identity, offsets, chars, 0, end)
+            continue_path(position + end, used | {index}, (*path, fragment))
+            if len(paths) > 1 or explored > 10000:
+                return
+
+    for index, (identity, normalized, offsets, chars) in enumerate(fragments):
+        start = 0
+        while start < len(normalized):
+            found = normalized.find(letters[0], start)
+            if found < 0:
+                break
+            explored += 1
+            suffix = normalized[found:]
+            if letters.startswith(suffix):
+                fragment = interval(identity, offsets, chars, found, len(normalized))
+                continue_path(len(suffix), frozenset({index}), (fragment,))
+            elif suffix.startswith(letters):
+                fragment = interval(identity, offsets, chars, found, found + len(letters))
+                add_path((fragment,))
+            if len(paths) > 1 or explored > 10000:
+                break
+            start = found + 1
+        if len(paths) > 1 or explored > 10000:
+            break
+    return paths if explored <= 10000 else None
+
+
 def repair_duplicate_source_layout(page: Any, layout: str, native: str, *,
                                    method: str, pairs: list[dict],
                                    decorative_status: str) -> tuple[str, dict]:
@@ -595,6 +679,13 @@ def repair_duplicate_source_layout(page: Any, layout: str, native: str, *,
             if sum(len(_source_occurrences(''.join(char['c'] for char in span['chars']), source))
                    for raw_block in raw_blocks for line in raw_block.get('lines', [])
                    for span in line['spans']) != 1:
+                return layout, result
+            raw_source = ''.join(char['c'] for char in spans[1]['chars'])
+            source_start = raw_source.find(source)
+            expected_fragments = ((block_index, line_index, 0, source_start,
+                                   source_start + len(source)),)
+            source_paths = _source_fragment_sequences(raw_blocks, source)
+            if source_start < 0 or source_paths != {expected_fragments}:
                 return layout, result
             trace_binding = _trace_binding(page, spans[1], source)
             if trace_binding is None:
@@ -655,11 +746,12 @@ def repair_duplicate_source_layout(page: Any, layout: str, native: str, *,
                 result['status'] = 'duplicate_source_emission_preservation_failed'
                 return layout, result
             box = tuple(round(value * 4) / 4 for value in spans[1]['bbox'])
-            identity = (f'{page.number}:{block_index}:{line_index}:0:{source}:'
+            identity = (f'{page.number}:{expected_fragments}:{source}:'
                         f'{box}:{current["dir"]}:{spans[1]["font"]}:'
                         f'{spans[1]["size"]}:{trace_binding}')
             result.update(status='duplicate_source_emission_repaired',
                           source_run=hashlib.sha256(identity.encode()).hexdigest()[:20],
+                          source_fragment_count=len(expected_fragments),
                           kept_range=list(layout_ranges[kept]), removed_range=list(removed),
                           removed_chars=len(layout) - len(proposed), source_unique=True,
                           trace_unique=True, flow_unique=True, preservation='passed')

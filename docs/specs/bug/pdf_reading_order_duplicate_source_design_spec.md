@@ -207,3 +207,13 @@ text: 3,620 to 3,566 characters after decorative repair, with the duplicate
 opening reduced from two occurrences to one. Review pages (23), warnings
 (66), and the eight rich-candidate selections were unchanged; no mechanics
 loss was observed. This replay did not rerun external vision or map analysis.
+
+Final-review hardening: a second source region may be split across raw spans
+while unrelated sidebar content interrupts native extraction order. A native
+substring count and a single full-span count do not establish unique source
+provenance. The repair now enumerates bounded source-fragment paths, retaining
+each block/line/span identity, character interval, and fragment order. Layout
+ranges qualify only when that ledger has exactly the one trace-bound source
+sequence; any competing path or search ambiguity leaves the selected text
+unchanged. The matching form ignores formatting only to discover competing
+paths, never to authorize a replacement on text similarity alone.
