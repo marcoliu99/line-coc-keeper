@@ -1542,6 +1542,15 @@
       "evidence": ["app/pdf_layout.py", "app/pdf_loader.py", "scripts/setup_paddle_layout.py", "tests/test_pdf_paddle_layout.py", "tests/test_setup_paddle_layout.py", "tests/fixtures/paddle_layout/provenance.json", "docs/specs/enhancement/paddle_two_column_reading_order_results.json"],
       "path": "docs/specs/enhancement/paddle_two_column_reading_order.md",
       "zh_path": "docs/specs/enhancement/paddle_two_column_reading_order_zh.md"
+    },
+    {
+      "title": "Conservative Paddle three-column native-text reading order",
+      "zh": "保守的 Paddle 三欄原生文字閱讀順序",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/enhancement/paddle_three_column_reading_order.md",
+      "zh_path": "docs/specs/enhancement/paddle_three_column_reading_order_zh.md"
     }
   ]
 }
