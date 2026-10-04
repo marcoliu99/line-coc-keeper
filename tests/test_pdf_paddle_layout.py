@@ -58,9 +58,10 @@ def test_single_column_is_not_reordered():
     assert order_recording(recorded_page(4)).status == "fallback"
 
 
-def test_three_columns_are_rejected_not_repaired():
+def test_clear_three_columns_use_geometry_order():
     result = order_recording(recorded_page(5))
-    assert result.status == "fallback" and result.reason == "not_two_columns"
+    assert result.status == "accepted" and result.reason == "three_columns"
+    assert result.text == recorded_page(5)["expected_text"]
 
 
 def test_paddle_must_not_read_a_column_bottom_before_top():
@@ -350,7 +351,7 @@ def test_unsafe_captured_layout_is_never_accepted(change, reason):
 
 
 @pytest.mark.parametrize("number", [4, 5])
-def test_single_and_three_column_extraction_are_exactly_legacy(
+def test_single_fallback_and_clear_three_column_extraction(
     monkeypatch, tmp_path, number
 ):
     import sys
@@ -393,13 +394,14 @@ def test_single_and_three_column_extraction_are_exactly_legacy(
     original = loader.extract_text(content, local_ocr_limit=0, ai_repair_limit=0)
     monkeypatch.setenv("PDF_PADDLE_LAYOUT_ENABLED", "true")
     report = {}
-    assert (
-        loader.extract_text(
-            content, quality_report=report, local_ocr_limit=0, ai_repair_limit=0
-        )
-        == original
-    )
-    assert report["pages"][0]["paddle_layout"]["reason"] == "not_two_columns"
+    actual = loader.extract_text(content, quality_report=report, local_ocr_limit=0, ai_repair_limit=0)
+    if number == 4:
+        assert actual == original
+        assert report["pages"][0]["paddle_layout"]["reason"] == "not_two_columns"
+    else:
+        assert actual[0] == "--- 第 1 頁 ---\n" + data["expected_text"]
+        assert report["pages"][0]["paddle_layout"]["reason"] == "three_columns"
+        assert report["pages"][0]["method"] == "paddle_layout"
 
 
 def test_invalid_native_assignments_and_ambiguous_regions_fall_back():

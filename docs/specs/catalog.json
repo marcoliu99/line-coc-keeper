@@ -1724,6 +1724,21 @@
       "path": "docs/specs/refactor/legacy_commands_retirement_design_spec.md",
       "zh_path": "docs/specs/refactor/legacy_commands_retirement_design_spec_zh.md",
       "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Conservative Paddle three-column native-text reading order",
+      "zh": "保守的 Paddle 三欄原生文字閱讀順序",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_layout.py",
+        "tests/test_pdf_three_column_layout.py",
+        "tests/test_pdf_paddle_layout.py",
+        "tests/fixtures/paddle_layout/page_05.json",
+        "docs/specs/enhancement/paddle_three_column_reading_order_results.json"
+      ],
+      "path": "docs/specs/enhancement/paddle_three_column_reading_order.md",
+      "zh_path": "docs/specs/enhancement/paddle_three_column_reading_order_zh.md"
     }
   ]
 }
