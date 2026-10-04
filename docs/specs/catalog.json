@@ -1560,6 +1560,15 @@
       "evidence": ["app/pdf_loader.py", "tests/test_pdf_paddle_ocr.py"],
       "path": "docs/specs/maintenance/paddle_ocr_selection_logging.md",
       "zh_path": "docs/specs/maintenance/paddle_ocr_selection_logging_zh.md"
+    },
+    {
+      "title": "Disable PyMuPDF4LLM internal OCR",
+      "zh": "關閉 PyMuPDF4LLM 內建 OCR",
+      "category": "bug",
+      "status": "backlog",
+      "evidence": ["app/pdf_loader.py", "tests/test_pdf_loader.py"],
+      "path": "docs/specs/bug/pymupdf4llm_internal_ocr.md",
+      "zh_path": "docs/specs/bug/pymupdf4llm_internal_ocr_zh.md"
     }
   ]
 }
