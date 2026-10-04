@@ -1,6 +1,7 @@
 import asyncio
 import multiprocessing
 import sys
+import threading
 import time
 import types
 import unittest
@@ -96,6 +97,7 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
         worker = scenario_rag._PrewarmWorker("g", "scenario")
 
         class StubbornProcess:
+            pid = 123
             exitcode = None
 
             def __init__(self):
@@ -155,6 +157,40 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(worker.process.exitcode)
             await scenario_rag.shutdown_prewarm()
             self.assertIsNotNone(worker.process.exitcode)
+
+    async def test_slow_process_start_does_not_block_event_loop_or_orphan_child(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = multiprocessing.get_context("spawn").Process(
+            target=_sleep_in_worker, args=(10.0,)
+        )
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_start():
+            with worker._start_stop_lock:
+                entered.set()
+                release.wait(timeout=2)
+                worker.process.start()
+
+        try:
+            with patch.object(scenario_rag, "_PrewarmWorker", return_value=worker), \
+                    patch.object(worker, "start", side_effect=slow_start), \
+                    patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
+                    patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", True), \
+                    patch.object(scenario_rag, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
+                scenario_rag.schedule_index_prewarm("g", "scenario")
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.1)
+                shutdown = asyncio.create_task(scenario_rag.shutdown_prewarm())
+                await asyncio.sleep(0.01)
+                self.assertFalse(shutdown.done())
+                release.set()
+                await asyncio.wait_for(shutdown, timeout=2)
+                self.assertIsNotNone(worker.process.exitcode)
+        finally:
+            release.set()
+            if worker.process.pid is not None:
+                worker.stop()
 
     async def test_disabled_prewarm_starts_no_child(self):
         with patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", False), \

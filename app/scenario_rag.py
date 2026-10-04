@@ -74,9 +74,11 @@ class _PrewarmWorker:
         self.process = multiprocessing.get_context("spawn").Process(
             target=_run_prewarm_index, args=(group_id, scenario_text)
         )
+        self._start_stop_lock = threading.Lock()
 
     def start(self) -> None:
-        self.process.start()
+        with self._start_stop_lock:
+            self.process.start()
 
     async def wait(self) -> None:
         while self.process.exitcode is None:
@@ -86,14 +88,17 @@ class _PrewarmWorker:
             raise RuntimeError("prewarm worker exited unsuccessfully")
 
     def stop(self) -> None:
-        if self.process.exitcode is None:
-            self.process.terminate()
-            self.process.join(timeout=0.1)
+        with self._start_stop_lock:
+            if self.process.pid is None:
+                return
             if self.process.exitcode is None:
-                self.process.kill()
-                self.process.join(timeout=0.5)
-        else:
-            self.process.join(timeout=0)
+                self.process.terminate()
+                self.process.join(timeout=0.1)
+                if self.process.exitcode is None:
+                    self.process.kill()
+                    self.process.join(timeout=0.5)
+            else:
+                self.process.join(timeout=0)
 
 
 @dataclass
@@ -131,8 +136,8 @@ async def _prewarm_index(group_id: str, scenario_text: str) -> None:
             # Keep the child shielded from wrapper cancellation; shutdown owns
             # the grace period and, if necessary, terminates the child.
             worker = _PrewarmWorker(group_id, scenario_text)
-            worker.start()
             state.workers.add(worker)
+            await asyncio.to_thread(worker.start)
             worker_task = asyncio.create_task(worker.wait())
             state.worker_tasks.add(worker_task)
             worker_task.add_done_callback(state.worker_tasks.discard)
@@ -207,7 +212,7 @@ async def shutdown_prewarm() -> None:
     finally:
         try:
             for child in state.workers:
-                child.stop()
+                await asyncio.to_thread(child.stop)
             if state.worker_tasks:
                 await asyncio.gather(*state.worker_tasks, return_exceptions=True)
         finally:
