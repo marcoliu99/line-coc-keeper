@@ -71,7 +71,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/providers/anthropic_provider.py`：Claude（Anthropic Messages API）介面卡，含 prompt caching
 - `app/providers/gemini_provider.py` / `app/providers/openai_provider.py` / `app/providers/codex_provider.py`：Gemini（google-genai SDK）／OpenAI／已登入 Codex CLI 介面卡；Codex 用於對話及一般文字分析
 - `app/locks.py`：per-conversation 鎖，防止同一個聊天室的兩則訊息互相覆蓋對方的存檔；KP 助手訊息另有優先權佇列
-- `app/combat.py`：正式戰鬥輪次狀態機（先攻順位、回合、HP）
+- `app/combat.py`：正式戰鬥輪次狀態機（先攻順位、回合、HP）；`app/combat_flow.py` 是建立在它之上、以收據為本的 managed 流程；`app/services/combat_engine.py`（`CombatEngine.handle(state, action)`）是指令、Keeper 工具與檢定引擎共用的唯一入口——只讀一次戰鬥模式（idle／legacy／managed），再執行對應的實作。`tests/test_architecture_combat.py` 確保 `combat` 不會到達 `combat_flow`（[規格](docs/specs/refactor/combat_engine_design_spec_zh.md)）
 - `app/creation.py`：互動式建角流程（擲屬性、分配職業/興趣技能點數）
 - `app/pregen_extractor.py`：從劇本文字中抽取內建的預製調查員
 - `app/intent_parser.py`：規則式（regex，不額外呼叫 LLM）偵測玩家訊息裡的移動意圖與「進入某地點」意圖

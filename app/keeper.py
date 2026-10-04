@@ -51,7 +51,8 @@ from app.models import Character, GroupState
 from app.providers.registry import conversation_provider
 from app.repositories import state_transaction
 from app.repositories.group_state import load_state
-from app.services import history_authority, mutation_admission
+from app.services import combat_actions as combat_act
+from app.services import combat_engine, history_authority, mutation_admission
 
 _logger = logging.getLogger(__name__)
 # Existing callers patch scenario_library through keeper. Retain the module
@@ -359,8 +360,9 @@ def apply_character_delta_in_state(
             'investigator': target_char.character_id, 'field': field_name, 'delta': delta,
         })
         if field_name == 'hp' and delta < 0:
-            damage_result = combat.managed_single_hit(target_state, target_char, -delta,
-                                                     event_id=identity, reason=reason or entry_point)
+            damage_result = combat_engine.handle(target_state, combat_act.SingleHit(
+                character=target_char, damage=-delta, event_id=identity, reason=reason or entry_point,
+            ))
             if not damage_result.get('ok'):
                 return resource_bridge.effective(target_state, target_char).hp, False, None, damage_result
             effective = resource_bridge.effective(target_state, target_char)
@@ -1322,7 +1324,7 @@ def _build_dynamic_prompt(
         combat_block = f"""
 
 # 目前戰鬥狀態
-{combat.status_text(state, include_private=(speaker_role == "kp_assistant"))}
+{combat_engine.handle(state, combat_act.Status(include_private=(speaker_role == "kp_assistant")))}
 
 Combat rule: follow the current actor and recorded initiative strictly. For investigator actions use
 declare_combat_action then run_combat_action. For an enemy turn call plan_enemy_turn then

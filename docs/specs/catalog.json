@@ -1618,7 +1618,10 @@
         "app/checks/service.py",
         "tests/test_check_engine.py",
         "docs/refactor/phase1-result.md",
-        "docs/refactor/phase2-result.md"
+        "docs/refactor/phase2-result.md",
+        "app/services/combat_engine.py",
+        "tests/test_combat_engine.py",
+        "docs/refactor/phase3-result.md"
       ],
       "path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec.md",
       "zh_path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md",
@@ -1661,6 +1664,26 @@
       ],
       "path": "docs/specs/refactor/check_engine_design_spec.md",
       "zh_path": "docs/specs/refactor/check_engine_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Combat engine",
+      "zh": "戰鬥引擎",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/combat_engine.py",
+        "app/services/combat_actions.py",
+        "app/combat.py",
+        "app/combat_flow.py",
+        "app/combat_resources.py",
+        "app/keeper_tools/combat.py",
+        "app/keeper_tools/managed_combat.py",
+        "tests/test_combat_engine.py",
+        "tests/test_architecture_combat.py"
+      ],
+      "path": "docs/specs/refactor/combat_engine_design_spec.md",
+      "zh_path": "docs/specs/refactor/combat_engine_design_spec_zh.md",
       "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
     }
   ]

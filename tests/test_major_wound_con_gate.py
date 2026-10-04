@@ -12,6 +12,7 @@ from unittest.mock import patch
 from app import combat, combat_resources, db, dice, keeper
 from app.models import Character, GroupState
 from app.repositories import group_state
+from tests import combat_calls as calls
 from tests import state_store
 
 SEARCH_CHECK = {"type": "skill", "skill": "偵查", "skill_value": 50, "check_id": "check-search"}
@@ -43,7 +44,7 @@ def _enemy_attack_plan(state: GroupState) -> str:
         {"id": "bite", "label": "Bite", "skill_value": 50, "damage": "1D8"},
     ])
     state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Attacker")
-    return combat.plan_enemy_turn(state)["plan_id"]
+    return calls.plan_enemy_turn(state)["plan_id"]
 
 
 def _reviewed_effect(state, *args, **kwargs):
@@ -57,10 +58,10 @@ def _reviewed_effect(state, *args, **kwargs):
 
 # (entry point, how to deal a 6-point hit to Mark)
 DAMAGE_PATHS = [
-    ("apply_combat_damage", lambda state: combat.apply_combat_damage(state, "Mark", 6)),
-    ("apply_final_combat_damage", lambda state: combat.apply_final_combat_damage(state, "Mark", 6)),
-    ("damage_combatant", lambda state: combat.damage_combatant(state, "Mark", -6)),
-    ("managed_single_hit", lambda state: combat.managed_single_hit(
+    ("apply_combat_damage", lambda state: calls.apply_combat_damage(state, "Mark", 6)),
+    ("apply_final_combat_damage", lambda state: calls.apply_final_combat_damage(state, "Mark", 6)),
+    ("damage_combatant", lambda state: calls.damage_combatant(state, "Mark", -6)),
+    ("managed_single_hit", lambda state: calls.managed_single_hit(
         state, state.characters["u1"], 6, event_id="incident", reason="Verified single-hit incident",
     )),
 ]
@@ -98,7 +99,7 @@ class CombatDamagePathTests(unittest.TestCase):
     def test_a_minor_hit_ignores_the_pending_check(self):
         state = _combat_state("Mark")
         state.pending_checks["u1"] = dict(SEARCH_CHECK)
-        result = combat.apply_combat_damage(state, "Mark", 5)
+        result = calls.apply_combat_damage(state, "Mark", 5)
         self.assertTrue(result["ok"])
         self.assertFalse(result["major_wound_triggered"])
         self.assertEqual(combat_resources.effective_character(state, state.characters["u1"]).hp, 7)
@@ -106,7 +107,7 @@ class CombatDamagePathTests(unittest.TestCase):
     def test_a_hit_to_zero_ignores_the_pending_check(self):
         state = _combat_state("Mark")
         state.pending_checks["u1"] = dict(SEARCH_CHECK)
-        result = combat.apply_combat_damage(state, "Mark", 12)
+        result = calls.apply_combat_damage(state, "Mark", 12)
         self.assertTrue(result["ok"])
         self.assertEqual(combat_resources.effective_character(state, state.characters["u1"]).hp, 0)
 
@@ -116,14 +117,14 @@ class CombatDamagePathTests(unittest.TestCase):
         state.pending_luck_decisions["u1"] = dict(LUCK_DECISION)
         with patch.object(combat.dice, "skill_check") as roll:
             roll.return_value = dice.SkillCheckResult(50, 30, 0, 0, "regular", True)
-            result = combat.apply_combat_damage(state, "Mark", 6)
+            result = calls.apply_combat_damage(state, "Mark", 6)
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
         roll.assert_called_once()
 
     def test_without_a_blocker_the_con_check_is_registered_as_before(self):
         state = _combat_state("Mark")
-        result = combat.apply_combat_damage(state, "Mark", 6)
+        result = calls.apply_combat_damage(state, "Mark", 6)
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_check"]["pending"])
         self.assertEqual(state.pending_checks["u1"]["skill"], "CON")
@@ -135,7 +136,7 @@ class MultiTargetEffectTests(unittest.TestCase):
         state.pending_checks["u2"] = dict(SEARCH_CHECK)
         _reviewed_effect(state, "all", "Collapsing Ceiling", timing="round_end", damage="6")
 
-        results = combat.process_timing(state, "round_end")
+        results = calls.process_timing(state, "round_end")
 
         self.assertEqual([r.get("blocked_by") for r in results], ["pending_check"])
         self.assertEqual(combat_resources.effective_character(state, state.characters["u1"]).hp, 12)
@@ -143,12 +144,12 @@ class MultiTargetEffectTests(unittest.TestCase):
         self.assertFalse([key for key in state.combat.processed_timings if "round_end" in key])
 
         del state.pending_checks["u2"]
-        results = combat.process_timing(state, "round_end")
+        results = calls.process_timing(state, "round_end")
 
         self.assertTrue(all(r["ok"] for r in results))
         self.assertEqual(combat_resources.effective_character(state, state.characters["u1"]).hp, 6)
         self.assertEqual(combat_resources.effective_character(state, state.characters["u2"]).hp, 6)
-        self.assertEqual(combat.process_timing(state, "round_end"), [])
+        self.assertEqual(calls.process_timing(state, "round_end"), [])
         self.assertEqual(combat_resources.effective_character(state, state.characters["u1"]).hp, 6)
 
 
@@ -168,7 +169,7 @@ class TurnAdvancementTests(unittest.TestCase):
         state.pending_checks["u1"] = dict(SEARCH_CHECK)
         before = self._snapshot(state)
 
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["blocked_by"], "pending_check")
@@ -177,7 +178,7 @@ class TurnAdvancementTests(unittest.TestCase):
         self.assertEqual(self._snapshot(state), before)
 
         del state.pending_checks["u1"]
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
 
         self.assertTrue(result["ok"])
         self.assertEqual(state.combat.current_index, 1)
@@ -191,7 +192,7 @@ class TurnAdvancementTests(unittest.TestCase):
         state.pending_luck_decisions["u2"] = dict(LUCK_DECISION)
         before = self._snapshot(state)
 
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
 
         self.assertEqual(result["blocked_by"], "pending_luck_decision")
         self.assertIn("請先處理 Luck 選項", result["error"])
@@ -206,7 +207,7 @@ class TurnAdvancementTests(unittest.TestCase):
         state.pending_checks["u1"] = dict(SEARCH_CHECK)
         before = self._snapshot(state)
 
-        result = combat.plan_enemy_turn(state)
+        result = calls.plan_enemy_turn(state)
 
         self.assertEqual(result["blocked_by"], "pending_check")
         self.assertEqual(self._snapshot(state), before)

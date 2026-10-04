@@ -3,9 +3,10 @@
 A pending entry with ``combat_context``, ``postcombat_context`` or
 ``medical_context`` belongs to a managed battle or a continuing injury: its roll,
 Luck and result are recorded against the battle, not just the character. The
-check engine hands such entries to this adapter, which sits above both the check
-engine and combat (so neither imports the other). Phase 3 folds this into the
-combat engine.
+check engine hands such entries to this adapter, which turns them into combat
+engine actions (validate, roll, feed the result back) and the engine's answers
+into check outcomes. It sits above both, so the check engine never imports
+combat code and the combat engine never imports the check engine.
 
 Like the check service, nothing here saves: it changes the state it is given and
 returns an outcome whose ``changed`` flag (and ``save_reason``) the surrounding
@@ -13,20 +14,22 @@ transaction acts on.
 """
 from __future__ import annotations
 
-from app import combat_flow, combat_resources, dice
+from app import combat_resources, dice
 from app.checks import events, narration
 from app.checks import luck as luck_policy
 from app.checks.models import CheckOutcome, outcome_for
 from app.keeper_tools import resource_bridge
 from app.models import GroupState
+from app.services import combat_actions as act
+from app.services import combat_engine
 
 
 class ManagedCombatChecks:
-    """The ``ManagedChecks`` implementation backed by ``combat_flow``."""
+    """The ``ManagedChecks`` implementation backed by the combat engine."""
 
     def resolve_check(self, state: GroupState, user_id: str, text: str, pending: dict) -> CheckOutcome:
         """Consume only a server-owned combat/continuing-state interaction."""
-        validation = combat_flow.validate_pending_context(state, pending, user_id)
+        validation = combat_engine.handle(state, act.ValidatePending(pending=pending, owner_id=user_id))
         if not validation["ok"]:
             return outcome_for(user_id, pending, reply_text=validation["error"])
         try:
@@ -46,7 +49,7 @@ class ManagedCombatChecks:
         except ValueError as error:
             return outcome_for(user_id, pending, reply_text=str(error))
         before = events.character_attribute_snapshot(character)
-        result = combat_flow.roll_pending_check(state, pending, user_id)
+        result = combat_engine.handle(state, act.RollPending(pending=pending, owner_id=user_id))
         state.pending_checks.pop(user_id, None)
         options = luck_policy.offer(
             result.skill_value, result.roll, result.tier, character.luck, result.required_tier,
@@ -61,9 +64,9 @@ class ManagedCombatChecks:
                 "options": [{"tier": o.tier, "cost": o.cost} for o in options],
             }
             state.pending_luck_decisions[user_id] = decision
-            outcome = combat_flow.on_authoritative_check_result(
-                state, pending_entry=decision, owner_id=user_id, result=result, final=False,
-            )
+            outcome = combat_engine.handle(state, act.CheckResult(
+                pending_entry=decision, owner_id=user_id, result=result, final=False,
+            ))
             if not outcome.get("ok"):
                 return _paused(user_id, pending, f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}",
                                "combat_check_paused")
@@ -80,9 +83,9 @@ class ManagedCombatChecks:
             )
             reply.save_reason = "combat_check_luck"
             return reply
-        outcome = combat_flow.on_authoritative_check_result(
-            state, pending_entry=pending, owner_id=user_id, result=result,
-        )
+        outcome = combat_engine.handle(state, act.CheckResult(
+            pending_entry=pending, owner_id=user_id, result=result,
+        ))
         if not outcome.get("ok"):
             return _paused(user_id, pending, f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}",
                            "combat_check_paused")
@@ -98,10 +101,10 @@ class ManagedCombatChecks:
         if option is None:
             labels = "、".join(o["label"] for o in pending.get("options", []))
             return outcome_for(user_id, pending, reply_text=f"請選擇：{labels}")
-        outcome = combat_flow.submit_choice(
-            state, interaction_id=pending["combat_context"]["interaction_id"],
+        outcome = combat_engine.handle(state, act.Choose(
+            interaction_id=pending["combat_context"]["interaction_id"],
             owner_id=user_id, choice=option["kind"],
-        )
+        ))
         if not outcome.get("ok"):
             return outcome_for(user_id, pending, reply_text=outcome.get("error", "選擇遭拒"))
         reply_text = f"已選擇「{option['label']}」。" + (
@@ -113,7 +116,7 @@ class ManagedCombatChecks:
         return result
 
     def resolve_luck(self, state: GroupState, user_id: str, choice: str, pending: dict) -> CheckOutcome:
-        validation = combat_flow.validate_pending_context(state, pending, user_id)
+        validation = combat_engine.handle(state, act.ValidatePending(pending=pending, owner_id=user_id))
         if not validation["ok"]:
             return outcome_for(user_id, pending, reply_text=validation["error"])
         try:
@@ -139,9 +142,9 @@ class ManagedCombatChecks:
             tier=spend.tier, success=luck_policy.success_at(spend.tier, required), required_tier=required,
         )
         state.pending_luck_decisions.pop(user_id, None)
-        outcome = combat_flow.on_authoritative_check_result(
-            state, pending_entry=pending, owner_id=user_id, result=result,
-        )
+        outcome = combat_engine.handle(state, act.CheckResult(
+            pending_entry=pending, owner_id=user_id, result=result,
+        ))
         if not outcome.get("ok"):
             return _paused(
                 user_id, pending, f"Luck 決定與骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}",

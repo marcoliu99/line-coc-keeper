@@ -3,6 +3,7 @@ import unittest
 from app import combat
 from app.keeper import _CombatStatusToolGate
 from app.models import Combatant, CombatState, GroupState
+from tests import combat_calls as calls
 
 
 class CombatStatusToolGateTests(unittest.TestCase):
@@ -58,7 +59,7 @@ class CombatStatusToolGateTests(unittest.TestCase):
         combat.add_combat_effect(state, "Cultist", "burning", timing="turn_start", damage="1")
         gate = _CombatStatusToolGate(state)
 
-        result = combat.plan_enemy_turn(state, "Cultist")
+        result = calls.plan_enemy_turn(state, "Cultist")
 
         self.assertTrue(result["ok"])
         self.assertEqual(enemy.hp, 4)
