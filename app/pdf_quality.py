@@ -5,15 +5,17 @@ import hashlib
 import re
 import statistics
 from collections import Counter
-from typing import Any
+from typing import Any, Literal
 
 VERSION = 'ai-import-repair-v6'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
 _MECHANIC_ATOM = r'(?:\d+\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+)'
 _MECHANIC_EXPRESSION = re.compile(
-    rf'(?<!\w)(?:{_MECHANIC_ATOM}\s*/\s*{_MECHANIC_ATOM}|'
-    rf'\d+\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+(?:\.\d+)?\s*%)(?!\w)',
+    rf'(?<![\w%+/\-])(?:{_MECHANIC_ATOM}\s*/\s*{_MECHANIC_ATOM}|'
+    rf'\d+\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|'
+    r'[+-][ \t]*\d+(?:\.\d+)?[ \t]*%?|\d+(?:\.\d+)?\s*%)'
+    r'(?![\w%+/\-]|[ \t]*[+/\-][ \t]*(?:\d|[dD]))',
     re.IGNORECASE,
 )
 _SOURCE_TOKEN = re.compile(rf'{_MECHANIC_EXPRESSION.pattern}|[\w]+', re.IGNORECASE | re.UNICODE)
@@ -172,7 +174,9 @@ def _decorative_vertical_fragment(line: str, page_evidence: dict) -> bool:
     return False
 
 
-def _vertical_fragment_role(line: str, page_evidence: dict) -> str | None:
+def _vertical_fragment_role(
+    line: str, page_evidence: dict,
+) -> Literal['decorative', 'semantic', 'ambiguous'] | None:
     if not _VERTICAL_LETTERS.fullmatch(line):
         return None
     if _decorative_vertical_fragment(line, page_evidence):
@@ -207,6 +211,7 @@ def select_rich_ocr_candidate(baseline: str, candidate: str, pairs: list[dict],
     if len(candidate) < threshold:
         return reject('candidate_too_short')
     if ('\ufffd' in candidate or re.search(r'(?<!\w)[lI|][dD]\d', candidate)
+            or re.search(r'(?<!\w)[+-][ \t]*[+-][ \t]*\d', candidate)
             or re.search(r'\bSAN\s+(?:\d+[dD]\d+|\d+)\s*/\s*(?=$|\D)', candidate, re.IGNORECASE)):
         return reject('mechanic_loss')
 

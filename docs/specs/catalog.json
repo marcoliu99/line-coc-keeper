@@ -1590,8 +1590,8 @@
       "title": "Preserve rich OCR candidates on low-text PDF pages",
       "zh": "保留低文字 PDF 頁面中有證據支持的豐富 OCR 候選",
       "category": "bug",
-      "status": "backlog",
-      "evidence": [],
+      "status": "implemented",
+      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_rich_ocr.py"],
       "path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec_zh.md"
     },

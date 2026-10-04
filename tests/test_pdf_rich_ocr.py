@@ -73,6 +73,8 @@ def test_vertical_letters_across_distant_blocks_are_not_reconstructed():
         word['block'] = index
         word['bbox'] = [20, 40 + index * 180, 25, 50 + index * 180]
     assert not pdf_quality._vertical_fragment('N a m e', evidence)
+    assert _select('N a m e', 'STR 60\n' + FILLER,
+                   evidence=evidence)['status'] == 'insufficient_source_evidence'
 
 
 def test_vertical_letters_in_separate_nearby_blocks_are_not_reconstructed():
@@ -80,12 +82,16 @@ def test_vertical_letters_in_separate_nearby_blocks_are_not_reconstructed():
     for index, word in enumerate(evidence['words']):
         word['block'] = index
     assert not pdf_quality._vertical_fragment('N a m e', evidence)
+    assert _select('N a m e', 'STR 60\n' + FILLER,
+                   evidence=evidence)['status'] == 'insufficient_source_evidence'
 
 
 def test_vertical_letters_cannot_cross_columns_or_regions():
     evidence = _evidence(vertical=True)
     evidence['words'][2]['bbox'] = [300, 64, 305, 74]
     assert not pdf_quality._vertical_fragment('N a m e', evidence)
+    assert _select('N a m e', 'STR 60\n' + FILLER,
+                   evidence=evidence)['status'] == 'insufficient_source_evidence'
     evidence = _evidence(vertical=True)
     evidence['words'][2]['font'] = 'Caption'
     assert not pdf_quality._vertical_fragment('N a m e', evidence)
@@ -161,6 +167,27 @@ def test_unbound_dice_operator_and_value_are_mechanics(changed: str):
     result = _select('31\nRoll 1d6+2!', f'Roll {changed}!\n' + FILLER,
                      evidence=_evidence(folio=True))
     assert result['status'] == 'mechanic_loss'
+
+
+@pytest.mark.parametrize(('baseline', 'changed'), [
+    ('Add +2 now', 'Add -2 now'),
+    ('Bonus +10% now', 'Bonus -10% now'),
+    ('Add +2 now', 'Add ++2 now'),
+    ('Add +2 now', 'Add + +2 now'),
+    ('Roll 1d6+2 now', 'Roll 1d6+2+3 now'),
+    ('SAN 1/1d6', 'SAN 1/1d6/2'),
+    ('SAN 1/1d6', 'SAN 1/1d6 / 2'),
+])
+def test_signed_modifier_change_is_mechanics_loss(baseline: str, changed: str):
+    result = _select('31\n' + baseline, changed + '\n' + FILLER,
+                     evidence=_evidence(folio=True))
+    assert result['status'] == 'mechanic_loss'
+
+
+def test_signed_modifier_spacing_is_equivalent_without_losing_sign():
+    result = _select('31\nAdd + 2 now', 'Add +2 now\n' + FILLER,
+                     evidence=_evidence(folio=True))
+    assert result['status'] == 'accepted'
 
 
 @pytest.mark.parametrize(('original', 'changed'), [
