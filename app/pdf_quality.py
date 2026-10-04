@@ -522,6 +522,151 @@ def repair_decorative_layout(layout: str, evidence: dict, *, warnings: list[str]
     return repaired, result
 
 
+def _source_occurrences(text: str, source: str) -> list[tuple[int, int]]:
+    """Locate an exact source run while allowing only layout whitespace changes."""
+    parts = source.strip().split()
+    if not parts:
+        return []
+    pattern = r'\s+'.join(re.escape(part) for part in parts)
+    if parts[0][0].isalnum():
+        pattern = r'(?<!\w)' + pattern
+    if parts[-1][-1].isalnum():
+        pattern += r'(?!\w)'
+    return [match.span() for match in re.finditer(pattern, text)]
+
+
+def _trace_binding(page: Any, span: dict, source: str) -> tuple[int, int] | None:
+    """Require one painted glyph run with the same characters and origins."""
+    raw_chars = span['chars']
+    raw_text = ''.join(char['c'] for char in raw_chars)
+    begin = raw_text.find(source)
+    if begin < 0:
+        return None
+    glyphs = raw_chars[begin:begin + len(source)]
+    matches: list[tuple[int, int]] = []
+    for trace in page.get_texttrace():
+        if (trace.get('type') != 0 or trace.get('opacity', 0) <= 0
+                or trace.get('font') != span['font']
+                or abs(trace.get('size', 0) - span['size']) > .5):
+            continue
+        trace_text = ''.join(chr(char[0]) for char in trace['chars'])
+        for found in re.finditer(re.escape(source), trace_text):
+            traced = trace['chars'][found.start():found.end()]
+            if len(traced) != len(glyphs):
+                continue
+            if all(all(abs(raw['origin'][axis] - painted[2][axis]) <= .5
+                       for axis in (0, 1))
+                   and all(abs(raw['bbox'][edge] - painted[3][edge]) <= .5
+                           for edge in (0, 2))
+                   for raw, painted in zip(glyphs, traced, strict=True)):
+                matches.append((trace['seqno'], found.start()))
+    return matches[0] if len(matches) == 1 else None
+
+
+def repair_duplicate_source_layout(page: Any, layout: str, native: str, *,
+                                   method: str, pairs: list[dict],
+                                   decorative_status: str) -> tuple[str, dict]:
+    """Remove one layout emission only when one PDF span has a unique paragraph flow."""
+    result: dict = {'status': 'not_applicable'}
+    if method != 'layout':
+        return layout, result
+    raw_blocks = page.get_text('rawdict')['blocks']
+    plain_blocks = page.get_text('dict')['blocks']
+    for block_index, block in enumerate(raw_blocks):
+        lines = block.get('lines', [])
+        for line_index in range(1, len(lines) - 1):
+            previous, current, following = lines[line_index - 1:line_index + 2]
+            if any(len(line['spans']) != 1 for line in (previous, current, following)):
+                continue
+            spans = [line['spans'][0] for line in (previous, current, following)]
+            before, source, after = (''.join(char['c'] for char in span['chars']).strip()
+                                     for span in spans)
+            if not before or not source or not after:
+                continue
+            layout_ranges = _source_occurrences(layout, source)
+            if len(layout_ranges) != 2:
+                continue
+            result = {'status': 'duplicate_source_emission_ambiguous',
+                      'output_ranges': [list(pair) for pair in layout_ranges]}
+            if decorative_status not in {'not_applicable', 'repaired'}:
+                return layout, result
+            if len(_source_occurrences(native, source)) != 1:
+                return layout, result
+            if sum(len(_source_occurrences(''.join(char['c'] for char in span['chars']), source))
+                   for raw_block in raw_blocks for line in raw_block.get('lines', [])
+                   for span in line['spans']) != 1:
+                return layout, result
+            trace_binding = _trace_binding(page, spans[1], source)
+            if trace_binding is None:
+                return layout, result
+            # Raw and plain extraction must agree on this source geometry.
+            plain_lines = plain_blocks[block_index].get('lines', [])
+            if len(plain_lines) <= line_index + 1 or not plain_lines[line_index]['spans']:
+                return layout, result
+            if any(abs(spans[1]['bbox'][edge]
+                       - plain_lines[line_index]['spans'][0]['bbox'][edge]) > .5
+                   for edge in range(4)):
+                return layout, result
+            if (previous['dir'] != current['dir'] or current['dir'] != following['dir']
+                    or spans[1]['font'] != spans[2]['font']
+                    or abs(spans[1]['size'] - spans[2]['size']) > .5
+                    or abs(current['bbox'][0] - following['bbox'][0]) > spans[1]['size'] * 1.5
+                    or not previous['bbox'][1] < current['bbox'][1] < following['bbox'][1]
+                    or following['bbox'][1] - current['bbox'][3] > spans[1]['size'] * 2):
+                return layout, result
+            before_ranges = _source_occurrences(layout, before)
+            after_ranges = _source_occurrences(layout, after)
+            if any(sum(len(_source_occurrences(''.join(char['c'] for char in span['chars']), item))
+                       for raw_block in raw_blocks for line in raw_block.get('lines', [])
+                       for span in line['spans']) != 1 for item in (before, after)):
+                return layout, result
+            if (len(before_ranges) != 1 or len(after_ranges) != 1
+                    or not before_ranges[0][0] < layout_ranges[0][0]
+                    or not layout_ranges[0][1] < after_ranges[0][0]
+                    or max(layout_ranges[-1][1], after_ranges[0][1]) - before_ranges[0][1]
+                    > 3 * (len(before) + 2 * len(source) + len(after))):
+                return layout, result
+            flows = [index for index, (_, end) in enumerate(layout_ranges)
+                     if end < after_ranges[0][0]
+                     and layout[end:after_ranges[0][0]].isspace()
+                     and '\n\n' not in layout[end:after_ranges[0][0]]]
+            if len(flows) != 1:
+                return layout, result
+            kept = flows[0]
+            removed = layout_ranges[1 - kept]
+            left, right = layout[:removed[0]], layout[removed[1]:]
+            # Trim only the separator attached to the orphan emission.
+            if left.endswith(' ') and right.startswith(' '):
+                left = left[:-1]
+                right = right[1:]
+            proposed = left + right
+            final_source = _source_occurrences(proposed, source)
+            final_before = _source_occurrences(proposed, before)
+            final_after = _source_occurrences(proposed, after)
+            if (len(final_source) != 1 or len(final_before) != 1 or len(final_after) != 1
+                    or not final_before[0][1] < final_source[0][0] < final_after[0][0]
+                    or not proposed[final_source[0][1]:final_after[0][0]].isspace()
+                    or '\n\n' in proposed[final_source[0][1]:final_after[0][0]]
+                    or _mechanic_tokens(native) - _mechanic_tokens(proposed)
+                    or rich_ocr_mechanics(native) - rich_ocr_mechanics(proposed)
+                    or Counter(_NUMBER.findall(native)) - Counter(_NUMBER.findall(proposed))
+                    or any(check['status'] == 'matched' for check in check_pairs(pairs, layout))
+                    and any(check['status'] != 'matched' for check in check_pairs(pairs, proposed))):
+                result['status'] = 'duplicate_source_emission_preservation_failed'
+                return layout, result
+            box = tuple(round(value * 4) / 4 for value in spans[1]['bbox'])
+            identity = (f'{page.number}:{block_index}:{line_index}:0:{source}:'
+                        f'{box}:{current["dir"]}:{spans[1]["font"]}:'
+                        f'{spans[1]["size"]}:{trace_binding}')
+            result.update(status='duplicate_source_emission_repaired',
+                          source_run=hashlib.sha256(identity.encode()).hexdigest()[:20],
+                          kept_range=list(layout_ranges[kept]), removed_range=list(removed),
+                          removed_chars=len(layout) - len(proposed), source_unique=True,
+                          trace_unique=True, flow_unique=True, preservation='passed')
+            return proposed, result
+    return layout, result
+
+
 def numeric_pairs(evidence: dict) -> list[dict]:
     pairs = []
     words = evidence['words']

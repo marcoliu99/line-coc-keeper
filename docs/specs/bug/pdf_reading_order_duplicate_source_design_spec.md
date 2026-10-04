@@ -188,5 +188,22 @@ leave the duplicate and report **HOLD**, rather than deduplicating by content.
 PyMuPDF4LLM output currently provides no span IDs. The implementation must
 prove a unique alignment back to PyMuPDF source geometry and neighboring
 source order before editing; some genuine extraction duplicates will remain
-unrepaired when that proof is unavailable. This is intentional. This spec is
-ready for implementation review, but contains no runtime change.
+unrepaired when that proof is unavailable. This is intentional.
+
+## Implementation record
+
+`pdf_quality.repair_duplicate_source_layout()` now checks one raw span and
+painted trace run, unique native/layout occurrences, same-block neighboring
+source lines, and a unique paragraph-flow survivor. `pdf_loader.extract_text()`
+calls it after decorative repair. An uncertain alignment or failed mechanics
+preservation leaves the selected source and review unchanged. The new focused
+tests cover distinct source blocks, columns, headers, overlays, both survivor
+positions, ambiguity, and legitimate versus duplicated mechanics.
+An ambiguous or failed-preservation decision adds its own review-required
+warning; a repaired duplicate does not clear existing warnings.
+
+The hash-pinned 43-page saved-candidate replay changed only page 13's selected
+text: 3,620 to 3,566 characters after decorative repair, with the duplicate
+opening reduced from two occurrences to one. Review pages (23), warnings
+(66), and the eight rich-candidate selections were unchanged; no mechanics
+loss was observed. This replay did not rerun external vision or map analysis.

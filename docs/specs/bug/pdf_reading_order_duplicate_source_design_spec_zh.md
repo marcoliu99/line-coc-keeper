@@ -153,5 +153,21 @@ mechanics 遺失，warning/review policy 不變。PR170 八個 rich candidate
 
 目前 PyMuPDF4LLM 輸出沒有 span ID。實作必須先證明回到 PyMuPDF 來源
 geometry 與相鄰來源順序的唯一對齊，才能編輯；無法證明的實際 extraction
-重複可能因此暫時不修。這是刻意的保守選擇。本規格已可供 implementation
-review，但本輪沒有 runtime 變更。
+重複可能因此暫時不修。這是刻意的保守選擇。
+
+## 實作紀錄
+
+`pdf_quality.repair_duplicate_source_layout()` 現在檢查唯一的 raw span 與
+painted trace run、native/layout 出現次數、同一 block 的相鄰來源行，以及
+唯一的段落流向 survivor。`pdf_loader.extract_text()` 在 decorative repair
+後呼叫它。對齊不確定或 mechanics preservation 失敗時，selected source 與
+review 維持原狀。新測試涵蓋不同來源 block、雙欄、header、overlay、兩種
+survivor 位置、模糊對齊，以及合法與重複輸出的 mechanics。
+對齊不明或 preservation 失敗會新增需 review 的 warning；成功修復不會
+清除原有 warning。
+
+相同 SHA 的 43 頁 saved-candidate replay 中，只有第 13 頁 selected text
+改變：decorative repair 後的 3,620 字變為 3,566 字，重複開頭由兩份變
+一份。23 個 review pages、66 項 warnings 與八個 rich candidate 選擇
+均未變；沒有觀察到 mechanics 遺失。此 replay 沒有重跑外部 vision 或
+map analysis。
