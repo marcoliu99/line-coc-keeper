@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.commands import router
+from app import legacy_commands
 from app.commands.handlers import uploads
 from app.commands.handlers.uploads import Upload
 from app.models import GroupState
@@ -49,6 +50,19 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         handlers["handle_scenario_compare_upload"].assert_not_awaited()
         buttons.assert_awaited_once()
         stage.assert_not_awaited()
+
+    async def test_markdown_scenario_helpers_recognize_page_markers_and_title(self):
+        self.assertIsNotNone(
+            legacy_commands._MARKDOWN_PAGE_MARKER_RE.search("--- 第 7 頁 ---\n內容")
+        )
+        self.assertEqual(
+            legacy_commands._markdown_scenario_title("# Ignored", "scenario_The_Haunting.md"),
+            "The Haunting",
+        )
+        self.assertEqual(
+            legacy_commands._markdown_scenario_title("# The Haunting\nBody", "scenario.md"),
+            "The Haunting",
+        )
 
     async def test_several_pdfs_or_a_part_name_are_staged(self):
         for names in (("a.pdf", "b.pdf"), ("scenario_part1.pdf",)):
