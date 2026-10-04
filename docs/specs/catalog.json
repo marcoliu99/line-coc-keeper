@@ -1581,7 +1581,7 @@
       "title": "PDF final review warnings",
       "zh": "PDF 最終人工核對警告修正",
       "category": "bug",
-      "status": "proposed",
+      "status": "implemented",
       "evidence": [
         "app/pdf_loader.py",
         "tests/test_pdf_loader.py"

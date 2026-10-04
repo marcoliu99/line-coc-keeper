@@ -2,7 +2,7 @@
 
 [繁體中文](pdf_final_review_warnings_zh.md)
 
-Status: awaiting implementation confirmation. Branch: `fix/pdf-final-review-warnings`.
+Status: implemented; specified real-PDF smoke awaits source identification. Branch: `fix/pdf-final-review-warnings`.
 Baseline: main_v2 `92b52e4da88063d14ae3c9585fda9d5060d19b37`.
 
 ## Problem and goal
@@ -28,3 +28,9 @@ Use the same user-reported PDF/evidence for pages 12,16,17; record final text le
 ## Open input
 
 The exact affected PDF and quality report paths have not been identified. Their page outcomes cannot yet be claimed. No other design changes are proposed.
+
+## Implementation validation
+
+Resolved low-text cases reproduced the false review under the old condition, then passed with unchanged warning history. Public extract_text regressions cover 199/200/250 characters and successful repair history. Full pytest: 1994 passed, 1 skipped, 183 subtests passed. Ruff, mypy (128 files), compileall and diff-check passed.
+
+The exact PDF/quality report for pages 12,16,17 is still unidentified. That smoke has not run and no real page removal is claimed. Merge assessment remains HOLD pending that evidence. OCR, Layout, player copy and existing data are unchanged.

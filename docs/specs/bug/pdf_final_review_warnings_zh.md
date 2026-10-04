@@ -2,7 +2,7 @@
 
 [English](pdf_final_review_warnings.md)
 
-狀態：待確認實作。Branch：`fix/pdf-final-review-warnings`。
+狀態：已實作；指定真實 PDF smoke 待確認來源。Branch：`fix/pdf-final-review-warnings`。
 基準：最新 main_v2 `92b52e4da88063d14ae3c9585fda9d5060d19b37`。
 
 ## 問題與目標
@@ -37,3 +37,9 @@ Runtime 修改限定 pdf_loader 與必要 tests。不修改 OCR、Paddle Layout�
 ## 待確認事項
 
 同份 PDF 與 quality report 路徑尚待使用者指出；目前不能推測第 12、16、17 頁實際結果。除此之外直接沿用使用者給定規則，不擴大品質系統。
+
+## 本次實作驗證
+
+原條件下成功補足案例先重現誤報；修改後 `tests/test_pdf_loader.py` 通過，包括 199/200/250 字的 public extract_text 比較，warnings 不刪除。完整 pytest：1994 passed、1 skipped、183 subtests passed；ruff、mypy（128 files）、compileall、diff-check 全部 PASS。
+
+指定第 12、16、17 頁仍未取得同份 PDF／quality report 路徑，未執行該真實 smoke，未宣稱移除任何頁。合併結論暫為 HOLD，待補該證據。OCR、Layout、玩家訊息及資料庫均未修改。
