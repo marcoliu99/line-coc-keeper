@@ -18,6 +18,7 @@ from app import scenario_source_authoring as source
 from app import scenario_source_review as review
 from app import scenario_templates as templates
 from app.models import GroupState
+from app.services import scenario_admission
 
 
 def _sync(test):
@@ -541,7 +542,7 @@ async def test_kp_can_select_corrected_english_explicitly(prepared, monkeypatch)
     before = deepcopy(state)
     monkeypatch.setattr(system, 'load_state', lambda _: state)
     monkeypatch.setattr(system.state_transaction, 'commit_snapshot', lambda *args, **kwargs: None)
-    monkeypatch.setattr(system.scenario_activation, 'refresh_after_commit', lambda *args: True)
+    monkeypatch.setattr(scenario_admission.scenario_activation, 'refresh_after_commit', lambda *args: True)
     monkeypatch.setattr(templates, 'schedule_index_prewarm', lambda *args: None)
     monkeypatch.setattr(templates, 'preferred_variant', lambda *args: 'stale-zh-preference')
     selected_variants = []

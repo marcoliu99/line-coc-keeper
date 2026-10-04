@@ -245,7 +245,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertIsNone(db.get_json("memory_chunks", group_id))
 
     def test_new_scenario_invalidates_pending_decisions_and_check_cache(self) -> None:
-        from app.services.scenario_ingestion import _apply_new_scenario
+        from app.services.scenario_admission import apply_new_scenario
 
         state = GroupState("scenario-reset", timeline_id="timeline-old")
         state.pending_checks["p1"] = {"type": "skill", "timeline_id": "timeline-old"}
@@ -253,7 +253,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         state.deterministic_check_results["old-result"] = {"timeline_id": "timeline-old"}
         state.resolved_check_events.append({"event_id": "old-event", "timeline_id": "timeline-old"})
 
-        _apply_new_scenario(state, "new text", "New", {"npcs": [], "locations": []}, {}, [])
+        apply_new_scenario(state, "new text", "New", {"npcs": [], "locations": []}, {}, [])
 
         self.assertNotEqual(state.timeline_id, "timeline-old")
         self.assertEqual(state.pending_checks, {})

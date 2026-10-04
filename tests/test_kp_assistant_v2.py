@@ -23,7 +23,7 @@ from app.commands.handlers import system as system_handler
 from app.domain.models import AgentMessage
 from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
-from app.services import post_turn, scenario_ingestion
+from app.services import post_turn, scenario_admission, scenario_ingestion
 from tests.provider_fakes import use_fake_provider
 from tests.state_store import StateStorePatch, clone_state
 
@@ -355,7 +355,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         original_guess_title = scenario_ingestion.pdf_loader.guess_title
         original_extract_preview = scenario_ingestion.pdf_loader.extract_preview
         original_extract_index = scenario_ingestion.scenario_index.extract_scenario_index
-        original_refresh_images = scenario_ingestion.scenario_activation.refresh_after_commit
+        original_refresh_images = scenario_admission.scenario_activation.refresh_after_commit
 
         with StateStorePatch(scenario_ingestion) as store:
             state = GroupState(group_id="g")
@@ -365,7 +365,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             scenario_ingestion.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
             scenario_ingestion.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
             scenario_ingestion.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
-            scenario_ingestion.scenario_activation.refresh_after_commit = lambda *args: True
+            scenario_admission.scenario_activation.refresh_after_commit = lambda *args: True
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
@@ -394,7 +394,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 scenario_ingestion.pdf_loader.guess_title = original_guess_title
                 scenario_ingestion.pdf_loader.extract_preview = original_extract_preview
                 scenario_ingestion.scenario_index.extract_scenario_index = original_extract_index
-                scenario_ingestion.scenario_activation.refresh_after_commit = original_refresh_images
+                scenario_admission.scenario_activation.refresh_after_commit = original_refresh_images
                 scenario_ingestion.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
                 temp_library.cleanup()
 

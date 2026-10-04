@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from app import scenario_rag, scenario_templates
 from app.models import GroupState
-from app.services import scenario_ingestion
+from app.services import scenario_admission, scenario_ingestion
 
 
 class ScenarioTemplateReviewFixTests(unittest.TestCase):
@@ -19,9 +19,9 @@ class ScenarioTemplateReviewFixTests(unittest.TestCase):
         with patch.object(scenario_ingestion, "load_state", return_value=state), \
                 patch("app.repositories.state_transaction.commit_snapshot"), \
                 patch.object(scenario_ingestion.scenario_library, "load_context", return_value=context), \
-                patch.object(scenario_ingestion, "_apply_new_scenario"), \
-                patch.object(scenario_ingestion, "_install_library_context"), \
-                patch.object(scenario_ingestion.scenario_activation, "refresh_after_commit", return_value=True), \
+                patch.object(scenario_admission, "apply_new_scenario"), \
+                patch.object(scenario_admission, "install_library_context"), \
+                patch.object(scenario_admission.scenario_activation, "refresh_after_commit", return_value=True), \
                 patch.object(scenario_ingestion, "_pdf_upload_confirmation_text", return_value="loaded"), \
                 patch.object(scenario_templates, "preference_notice", return_value="已改用原文檢索"):
             response = scenario_ingestion.apply_pdf_upload_choice("group", "new")

@@ -13,7 +13,6 @@ from app import (
     keeper,
     locks,
     observability,
-    scenario_activation,
     scenario_authoring,
     scenario_index,
     scenario_intro,
@@ -22,7 +21,6 @@ from app import (
     scenario_source_authoring,
     scenario_templates,
     scene_digest,
-    scene_map,
     spoiler_policy,
 )
 from app.agents import supervisor
@@ -47,6 +45,7 @@ from app.services import (
     correction_adjudication,
     history_authority,
     mutation_admission,
+    scenario_admission,
 )
 from app.services.character_service import (
     build_readiness_roster,
@@ -127,23 +126,6 @@ async def _handle_staged_merge(
         latest = load_state(conversation_id)
         latest.staged_pdf_parts = [p for p in latest.staged_pdf_parts if p not in selected]
         state_transaction.commit_snapshot(latest)
-def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) -> None:
-    previous_locations = {
-        owner_id: (state.current_map_page.get(owner_id, ""), state.current_room_id.get(owner_id, ""))
-        for owner_id in set(state.current_map_page) | set(state.current_room_id)
-    }
-    state.scene_maps = dict(new_maps)
-    state.current_map_page = {}
-    state.current_room_id = {}
-    for owner_id, (map_key, room_id) in previous_locations.items():
-        new_map = state.scene_maps.get(map_key)
-        if new_map is not None and scene_map.get_room(new_map, room_id) is not None:
-            state.current_map_page[owner_id] = map_key
-            state.current_room_id[owner_id] = room_id
-        else:
-            state.party_facing.pop(owner_id, None)
-
-
 async def _handle_newgame(conversation_id: str, reply: Reply) -> None:
     """Reset the conversation to a fresh game on a new timeline.
 
@@ -573,10 +555,11 @@ async def handle_system_command(
             if not permissions.is_kp(state, user_id):
                 await reply(permissions.kp_only("選擇劇本"))
                 return
-            if state.pending_pregen_luck:
+            block = scenario_admission.pending_block(state)
+            if block == "pregen_luck":
                 await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
                 return
-            if state.pending_pdf_upload is not None or state.pending_scenario_upload is not None:
+            if block is not None:
                 await reply("目前仍有待處理的劇本上傳，請先完成或取消該流程後再切換劇本。")
                 return
             if len(parts) < 4:
@@ -595,68 +578,14 @@ async def handle_system_command(
             except (FileNotFoundError, ValueError) as exc:
                 await reply(f"中文模板無法啟用：{exc}")
                 return
-            old_pool = list(state.pregens)
-            old_scenario_id = state.scenario_library_id or None
-            old_hash = ""
-            if old_scenario_id:
-                try:
-                    old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
-                except (FileNotFoundError, ValueError):
-                    pass
-            scenario_activation.install_context_fields(
-                state, parts[3], context, variant_id=variant_id, preserve_maps=True,
-            )
-            # Selecting a scenario is a new campaign context even when the
-            # live investigator sheets are retained.  Old maintenance,
-            # memory, and provider results must not bleed into this scenario.
-            old_timeline_id = state.timeline_id or f"legacy-{conversation_id}"
-            state.timeline_id = f"timeline-{uuid4().hex[:8]}"
-            # All player decisions and deterministic-result caches belong to
-            # the previous scenario timeline.  Clear them at the reset point
-            # so an old Discord button or typed command cannot be consumed by
-            # the newly selected scenario.
-            state.pending_checks.clear()
-            state.pending_luck_decisions.clear()
-            state.deterministic_check_results.clear()
-            state.resolved_check_events.clear()
-            observability.event(
-                "provider.chain.reset",
-                reason="scenario_use",
-                old_timeline_id=old_timeline_id,
-                requested_timeline_id=state.timeline_id,
-                provider="openai",
-            )
-            _replace_scene_maps_preserving_locations(state, context["scene_maps"])
-            # /coc scenario use assigns both itself, so the upload flow's report
-            # never ran here — selecting an already-stored affected variant was
-            # the one path that stayed silent.
-            artifact_notice = scenario_index.report_location_index(
-                state.scenario_location_index, source="scenario_use",
-                scenario_title=state.scenario_title, scene_maps=state.scene_maps)
-            # Pregens belong to the selected library item. Keep live
-            # investigators in state.characters, but never leak the previous
-            # scenario's pregen pool into this scenario's /coc pregens list.
-            state.openai_previous_response_id = ""
-            state.openai_previous_response_timeline_id = ""
-            state.active = True
-            install_result: dict[str, bool] = {}
-            def install_cards(conn):
-                manual_pregens.capture_legacy(
-                    conn, conversation_id, old_scenario_id, old_pool, old_hash,
-                )
-                state.pregens, install_result["stale"] = manual_pregens.install_pool(
-                    conn, conversation_id, parts[3], context,
-                    bind_unassigned=(old_scenario_id is None),
-                )
-            _, image_refreshed = scenario_activation.commit_and_refresh(
-                lambda: state_transaction.commit_snapshot(state, mutate_tx=install_cards),
-                conversation_id, parts[3], context,
+            artifact_notice, activation = scenario_admission.activate_selected(
+                conversation_id, state, parts[3], context, variant_id=variant_id,
             )
             if len(parts) > 4:
                 scenario_templates.select_variant(conversation_id, parts[3], variant_id)
             scenario_templates.schedule_index_prewarm(state)
-            note = "\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""
-            image_notice = "\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else ""
+            note = activation.card_note
+            image_notice = activation.image_note
             await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。{note}"
                         + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else "")
                         + (f"\n\n{artifact_notice}" if artifact_notice else "") + image_notice)

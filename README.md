@@ -79,6 +79,7 @@ Persistence:
 - **`app/commands/router.py`** is the platform-independent routing entry point. It dispatches commands to domain handlers and ordinary messages to the Supervisor.
 - **`app/commands/handlers/`** separates character, combat, system/scenario, and map commands into `character.py`, `combat.py`, `system.py`, and `map_handler.py`. Handlers reuse existing command logic where appropriate.
 - **`app/services/scenario_ingestion.py`**, **`map_service.py`** and **`character_service.py`** hold what used to live in the single `app/legacy_commands.py` module (deleted in phase 4 of the [architecture refactor](docs/specs/refactor/architecture_refactor_phases_1_4_design_spec.md)): PDF / Markdown scenario upload orchestration and pregen merging, map uploads and movement resolution, and the claim / away-back / heal / readiness rules. Check and Luck resolution is in `app/checks`, battle actions in `app/services/combat_engine.py`. Resolved-check narration enters the unified Supervisor flow rather than a separate `keeper.run_turn` path.
+- **`app/services/scenario_admission.py`** owns how a library scenario is admitted into a conversation: the pending-state checks, the install → retire old cards → install new pool → commit → publish images sequence, and the new / correction choice. The PDF and Markdown uploads and `/coc scenario use` only parse, extract and word the reply ([spec](docs/specs/refactor/scenario_admission_design_spec.md)).
 
 ### Agentic Keeper and the unified turn flow
 

@@ -27,11 +27,11 @@ from app import (
     scenario_activation,
     scenario_index,
     scenario_library,
+    scenario_templates,
 )
+from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories import group_state, state_transaction
-from app import scenario_templates
-from app.commands.handlers import system
 from app.services import map_service, scenario_ingestion
 
 

@@ -8,7 +8,7 @@ from app import db, dictionary
 from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories import group_state, manual_pregens
-from app.services import scenario_ingestion
+from app.services import scenario_admission, scenario_ingestion
 
 
 def _card(name="林文", strength=65):
@@ -148,7 +148,7 @@ class ManualPregenPersistenceTests(unittest.TestCase):
         group_state.save_state(fresh)
         replies = []
         with patch.object(system.scenario_library, "load_context", return_value=_context("s")), \
-                patch.object(system.scenario_activation, "refresh_after_commit", return_value=True), \
+                patch.object(scenario_admission.scenario_activation, "refresh_after_commit", return_value=True), \
                 patch.object(system.scenario_rag, "schedule_index_prewarm"):
             asyncio.run(system.handle_system_command(
                 "g", "kp", reply, None, None, None, ["/coc", "scenario", "use", "s"]
