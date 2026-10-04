@@ -16,7 +16,9 @@ PyMuPDF4LLM 1.28.2 預設啟用自己的 Tesseract OCR。目前正式 `to_markdo
 
 `to_markdown(..., use_ocr=False)` 回傳原生文字及版面證據。既有低文字判斷再決定是否呼叫 `_ocr_image()`；後者仍先試 Paddle，失敗才用 Tesseract。
 
-若高文字頁選用未變動的原生文字，而且 warning 包含 `numeric_pair_review`、`layout_numeric_loss`、`layout_pair_mismatch` 或 `source_pair_unresolved`，則額外執行一次 Paddle 全頁第二證據。只用既有 pair 檢查及精確的數值行比對，解除確實得到支持的 warning。原生 pair 本身未確定時不能只靠 OCR 確認。低文字頁略過此 pass，避免重複推論。Paddle 失敗或證據不足時保留 warning；此驗證不進 Tesseract。歷史 warning 與 canonical 文字維持原樣；`paddle_numeric_verification` 只記錄是否嘗試、狀態、已檢查／已解除／未解除 warning 與 pair 計數，不保存 OCR 原文。最後待核對判定只略過明確解除的 warning。
+若高文字頁選用未變動的原生文字，而且 warning 包含 `numeric_pair_review`、`layout_numeric_loss`、`layout_pair_mismatch` 或 `source_pair_unresolved`，則額外執行一次 Paddle 全頁第二證據。Pair warning 保留原本檢查；`layout_numeric_loss` 只核對 layout 真正遺失的完整 mechanics（含骰式 modifier 與有順序的斜線式），每一項都必須在 Paddle 結果中靠近相同文字 anchor。頁面其他位置出現相同數字、anchor 不明或只確認部分項目，都不能解除 warning。原生 pair 本身未確定時不能只靠 OCR 確認。低文字頁略過此 pass，避免重複推論。Paddle 失敗或證據不足時保留 warning；此驗證不進 Tesseract。歷史 warning 與 canonical 文字維持原樣；`paddle_numeric_verification` 只記錄是否嘗試、狀態、已檢查／已解除／未解除 warning、缺失／確認／未確認的 mechanics、anchor 與 pair 計數，不保存 OCR 原文。最後待核對判定只略過明確解除的 warning。
+
+相同 SHA 的 The Haunting 全書 smoke 共 27 頁：正常 Paddle OCR 12 次，數值第二證據 2 次（第 12、16 頁），沒有重複對第 17 頁推論。第 12 頁 `numeric_pair_review` 仍獲確認並解除最後 review。第 16 頁 layout 缺少一個重複出現的數值 `1918`，但無法唯一綁定遺失的局部上下文（合格 anchor 數 0），所以 Paddle 證據仍是 inconclusive，保留 warning 與最後 review。原生 canonical 文字維持不變。
 
 ## 測試與驗證
 

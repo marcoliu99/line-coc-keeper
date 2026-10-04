@@ -397,16 +397,16 @@ class PdfQualityRegressionTests(unittest.TestCase):
         self.assertEqual(pregen['str_'], 60)
 
 
-def _numeric_verification_row(source, warnings, pairs=None, layout_checks=None):
-    return {'warnings': warnings, 'method': 'native', 'candidates': {'native': source},
+def _numeric_verification_row(source, warnings, pairs=None, layout_checks=None, layout=''):
+    return {'warnings': warnings, 'method': 'native', 'candidates': {'native': source, 'layout': layout},
             'numeric_pairs': pairs or [], 'layout_pair_checks': layout_checks or []}
 
 
-def test_layout_numeric_loss_resolves_only_with_exact_native_numeric_evidence():
+def test_layout_numeric_loss_resolves_only_missing_anchored_evidence():
     source = 'STR 60 DEX 50\n' + ('Narrative without another value. ' * 10)
     pairs = [{'label': 'STR', 'value': '60', 'status': 'same_row_candidate', 'block': 0},
              {'label': 'DEX', 'value': '50', 'status': 'same_row_candidate', 'block': 0}]
-    row = _numeric_verification_row(source, ['layout_numeric_loss'], pairs)
+    row = _numeric_verification_row(source, ['layout_numeric_loss'], pairs, layout='STR DEX 50')
     with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
                       return_value=pdf_ocr.OcrResult(text='STR 60 DEX 50', status='accepted')) as paddle:
         result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
@@ -444,11 +444,78 @@ def test_layout_numeric_loss_keeps_review_for_incomplete_or_conflicting_evidence
     source = 'STR 60 DEX 50\n' + ('Narrative without another value. ' * 10)
     pairs = [{'label': 'STR', 'value': '60', 'status': 'same_row_candidate', 'block': 0},
              {'label': 'DEX', 'value': '50', 'status': 'same_row_candidate', 'block': 0}]
-    row = _numeric_verification_row(source, ['layout_numeric_loss'], pairs)
+    row = _numeric_verification_row(source, ['layout_numeric_loss'], pairs, layout='STR DEX 50')
     with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
                       return_value=pdf_ocr.OcrResult(text=candidate, status='accepted')):
         result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
     assert result['warnings_resolved'] == []
+
+
+@pytest.mark.parametrize(('native', 'layout', 'paddle', 'confirmed'), [
+    ('Armor 1\nMove 8', 'Armor\nMove 8', 'Armor 1\nMove 8', True),
+    ('Armor 1\nRoom 2', 'Armor\nRoom 2', 'Armor\nRoom 1', False),
+    ('STR 60\nDEX 60', 'STR\nDEX 60', 'STR 60\nDEX 60', True),
+    ('STR 60\nDEX 60', 'STR\nDEX 60', 'STR\nDEX 60', False),
+    ('Damage 1d6+2', 'Damage', 'Damage 1d6+2', True),
+    ('Damage 1d6+2', 'Damage', 'Damage 1d6', False),
+    ('SAN 1/1d6', 'SAN', 'SAN 1/1d6', True),
+    ('SAN 1/1d6', 'SAN', 'SAN 1d6/1', False),
+    ('Armor 1\nDamage 1d6+2', 'Armor\nDamage', 'Armor 1\nDamage 1d6', False),
+])
+def test_layout_loss_checks_whole_mechanic_near_same_anchor(native, layout, paddle, confirmed):
+    source = native + '\n' + ('Narrative without another value. ' * 10)
+    row = _numeric_verification_row(source, ['layout_numeric_loss'], layout=layout)
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(text=paddle, status='accepted')):
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert bool(result['warnings_resolved']) is confirmed
+    assert result['status'] == ('confirmed' if confirmed else 'inconclusive')
+    assert row['candidates']['native'] == source
+    assert ('layout_numeric_loss' in result['warnings_unresolved']) is not confirmed
+    assert sum(map(len, (result['confirmed_mechanics'], result['unconfirmed_mechanics']))) \
+        == len(result['missing_mechanics'])
+
+
+def test_layout_loss_requires_every_missing_mechanic():
+    missing, confirmed, unconfirmed, anchors = pdf_loader._missing_mechanics_supported(
+        'Armor 1\nDamage 1d6+2', 'Armor\nDamage', 'Armor 1\nDamage 1d6')
+    assert missing == ['1', '1d6+2']
+    assert confirmed == ['1']
+    assert unconfirmed == ['1d6+2']
+    assert anchors == 2
+
+
+def test_layout_loss_without_local_anchor_stays_unconfirmed():
+    missing, confirmed, unconfirmed, anchors = pdf_loader._missing_mechanics_supported('1', '', '1')
+    assert missing == ['1']
+    assert confirmed == []
+    assert unconfirmed == ['1']
+    assert anchors == 0
+
+
+@pytest.mark.parametrize(('native', 'layout', 'paddle', 'expected'), [
+    ('SAN 0/1d4', 'SAN', 'SAN 0 / 1D4', '0/1d4'),
+    ('SAN 1d3/1d10', 'SAN', 'SAN 1d3/1d10', '1d3/1d10'),
+    ('Chance 25%', 'Chance', 'Chance 25%', '25%'),
+    ('Damage 1d10-1', 'Damage', 'Damage 1d10-1', '1d10-1'),
+])
+def test_layout_loss_preserves_complete_mechanic(native, layout, paddle, expected):
+    missing, confirmed, unconfirmed, anchors = pdf_loader._missing_mechanics_supported(native, layout, paddle)
+    assert missing == [expected]
+    assert confirmed == [expected]
+    assert unconfirmed == []
+    assert anchors == 1
+
+
+@pytest.mark.parametrize('status', ['unavailable', 'rejected', 'error', 'empty'])
+def test_layout_loss_paddle_failure_keeps_review(status):
+    source = 'Armor 1\n' + ('Narrative without another value. ' * 10)
+    row = _numeric_verification_row(source, ['layout_numeric_loss'], layout='Armor')
+    with patch.object(pdf_loader.pdf_ocr, 'recognize_with_paddle',
+                      return_value=pdf_ocr.OcrResult(status=status)):
+        result = pdf_loader._verify_numeric_with_paddle(None, row, source, b'image')
+    assert result['status'] == status
+    assert result['warnings_unresolved'] == ['layout_numeric_loss']
 
 
 @pytest.mark.parametrize('status', ['unavailable', 'rejected', 'error', 'empty'])

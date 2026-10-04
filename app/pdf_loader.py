@@ -341,13 +341,65 @@ def _pair_lines_supported(source: str, candidate: str, pairs: list[dict]) -> boo
     return bool(pairs)
 
 
+_MECHANIC_ATOM = r'(?:\d+[dD]\d+(?:[+-]\d+)?|\d+(?:\.\d+)?%?)'
+_MECHANIC = re.compile(rf'(?<![\w])(?:{_MECHANIC_ATOM}\s*/\s*{_MECHANIC_ATOM}|{_MECHANIC_ATOM})(?![\w])')
+_ANCHOR_WORD = re.compile(r'[^\W\d_]+', re.UNICODE)
+
+
+def _anchored_mechanics(text: str) -> tuple[Counter[str], Counter[tuple[str, str]]]:
+    """Keep slash/dice expressions whole and bind each value to its preceding word."""
+    values: Counter[str] = Counter()
+    anchored: Counter[tuple[str, str]] = Counter()
+    for line in text.splitlines():
+        for match in _MECHANIC.finditer(line):
+            value = re.sub(r'\s+', '', match.group()).casefold()
+            values[value] += 1
+            words = list(_ANCHOR_WORD.finditer(line[:match.start()]))
+            if words and match.start() - words[-1].end() <= 30:
+                anchored[(words[-1].group().casefold(), value)] += 1
+    return values, anchored
+
+
+def _missing_mechanics_supported(native: str, layout: str, paddle: str) -> tuple[list[str], list[str], list[str], int]:
+    """Confirm only layout-lost values, at the same local label in independent OCR."""
+    native_values, native_anchors = _anchored_mechanics(native)
+    layout_values, layout_anchors = _anchored_mechanics(layout)
+    _, paddle_anchors = _anchored_mechanics(paddle)
+    missing = native_values - layout_values
+    anchor_deficit = native_anchors - layout_anchors
+    confirmed: list[str] = []
+    unconfirmed: list[str] = []
+    anchor_count = 0
+    for value, count in missing.items():
+        matches = [(anchor, amount) for (anchor, token), amount in anchor_deficit.items() if token == value]
+        # A missing value without a unique local binding cannot be verified by
+        # finding the same number elsewhere on the page.
+        if sum(amount for _, amount in matches) != count:
+            unconfirmed.extend([value] * count)
+            continue
+        anchor_count += sum(amount for _, amount in matches)
+        for anchor, amount in matches:
+            native_at_anchor = Counter({token: n for (label, token), n in native_anchors.items()
+                                        if label == anchor})
+            paddle_at_anchor = Counter({token: n for (label, token), n in paddle_anchors.items()
+                                        if label == anchor})
+            if (paddle_anchors[(anchor, value)] >= native_anchors[(anchor, value)]
+                    and paddle_at_anchor == native_at_anchor):
+                confirmed.extend([value] * amount)
+            else:
+                unconfirmed.extend([value] * amount)
+    return list(missing.elements()), confirmed, unconfirmed, anchor_count
+
+
 def _verify_numeric_with_paddle(page: pymupdf.Page, row: dict, canonical: str,
                                 image: bytes | None) -> dict:
     """Record independent OCR evidence without changing selected source or warnings."""
     checked = [warning for warning in row['warnings'] if warning in _NUMERIC_VERIFICATION_WARNINGS]
     result: dict = {'attempted': False, 'status': 'skipped', 'warnings_checked': checked,
                     'warnings_resolved': [], 'warnings_unresolved': checked.copy(),
-                    'matched_pair_count': 0, 'unmatched_pair_count': 0}
+                    'matched_pair_count': 0, 'unmatched_pair_count': 0,
+                    'missing_mechanics': [], 'confirmed_mechanics': [], 'unconfirmed_mechanics': [],
+                    'anchor_count': 0}
     # Low-text pages already enter the ordinary Paddle/Tesseract path; do not OCR twice.
     if len(canonical) < _LOW_TEXT_THRESHOLD or row['method'] != 'native' \
             or canonical != row['candidates']['native']:
@@ -373,16 +425,21 @@ def _verify_numeric_with_paddle(page: pymupdf.Page, row: dict, canonical: str,
     result['unmatched_pair_count'] = len(pair_checks) - result['matched_pair_count']
     pair_supported = pair_supported and result['unmatched_pair_count'] == 0 \
         and _pair_lines_supported(canonical, paddle.text, disputed)
-    resolved_pairs = [pair for pair in pairs if pair['status'] != 'unresolved']
-    all_pairs_supported = all(check['status'] == 'matched' for check in pdf_quality.check_pairs(resolved_pairs, canonical)) \
-        and all(check['status'] == 'matched' for check in pdf_quality.check_pairs(resolved_pairs, paddle.text))
     line_supported = _numeric_lines_supported(canonical, paddle.text)
+    if 'layout_numeric_loss' in checked:
+        missing, confirmed_missing, unconfirmed_missing, anchor_count = _missing_mechanics_supported(
+            canonical, row['candidates'].get('layout', ''), paddle.text)
+        result['missing_mechanics'] = missing
+        result['confirmed_mechanics'] = confirmed_missing
+        result['unconfirmed_mechanics'] = unconfirmed_missing
+        result['anchor_count'] = anchor_count
 
     for warning in checked:
         if warning in {'numeric_pair_review', 'layout_pair_mismatch'}:
             confirmed = pair_supported if disputed else line_supported
         elif warning == 'layout_numeric_loss':
-            confirmed = line_supported and all_pairs_supported
+            confirmed = bool(result['missing_mechanics']) and not result['unconfirmed_mechanics'] \
+                and len(result['confirmed_mechanics']) == len(result['missing_mechanics'])
         else:  # An unresolved source pair has no trustworthy canonical value to verify.
             confirmed = False
         if confirmed:
