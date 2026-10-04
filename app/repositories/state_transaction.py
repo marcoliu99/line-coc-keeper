@@ -28,7 +28,10 @@ use ``ctx.conn``.
 
 Outcomes are values, not exceptions: ``applied``, ``duplicate``,
 ``awaiting_input`` (committed, a player must act next), ``stale_timeline``,
-``conflict`` and ``rejected``. Exceptions raised by the mutation itself
+``conflict`` and ``rejected``. ``awaiting_input`` is the contract for a
+mutation that calls ``ctx.awaiting_input()``; the check and combat services
+currently leave a wait as ordinary state (a pending check or decision, the
+combat phase) and commit it as ``applied``. Exceptions raised by the mutation itself
 propagate after the transaction rolls back, so domain code can keep raising
 ``ValueError`` for its own validation.
 
@@ -162,13 +165,12 @@ class TxContext:
 
     def __init__(
         self, *, conn: sqlite3.Connection, state: GroupState, conversation_id: str,
-        action_id: str, revision_before: int, timeline_id: str, reason: str = "",
+        action_id: str, timeline_id: str, reason: str = "",
     ) -> None:
         self.conn = conn
         self.state = state
         self.conversation_id = conversation_id
         self.action_id = action_id
-        self.revision_before = revision_before
         self.timeline_id = timeline_id
         # Why the state is being written (commit log). A mutation that only
         # learns the real reason while it runs (a check settling into a
@@ -178,7 +180,6 @@ class TxContext:
         self.stored_result: dict[str, Any] = {}
         self.save_skipped = False
         self.awaiting: dict[str, Any] | None = None
-        self.replaced = False
 
     @property
     def events(self) -> tuple[StagedEvent, ...]:
@@ -199,7 +200,11 @@ class TxContext:
         self.stored_result = json.loads(json.dumps(dict(payload), ensure_ascii=False, default=str))
 
     def skip_save(self) -> None:
-        """Nothing to write: the state row, revision and mirrors stay untouched."""
+        """Nothing to write: the state row, revision, mirrors and ledger stay untouched.
+
+        Rows the mutation already wrote through ``conn`` are rolled back too, as
+        for a rejection, so a skipped action leaves nothing behind.
+        """
         self.save_skipped = True
 
     def awaiting_input(self, **details: Any) -> None:
@@ -213,7 +218,6 @@ class TxContext:
         """Swap the whole game state (``/coc newgame``, rollback)."""
         new_state.group_id = self.conversation_id
         self.state = new_state
-        self.replaced = True
 
 
 # The mutation in progress for this thread/task. A mutation that opens another
@@ -496,8 +500,7 @@ def _mutate(
                 before = _resource_snapshot(latest)
                 ctx = TxContext(
                     conn=conn, state=latest, conversation_id=conversation_id,
-                    action_id=action_id or "", revision_before=latest.state_revision,
-                    timeline_id=timeline_id, reason=reason,
+                    action_id=action_id or "", timeline_id=timeline_id, reason=reason,
                 )
                 phase = "mutation"
                 token = _active.set(ctx)
@@ -536,6 +539,10 @@ def _mutate(
                     revision = commit.revision
                     stored_timeline = commit.timeline_id
                 else:
+                    # An action that saved nothing leaves nothing behind: drop what
+                    # it wrote through ctx.conn (a checkpoint taken for a battle
+                    # that was then not saved) along with the state.
+                    conn.rollback()
                     revision = latest.state_revision
                     stored_timeline = timeline_id
                 outcome = Outcome.AWAITING_INPUT if ctx.awaiting is not None else Outcome.APPLIED

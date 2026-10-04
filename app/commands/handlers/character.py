@@ -8,7 +8,6 @@ from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.commands.types import Reply, SendDM
 from app.keeper_tools import resource_bridge
 from app.models import OCCUPATIONS, GroupState, generate_investigator
-from app.repositories import state_transaction
 from app.repositories.group_state import load_state
 from app.services import combat_engine, mutation_admission
 from app.services.character_service import (
@@ -353,24 +352,30 @@ async def handle_character_command(
     return False
 
 
-@mutation_admission.guard_async_entry
-async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
-    """Resolve the player's explicit LUCK roll for a newly claimed pregen."""
-    state = load_state(conversation_id)
+def _roll_pregen_luck(state: GroupState, user_id: str) -> Outcome:
     if state.combat.active:
-        await reply('戰鬥中不能補建未驗證的角色 Luck；原待處理事項仍保留。')
-        return
+        return refuse('戰鬥中不能補建未驗證的角色 Luck；原待處理事項仍保留。')
     character_id = state.pending_pregen_luck.get(user_id)
     if not character_id:
-        await reply("目前沒有等待你擲 LUCK 的預製角色；請先用「/coc usepregen 編號」選角。")
-        return
+        return refuse("目前沒有等待你擲 LUCK 的預製角色；請先用「/coc usepregen 編號」選角。")
     char = state.characters_by_id.get(character_id)
     if char is None:
         state.pending_pregen_luck.pop(user_id, None)
-        state_transaction.commit_snapshot(state)
-        await reply("找不到等待擲 LUCK 的角色，請重新選擇預製角色。")
-        return
+        return Outcome(False, "找不到等待擲 LUCK 的角色，請重新選擇預製角色。", save=True)
     char.luck = pregen_extractor.roll_player_luck()
     state.pending_pregen_luck.pop(user_id, None)
-    state_transaction.commit_snapshot(state)
-    await reply(f"🎲 {char.name} 的 LUCK 擲骰結果：{char.luck}。現在可以開始遊戲了。")
+    return done(f"🎲 {char.name} 的 LUCK 擲骰結果：{char.luck}。現在可以開始遊戲了。")
+
+
+@mutation_admission.guard_async_entry
+async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Reply) -> None:
+    """Resolve the player's explicit LUCK roll for a newly claimed pregen.
+
+    The roll is drawn and applied to the latest committed state inside the
+    transaction, so a concurrent write cannot discard it, and a retry after a
+    conflict draws again from the unchanged pending claim.
+    """
+    outcome = await transact(
+        conversation_id, lambda state: _roll_pregen_luck(state, user_id), reason="character",
+    )
+    await reply(outcome.text)

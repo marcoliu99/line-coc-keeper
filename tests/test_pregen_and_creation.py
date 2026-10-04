@@ -282,5 +282,26 @@ class MigrateSkillNamesTests(unittest.TestCase):
         self.assertEqual(len(state.characters_for_owner("u1")), 1)
 
 
+    def test_pregen_luck_roll_applies_to_the_latest_state_and_a_refusal_writes_nothing(self):
+        state = GroupState(group_id="g-latest", active=True)
+        state.pregens = [{"name": "A", "occupation": "偵探", "skills": {}}]
+        character_service.claim_pregen(state, 0, "u1")
+        db.set_json("group_states", "g-latest", state.to_dict())
+        replies = []
+
+        async def reply(message):
+            replies.append(message)
+
+        with patch.object(character_handler, "load_state", side_effect=AssertionError("snapshot read outside the transaction")), \
+                patch("app.models.random.randint", return_value=4):
+            asyncio.run(character_handler.handle_pregen_luck_roll("g-latest", "u1", reply))
+        self.assertIn("60", replies[-1])
+
+        revision = db.get_json("group_states", "g-latest")["state_revision"]
+        asyncio.run(character_handler.handle_pregen_luck_roll("g-latest", "u1", reply))
+        self.assertIn("沒有等待你擲 LUCK", replies[-1])
+        self.assertEqual(db.get_json("group_states", "g-latest")["state_revision"], revision)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -141,6 +141,25 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replacement[0].entry["skill"], "攀爬")
         self.assertEqual(memory.commits, 2)
 
+    async def test_a_turn_with_no_new_button_never_opens_a_write_transaction(self):
+        conversation_id = "discord-channel-71010"
+        state = GroupState(group_id=conversation_id)
+        entry = {"type": "skill", "skill": "DEX", "skill_value": 70}
+        state.pending_checks["123"] = dict(entry)
+        state.pending_luck_decisions["123"] = {"options": [{"cost": 1, "tier": "regular"}], "_buttons_posted": True}
+
+        async def refuse_to_write(*_args, **_kwargs):
+            raise AssertionError("a write transaction was opened with nothing to claim")
+
+        with patch.object(pending_buttons, "load_state", return_value=state), \
+                patch.object(pending_buttons.state_transaction, "amutate", refuse_to_write):
+            async with locks.get_conversation_lock(conversation_id):
+                unchanged = await pending_buttons.claim_pending_buttons_locked(conversation_id, {"123": entry}, {})
+                luck_only = await pending_buttons.claim_pending_buttons_locked(
+                    conversation_id, {}, {}, kinds=frozenset({"luck"}),
+                )
+        self.assertEqual((unchanged, luck_only), ([], []))
+
     async def test_luck_is_rechecked_after_check_send(self):
         conversation_id = "discord-channel-71004"
         state = GroupState(group_id=conversation_id)

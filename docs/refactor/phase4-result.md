@@ -35,7 +35,7 @@
 ```text
 ruff check .          # All checks passed
 mypy app              # Success: no issues found in 149 source files
-pytest                # 2221 passed, 1 skipped, 222 subtests passed（第 3 階段 2202 項 → +19；其中 2 項是 code review 後新增）
+pytest                # 2224 passed, 1 skipped, 222 subtests passed（第 3 階段 2202 項 → +22；其中 5 項是 code review 後新增）
 ```
 
 唯一的 skip 同前（`tests/test_codex_analysis_smoke.py`，需已登入的 Codex CLI），**未執行**。
@@ -65,6 +65,10 @@ pytest                # 2221 passed, 1 skipped, 222 subtests passed（第 3 階�
 | baseline 既有（未修，已記錄） | `commands/handlers/system.py` 仍然很大，且保留自己的 `commit_snapshot` 呼叫；規格只要求搬走能讓 `legacy_commands` 被刪除的部分 |
 | 未解決（沿用） | 第 2 階段的 Luck 政策衝突已由產品決定：維持戰鬥攻擊／防禦擲骰可用 Luck，並修改規格（程式未更動）；戰鬥骰仍直接用 `app.dice` 而非檢定引擎的 `DicePort` |
 | baseline／#165 引入後修復（code review） | 沒有進行中劇本時上傳角色卡，若與未被認領的預製角色以不同名字判定為同一人（指紋或職業＋技能），比對會把別名寫進 dictionary 表，而 #165 的「交易內不准另開寫入」防護會丟出 `NestedTransactionError`，上傳失敗。現在比對（含別名學習）在開啟交易之前完成（`test_upload_without_a_scenario_learns_the_alias_after_the_pool_is_committed`） |
+| #165 引入後修復（code review） | `handle_pregen_luck_roll` 在交易外載入快照、抽 Luck，再直接在 event loop 上用阻塞的 `commit_snapshot` 提交；背景寫入讓 revision 變動時玩家會看到沒被接住的 `StateRevisionConflict`，抽到的值也作廢。改為 `transact` 的 delta：骰值在最新 state 的交易內抽取與套用（`test_pregen_luck_roll_applies_to_the_latest_state_and_a_refusal_writes_nothing`） |
+| #165 引入後修復（code review） | `claim_pending_buttons_locked` 每回合都開 `BEGIN IMMEDIATE`，即使沒有任何新按鈕；基線是先讀、有新項目才寫。恢復為先用唯讀載入判斷，只有確實有東西要認領時才開寫入交易（`test_a_turn_with_no_new_button_never_opens_a_write_transaction`） |
+| #165 引入後修復（code review） | `ctx.skip_save()` 只略過 state 與 ledger，已透過 `ctx.conn` 寫入的列（例如為沒有存檔的戰鬥所建的開戰前 checkpoint）仍會提交，與「全部成功才提交」不符。現在與拒絕相同，一併 rollback（`test_skip_save_also_drops_rows_already_written_through_the_connection`；所有現有的 `skip_save` 呼叫都在寫入之前，不受影響） |
+| 文件與死碼整理（code review） | `TxContext.revision_before` 與 `TxContext.replaced` 沒有任何讀取者，已刪除。`awaiting_input` 是需求規定要能表達的 outcome，予以保留，但規格與模組說明改為如實說明：目前檢定與戰鬥 service 不呼叫它，等待玩家以一般狀態提交、結果為 `applied`。`retryable`（revision 衝突時設定）與 `original_outcome`（重播時設定）有 production 設定者與測試，保留 |
 | 文件修正（code review） | 傷勢檢定不可用 Luck 的範圍限於戰鬥引擎登記的傷勢檢定；戰鬥以外由 `adjust_character` 串在重傷後的 CON 檢定從基線起就提供 Luck，現況不變，新增 `test_c5_a_major_wound_con_check_outside_combat_keeps_offering_luck` 釘住。另清掉 `pyproject.toml` 裡已刪除檔案的 SLF001 例外、`catalog.json` 中 18 筆指向 `app/legacy_commands.py` 的證據連結，以及兩處舊函式名稱的註解 |
 | 限制 | typed extraction result 與 provider 抽象依規格留待後續階段；PDF／預製角色流程只做原樣搬移 |
 

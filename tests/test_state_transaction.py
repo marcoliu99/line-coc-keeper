@@ -541,6 +541,23 @@ class StateTransactionTests(unittest.TestCase):
         self.assertIsNone(db.get_json("state_checkpoints", marker))
         self.assertEqual([r for r in _ledger_rows(conversation) if r["action_id"] == "r"], [])
 
+    def test_skip_save_also_drops_rows_already_written_through_the_connection(self):
+        conversation = _conversation()
+        _seed(conversation)
+        before = _raw_row(conversation)
+        marker = f"{conversation}:skipped"
+
+        def write_then_skip(ctx: state_transaction.TxContext) -> None:
+            db.set_json_tx(ctx.conn, "state_checkpoints", marker, {"group_id": conversation})
+            ctx.skip_save()
+
+        result = state_transaction.mutate(conversation, write_then_skip, action_id="s", request_fingerprint="f")
+        self.assertEqual(result.outcome, Outcome.APPLIED)
+        self.assertFalse(result.committed)
+        self.assertEqual(_raw_row(conversation), before)
+        self.assertIsNone(db.get_json("state_checkpoints", marker))
+        self.assertEqual([r for r in _ledger_rows(conversation) if r["action_id"] == "s"], [])
+
     def test_extra_tables_written_through_ctx_conn_commit_with_the_state(self):
         conversation = _conversation()
         _seed(conversation)

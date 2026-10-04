@@ -23,7 +23,7 @@
 | 第 1 階段 | 通過 | 130 | 2107 項（+59） |
 | 第 2 階段 | 通過 | 144 | 2154 項（+47），1 skipped |
 | 第 3 階段 | 通過 | 146 | 2202 項（+48），1 skipped |
-| 第 4 階段 | 通過 | 149 | 2221 項（+19），1 skipped，222 subtests |
+| 第 4 階段 | 通過 | 149 | 2224 項（+22），1 skipped，222 subtests |
 
 唯一的 skip 是 `tests/test_codex_analysis_smoke.py`，它需要已登入的 Codex CLI，**這個環境沒有，未執行**。
 
