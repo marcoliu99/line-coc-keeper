@@ -27,38 +27,7 @@ sys.modules.setdefault(
 
 from app import dice, keeper, legacy_commands, observability
 from app.models import Character, GroupState
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(state.to_dict())
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState, *, reason: str = "command") -> None:
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            self.originals.append((module, module.load_state, module.save_state))
-            module.load_state = load_state
-            module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, load_state, save_state in reversed(self.originals):
-            module.load_state = load_state
-            module.save_state = save_state
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
+from tests.state_store import StateStorePatch, clone_state
 
 
 def _state_with_investigator() -> GroupState:
@@ -607,7 +576,10 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         whatever the generated Keeper narration happened to say."""
         state = _state_with_investigator()
         state.active = True
-        timeline_id = state.timeline_id or f"legacy-{state.group_id}"
+        # Real storage assigns a timeline on the first save, so a pending entry
+        # that names one must be built against the stored value.
+        state.timeline_id = "timeline-g"
+        timeline_id = state.timeline_id
         state.pending_luck_decisions["u1"] = {
             "decision_id": "decision-1", "check_id": "check-1", "timeline_id": timeline_id,
             "origin_revision": state.state_revision + 1, "origin_turn_id": "", "origin_request_id": "",

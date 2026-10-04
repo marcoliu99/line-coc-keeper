@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from app import combat
 from app.commands.handlers import combat as combat_handler
 from app.models import Character, GroupState
+from tests.state_store import MemoryTransactions
 
 
 def _state() -> GroupState:
@@ -33,7 +34,7 @@ class OperatorCommandTests(unittest.IsolatedAsyncioTestCase):
         saved: list[GroupState] = []
         reply = AsyncMock()
         with patch.object(combat_handler, "load_state", return_value=state), \
-                patch.object(combat_handler, "save_state", side_effect=lambda s, reason: saved.append(s)), \
+                MemoryTransactions(state, on_commit=saved.append).patched(), \
                 patch.object(combat.checkpoints, "create_checkpoint") as checkpoint:
             await combat_handler.handle_combat_command("g", reply, ["/coc", "combat", *parts])
         return (saved[-1] if saved else state), reply, checkpoint.call_args_list

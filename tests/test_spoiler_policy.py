@@ -346,7 +346,7 @@ class PregenAndIndexCommandTests(unittest.TestCase):
         reply = ReplyCollector()
         extracted = {"npcs": [{"name": "神秘管家", "hp": 15}], "locations": []}
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state", lambda *a, **k: None), \
+                patch("app.repositories.state_transaction.commit_snapshot", lambda *a, **k: None), \
                 patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=extracted), \
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
             asyncio.run(system_handler.handle_system_command(
@@ -361,7 +361,7 @@ class PregenAndIndexCommandTests(unittest.TestCase):
         reply = ReplyCollector()
         extracted = {"npcs": [{"name": "神秘管家", "hp": 15}], "locations": []}
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state", lambda *a, **k: None), \
+                patch("app.repositories.state_transaction.commit_snapshot", lambda *a, **k: None), \
                 patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=extracted), \
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
             asyncio.run(system_handler.handle_system_command(
@@ -374,7 +374,7 @@ class PregenAndIndexCommandTests(unittest.TestCase):
         reply = ReplyCollector()
         extracted = {"npcs": [{"name": "神秘管家", "hp": 15}], "locations": []}
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state", lambda *a, **k: None), \
+                patch("app.repositories.state_transaction.commit_snapshot", lambda *a, **k: None), \
                 patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=extracted), \
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False):
             asyncio.run(system_handler.handle_system_command(

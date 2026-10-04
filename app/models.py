@@ -1144,6 +1144,12 @@ class GroupState:
     # committed in its worker thread, so these markers say recovery_required
     # rather than claiming the outcome was rolled back.
     tool_recovery_markers: list[dict[str, Any]] = field(default_factory=list)
+    # In-memory only, never serialized: the timeline this snapshot was read
+    # from storage under. A flow that starts a new timeline (scenario upload,
+    # rollback) rewrites ``timeline_id`` on the snapshot before saving, so the
+    # writer compares against this instead to refuse a snapshot from before a
+    # reset. Empty means "not loaded, or loaded before any timeline existed".
+    loaded_timeline_id: str = field(default="", repr=False, compare=False)
 
     def get_character_by_name(self, name: str) -> Character | None:
         for c in self.characters.values():
@@ -1436,4 +1442,5 @@ class GroupState:
             commerce=data.get("commerce", {}),
             consumed_or_removed_items=data.get("consumed_or_removed_items", []),
             tool_recovery_markers=data.get("tool_recovery_markers", []),
+            loaded_timeline_id=data.get("timeline_id", ""),
         )

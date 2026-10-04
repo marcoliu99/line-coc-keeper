@@ -5,7 +5,8 @@ import asyncio
 import logging
 
 from app import keeper, locks
-from app.repositories.group_state import load_state, save_state
+from app.repositories import state_transaction
+from app.repositories.group_state import load_state
 
 _logger = logging.getLogger(__name__)
 _running: set[str] = set()
@@ -53,7 +54,7 @@ async def rebuild(conversation_id: str) -> None:
                             report["summary_rebuild_status"] = "done"
                     latest.openai_previous_response_id = ""
                     latest.openai_previous_response_timeline_id = ""
-                    save_state(latest, reason="correction_summary_rebuild")
+                    state_transaction.commit_snapshot(latest, reason="correction_summary_rebuild")
                 break
     except Exception:
         _logger.exception("failed to rebuild summary after correction")

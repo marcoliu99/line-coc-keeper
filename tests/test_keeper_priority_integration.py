@@ -18,10 +18,7 @@ from app import legacy_commands as commands
 from app import locks
 from app.commands import router
 from app.models import Character, GroupState
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(state.to_dict())
+from tests.state_store import StateStorePatch
 
 
 class ReplyCollector:
@@ -30,34 +27,6 @@ class ReplyCollector:
 
     async def __call__(self, text: str) -> None:
         self.messages.append(text)
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState) -> None:
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            self.originals.append((module, module.load_state, module.save_state))
-            module.load_state = load_state
-            module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, load_state, save_state in reversed(self.originals):
-            module.load_state = load_state
-            module.save_state = save_state
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
 
 
 class GateCallForbidden:

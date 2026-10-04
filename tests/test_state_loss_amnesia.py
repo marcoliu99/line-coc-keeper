@@ -68,7 +68,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         state = GroupState("save-failure", timeline_id="timeline-save")
         group_state.save_state(state)
 
-        with patch.object(keeper, "save_state", side_effect=OSError("disk full")), \
+        with patch.object(group_state, "write_state_tx", side_effect=OSError("disk full")), \
                 patch.object(keeper.observability, "event") as event, \
                 self.assertRaises(OSError):
             keeper._commit_turn_result(

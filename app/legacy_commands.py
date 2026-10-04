@@ -65,11 +65,10 @@ from app.models import (
     Character,
     GroupState,
 )
-from app.repositories import manual_pregens
+from app.repositories import manual_pregens, state_transaction
 from app.repositories.group_state import (
     load_page_image,
     load_state,
-    save_state,
 )
 from app.services import mutation_admission, opposed_checks, turn_delivery
 
@@ -412,7 +411,7 @@ async def handle_pdf_upload(
                     await reply("已有一份相似 PDF 等待處理，請先用 /coc scenario reparse 或 /coc scenario cancel。")
                     return False
                 state.pending_scenario_upload = {"key": key, "file_name": file_name, "title": preview_title, "matches": matches}
-                save_state(state)
+                state_transaction.commit_snapshot(state)
             labels = "、".join(f"{m['id']}《{m['title']}》（{m['score']:.0%}）" for m in matches[:3])
             await reply(f"偵測到相似劇本：{labels}。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。")
             return False
@@ -492,7 +491,7 @@ async def handle_pdf_upload(
                 "active_chapter_id": library_context["active_chapter_id"],
                 "context_chapter_ids": library_context["context_chapter_ids"],
             }
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             current_title = state.scenario_title
             confirmation_pending = True
         else:
@@ -507,7 +506,7 @@ async def handle_pdf_upload(
                     conn, conversation_id, scenario_id, library_context, bind_unassigned=True,
                 )
             _, image_refreshed = scenario_activation.commit_and_refresh(
-                lambda: save_state(state, mutate_tx=install_first),
+                lambda: state_transaction.commit_snapshot(state, mutate_tx=install_first),
                 conversation_id, scenario_id, library_context,
             )
             confirmation_pending = False
@@ -552,7 +551,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
         context = scenario_library.load_context(scenario_id, pending.get("active_chapter_id", ""))
     except (FileNotFoundError, ValueError):
         state.pending_pdf_upload = None
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         return "這個待處理劇本庫項目已不存在，請重新上傳 PDF。"
     extracted_index = context["indexes"]
     old_pool = list(state.pregens)
@@ -591,7 +590,7 @@ def _resolve_pdf_upload_choice_locked(conversation_id: str, choice: PdfChoice) -
             bind_unassigned=(old_scenario_id is None), claimed=claimed,
         )
     _, image_refreshed = scenario_activation.commit_and_refresh(
-        lambda: save_state(state, mutate_tx=install_selected),
+        lambda: state_transaction.commit_snapshot(state, mutate_tx=install_selected),
         conversation_id, scenario_id, context,
     )
     variant_notice = scenario_templates.preference_notice(conversation_id, scenario_id)
@@ -666,7 +665,7 @@ async def handle_map_upload(
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         state.scene_maps[key] = data
-        save_state(state)
+        state_transaction.commit_snapshot(state)
 
     entry_room = scene_map_engine.get_room(data, data.get("entry_room_id", ""))
     entry_note = f"，入口房間「{entry_room['name']}」" if entry_room else ""
@@ -761,7 +760,7 @@ async def handle_role_sheet_upload(
             else:
                 state.pregens, _ = pregen_extractor.reconcile_pregen_into_pool(old_pool, pregen)
         try:
-            save_state(state, mutate_tx=save_manual)
+            state_transaction.commit_snapshot(state, mutate_tx=save_manual)
         except ValueError as exc:
             await reply(str(exc))
             return
@@ -1019,21 +1018,28 @@ def _resolved_check_event_seed(
 
 
 def _persist_resolved_check_event(conversation_id: str, event_seed: dict) -> None:
-    """Record the check and only attribute changes present in committed state."""
-    with locks.get_state_lock(conversation_id):
-        latest = load_state(conversation_id)
+    """Record the check and only attribute changes present in committed state.
+
+    One action per resolved check (``check-event:<event_id>``), shared with the
+    Keeper-tool path, so a narration retry that reaches this point again
+    records nothing a second time.
+    """
+    def record(ctx: state_transaction.TxContext) -> None:
+        latest = ctx.state
         current_timeline_id = latest.timeline_id or f"legacy-{conversation_id}"
         if current_timeline_id != event_seed["timeline_id"]:
             observability.event(
                 "check.event.stale", level=logging.INFO, reason="timeline_mismatch",
                 check_id=event_seed["check_id"] or None,
             )
+            ctx.skip_save()
             return
         if any(
             event.get("event_id") == event_seed["event_id"]
             for event in latest.resolved_check_events
             if isinstance(event, dict)
         ):
+            ctx.skip_save()
             return
         char = latest.get_active_character(event_seed["owner_id"])
         if (
@@ -1041,6 +1047,7 @@ def _persist_resolved_check_event(conversation_id: str, event_seed: dict) -> Non
             or char.name != event_seed["investigator"]
             or char.character_id != event_seed["character_id"]
         ):
+            ctx.skip_save()
             return
         after = _character_attribute_snapshot(char)
         effects = [
@@ -1071,15 +1078,29 @@ def _persist_resolved_check_event(conversation_id: str, event_seed: dict) -> Non
         event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         latest.resolved_check_events.append(event)
         del latest.resolved_check_events[:-20]
-        save_state(latest, reason="resolved_check_event")
+        ctx.stage_event(
+            "check_resolved", event_id=str(event_seed["event_id"]),
+            causation_id=str(event_seed.get("check_id") or ""),
+        )
+
+    event_id = str(event_seed["event_id"])
+    state_transaction.mutate(
+        conversation_id, record, reason="resolved_check_event",
+        action_id=f"check-event:{event_id}",
+        request_fingerprint=state_transaction.request_fingerprint(
+            {"event_id": event_id, "timeline_id": event_seed["timeline_id"],
+             "owner_id": event_seed["owner_id"], "character_id": event_seed["character_id"]}
+        ),
+    )
 
 
 def _persist_check_consequence_origin(conversation_id: str, event_seed: dict) -> None:
     """Publish the settled check's source-bound plan before its follow-up turn."""
-    with locks.get_state_lock(conversation_id):
-        latest = load_state(conversation_id)
-        if resolved_check_consequences.persist_origin(latest, event_seed):
-            save_state(latest, reason="resolved_check_consequence_origin")
+    def publish(ctx: state_transaction.TxContext) -> None:
+        if not resolved_check_consequences.persist_origin(ctx.state, event_seed):
+            ctx.skip_save()
+
+    state_transaction.mutate(conversation_id, publish, reason="resolved_check_consequence_origin")
 
 
 @dataclass
@@ -1456,7 +1477,7 @@ def _resolve_managed_check(state: GroupState, user_id: str, text: str, pending: 
             '請用 /coc check 或檢定按鈕擲骰。' if user_id in state.pending_checks
             else '已依系統紀錄處理；請依目前戰鬥狀態繼續。')
         resource_bridge.record_choice_control_receipt(state, pending, user_id, option, reply_text)
-        save_state(state, reason='combat_choice')
+        state_transaction.commit_snapshot(state, reason='combat_choice')
         return _audienced_check_resolution(user_id, pending, reply_text=reply_text)
     if pending.get('type') != 'skill' or (skill_arg and not _skill_names_match(pending.get('skill', ''), skill_arg)):
         return _audienced_check_resolution(user_id, pending, reply_text='請使用目前待處理檢定的技能或檢定按鈕。')
@@ -1481,20 +1502,20 @@ def _resolve_managed_check(state: GroupState, user_id: str, text: str, pending: 
             state, pending_entry=decision, owner_id=user_id, result=result, final=False,
         )
         if not outcome.get('ok'):
-            save_state(state, reason='combat_check_paused')
+            state_transaction.commit_snapshot(state, reason='combat_check_paused')
             return _audienced_check_resolution(user_id, pending, reply_text=f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
         resource_bridge.record_control_receipt(state, decision, user_id, character, result, pending_luck=True)
-        save_state(state, reason='combat_check_luck')
+        state_transaction.commit_snapshot(state, reason='combat_check_luck')
         options_text = '、'.join(f"{o.tier}（{o.cost} 點）" for o in options)
         return _audienced_check_resolution(user_id, pending,
             reply_text=f"🎲 {character.name} 的 {pending['skill']} 擲出 {result.roll} → {_tier_zh_for_result(result)}。目前 Luck {character.luck}；可選 {options_text} 或 skip。",
             check_id=pending['check_id'], timeline_id=pending.get('timeline_id', ''), decision_id=decision['decision_id'])
     outcome = combat_flow.on_authoritative_check_result(state, pending_entry=pending, owner_id=user_id, result=result)
     if not outcome.get('ok'):
-        save_state(state, reason='combat_check_paused')
+        state_transaction.commit_snapshot(state, reason='combat_check_paused')
         return _audienced_check_resolution(user_id, pending, reply_text=f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
     resource_bridge.record_control_receipt(state, pending, user_id, character, result)
-    save_state(state, reason='combat_check')
+    state_transaction.commit_snapshot(state, reason='combat_check')
     return _managed_check_feedback(state, character, user_id, pending, result, outcome, before)
 
 
@@ -1554,10 +1575,10 @@ def _resolve_managed_luck(state: GroupState, user_id: str, choice: str, pending:
     state.pending_luck_decisions.pop(user_id, None)
     outcome = combat_flow.on_authoritative_check_result(state, pending_entry=pending, owner_id=user_id, result=result)
     if not outcome.get('ok'):
-        save_state(state, reason='combat_luck_paused')
+        state_transaction.commit_snapshot(state, reason='combat_luck_paused')
         return _audienced_check_resolution(user_id, pending, reply_text=f"Luck 決定與骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}")
     resource_bridge.record_control_receipt(state, pending, user_id, character, result, choice=choice)
-    save_state(state, reason='combat_luck')
+    state_transaction.commit_snapshot(state, reason='combat_luck')
     return _managed_check_feedback(state, character, user_id, pending, result, outcome, before, luck_spent=spent)
 
 
@@ -1601,7 +1622,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                     current_timeline_id=timeline_id,
                     owner_id_hash=observability.safe_identifier(user_id),
                 )
-                save_state(state)
+                state_transaction.commit_snapshot(state)
                 return _audienced_check_resolution(user_id, audience_entry, reply_text="這個檢定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         # Keep the original entry separate from `pending`: a valid choice
         # consumes the pending entry into the selected option, but its
@@ -1760,7 +1781,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 char.name, "理智檢定", f"SAN {san_before}", sanity_result.check.roll, outcome
             )
             resource_bridge.reconcile(state, char, event_id=f"{check_id}:resources", reason="Authoritative player check")
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
@@ -1844,7 +1865,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 char.name, "INT", str(value), skill_result.roll, tier_zh
             )
             resource_bridge.reconcile(state, char, event_id=f"{check_id}:resources", reason="Authoritative player check")
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             return _audienced_check_resolution(user_id, audience_entry,
                 state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
                 roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
@@ -1890,7 +1911,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
                 "consequences": (pending_entry or {}).get('consequences', []),
                 "medical_context": dict((pending_entry or {}).get("medical_context") or {}),
             }
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             options_text = "、".join(f"花 {o.cost} 點 Luck → {_CHECK_TIER_ZH[o.tier]}" for o in luck_options)
             dice_note = f"（獎勵骰x{bonus}）" if bonus else f"（懲罰骰x{penalty}）" if penalty else ""
             check_label = f"選擇「{display_label}」（{skill_name}）" if display_label is not None else f"「{skill_name}」"
@@ -1931,7 +1952,7 @@ def _resolve_check_deterministically(conversation_id: str, user_id: str, text: s
             char.name, display_label or skill_name, str(value), skill_result.roll, _tier_zh_for_result(skill_result), opposed_text
         )
         resource_bridge.reconcile(state, char, event_id=f"{check_id}:resources", reason="Authoritative player check")
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         return _audienced_check_resolution(user_id, audience_entry,
             state=state, char=char, roll_line=roll_line, keeper_message=keeper_message,
             roll_feedback_text=roll_feedback_text, keeper_header=keeper_header, should_finalize=True,
@@ -2059,7 +2080,7 @@ def _resolve_luck_decision_deterministically(
                 current_timeline_id=timeline_id,
                 owner_id_hash=observability.safe_identifier(user_id),
             )
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             return _audienced_check_resolution(user_id, audience_entry, reply_text="這個 Luck 決定所屬的劇情時間線已經失效，請依目前劇情重新操作。")
         decision_id = effective_decision_id(user_id, pending, timeline_id)
         # Keep the narration/result identity aligned with the persisted
@@ -2085,13 +2106,13 @@ def _resolve_luck_decision_deterministically(
             option = next((o for o in pending["options"] if o["tier"] == choice), None)
             if not option:
                 state.pending_luck_decisions[user_id] = pending  # not a valid option — put it back
-                save_state(state)
+                state_transaction.commit_snapshot(state)
                 options_text = "、".join(f"{o['tier']}（{o['cost']} 點）" for o in pending["options"])
                 return _audienced_check_resolution(user_id, audience_entry, reply_text=f"這不是有效的選項，可選：{options_text}、skip")
             luck_spent = option["cost"]
             if char.luck < luck_spent:
                 state.pending_luck_decisions[user_id] = pending
-                save_state(state)
+                state_transaction.commit_snapshot(state)
                 return _audienced_check_resolution(user_id, audience_entry, reply_text=f"目前 Luck 只有 {char.luck} 點，不足以花費 {luck_spent} 點。")
             char.luck -= luck_spent
             tier = choice
@@ -2127,7 +2148,7 @@ def _resolve_luck_decision_deterministically(
             ranged_opposed_text=ranged_opposed_text, is_counter=pending_is_counter,
         )
         resource_bridge.reconcile(state, char, event_id=f"{decision_id}:resources", reason="Authoritative Luck decision")
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         outcome_text = _tier_zh_for_tier(tier, required_tier)
         if luck_spent:
             result_line = f"花費 {luck_spent} 點幸運：{pending['roll']} → {outcome_text}"
@@ -2206,7 +2227,7 @@ def _map_position_snapshot(state: GroupState, user_id: str) -> tuple[str, str, s
 
 def _save_if_map_position_changed(state: GroupState, user_id: str, before: tuple[str, str, str]) -> None:
     if _map_position_snapshot(state, user_id) != before:
-        save_state(state)
+        state_transaction.commit_snapshot(state)
 
 
 def _resolve_map_action_transaction(conversation_id: str, user_id: str, text: str) -> dict | None:
@@ -2425,12 +2446,12 @@ async def handle_pregen_luck_roll(conversation_id: str, user_id: str, reply: Rep
     char = state.characters_by_id.get(character_id)
     if char is None:
         state.pending_pregen_luck.pop(user_id, None)
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         await reply("找不到等待擲 LUCK 的角色，請重新選擇預製角色。")
         return
     char.luck = pregen_extractor.roll_player_luck()
     state.pending_pregen_luck.pop(user_id, None)
-    save_state(state)
+    state_transaction.commit_snapshot(state)
     await reply(f"🎲 {char.name} 的 LUCK 擲骰結果：{char.luck}。現在可以開始遊戲了。")
 
 
@@ -2453,7 +2474,7 @@ def _set_character_away_state(conversation_id: str, user_id: str, away: bool) ->
             state.active_character_id_by_user[user_id] = char.character_id
         if state.characters.get(user_id) and state.characters[user_id].character_id == char.character_id:
             state.characters[user_id].away = away
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         return _AwayStateResult(character_name=char.name)
 
 

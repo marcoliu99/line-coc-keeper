@@ -31,6 +31,7 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,9 @@ _TABLES = (
     "group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
     "state_checkpoints", "scene_digests", "manual_pregen_assets", "narrative_correction_archive", "narrative_message_receipts",
     "scenario_template_jobs", "scenario_template_checkpoints", "scenario_template_preferences",
+    # Per-conversation action ledger written by app/repositories/state_transaction.py
+    # in the same SQLite transaction as the state row it belongs to.
+    "state_actions",
 )
 
 _SCHEMA = """
@@ -65,6 +69,34 @@ CREATE TABLE IF NOT EXISTS {table} (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 )
 """
+
+class NestedTransactionError(RuntimeError):
+    """A write was attempted on a second connection while a game-state
+    transaction holds SQLite's write lock. Waiting would only time out."""
+
+
+# Set by app/repositories/state_transaction.py for the duration of one game-state
+# mutation. Any other write opened in that window would block on SQLite's own
+# lock for the busy timeout and then fail, so it is refused immediately instead.
+_state_transaction_active: ContextVar[bool] = ContextVar("db_state_transaction_active", default=False)
+
+
+@contextmanager
+def state_transaction_scope() -> Iterator[None]:
+    token = _state_transaction_active.set(True)
+    try:
+        yield
+    finally:
+        _state_transaction_active.reset(token)
+
+
+def _refuse_nested_write(operation: str) -> None:
+    if _state_transaction_active.get():
+        raise NestedTransactionError(
+            f"{operation} was called inside a game-state transaction; "
+            "write through the transaction's own connection (ctx.conn) instead"
+        )
+
 
 _TRANSIENT_ROOTS = tuple(Path(path) for path in ("/tmp", "/var/tmp", "/private/tmp"))
 
@@ -153,6 +185,7 @@ def transaction() -> Iterator[sqlite3.Connection]:
     set_json once per character on top of once for the group state itself —
     N+1 separate connections (each paying its own PRAGMA overhead) for what
     is logically one atomic save."""
+    _refuse_nested_write("db.transaction")
     with observability.span("db.transaction", operation="transaction"), _connect() as conn:
         yield conn
 
@@ -204,6 +237,7 @@ def get_json(table: str, key: str) -> Any | None:
 
 def set_json(table: str, key: str, value: Any) -> None:
     """Upserts `value` (anything json.dumps can serialize) under `key`."""
+    _refuse_nested_write("db.set_json")
     with observability.span("db.write", operation="set_json", table=table):
         table = _validate_table(table)
         payload = json.dumps(value, ensure_ascii=False)
@@ -217,6 +251,7 @@ def set_json(table: str, key: str, value: Any) -> None:
 
 
 def delete_json(table: str, key: str) -> None:
+    _refuse_nested_write("db.delete_json")
     table = _validate_table(table)
     with _connect() as conn:
         _admit_delete(conn, table, key)

@@ -6,7 +6,7 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app import config, embedding_execution, memory_rag, observability, scenario_rag
 from app.agents import assistant
@@ -15,6 +15,7 @@ from app.domain.models import AgentMessage
 from app.models import GroupState
 from app.providers import registry
 from app.services import pending_buttons
+from tests.state_store import MemoryTransactions
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 
@@ -439,7 +440,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", MagicMock()):
+                MemoryTransactions(state).patched():
             await discord_bot._post_luck_buttons(
                 channel,
                 "discord-channel-1",
@@ -483,13 +484,13 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         }
         channel = SimpleNamespace()
         send = AsyncMock()
-        save = MagicMock()
+        memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save):
+                memory.patched():
             # Two overlapping callers, each with its own stale before-
             # snapshot captured before the decision existed — exactly what
             # a genuine race between two concurrent request-handling flows
@@ -498,7 +499,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
 
         send.assert_awaited_once()
-        save.assert_called_once()
+        self.assertEqual(memory.commits, 1)
 
     async def test_check_button_posted_only_once_when_two_overlapping_calls_race(self):
         from app import discord_bot
@@ -518,18 +519,18 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         state.pending_checks["123"] = {"type": "skill", "skill": "閃避", "skill_value": 30}
         channel = SimpleNamespace()
         send = AsyncMock()
-        save = MagicMock()
+        memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "CheckButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save):
+                memory.patched():
             await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
             await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
 
         send.assert_awaited_once()
-        save.assert_called_once()
+        self.assertEqual(memory.commits, 1)
 
     async def test_luck_button_still_posts_normally_for_a_single_non_overlapping_call(self):
         """Regression guard: the durable marker must not break the plain,
@@ -553,13 +554,13 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         }
         channel = SimpleNamespace()
         send = AsyncMock()
-        save = MagicMock()
+        memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save):
+                memory.patched():
             await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
 
         send.assert_awaited_once()
@@ -594,14 +595,14 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         state.pending_checks["123"] = {"type": "skill", "skill": "閃避", "skill_value": 30}
         channel = SimpleNamespace()
         send = AsyncMock()
-        save = MagicMock()
+        memory = MemoryTransactions(state)
         conversation_id = "discord-channel-1"
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "CheckButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save):
+                memory.patched():
             await discord_bot._post_check_buttons(channel, conversation_id, state, {})
 
         marked_entry = state.pending_checks["123"]
@@ -636,13 +637,13 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         }
         channel = SimpleNamespace()
         send = AsyncMock(side_effect=[RuntimeError("simulated Discord send failure"), None])
-        save = MagicMock()
+        memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
                 patch.object(discord_bot, "LuckSpendButton", FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save):
+                memory.patched():
             # First attempt: claim gets saved, then the send fails.
             await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
             self.assertNotIn("_buttons_posted", state.pending_luck_decisions.get("123", {}))
