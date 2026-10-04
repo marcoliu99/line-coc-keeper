@@ -37,6 +37,7 @@ _logger = logging.getLogger(__name__)
 # pages that actually caused a real in-game room-layout mistake had 53 and 70
 # chars each, comfortably past the old 40-char cutoff undetected.
 _LOW_TEXT_THRESHOLD = 200
+_INFORMATIONAL_WARNINGS = {"native_two_columns", "layout_unavailable", "local_ocr_repaired"}
 
 # A page with at least this many vector drawing primitives (lines, rectangles,
 # curves — pymupdf's page.get_drawings()) is treated as "probably graphic
@@ -432,6 +433,17 @@ def _repair_local_regions(page: pymupdf.Page, evidence: dict, pairs: list[dict],
     return text, attempts
 
 
+def _page_requires_review(row: dict, final_text: str) -> bool:
+    """Keep warning history, but review only problems unresolved in final text."""
+    verification = row.get('paddle_numeric_verification', {})
+    resolved = set(verification.get('warnings_resolved', [])) if verification.get('status') in {'confirmed', 'partial'} else set()
+    return any(
+        warning not in _INFORMATIONAL_WARNINGS and warning not in resolved
+        and (warning != "low_text" or len(final_text) < _LOW_TEXT_THRESHOLD)
+        for warning in row["warnings"]
+    )
+
+
 def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8, ai_repair_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
     """Return complete source, review pages, legacy truncation flag, images, maps.
 
@@ -570,6 +582,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
     review = []
     for i, text in enumerate(texts):
         row = report["pages"][i]
+        requires_review = _page_requires_review(row, text)
         unresolved = row["ai_repair"]["unresolved_labels"]
         if unresolved:
             text += "\n[PDF_UNRESOLVED_FIELDS: " + ",".join(unresolved) + "]"
@@ -578,8 +591,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
         row["selected_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if not text.strip():
             row["warnings"].append("empty_page")
-        resolved = set(row.get('paddle_numeric_verification', {}).get('warnings_resolved', []))
-        if any(w not in {"native_two_columns", "layout_unavailable"} | resolved for w in row["warnings"]):
+        if requires_review or not text.strip():
             review.append(i + 1)
         if i and pdf_quality.continuation(texts[i - 1], text):
             report["continuations"].append({"from_page": i, "to_page": i + 1, "status": "candidate"})

@@ -483,3 +483,79 @@ def test_low_text_page_skips_second_verification_inference():
     assert result['attempted'] is False
     assert result['warnings_unresolved'] == ['numeric_pair_review']
     paddle.assert_not_called()
+
+
+class PdfFinalReviewTests(unittest.TestCase):
+    def test_numeric_evidence_only_resolves_its_verified_warning(self):
+        row = {'warnings': ['native_two_columns', 'numeric_pair_review'],
+               'paddle_numeric_verification': {'status': 'confirmed',
+                                               'warnings_resolved': ['numeric_pair_review']}}
+        self.assertFalse(pdf_loader._page_requires_review(row, 'x' * 300))
+        row['paddle_numeric_verification']['status'] = 'inconclusive'
+        self.assertTrue(pdf_loader._page_requires_review(row, 'x' * 300))
+        row['paddle_numeric_verification']['status'] = 'confirmed'
+        row['warnings'].append('future_unknown_warning')
+        self.assertTrue(pdf_loader._page_requires_review(row, 'x' * 300))
+
+    def test_final_warning_classification_preserves_history(self):
+        cases = [
+            (['low_text'], 200, False),
+            (['low_text'], 199, True),
+            (['low_text', 'local_ocr_repaired'], 200, False),
+            (['local_ocr_repaired'], 200, False),
+            (['local_ocr_review'], 300, True),
+            (['numeric_pair_review'], 300, True),
+            (['ocr_evidence_loss'], 300, True),
+            (['vision_review_required'], 300, True),
+            (['native_two_columns'], 300, False),
+            (['layout_unavailable'], 300, False),
+            (['ambiguous_columns'], 300, True),
+            (['source_pair_unresolved'], 300, True),
+            (['layout_pair_mismatch'], 300, True),
+            (['layout_numeric_loss'], 300, True),
+            (['layout_text_loss'], 300, True),
+            (['ocr_pair_review'], 300, True),
+            (['ocr_pair_mismatch'], 300, True),
+            (['ai_fields_unresolved'], 300, True),
+            (['vision_failed'], 300, True),
+            (['vision_pair_review'], 300, True),
+            (['vision_pair_mismatch'], 300, True),
+            (['low_text', 'numeric_pair_review'], 300, True),
+            (['local_ocr_repaired', 'ocr_evidence_loss'], 300, True),
+            (['future_unknown_warning'], 300, True),
+            (['empty_page'], 0, True),
+        ]
+        for warnings, length, expected in cases:
+            with self.subTest(warnings=warnings, length=length):
+                row = {'warnings': warnings.copy()}
+                self.assertEqual(pdf_loader._page_requires_review(row, 'x' * length), expected)
+                self.assertEqual(row['warnings'], warnings)
+
+    def test_extract_text_uses_final_ocr_text_without_erasing_history(self):
+        native = 'source ' * 11
+        with pymupdf.open() as doc:
+            doc.new_page()
+            payload = doc.tobytes()
+        for repaired in (False, True):
+            for length in (199, 200, 250):
+                with self.subTest(repaired=repaired, length=length):
+                    final = native + 'x' * (length - len(native))
+                    report = {}
+                    repairs = [{'status': 'accepted'}] if repaired else []
+                    with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+                         patch.object(pdf_loader.pdf_quality, 'native_text', return_value=(native, [])), \
+                         patch.object(pdf_loader.pdf_layout, 'reorder_with_paddle', return_value=pdf_loader.pdf_layout.LayoutResult(reason='incomplete_mapping')), \
+                         patch.object(pdf_loader, '_repair_local_regions', return_value=(native, repairs)), \
+                         patch.object(pdf_loader, '_page_has_graphic_content', return_value=True), \
+                         patch.object(pdf_loader, '_render_page_png', return_value=b'png'), \
+                         patch.object(pdf_loader, '_markitdown_page_texts', return_value={1: final}), \
+                         patch.object(pdf_loader.pdf_ai_repair, 'repair_page', side_effect=lambda _page, _row, text, _budget: (text, {'regions': [], 'unresolved_labels': []})), \
+                         patch.object(pdf_loader, '_analyze_graphic_page', return_value=('', None)) as vision:
+                        text, review, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+                    self.assertIn(final, text)
+                    self.assertEqual(review, [1] if length < 200 else [])
+                    self.assertEqual(report['review_pages'], review)
+                    self.assertIn('low_text', report['pages'][0]['warnings'])
+                    self.assertEqual('local_ocr_repaired' in report['pages'][0]['warnings'], repaired)
+                    if length >= 200:
+                        vision.assert_not_called()
