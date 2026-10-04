@@ -216,6 +216,7 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 entered.set()
                 release.wait(timeout=2)
                 worker.process.start()
+                return True
 
         try:
             with patch.object(scenario_rag, "_PrewarmWorker", return_value=worker), \
@@ -232,6 +233,40 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
                 await asyncio.wait_for(shutdown, timeout=2)
                 self.assertIsNotNone(worker.exitcode)
+        finally:
+            release.set()
+            worker.stop()
+
+    async def test_shutdown_before_start_lock_prevents_late_child(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = multiprocessing.get_context("spawn").Process(
+            target=_sleep_in_worker, args=(10.0,)
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        original_start = worker.start
+
+        def delayed_before_lock():
+            entered.set()
+            try:
+                release.wait(timeout=2)
+                return original_start()
+            finally:
+                finished.set()
+
+        try:
+            with patch.object(scenario_rag, "_PrewarmWorker", return_value=worker), \
+                    patch.object(worker, "start", side_effect=delayed_before_lock), \
+                    patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
+                    patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", True):
+                scenario_rag.schedule_index_prewarm("g", "scenario")
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                await asyncio.wait_for(scenario_rag.shutdown_prewarm(), timeout=1)
+                release.set()
+                self.assertTrue(await asyncio.to_thread(finished.wait, 1))
+                self.assertIsNone(worker.process.pid)
+                self.assertIsNone(worker.exitcode)
         finally:
             release.set()
             worker.stop()

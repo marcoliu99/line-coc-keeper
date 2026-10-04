@@ -75,6 +75,7 @@ class _PrewarmWorker:
             target=_run_prewarm_index, args=(group_id, scenario_text)
         )
         self._start_stop_lock = threading.Lock()
+        self._stopping = False
         self._closed = False
         self._exitcode: int | None = None
 
@@ -90,9 +91,12 @@ class _PrewarmWorker:
                 self.process.close()
                 self._closed = True
 
-    def start(self) -> None:
+    def start(self) -> bool:
         with self._start_stop_lock:
+            if self._stopping:
+                return False
             self.process.start()
+            return True
 
     async def wait(self) -> None:
         while self.exitcode is None:
@@ -103,6 +107,7 @@ class _PrewarmWorker:
 
     def stop(self) -> bool:
         with self._start_stop_lock:
+            self._stopping = True
             if self._closed:
                 return True
             if self.process.pid is None:
@@ -158,7 +163,8 @@ async def _prewarm_index(group_id: str, scenario_text: str) -> None:
             # the grace period and, if necessary, terminates the child.
             worker = _PrewarmWorker(group_id, scenario_text)
             state.workers.add(worker)
-            await asyncio.to_thread(worker.start)
+            if not await asyncio.to_thread(worker.start):
+                return
             worker_task = asyncio.create_task(worker.wait())
             state.worker_tasks.add(worker_task)
             def release_finished(done: asyncio.Future[Any]) -> None:
