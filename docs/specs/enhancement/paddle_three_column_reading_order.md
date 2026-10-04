@@ -1,6 +1,6 @@
 # Conservative Paddle three-column native-text reading order
 
-Status: awaiting design review; production implementation has not started.
+Status: implemented after explicit user approval of this design and its public seams.
 
 ## Baseline and evidence
 
@@ -69,4 +69,10 @@ After approval, implement/test/commit/push, align with latest main_v2, open a no
 
 Final report covers the user's 37 items: baseline/final/branch, classification and exact ordering, page_05 before/after, positive/negative fixtures, unchanged two/single-column behavior, text/number/dice/SAN conservation, no new tools/model/OCR/gameplay, all checks, real evidence count/timing, scope and MERGE READY/HOLD. MERGE READY requires passing CI and no unresolved correctness findings.
 
-Review decision: approve this small shared-validation/three-column geometry branch and public test seams before production code is changed.
+Review decision: the user explicitly approved this design and public seams before production changes.
+
+## Implementation evidence
+
+The unchanged page_05 regression was observed RED (`fallback/not_two_columns`) before implementation and GREEN with exact frozen expected text afterward. Tests cover ordinary/title/image/unequal synthetic examples and the specified unsafe layouts, plus missing/duplicate/invalid model order independence. Real extract_text integration uses only an external model stub. All original two-column expected texts match byte for byte; the single-column and fault cases remain unchanged.
+
+Only app/pdf_layout.py changes production behavior; loader/OCR/setup/Python/gameplay code is untouched. Live CPU smoke uses the same five-page subset and locally cached weights with sockets blocked. Real three-column evidence is 0 pages: the successful three-column page is the existing synthetic fixture, not a production-corpus claim. Results and timings are in [results](paddle_three_column_reading_order_results.json).

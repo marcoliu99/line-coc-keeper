@@ -120,11 +120,11 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 
 Only the Discord bot entry point needs to run. Discord receives image attachments directly; no webhook, ngrok tunnel, or public image URL is required.
 
-### Optional two-column PDF reading order
+### Optional two/three-column PDF reading order
 
 With the existing optional Paddle dependencies on a supported Python interpreter (3.9–3.13), run `python scripts/setup_paddle_layout.py` once to download PP-DocLayoutV3. Set `PDF_PADDLE_LAYOUT_MODEL_DIR` for a different cache root; `PDF_PADDLE_LAYOUT_ENABLED=false` disables it. Normal extraction only loads local model files and never downloads them. Missing models/packages or uncertain layouts use the original flow, including on Python 3.14 where the official Paddle wheel is unavailable.
 
-Paddle predicts regions and reading order only: text remains native PyMuPDF text. Only completely mapped, clearly separated two-column pages are accepted. Single-column, three-column and uncertain pages retain the original flow. See the [implementation specification](docs/specs/enhancement/paddle_two_column_reading_order.md).
+Paddle predicts regions and reading order only: text remains native PyMuPDF text. Only completely mapped, clearly separated two- or three-column pages are accepted. Two-column pages retain their model-order checks; three-column body text uses region geometry to read full left, middle and right columns without Paddle order. Single-column, mixed-column and uncertain pages retain the original flow. See the [two-column specification](docs/specs/enhancement/paddle_two_column_reading_order.md) and [three-column extension](docs/specs/enhancement/paddle_three_column_reading_order.md).
 
 ### Token budgets and API admission
 

@@ -1,4 +1,4 @@
-"""Optional, conservative two-column ordering of native PDF text; never OCR."""
+"""Optional, conservative two/three-column ordering of native PDF text; never OCR."""
 from __future__ import annotations
 
 import logging
@@ -9,12 +9,13 @@ import time
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
+from statistics import median
 from typing import Any, Literal
 
 import pymupdf
 
 BBox = tuple[float, float, float, float]
-LayoutReason = Literal['two_columns', 'disabled', 'model_unavailable', 'backend_unavailable',
+LayoutReason = Literal['two_columns', 'three_columns', 'disabled', 'model_unavailable', 'backend_unavailable',
                        'unsupported_rotation', 'initialization_error', 'inference_error',
                        'malformed_result', 'not_two_columns', 'overlapping_regions',
                        'incomplete_mapping', 'ambiguous_mapping', 'invalid_order', 'content_mismatch', 'repair_required']
@@ -63,7 +64,7 @@ def _valid_box(box: BBox, width: float, height: float) -> bool:
 
 def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
                        width: float, height: float) -> LayoutResult:
-    """Return native text only for completely mapped, noninterleaved two columns."""
+    """Return native text only for completely mapped, safely separated two or three columns."""
     def fallback(reason: LayoutReason) -> LayoutResult:
         return LayoutResult(reason=reason)
 
@@ -75,11 +76,6 @@ def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
                           or region.label not in _TEXT | _IGNORED for region in regions):
         return fallback('malformed_result')
     eligible = [region for region in regions if region.label in _TEXT]
-    orders = [region.order for region in eligible if region.order is not None]
-    if (any(type(order) is not int or order < 1 for order in orders)
-            or len(set(orders)) != len(orders)
-            or any(region.order is None and region.label not in {'header'} | _FOOTERS for region in eligible)):
-        return fallback('invalid_order')
     for i, region in enumerate(eligible):
         for other in eligible[i + 1:]:
             if _intersection(region.bbox, other.bbox) / min(_area(region.bbox), _area(other.bbox)) > .5:
@@ -103,58 +99,84 @@ def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
             groups.append([i])
         else:
             groups[-1].append(i)
-    if len(groups) != 2:
+    column_count = len(groups)
+    if column_count not in {2, 3}:
         return fallback('not_two_columns')
+    if column_count == 2:
+        orders = [region.order for region in eligible if region.order is not None]
+        if (any(type(order) is not int or order < 1 for order in orders)
+                or len(set(orders)) != len(orders)
+                or any(region.order is None and region.label not in {'header'} | _FOOTERS for region in eligible)):
+            return fallback('invalid_order')
+
     intervals = [(min(eligible[i].bbox[0] for i in group), max(eligible[i].bbox[2] for i in group))
                  for group in groups]
-    if (intervals[1][0] - intervals[0][1] < .02 * width
+    if (any(intervals[i + 1][0] - intervals[i][1] < .02 * width for i in range(column_count - 1))
             or any(right - left < .15 * width for left, right in intervals)
-            or any(sum(len(assignments[i]) for i in group) < 2 for group in groups)):
+            or any(sum(len(assignments[i]) for i in group) < (3 if column_count == 3 else 2) for group in groups)):
         return fallback('not_two_columns')
+    if column_count == 3:
+        body_lines = [[line for i in group for line in assignments[i]] for group in groups]
+        line_height = median(line.bbox[3] - line.bbox[1] for column in body_lines for line in column)
+        bands = [(min(line.bbox[1] for line in column), max(line.bbox[3] for line in column))
+                 for column in body_lines]
+        heights = [bottom - top for top, bottom in bands]
+        tolerance_y = max(2 * line_height, .1 * max(heights))
+        if (min(heights) < 2 * line_height
+                or max(top for top, _ in bands) - min(top for top, _ in bands) > tolerance_y
+                or max(bottom for _, bottom in bands) - min(bottom for _, bottom in bands) > tolerance_y):
+            return fallback('not_two_columns')
     top = min(eligible[i].bbox[1] for i in body)
     bottom = max(eligible[i].bbox[3] for i in body)
     tolerance = .01 * width
+    vertical_tolerance = tolerance if column_count == 2 else 0.0
     columns: dict[int, int] = {}
     prefixes: list[int] = []
     suffixes: list[int] = []
     for i, region in enumerate(eligible):
         if not assignments[i]:
             continue
+        if (column_count == 3 and region.label in {'doc_title', 'paragraph_title', 'header'}
+                and region.bbox[3] <= top):
+            prefixes.append(i)
+            continue
         if region.label == 'header':
-            if region.bbox[3] > top + tolerance:
+            if region.bbox[3] > top + vertical_tolerance:
                 return fallback('invalid_order')
             prefixes.append(i)
             continue
         if region.label in _FOOTERS:
-            if region.bbox[1] < bottom - tolerance:
+            if region.bbox[1] < bottom - vertical_tolerance:
                 return fallback('invalid_order')
             suffixes.append(i)
             continue
         if region.label == 'doc_title':
-            if region.bbox[3] > top + tolerance:
+            if region.bbox[3] > top + vertical_tolerance:
                 return fallback('not_two_columns')
             prefixes.append(i)
             continue
         column = next((column for column, (left, right) in enumerate(intervals)
                        if region.bbox[0] >= left - tolerance and region.bbox[2] <= right + tolerance), None)
         if column is None:
-            if region.label == 'paragraph_title' and region.bbox[3] <= top + tolerance:
+            if region.label == 'paragraph_title' and region.bbox[3] <= top + vertical_tolerance:
                 prefixes.append(i)
                 continue
             return fallback('not_two_columns')
         columns[i] = column
-    ordered_regions = sorted(columns, key=lambda i: eligible[i].order or 0)
-    sequence = [columns[i] for i in ordered_regions]
-    if sequence != sorted(sequence) or set(sequence) != {0, 1}:
-        return fallback('invalid_order')
-    for column in (0, 1):
-        column_lines = [line for i in ordered_regions if columns[i] == column
-                        for line in sorted(assignments[i], key=lambda line: (line.bbox[1], line.bbox[0], line.id))]
-        if column_lines != sorted(column_lines, key=lambda line: (line.bbox[1], line.bbox[0], line.id)):
+    ordered_regions = (sorted(columns, key=lambda i: eligible[i].order or 0) if column_count == 2
+                       else sorted(columns, key=lambda i: (columns[i], eligible[i].bbox[1], eligible[i].bbox[0], i)))
+    if column_count == 2:
+        sequence = [columns[i] for i in ordered_regions]
+        if sequence != sorted(sequence) or set(sequence) != {0, 1}:
             return fallback('invalid_order')
+        for column in (0, 1):
+            column_lines = [line for i in ordered_regions if columns[i] == column
+                            for line in sorted(assignments[i], key=lambda line: (line.bbox[1], line.bbox[0], line.id))]
+            if column_lines != sorted(column_lines, key=lambda line: (line.bbox[1], line.bbox[0], line.id)):
+                return fallback('invalid_order')
     # Reject disconnected native horizontal bands inside a predicted column,
     # including staggered short labels. This veto never constructs extra columns.
-    for column in (0, 1):
+    for column in range(column_count):
         native = sorted((line for i in ordered_regions if columns[i] == column
                          for line in assignments[i]), key=lambda line: line.bbox[0])
         rightmost = native[0].bbox[2]
@@ -162,21 +184,29 @@ def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
             if line.bbox[0] - rightmost >= .02 * width:
                 return fallback('not_two_columns')
             rightmost = max(rightmost, line.bbox[2])
-    first = min(eligible[i].order or 0 for i in ordered_regions)
-    last = max(eligible[i].order or 0 for i in ordered_regions)
-    if (any(eligible[i].order is not None and (eligible[i].order or 0) >= first for i in prefixes)
-            or any(eligible[i].order is not None and (eligible[i].order or 0) <= last for i in suffixes)):
-        return fallback('invalid_order')
-    region_order = (sorted(prefixes, key=lambda i: eligible[i].bbox[1]) + ordered_regions
-                    + sorted(suffixes, key=lambda i: eligible[i].bbox[1]))
-    ordered = [line for i in region_order for line in sorted(assignments[i],
-               key=lambda line: (line.bbox[1], line.bbox[0], line.id))]
+    if column_count == 2:
+        first = min(eligible[i].order or 0 for i in ordered_regions)
+        last = max(eligible[i].order or 0 for i in ordered_regions)
+        if (any(eligible[i].order is not None and (eligible[i].order or 0) >= first for i in prefixes)
+                or any(eligible[i].order is not None and (eligible[i].order or 0) <= last for i in suffixes)):
+            return fallback('invalid_order')
+        region_order = (sorted(prefixes, key=lambda i: eligible[i].bbox[1]) + ordered_regions
+                        + sorted(suffixes, key=lambda i: eligible[i].bbox[1]))
+        ordered = [line for i in region_order for line in sorted(assignments[i],
+                   key=lambda line: (line.bbox[1], line.bbox[0], line.id))]
+    else:
+        line_key = lambda line: (line.bbox[1], line.bbox[0], line.id)
+        ordered = sorted((line for i in prefixes for line in assignments[i]), key=line_key)
+        for column in range(3):
+            ordered.extend(sorted((line for i in columns if columns[i] == column
+                                   for line in assignments[i]), key=line_key))
+        ordered.extend(sorted((line for i in suffixes for line in assignments[i]), key=line_key))
     if Counter(line.id for line in ordered) != Counter(line.id for line in lines):
         return fallback('content_mismatch')
     text = '\n'.join(line.text for line in ordered)
     if Counter(text.split()) != Counter(token for line in lines for token in line.text.split()):
         return fallback('content_mismatch')
-    return LayoutResult(text=text, status='accepted', reason='two_columns')
+    return LayoutResult(text=text, status='accepted', reason='three_columns' if column_count == 3 else 'two_columns')
 
 
 MODEL = 'PP-DocLayoutV3'
@@ -272,7 +302,7 @@ def reorder_with_paddle(page: pymupdf.Page, *, repair_required: bool = False) ->
                 raise ValueError('Invalid coordinates')
             bbox = (float(coordinates[0]) / sx, float(coordinates[1]) / sy,
                     float(coordinates[2]) / sx, float(coordinates[3]) / sy)
-            regions.append(LayoutRegion(box['label'], bbox, box['order']))
+            regions.append(LayoutRegion(box['label'], bbox, box.get('order')))
         result = order_native_lines(lines, regions, width=page.rect.width, height=page.rect.height)
     except ImportError:
         result = LayoutResult(reason='backend_unavailable')

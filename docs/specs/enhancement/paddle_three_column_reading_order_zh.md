@@ -1,6 +1,6 @@
 # 保守的 Paddle 三欄原生文字閱讀順序
 
-狀態：等待設計審閱，尚未開始 production implementation。
+狀態：使用者已明確核准本設計與 public seams，實作完成。
 
 ## Baseline 與證據
 
@@ -69,4 +69,10 @@ PDF 原生行 + PP-DocLayoutV3 區域
 
 最終回報使用者 37 項：baseline/final/branch、分類與順序、page_05 前後、正負 fixtures、雙／單欄不變、文字／數字／dice／SAN、無新工具／模型／OCR／gameplay、全部 checks、真實 evidence 數／時間、scope、MERGE READY/HOLD。MERGE READY 須 CI PASS 且無未解決 correctness finding。
 
-審閱決定：先核准這段共用檢查／三欄 geometry 分支與 public test seams，再修改 production code。
+審閱決定：使用者已明確核准共用檢查／三欄 geometry 分支與 public test seams。
+
+## 實作證據
+
+未修改的 page_05 regression 實作前確定 RED（fallback/not_two_columns），實作後 GREEN 且逐字符合原 expected text。測試涵蓋普通／標題／圖片／不等寬 synthetic 與指定不安全版面，以及缺少／重複／無效模型 order 不影響三欄。真正 extract_text integration 只 stub 外部模型。原雙欄 expected text 逐字相同；單欄及故障 fallback 不變。
+
+Production 只有 app/pdf_layout.py 行為改動；loader/OCR/setup/Python/gameplay 未修改。本機 CPU smoke 重用五頁 subset 與本機模型，封鎖 socket。真實三欄 evidence 為 0 頁：成功三欄來自既有 synthetic fixture，不宣稱 corpus production 已驗證。[結果與時間](paddle_three_column_reading_order_results.json)。

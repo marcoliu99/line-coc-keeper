@@ -1,0 +1,77 @@
+{
+  "subset_sha256": "362531220b2ad0d5d4479b6c5fed754de9a3660d6d1245727cd5127f0f4b322e",
+  "network_attempts": [],
+  "rows": [
+    {
+      "page": 1,
+      "status": "accepted",
+      "reason": "two_columns",
+      "initialization_seconds": 2.6972932499775197,
+      "inference_seconds": 1.2351166250009555,
+      "exact_expected_order": true,
+      "native_unchanged": true
+    },
+    {
+      "page": 2,
+      "status": "accepted",
+      "reason": "two_columns",
+      "initialization_seconds": 0.0,
+      "inference_seconds": 0.9406716249941383,
+      "exact_expected_order": true,
+      "native_unchanged": true
+    },
+    {
+      "page": 3,
+      "status": "accepted",
+      "reason": "two_columns",
+      "initialization_seconds": 0.0,
+      "inference_seconds": 0.959792457986623,
+      "exact_expected_order": true,
+      "native_unchanged": true
+    },
+    {
+      "page": 4,
+      "status": "fallback",
+      "reason": "not_two_columns",
+      "initialization_seconds": 0.0,
+      "inference_seconds": 0.9535285829915665,
+      "exact_expected_order": null,
+      "native_unchanged": true
+    },
+    {
+      "page": 5,
+      "status": "accepted",
+      "reason": "three_columns",
+      "initialization_seconds": 0.0,
+      "inference_seconds": 0.9515893749776296,
+      "exact_expected_order": true,
+      "native_unchanged": true
+    }
+  ],
+  "model_sha256": {
+    "inference.json": "2b68367c5b312a03de5a6e1642c597c8f95165a7e40cd59c6700cf4a5042f4fd",
+    "inference.pdiparams": "70bd316b0582769ec968829fd1feb1a6a58b7c941b938327e551b6b12b45c137",
+    "inference.yml": "506fcfac13b3b546ae40d7886b44126420f392adb694e3f8bb6a6286a1f90fdc"
+  },
+  "baseline_sha": "0e87e0670b2ec454609cc5ec63af943c0f736f01",
+  "real_three_column_evidence_pages": 0,
+  "three_column_evidence": "existing synthetic page_05; additional deterministic synthetic test builders",
+  "whole_page_ocr": false,
+  "new_models": false,
+  "new_runtime_dependencies": false,
+  "ocr_changed": false,
+  "loader_changed": false,
+  "gameplay_changed": false,
+  "environment": {
+    "live_cpu": "Python 3.11; PaddleOCR 3.7.0; PaddleX 3.7.2; PaddlePaddle 3.3.0",
+    "ci_local": "Python 3.14; external model stub only, real extract_text"
+  },
+  "checks": {
+    "targeted": "59 passed",
+    "pytest": "1989 passed, 1 skipped; 152 subtests passed",
+    "ruff": "PASS",
+    "mypy": "PASS: 128 source files",
+    "compileall": "PASS",
+    "diff_check": "PASS"
+  }
+}
