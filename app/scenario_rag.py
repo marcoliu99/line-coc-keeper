@@ -75,20 +75,36 @@ class _PrewarmWorker:
             target=_run_prewarm_index, args=(group_id, scenario_text)
         )
         self._start_stop_lock = threading.Lock()
+        self._closed = False
+        self._exitcode: int | None = None
+
+    @property
+    def exitcode(self) -> int | None:
+        return self._exitcode if self._closed else self.process.exitcode
+
+    def _close_finished(self) -> None:
+        with self._start_stop_lock:
+            if not self._closed and self.process.exitcode is not None:
+                self.process.join(timeout=0)
+                self._exitcode = self.process.exitcode
+                self.process.close()
+                self._closed = True
 
     def start(self) -> None:
         with self._start_stop_lock:
             self.process.start()
 
     async def wait(self) -> None:
-        while self.process.exitcode is None:
+        while self.exitcode is None:
             await asyncio.sleep(0.02)
-        self.process.join(timeout=0)
-        if self.process.exitcode != 0:
+        await asyncio.to_thread(self._close_finished)
+        if self.exitcode != 0:
             raise RuntimeError("prewarm worker exited unsuccessfully")
 
     def stop(self) -> bool:
         with self._start_stop_lock:
+            if self._closed:
+                return True
             if self.process.pid is None:
                 return True
             if self.process.exitcode is None:
@@ -99,7 +115,11 @@ class _PrewarmWorker:
                     self.process.join(timeout=0.5)
             else:
                 self.process.join(timeout=0)
-            return self.process.exitcode is not None
+            if self.process.exitcode is not None:
+                self._exitcode = self.process.exitcode
+                self.process.close()
+                self._closed = True
+            return self._closed
 
 
 @dataclass
@@ -141,7 +161,12 @@ async def _prewarm_index(group_id: str, scenario_text: str) -> None:
             await asyncio.to_thread(worker.start)
             worker_task = asyncio.create_task(worker.wait())
             state.worker_tasks.add(worker_task)
-            worker_task.add_done_callback(state.worker_tasks.discard)
+            def release_finished(done: asyncio.Future[Any]) -> None:
+                state.worker_tasks.discard(done)
+                if worker.exitcode is not None:
+                    state.workers.discard(worker)
+
+            worker_task.add_done_callback(release_finished)
             await asyncio.shield(worker_task)
             observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
         except asyncio.CancelledError:
@@ -212,7 +237,7 @@ async def shutdown_prewarm() -> None:
         raise
     finally:
         try:
-            for child in state.workers:
+            for child in tuple(state.workers):
                 if not await asyncio.to_thread(child.stop):
                     observability.event(
                         "rag.prewarm.shutdown_degraded", level=logging.ERROR,

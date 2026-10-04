@@ -74,10 +74,9 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             worker.stop()
             with self.assertRaises(RuntimeError):
                 await asyncio.wait_for(wait_task, timeout=0.5)
-            self.assertIsNotNone(worker.process.exitcode)
+            self.assertIsNotNone(worker.exitcode)
         finally:
-            if worker.process.pid is not None:
-                worker.stop()
+            worker.stop()
 
     async def test_completed_prewarm_worker_is_not_terminated(self):
         worker = scenario_rag._PrewarmWorker("g", "scenario")
@@ -91,7 +90,26 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             worker.stop()
         terminate.assert_not_called()
         kill.assert_not_called()
-        self.assertEqual(worker.process.exitcode, 0)
+        self.assertEqual(worker.exitcode, 0)
+
+    async def test_completed_prewarm_releases_process_handle_before_shutdown(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = multiprocessing.get_context("spawn").Process(
+            target=_sleep_in_worker, args=(0.01,)
+        )
+        with patch.object(scenario_rag, "_PrewarmWorker", return_value=worker), \
+                patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", True):
+            wrapper = scenario_rag.schedule_index_prewarm("g", "scenario")
+            self.assertIsNotNone(wrapper)
+            await asyncio.wait_for(wrapper, timeout=2)
+            await asyncio.sleep(0)
+            state = scenario_rag._prewarm_state(asyncio.get_running_loop())
+            self.assertNotIn(worker, state.workers)
+            self.assertEqual(worker.exitcode, 0)
+            with self.assertRaises(ValueError):
+                _ = worker.process.exitcode  # Process.close() released the handle.
+            await scenario_rag.shutdown_prewarm()
 
     def test_prewarm_worker_kills_child_if_terminate_does_not_finish(self):
         worker = scenario_rag._PrewarmWorker("g", "scenario")
@@ -113,6 +131,9 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             def kill(self):
                 self.kill_calls += 1
                 self.exitcode = -9
+
+            def close(self):
+                return None
 
         process = StubbornProcess()
         worker.process = process
@@ -161,7 +182,7 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await scenario_rag.shutdown_prewarm()
             elapsed = time.perf_counter() - started_at
             self.assertLess(elapsed, 0.5)
-            self.assertIsNotNone(worker.process.exitcode)
+            self.assertIsNotNone(worker.exitcode)
 
     async def test_cancelled_wrapper_leaves_child_for_shutdown_cleanup(self):
         context = multiprocessing.get_context("spawn")
@@ -178,9 +199,9 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
             wrapper.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await wrapper
-            self.assertIsNone(worker.process.exitcode)
+            self.assertIsNone(worker.exitcode)
             await scenario_rag.shutdown_prewarm()
-            self.assertIsNotNone(worker.process.exitcode)
+            self.assertIsNotNone(worker.exitcode)
 
     async def test_slow_process_start_does_not_block_event_loop_or_orphan_child(self):
         worker = scenario_rag._PrewarmWorker("g", "scenario")
@@ -210,11 +231,10 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(shutdown.done())
                 release.set()
                 await asyncio.wait_for(shutdown, timeout=2)
-                self.assertIsNotNone(worker.process.exitcode)
+                self.assertIsNotNone(worker.exitcode)
         finally:
             release.set()
-            if worker.process.pid is not None:
-                worker.stop()
+            worker.stop()
 
     async def test_disabled_prewarm_starts_no_child(self):
         with patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", False), \

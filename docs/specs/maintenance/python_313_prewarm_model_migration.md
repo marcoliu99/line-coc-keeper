@@ -10,13 +10,13 @@ Use one `multiprocessing.Process` for scenario prewarm, start it in a worker thr
 
 ## State and file contract
 
-No database or gameplay-state schema changes. The parent tracks the process and an async completion waiter. Cancellation leaves child ownership with `shutdown_prewarm`; the start/stop lock prevents shutdown from racing a spawn in progress. A normal exit reports `rag.prewarm.completed`; an unsuccessful exit reports `rag.prewarm.failed`. Shutdown keeps its grace period and `rag.prewarm.shutdown_degraded` event. If even `kill` does not finish, cancel the waiter so shutdown stays bounded.
+No database or gameplay-state schema changes. The parent tracks the process and an async completion waiter. A finished waiter joins and closes the process handle, then removes the worker from the active set. Cancellation leaves unfinished child ownership with `shutdown_prewarm`; the start/stop lock prevents shutdown from racing a spawn or close in progress. A normal exit reports `rag.prewarm.completed`; an unsuccessful exit reports `rag.prewarm.failed`. Shutdown keeps its grace period and `rag.prewarm.shutdown_degraded` event. If even `kill` does not finish, cancel the waiter so shutdown stays bounded.
 
 The migration CLI requires both destination paths. Its default sources are `~/.cache/line-coc-keeper/paddleocr` and `~/.cache/line-coc-keeper/paddle-layout`; source overrides are explicit. It reuses `app.pdf_ocr.models_ready()` and `app.pdf_layout.model_ready()`. It validates all paths and sources before writing, copies only named model directories to sibling staging directories, validates again, then renames each staged directory into place. A partial old destination is backed up and restored if publication fails. Overlapping paths are rejected. Complete destinations are no-ops. Sources remain unless `--remove-source` is explicit; even then only the named model directories are removed. The CLI never downloads models or edits `.env`.
 
 ## Validation
 
-Test responsive asyncio scheduling during a deliberately slow process start; normal completion, wrapper cancellation, grace timeout, termination, kill fallback, and bounded shutdown after failed kill. Test complete/incomplete sources, dry-run, idempotence, partial destination replacement, rollback, path overlap, source retention, and explicit deletion. Run full pytest on Python 3.13 and 3.14, plus ruff, mypy, compileall, diff-check, and Python 3.13 GitHub CI.
+Test responsive asyncio scheduling during a deliberately slow process start; normal completion and handle release before shutdown, wrapper cancellation, grace timeout, termination, kill fallback, and bounded shutdown after failed kill. Test complete/incomplete sources, dry-run, idempotence, partial destination replacement, rollback, path overlap, source retention, and explicit deletion. Run full pytest on Python 3.13 and 3.14, plus ruff, mypy, compileall, diff-check, and Python 3.13 GitHub CI.
 
 ## Tradeoff
 
