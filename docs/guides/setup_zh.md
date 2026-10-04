@@ -31,7 +31,14 @@ python scripts/migrate_paddle_models.py \
   --layout-dest /Users/marcoliu/data/paddle/paddle-layout
 ```
 
-預設從 `~/.cache/line-coc-keeper/paddleocr` 與 `~/.cache/line-coc-keeper/paddle-layout` 複製完整模型。若模型在別處，使用 `--ocr-source`、`--layout-source` 指定。script 不下載模型，且只有明確加 `--remove-source` 才刪除舊來源。搬移 OCR 後，可在 `.env` 設定 `PDF_PADDLE_OCR_ENABLED=true` 與 `PDF_PADDLE_MODEL_DIR=/Users/marcoliu/data/paddle/paddleocr`。若 OCR 模型缺失，需明確執行 `python scripts/setup_paddle_ocr.py --model-dir /Users/marcoliu/data/paddle/paddleocr`。目前分支尚無 Paddle layout setup 或 runtime 接點；script 可以準備 layout 模型檔，但本版 Bot 不會讀取 `PDF_PADDLE_LAYOUT_ENABLED` 或 `PDF_PADDLE_LAYOUT_MODEL_DIR`。
+預設從 `~/.cache/line-coc-keeper/paddleocr` 與 `~/.cache/line-coc-keeper/paddle-layout` 複製完整模型。若模型在別處，使用 `--ocr-source`、`--layout-source` 指定。script 不下載模型，且只有明確加 `--remove-source` 才刪除舊來源。若來源缺失，應另外明確執行 `python scripts/setup_paddle_ocr.py --model-dir /Users/marcoliu/data/paddle/paddleocr` 或 `python scripts/setup_paddle_layout.py --model-dir /Users/marcoliu/data/paddle/paddle-layout`，不要用 migration 下載。準備完成後，在 `.env` 設定：
+
+```dotenv
+PDF_PADDLE_OCR_ENABLED=true
+PDF_PADDLE_MODEL_DIR=/Users/marcoliu/data/paddle/paddleocr
+PDF_PADDLE_LAYOUT_ENABLED=true
+PDF_PADDLE_LAYOUT_MODEL_DIR=/Users/marcoliu/data/paddle/paddle-layout
+```
 
 ## 設定
 

@@ -31,7 +31,14 @@ python scripts/migrate_paddle_models.py \
   --layout-dest /Users/marcoliu/data/paddle/paddle-layout
 ```
 
-The script copies complete models from `~/.cache/line-coc-keeper/paddleocr` and `~/.cache/line-coc-keeper/paddle-layout` by default. Use `--ocr-source` or `--layout-source` if prepared models are elsewhere. It never downloads models and retains both sources unless `--remove-source` is specified. Set `PDF_PADDLE_OCR_ENABLED=true` and `PDF_PADDLE_MODEL_DIR=/Users/marcoliu/data/paddle/paddleocr` in `.env` after migration. If OCR models are missing, prepare them explicitly with `python scripts/setup_paddle_ocr.py --model-dir /Users/marcoliu/data/paddle/paddleocr`. This branch has no Paddle layout setup or runtime integration yet; the script can prepare layout files, but `PDF_PADDLE_LAYOUT_ENABLED` and `PDF_PADDLE_LAYOUT_MODEL_DIR` are not consumed by this version of the bot.
+The script copies complete models from `~/.cache/line-coc-keeper/paddleocr` and `~/.cache/line-coc-keeper/paddle-layout` by default. Use `--ocr-source` or `--layout-source` if prepared models are elsewhere. It never downloads models and retains both sources unless `--remove-source` is specified. If a source is missing, prepare it explicitly with `python scripts/setup_paddle_ocr.py --model-dir /Users/marcoliu/data/paddle/paddleocr` or `python scripts/setup_paddle_layout.py --model-dir /Users/marcoliu/data/paddle/paddle-layout` instead of running migration. After preparation, set in `.env`:
+
+```dotenv
+PDF_PADDLE_OCR_ENABLED=true
+PDF_PADDLE_MODEL_DIR=/Users/marcoliu/data/paddle/paddleocr
+PDF_PADDLE_LAYOUT_ENABLED=true
+PDF_PADDLE_LAYOUT_MODEL_DIR=/Users/marcoliu/data/paddle/paddle-layout
+```
 
 ## Configure
 

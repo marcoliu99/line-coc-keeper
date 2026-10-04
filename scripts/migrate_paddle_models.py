@@ -8,12 +8,6 @@ import tempfile
 from pathlib import Path
 
 
-def _layout_ready(root: Path, model_files: tuple[str, ...]) -> bool:
-    model = root / 'PP-DocLayoutV3'
-    return all((model / name).is_file() and (model / name).stat().st_size > 0
-               for name in model_files)
-
-
 def _stage(source: Path, destination: Path, models: tuple[str, ...], ready) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f'.{destination.name}.stage-', dir=destination.parent))
@@ -55,13 +49,15 @@ def migrate_models(
     *, dry_run: bool = False, remove_source: bool = False,
 ) -> None:
     # Importing this module does not import Paddle or prepare/download models.
-    from app.pdf_ocr import MODEL_FILES, MODELS, models_ready
+    from app.pdf_layout import MODEL as LAYOUT_MODEL
+    from app.pdf_layout import model_ready
+    from app.pdf_ocr import MODELS, models_ready
 
     plans = (
         ('OCR', ocr_source.expanduser().resolve(), ocr_dest.expanduser().resolve(),
          MODELS, models_ready, 'PDF_PADDLE_MODEL_DIR'),
         ('LAYOUT', layout_source.expanduser().resolve(), layout_dest.expanduser().resolve(),
-         ('PP-DocLayoutV3',), lambda root: _layout_ready(root, MODEL_FILES),
+         (LAYOUT_MODEL,), model_ready,
          'PDF_PADDLE_LAYOUT_MODEL_DIR'),
     )
     # Check every required source before creating either destination.
