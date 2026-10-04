@@ -16,6 +16,30 @@ cp .env.example .env
 
 The development requirements provide tests and profiling tools. Keep .env and runtime data out of Git.
 
+### Optional Paddle model migration on Python 3.13
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pip install -r requirements-pdf-ocr.txt
+python scripts/migrate_paddle_models.py --dry-run \
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
+python scripts/migrate_paddle_models.py \
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
+```
+
+The script copies complete models from `~/.cache/line-coc-keeper/paddleocr` and `~/.cache/line-coc-keeper/paddle-layout` by default. Both destination arguments are required. Use `--ocr-source` or `--layout-source` if prepared models are elsewhere. It never downloads models and retains both sources unless `--remove-source` is specified. If a source is missing, prepare it explicitly with `python scripts/setup_paddle_ocr.py --model-dir "$HOME/data/paddle/paddleocr"` or `python scripts/setup_paddle_layout.py --model-dir "$HOME/data/paddle/paddle-layout"` instead of running migration. After preparation, copy the absolute paths printed by the script into `.env`:
+
+```dotenv
+PDF_PADDLE_OCR_ENABLED=true
+PDF_PADDLE_MODEL_DIR=/absolute/path/to/paddle/paddleocr
+PDF_PADDLE_LAYOUT_ENABLED=true
+PDF_PADDLE_LAYOUT_MODEL_DIR=/absolute/path/to/paddle/paddle-layout
+```
+
 ## Configure
 
 Set LLM_PROVIDER to anthropic, gemini or openai and provide its corresponding API key. Consult .env.example and app/config.py for exact models and defaults. Current defaults include KEEPER_REASONING_EFFORT=medium, MAX_TOOL_ITERATIONS=5, HIGH_ITERATION_WATERMARK=4 and optional scenario prewarm off. OPENAI_HISTORY_TOKEN_BUDGET=4000 and OPENAI_HISTORY_MIN_TURNS=2 constrain selected history; adaptive admission defaults on, and stage output caps default 0. Restart the bot after changing environment configuration.

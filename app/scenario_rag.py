@@ -35,7 +35,6 @@ import multiprocessing
 import re
 import threading
 import time
-from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,27 +60,71 @@ from app.config import (
 _logger = logging.getLogger(__name__)
 
 
-def _create_prewarm_executor() -> Executor:
-    """Create an isolated worker process that can be terminated on shutdown.
-
-    ``asyncio.to_thread`` uses the event loop's default executor. Cancelling
-    its awaiter does not stop the thread, and ``asyncio.run`` waits for that
-    executor during loop teardown. A dedicated process gives prewarm work an
-    explicit termination boundary instead.
-    """
-    return ProcessPoolExecutor(
-        max_workers=1,
-        mp_context=multiprocessing.get_context("spawn"),
-    )
+def _run_prewarm_index(group_id: str, scenario_text: str) -> None:
+    try:
+        get_index(group_id, scenario_text)
+    except Exception:  # noqa: BLE001 - report failure via the child exit code.
+        raise SystemExit(1) from None
 
 
-def _stop_prewarm_executor(executor: Executor, *, terminate: bool) -> None:
-    if terminate and isinstance(executor, ProcessPoolExecutor):
-        terminate_workers = getattr(executor, "terminate_workers", None)
-        if callable(terminate_workers):
-            terminate_workers()
-            return
-    executor.shutdown(wait=not terminate, cancel_futures=True)
+class _PrewarmWorker:
+    """One low-priority index build with a public, bounded process shutdown."""
+
+    def __init__(self, group_id: str, scenario_text: str) -> None:
+        self.process = multiprocessing.get_context("spawn").Process(
+            target=_run_prewarm_index, args=(group_id, scenario_text)
+        )
+        self._start_stop_lock = threading.Lock()
+        self._stopping = False
+        self._closed = False
+        self._exitcode: int | None = None
+
+    @property
+    def exitcode(self) -> int | None:
+        return self._exitcode if self._closed else self.process.exitcode
+
+    def _close_finished(self) -> None:
+        with self._start_stop_lock:
+            if not self._closed and self.process.exitcode is not None:
+                self.process.join(timeout=0)
+                self._exitcode = self.process.exitcode
+                self.process.close()
+                self._closed = True
+
+    def start(self) -> bool:
+        with self._start_stop_lock:
+            if self._stopping:
+                return False
+            self.process.start()
+            return True
+
+    async def wait(self) -> None:
+        while self.exitcode is None:
+            await asyncio.sleep(0.02)
+        await asyncio.to_thread(self._close_finished)
+        if self.exitcode != 0:
+            raise RuntimeError("prewarm worker exited unsuccessfully")
+
+    def stop(self) -> bool:
+        with self._start_stop_lock:
+            self._stopping = True
+            if self._closed:
+                return True
+            if self.process.pid is None:
+                return True
+            if self.process.exitcode is None:
+                self.process.terminate()
+                self.process.join(timeout=0.1)
+                if self.process.exitcode is None:
+                    self.process.kill()
+                    self.process.join(timeout=0.5)
+            else:
+                self.process.join(timeout=0)
+            if self.process.exitcode is not None:
+                self._exitcode = self.process.exitcode
+                self.process.close()
+                self._closed = True
+            return self._closed
 
 
 @dataclass
@@ -89,7 +132,7 @@ class _PrewarmLoopState:
     semaphore: asyncio.Semaphore
     tasks: set[asyncio.Task]
     worker_tasks: set[asyncio.Future[Any]]
-    executor: Executor | None = None
+    workers: set[_PrewarmWorker] = field(default_factory=set)
 
 
 _prewarm_states: dict[asyncio.AbstractEventLoop, _PrewarmLoopState] = {}
@@ -99,7 +142,7 @@ def _prewarm_state(loop: asyncio.AbstractEventLoop) -> _PrewarmLoopState:
     state = _prewarm_states.get(loop)
     if state is None:
         state = _PrewarmLoopState(
-            semaphore=asyncio.Semaphore(SCENARIO_RAG_PREWARM_MAX_CONCURRENT),
+            semaphore=asyncio.Semaphore(min(SCENARIO_RAG_PREWARM_MAX_CONCURRENT, 1)),
             tasks=set(),
             worker_tasks=set(),
         )
@@ -110,25 +153,31 @@ def _prewarm_state(loop: asyncio.AbstractEventLoop) -> _PrewarmLoopState:
 async def _prewarm_index(group_id: str, scenario_text: str) -> None:
     loop = asyncio.get_running_loop()
     state = _prewarm_state(loop)
-    worker: asyncio.Future[Any] | None = None
+    worker_task: asyncio.Future[Any] | None = None
     async with state.semaphore:
         # Yield once so a just-finished upload can send its confirmation before
         # the optional, low-priority embedding work begins.
         await asyncio.sleep(0)
         try:
-            # Keep the worker shielded from cancellation of the low-priority
-            # wrapper. The dedicated process can be terminated if the index
-            # build outlives the configured shutdown grace period.
-            if state.executor is None:
-                state.executor = _create_prewarm_executor()
-            worker = loop.run_in_executor(state.executor, get_index, group_id, scenario_text)
-            state.worker_tasks.add(worker)
-            worker.add_done_callback(state.worker_tasks.discard)
-            await asyncio.shield(worker)
+            # Keep the child shielded from wrapper cancellation; shutdown owns
+            # the grace period and, if necessary, terminates the child.
+            worker = _PrewarmWorker(group_id, scenario_text)
+            state.workers.add(worker)
+            if not await asyncio.to_thread(worker.start):
+                return
+            worker_task = asyncio.create_task(worker.wait())
+            state.worker_tasks.add(worker_task)
+            def release_finished(done: asyncio.Future[Any]) -> None:
+                state.worker_tasks.discard(done)
+                if worker.exitcode is not None:
+                    state.workers.discard(worker)
+
+            worker_task.add_done_callback(release_finished)
+            await asyncio.shield(worker_task)
             observability.event("rag.prewarm.completed", rag_kind="scenario", status="success")
         except asyncio.CancelledError:
-            if worker is not None:
-                async_utils.observe_background_task(worker, operation="rag.prewarm")
+            if worker_task is not None:
+                async_utils.observe_background_task(worker_task, operation="rag.prewarm")
             observability.event("rag.prewarm.cancelled", level=logging.INFO, rag_kind="scenario")
             raise
         except Exception as exc:  # noqa: BLE001 - prewarm must never block scenario activation.
@@ -150,12 +199,11 @@ def schedule_index_prewarm(group_id: str, scenario_text: str) -> asyncio.Task | 
 
 
 async def shutdown_prewarm() -> None:
-    """Cancel wrappers and terminate a process worker beyond the grace period."""
+    """Cancel wrappers and stop child processes beyond the grace period."""
     loop = asyncio.get_running_loop()
     state = _prewarm_states.get(loop)
     if state is None:
         return
-    executor = state.executor
     pending: set[asyncio.Future[Any]] = set()
     try:
         tasks = tuple(state.tasks)
@@ -195,8 +243,17 @@ async def shutdown_prewarm() -> None:
         raise
     finally:
         try:
-            if executor is not None:
-                _stop_prewarm_executor(executor, terminate=bool(pending))
+            for child in tuple(state.workers):
+                if not await asyncio.to_thread(child.stop):
+                    observability.event(
+                        "rag.prewarm.shutdown_degraded", level=logging.ERROR,
+                        rag_kind="scenario", status="kill_timeout",
+                    )
+            if state.worker_tasks:
+                for worker in tuple(state.worker_tasks):
+                    if not worker.done():
+                        worker.cancel()
+                await asyncio.gather(*state.worker_tasks, return_exceptions=True)
         finally:
             _prewarm_states.pop(loop, None)
 
