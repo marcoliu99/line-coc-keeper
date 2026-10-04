@@ -4,7 +4,7 @@
 
 真正回歸在來源選擇，不在 OCR 引擎不足。PR92 後，一般 `select_text()` 的字詞覆蓋率會讓約 101 字的 native/layout 殘片否決《The Lightless Beacon》實體第 31 頁 4,233 字的 MarkItDown 候選。第 32、34、35、37、38、40、41 頁也有同類問題。「極少可用內容的 canonical ＋ review」不如「保留已知來源證據的豐富候選 ＋ review」。本設計只恢復這個狹窄選擇，不回到 PR30「有 OCR 文字就採用」。
 
-**已淘汰的設計：**目前 branch 已實作「新增 mechanics 必須由整頁 Paddle 逐項核對」，但真實八頁實驗中，Paddle 嚴格比對只確認 3/311，Tesseract 為 0/311。小範圍屬性診斷發現 Paddle 常能看到第一欄屬性值；問題是 MarkItDown 表格鍵與線性 OCR 文字的表示不相容。繼續建立全項跨格式 OCR verifier，會製造另一個難題，而非修正來源選擇。不要加入 Tesseract 投票、OCR ensemble 或第三個引擎。本次**只修改規格**；未經另一次明確實作授權，不修改目前 production code。
+**已淘汰的設計：**「新增 mechanics 必須由整頁 Paddle 逐項核對」已被真實八頁實驗否定：Paddle 嚴格比對只確認 3/311，Tesseract 為 0/311。小範圍屬性診斷發現 Paddle 常能看到第一欄屬性值；問題是 MarkItDown 表格鍵與線性 OCR 文字的表示不相容。繼續建立全項跨格式 OCR verifier，會製造另一個難題，而非修正來源選擇。不要加入 Tesseract 投票、OCR ensemble 或第三個引擎。
 
 ## 範圍與不處理事項
 
@@ -39,7 +39,7 @@ Promotion 必須同時滿足：
 
 新增或調整精簡 `rich_candidate_selection`：`attempted`、`status`、`reason`、`baseline_strength`、基線／候選字數、必要／保留來源項目數、數值／mechanics 衝突數、`source_preserved`、`candidate_extra_content_verified=false`。至少區分 `accepted`、`not_low_text_source`、`strong_baseline`、`candidate_too_short`、`source_content_loss`、`numeric_loss`、`pair_mismatch`、`mechanic_loss`、`insufficient_source_evidence`。不存完整來源語句、重複 OCR 全文，也不宣稱新增 mechanics 已驗證。舊品質報告缺少欄位仍可讀；不改 DB、API、publication 或遊戲 schema。
 
-目前已實作的 `rich_ocr_validation` 與強制 Paddle 路徑被**本設計取代**，但本次規格修訂不授權直接刪除。後續實作應移除 rich-candidate 專用 verifier dependency，且不增加本機 OCR 呼叫；原有獨立 Paddle/Tesseract 路徑完全保留。
+原本的 `rich_ocr_validation` 與強制 Paddle 路徑已被**本設計取代**；rich candidate 專用 verifier dependency 已移除，原有獨立 Paddle/Tesseract 路徑維持不變。
 
 ## 實作獲批准後的測試與真實驗證
 
@@ -50,3 +50,9 @@ Promotion 必須同時滿足：
 ## 待審核的取捨
 
 弱基線是不完整證據，不是完整 ground truth。同頁較豐富的候選可以提升可用性，卻不能證明每個新增數值正確；保留現有 review warning 可讓不確定性可見。硬邊界是**不得與已觀察到的必要來源矛盾**，包括數值、骰式、SAN、pair 與實質正文。產物分類或來源保留有疑義時，不升級。
+
+## 後續修正：直排字形與 mechanics 語法安全
+
+只有字母屬於同一狹窄文字 block、該 block 沒有其他無關行、字型與尺寸相容、x 座標對齊、y 座標單調且字形間距受限時，才把直排字母重建為語意來源。不得跨 block、欄或 caption／body 區域拼接。只有同一 PDF text span 在至少三個不同頁面重複出現、位於外側邊界、使用與正文隔離且明顯較大的展示字型，且來源字形座標能綁到該 span 時，才可判為裝飾。書名、頁碼、具體字詞或特定字型名稱都不能單獨決定結果。證據不足時保留為必要／不明來源，拒絕 promotion。
+
+先抽取完整 mechanics 語法，再做一般字詞標點正規化。骰式、加減修正、有順序的 SAN 損失及百分比在來源比較時保留運算符。大小寫與空白可以正規化；`1d6+2` 與 `1d6-2`、`1/1d6` 與 `0/1d6` 絕不等價。一般敘述的標點仍沿用既有比較規則。Promotion 仍保留 review warning，也不會把候選新增內容宣稱為已驗證。

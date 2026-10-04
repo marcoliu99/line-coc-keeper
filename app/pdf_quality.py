@@ -1,13 +1,23 @@
 """Conservative, local PDF evidence checks; these do not prove semantic fidelity."""
 from __future__ import annotations
 
+import hashlib
 import re
+import statistics
 from collections import Counter
 from typing import Any
 
-VERSION = 'ai-import-repair-v5'
+VERSION = 'ai-import-repair-v6'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
+_MECHANIC_ATOM = r'(?:\d+\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+)'
+_MECHANIC_EXPRESSION = re.compile(
+    rf'(?<!\w)(?:{_MECHANIC_ATOM}\s*/\s*{_MECHANIC_ATOM}|'
+    rf'\d+\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+(?:\.\d+)?\s*%)(?!\w)',
+    re.IGNORECASE,
+)
+_SOURCE_TOKEN = re.compile(rf'{_MECHANIC_EXPRESSION.pattern}|[\w]+', re.IGNORECASE | re.UNICODE)
+_VERTICAL_LETTERS = re.compile(r'(?:[A-Za-z]\s+){2,}[A-Za-z]')
 _RICH_ATOM = r'(?:\d+[dD]\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+)'
 _RICH_VALUE = rf'[+-]?{_RICH_ATOM}(?:\s*/\s*{_RICH_ATOM})?%?'
 _RICH_STAT = re.compile(
@@ -87,7 +97,12 @@ _PICTURE_MARKUP = re.compile(r'<!--\s*(?:start|end) of picture text\s*-->|<br\s*
 
 
 def _source_tokens(value: str) -> list[str]:
-    return _WORD.findall(value.casefold())
+    return [re.sub(r'\s+', '', match.group()).casefold() for match in _SOURCE_TOKEN.finditer(value)]
+
+
+def _mechanic_tokens(value: str) -> Counter[str]:
+    return Counter(re.sub(r'\s+', '', match.group()).casefold()
+                   for match in _MECHANIC_EXPRESSION.finditer(value))
 
 
 def _token_occurrences(haystack: list[str], needle: list[str]) -> int:
@@ -95,20 +110,74 @@ def _token_occurrences(haystack: list[str], needle: list[str]) -> int:
                for index in range(len(haystack) - len(needle) + 1))
 
 
-def _vertical_fragment(line: str, page_evidence: dict) -> bool:
+def _vertical_words(line: str, page_evidence: dict) -> list[dict] | None:
     letters = line.split()
-    if len(letters) < 3 or not all(len(letter) == 1 and letter.isalpha() for letter in letters):
-        return False
+    if not _VERTICAL_LETTERS.fullmatch(line):
+        return None
     words = page_evidence.get('words', [])
+    matches = []
     for start in range(len(words) - len(letters) + 1):
         part = words[start:start + len(letters)]
-        if [word['text'] for word in part] != letters:
+        if [word['text'] for word in part] == letters:
+            matches.append(part)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _vertical_fragment(line: str, page_evidence: dict) -> bool:
+    """Reconstruct semantic text only inside one coherent text container."""
+    part = _vertical_words(line, page_evidence)
+    if not part or len({word.get('block') for word in part}) != 1:
+        return False
+    containers = [block for block in page_evidence.get('blocks', []) if block['id'] == part[0]['block']]
+    if len(containers) != 1:
+        return False
+    container = containers[0]
+    if [item['text'].strip() for item in container['lines']] != [word['text'] for word in part]:
+        return False
+    fonts = {word.get('font') for word in part}
+    sizes = [word.get('font_size') for word in part]
+    if len(fonts) != 1 or None in fonts or any(not isinstance(size, (int, float)) or size <= 0
+                                               for size in sizes):
+        return False
+    size_values = [float(size) for size in sizes if isinstance(size, (int, float))]
+    if max(size_values) > min(size_values) * 1.1:
+        return False
+    if container['bbox'][2] - container['bbox'][0] > max(size_values) * 2:
+        return False
+    return (max(word['bbox'][0] for word in part) - min(word['bbox'][0] for word in part)
+            <= max(4, min(size_values) * .2)
+            and all(part[index + 1]['line'] > part[index]['line']
+                    and 0 <= part[index + 1]['bbox'][1] - part[index]['bbox'][3] <= min(size_values)
+                    for index in range(len(part) - 1)))
+
+
+def _decorative_vertical_fragment(line: str, page_evidence: dict) -> bool:
+    """Require repeated margin placement, isolated display font and source binding."""
+    part = _vertical_words(line, page_evidence)
+    if not part:
+        return False
+    repeated = set(page_evidence.get('repeated_vertical_signatures', []))
+    joined = ''.join(line.split()).casefold()
+    for span in page_evidence.get('vertical_spans', []):
+        if (span['signature'] not in repeated or span['joined'] != joined
+                or not span['margin'] or not span['large'] or span['body_font_used']):
             continue
-        if (max(word['bbox'][0] for word in part) - min(word['bbox'][0] for word in part) < 4
-                and all(part[index + 1]['bbox'][1] > part[index]['bbox'][3]
-                        for index in range(len(part) - 1))):
+        x0, y0, x1, y1 = span['bbox']
+        if all(word.get('font') == span['font']
+               and isinstance(word.get('font_size'), (int, float))
+               and abs(word['font_size'] - span['size']) <= span['size'] * .1
+               and x0 - 2 <= word['bbox'][0] and word['bbox'][2] <= x1 + 2
+               and y0 - 2 <= word['bbox'][1] and word['bbox'][3] <= y1 + 2 for word in part):
             return True
     return False
+
+
+def _vertical_fragment_role(line: str, page_evidence: dict) -> str | None:
+    if not _VERTICAL_LETTERS.fullmatch(line):
+        return None
+    if _decorative_vertical_fragment(line, page_evidence):
+        return 'decorative'
+    return 'semantic' if _vertical_fragment(line, page_evidence) else 'ambiguous'
 
 
 def _isolated_folio(line: str, page_evidence: dict) -> bool:
@@ -142,6 +211,7 @@ def select_rich_ocr_candidate(baseline: str, candidate: str, pairs: list[dict],
         return reject('mechanic_loss')
 
     required: list[str] = []
+    ambiguous_vertical = False
     for original in baseline.splitlines():
         line = _PICTURE_MARKUP.sub('', original).strip().strip('#*_`| ').strip()
         if line != original.strip() and _PICTURE_MARKUP.search(original):
@@ -152,13 +222,22 @@ def select_rich_ocr_candidate(baseline: str, candidate: str, pairs: list[dict],
             result['excluded_fragments'].append('decoration')
         elif _isolated_folio(line, page_evidence):
             result['excluded_fragments'].append('folio')
-        elif _vertical_fragment(line, page_evidence):
-            # Geometry proves the spacing is an artifact, not that the joined
-            # word (which may be a name) is dispensable source.
-            result['excluded_fragments'].append('vertical_spacing')
-            required.append(''.join(line.split()))
         else:
-            required.append(line)
+            role = _vertical_fragment_role(line, page_evidence)
+            if role == 'decorative':
+                result['excluded_fragments'].append('decorative_vertical_glyph')
+            elif role == 'semantic':
+                # Geometry proves the spacing is an artifact, not that the joined
+                # word (which may be a name) is dispensable source.
+                result['excluded_fragments'].append('vertical_spacing')
+                required.append(''.join(line.split()))
+            elif role == 'ambiguous':
+                ambiguous_vertical = True
+            else:
+                required.append(line)
+
+    if ambiguous_vertical:
+        return reject('insufficient_source_evidence')
 
     # A short coherent sentence is source, not a weak parser remnant.
     if any(len(_source_tokens(line)) >= 4 and re.search(r'[a-z][a-z]', line) for line in required):
@@ -188,6 +267,11 @@ def select_rich_ocr_candidate(baseline: str, candidate: str, pairs: list[dict],
     if conflicting:
         result['mechanics_conflicts'] = conflicting
         return reject('pair_mismatch')
+    required_mechanics = _mechanic_tokens('\n'.join(required))
+    missing_mechanics = required_mechanics - _mechanic_tokens(candidate)
+    if missing_mechanics:
+        result['mechanics_conflicts'] = missing_mechanics.total()
+        return reject('mechanic_loss')
     candidate_tokens = _source_tokens(candidate)
     seen_lines: Counter[tuple[str, ...]] = Counter()
     for line in required:
@@ -222,16 +306,62 @@ _VALUE = re.compile(r'^[+-]?\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?(?:/\d+)*$')
 def block_evidence(page: Any) -> dict:
     """Keep native coordinates independently of whichever text parser wins."""
     blocks = []
+    line_styles = {}
     for block in page.get_text('dict', flags=0)['blocks']:
         if block.get('type') != 0:
             continue
-        lines = [{'bbox': list(line['bbox']), 'text': ''.join(span['text'] for span in line['spans'])}
-                 for line in block.get('lines', [])]
+        lines = []
+        for index, line in enumerate(block.get('lines', [])):
+            styles = {(span['font'], round(span['size'], 2)) for span in line['spans']}
+            if len(styles) == 1:
+                line_styles[(block['number'], index)] = next(iter(styles))
+            lines.append({'bbox': list(line['bbox']), 'text': ''.join(span['text'] for span in line['spans'])})
         blocks.append({'id': block['number'], 'bbox': list(block['bbox']), 'lines': lines})
-    words = [{'bbox': list(w[:4]), 'text': w[4], 'block': w[5], 'line': w[6], 'word': w[7]}
+    words = [{'bbox': list(w[:4]), 'text': w[4], 'block': w[5], 'line': w[6], 'word': w[7],
+              'font': line_styles.get((w[5], w[6]), (None, None))[0],
+              'font_size': line_styles.get((w[5], w[6]), (None, None))[1]}
              for w in page.get_text('words')]
+    try:
+        traces = page.get_texttrace()
+    except (AttributeError, RuntimeError, ValueError):
+        traces = []
+    width, height = page.cropbox.width, page.cropbox.height
+    body = [span for span in traces if span['bbox'][0] >= width * .12
+            and span['bbox'][2] <= width * .88]
+    body_fonts = {span['font'] for span in body}
+    body_size = statistics.median(span['size'] for span in body) if body else None
+    vertical_spans = []
+    for span in traces:
+        raw = ''.join(chr(char[0]) for char in span['chars'] if 0 <= char[0] <= 0x10ffff).strip()
+        if not _VERTICAL_LETTERS.fullmatch(raw):
+            continue
+        x0, y0, x1, y1 = span['bbox']
+        if y1 - y0 < (x1 - x0) * 2:
+            continue
+        joined = ''.join(raw.split()).casefold()
+        position = tuple(round(value / bound, 3) for value, bound in zip(
+            (x0, y0, x1, y1), (width, height, width, height), strict=True))
+        identity = f"{joined}|{span['font']}|{span['size']:.2f}|{position}"
+        vertical_spans.append({'joined': joined, 'font': span['font'], 'size': span['size'],
+                               'bbox': list(span['bbox']),
+                               'signature': hashlib.sha256(identity.encode()).hexdigest()[:20],
+                               'margin': x1 <= width * .12 or x0 >= width * .88,
+                               'large': bool(body_size and span['size'] >= body_size * 1.5),
+                               'body_font_used': span['font'] in body_fonts})
     return {'width': page.cropbox.width, 'height': page.cropbox.height, 'rotation': page.rotation,
-            'coordinate_space': 'unrotated PyMuPDF page coordinates', 'blocks': blocks, 'words': words}
+            'coordinate_space': 'unrotated PyMuPDF page coordinates', 'blocks': blocks, 'words': words,
+            'vertical_spans': vertical_spans}
+
+
+def bind_repeated_vertical_evidence(pages: list[dict]) -> None:
+    """Bind only signatures repeated on distinct pages; never infer from one page."""
+    counts: Counter[str] = Counter()
+    for row in pages:
+        counts.update({span['signature'] for span in row['evidence'].get('vertical_spans', [])})
+    for row in pages:
+        evidence = row['evidence']
+        evidence['repeated_vertical_signatures'] = [span['signature'] for span in evidence.get('vertical_spans', [])
+                                                    if counts[span['signature']] >= 3]
 
 
 def numeric_pairs(evidence: dict) -> list[dict]:

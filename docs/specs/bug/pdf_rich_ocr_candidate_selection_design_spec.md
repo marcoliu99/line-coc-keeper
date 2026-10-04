@@ -4,7 +4,7 @@
 
 The regression is source selection, not a missing OCR engine. Since PR92, ordinary `select_text()` word coverage can let a roughly 101-character native/layout remnant veto a 4,233-character MarkItDown candidate on Lightless Beacon physical page 31. Pages 32, 34, 35, 37, 38, 40, and 41 show the same pattern. A richer canonical source with a review warning can be more useful than a tiny canonical remnant with that warning. This design restores that narrow choice without returning to PR30's unconditional OCR selection.
 
-**Superseded design:** mandatory whole-page Paddle corroboration of every newly introduced mechanic, currently implemented on this branch, is rejected after the eight-page experiment. Strict Paddle comparison confirmed 3/311 candidate mechanics; Tesseract confirmed 0/311. A bounded stat diagnostic found Paddle could see many first-column characteristic values, but MarkItDown table keys and linear OCR text used incompatible representations. Building an all-item cross-format OCR verifier would create another problem rather than repair the source-selection regression. Do not add Tesseract voting, an OCR ensemble, or another engine. This revision is specification only; production code remains unchanged until implementation is explicitly approved.
+**Superseded design:** mandatory whole-page Paddle corroboration of every newly introduced mechanic was rejected after the eight-page experiment. Strict Paddle comparison confirmed 3/311 candidate mechanics; Tesseract confirmed 0/311. A bounded stat diagnostic found Paddle could see many first-column characteristic values, but MarkItDown table keys and linear OCR text used incompatible representations. Building an all-item cross-format OCR verifier would create another problem rather than repair the source-selection regression. Do not add Tesseract voting, an OCR ensemble, or another engine.
 
 ## Scope and non-goals
 
@@ -39,7 +39,7 @@ When accepted, select the existing MarkItDown candidate as canonical and set `me
 
 Add or adapt compact `rich_candidate_selection` evidence: `attempted`, `status`, `reason`, `baseline_strength`, baseline/candidate character counts, required/preserved source item counts, numeric/mechanics conflicts, `source_preserved`, and `candidate_extra_content_verified=false`. Statuses include `accepted`, `not_low_text_source`, `strong_baseline`, `candidate_too_short`, `source_content_loss`, `numeric_loss`, `pair_mismatch`, `mechanic_loss`, and `insufficient_source_evidence`. Do not store complete source prose or duplicate OCR text, or call new candidate mechanics verified. Old quality reports without this field remain readable; there is no DB, API, publication, or gameplay schema change.
 
-The currently implemented `rich_ocr_validation` and mandatory Paddle branch are **superseded**, not removed by this spec-only revision. Implementation should remove the rich-candidate-only verifier dependency and avoid increasing local OCR calls while retaining all independent pre-existing Paddle/Tesseract paths.
+The former `rich_ocr_validation` and mandatory Paddle branch are **superseded**. The rich-candidate-only verifier dependency was removed without changing independent pre-existing Paddle/Tesseract paths.
 
 ## Tests and real validation after implementation approval
 
@@ -50,3 +50,9 @@ For the private 43-page Lightless Beacon PDF, verify SHA-256 `14437ca4eca3b6c05b
 ## Tradeoff for review
 
 A weak baseline is incomplete evidence, not complete ground truth. A richer same-page candidate can improve usability without proving every new value correct; retaining the review warning exposes that uncertainty. The hard boundary is **no contradiction of observable required source**, including numeric, dice, SAN, pair, and substantive prose evidence. If artifact classification or source preservation is ambiguous, do not promote.
+
+## Follow-up: vertical glyph and mechanics syntax safety
+
+Vertical letters are reconstructed as semantic source only when their words belong to one narrow text block containing no unrelated lines, share a font and compatible size, align in x, rise monotonically in y, and have bounded inter-glyph gaps. Separate blocks, columns, or caption/body regions cannot be joined. A vertical sequence may instead be classified as decorative only when the same PDF text span recurs on at least three distinct pages in an outer margin, uses an isolated display font substantially larger than the body font, and its source words bind to that span's coordinates. No book title, page number, word, or font name decides the outcome. Unproved vertical sequences remain required/ambiguous and fail closed.
+
+Mechanics syntax is extracted before ordinary word punctuation normalization. Complete dice expressions, modifiers, ordered SAN loss, and percentages retain their operators during source comparison. Case and whitespace may normalize; `1d6+2` and `1d6-2`, or `1/1d6` and `0/1d6`, cannot compare equal. Ordinary prose punctuation remains under the existing source comparison policy. Promotion still preserves review warnings and never certifies newly introduced candidate content.

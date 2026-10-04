@@ -587,6 +587,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                                       "initialization_seconds": paddle_layout.initialization_seconds,
                                                       "inference_seconds": paddle_layout.inference_seconds},
                                     "candidates": {"native": native, "layout": layout_text}})
+        pdf_quality.bind_repeated_vertical_evidence(report["pages"])
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None

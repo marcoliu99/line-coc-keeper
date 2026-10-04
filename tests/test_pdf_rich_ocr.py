@@ -13,14 +13,17 @@ FILLER = 'Additional background and form details. ' * 9
 
 def _evidence(*, vertical: bool = False, folio: bool = False) -> dict:
     words = []
+    blocks = []
     if vertical:
-        words.extend({'text': letter, 'bbox': [20, 40 + i * 20, 25, 50 + i * 20],
-                      'block': 0, 'line': i, 'word': 0}
+        words.extend({'text': letter, 'bbox': [20, 40 + i * 12, 25, 50 + i * 12],
+                      'block': 0, 'line': i, 'word': 0, 'font': 'Body', 'font_size': 12}
                      for i, letter in enumerate('Name'))
+        blocks.append({'id': 0, 'bbox': [20, 40, 25, 86],
+                       'lines': [{'text': letter} for letter in 'Name']})
     if folio:
         words.append({'text': '31', 'bbox': [20, 740, 30, 750],
                       'block': 1, 'line': 0, 'word': 0})
-    return {'height': 774, 'words': words, 'blocks': []}
+    return {'height': 774, 'words': words, 'blocks': blocks}
 
 
 def _select(baseline: str, candidate: str, *, evidence: dict | None = None) -> dict:
@@ -52,6 +55,84 @@ def test_vertical_name_is_not_discarded_with_its_spacing():
                    evidence=_evidence(vertical=True))['status'] == 'source_content_loss'
 
 
+def test_coherent_vertical_chapter_is_preserved_as_semantic_source():
+    letters = 'CHAPTER'
+    evidence = {'words': [{'text': letter, 'bbox': [20, 40 + i * 12, 25, 50 + i * 12],
+                           'block': 0, 'line': i, 'font': 'Body', 'font_size': 12}
+                          for i, letter in enumerate(letters)],
+                'blocks': [{'id': 0, 'bbox': [20, 40, 25, 122],
+                            'lines': [{'text': letter} for letter in letters]}]}
+    assert pdf_quality._vertical_fragment('C H A P T E R', evidence)
+    assert _select('C H A P T E R', 'STR 60\n' + FILLER,
+                   evidence=evidence)['status'] == 'source_content_loss'
+
+
+def test_vertical_letters_across_distant_blocks_are_not_reconstructed():
+    evidence = _evidence(vertical=True)
+    for index, word in enumerate(evidence['words']):
+        word['block'] = index
+        word['bbox'] = [20, 40 + index * 180, 25, 50 + index * 180]
+    assert not pdf_quality._vertical_fragment('N a m e', evidence)
+
+
+def test_vertical_letters_in_separate_nearby_blocks_are_not_reconstructed():
+    evidence = _evidence(vertical=True)
+    for index, word in enumerate(evidence['words']):
+        word['block'] = index
+    assert not pdf_quality._vertical_fragment('N a m e', evidence)
+
+
+def test_vertical_letters_cannot_cross_columns_or_regions():
+    evidence = _evidence(vertical=True)
+    evidence['words'][2]['bbox'] = [300, 64, 305, 74]
+    assert not pdf_quality._vertical_fragment('N a m e', evidence)
+    evidence = _evidence(vertical=True)
+    evidence['words'][2]['font'] = 'Caption'
+    assert not pdf_quality._vertical_fragment('N a m e', evidence)
+    evidence = _evidence(vertical=True)
+    evidence['blocks'][0]['lines'].append({'text': 'Body text'})
+    assert not pdf_quality._vertical_fragment('N a m e', evidence)
+
+
+def test_repeated_decorative_vertical_glyphs_are_not_semantic_source():
+    evidence = _evidence(vertical=True)
+    for word in evidence['words']:
+        word['font'] = 'Display'
+    signature = 'repeated-art'
+    evidence['vertical_spans'] = [{'joined': 'name', 'signature': signature,
+                                   'font': 'Display', 'size': 12,
+                                   'margin': True, 'large': True, 'body_font_used': False,
+                                   'bbox': [18, 35, 30, 90]}]
+    evidence['repeated_vertical_signatures'] = [signature]
+    result = _select('N a m e', 'STR 60\n' + FILLER, evidence=evidence)
+    assert result['status'] == 'accepted'
+    assert result['excluded_fragments'] == ['decorative_vertical_glyph']
+
+
+def test_decorative_classification_needs_all_structural_signals():
+    evidence = _evidence(vertical=True)
+    for word in evidence['words']:
+        word['font'] = 'Display'
+    evidence['vertical_spans'] = [{'joined': 'name', 'signature': 'art',
+                                   'font': 'Display', 'size': 12,
+                                   'margin': True, 'large': True, 'body_font_used': False,
+                                   'bbox': [18, 35, 30, 90]}]
+    assert _select('N a m e', 'STR 60\n' + FILLER, evidence=evidence)['status'] == 'source_content_loss'
+
+
+def test_decorative_signature_must_repeat_on_distinct_pages():
+    pages = [{'evidence': {'vertical_spans': [{'signature': 'art'}]}} for _ in range(2)]
+    pdf_quality.bind_repeated_vertical_evidence(pages)
+    assert all(not row['evidence']['repeated_vertical_signatures'] for row in pages)
+    pages.append({'evidence': {'vertical_spans': [{'signature': 'art'}]}})
+    pdf_quality.bind_repeated_vertical_evidence(pages)
+    assert all(row['evidence']['repeated_vertical_signatures'] == ['art'] for row in pages)
+
+
+def test_normal_horizontal_name_is_preserved():
+    assert _select('Name', 'STR 60\n' + FILLER)['status'] == 'strong_baseline'
+
+
 def test_ambiguous_folio_number_is_not_discarded():
     evidence = _evidence(folio=True)
     evidence['words'].append({'text': '31', 'bbox': [50, 300, 60, 310]})
@@ -73,6 +154,36 @@ def test_ambiguous_folio_number_is_not_discarded():
 ])
 def test_source_preservation(baseline: str, candidate: str, status: str):
     assert _select(baseline, candidate)['status'] == status
+
+
+@pytest.mark.parametrize('changed', ['1d6-2', '1d6+1', '1d8+2', '2d6+2'])
+def test_unbound_dice_operator_and_value_are_mechanics(changed: str):
+    result = _select('31\nRoll 1d6+2!', f'Roll {changed}!\n' + FILLER,
+                     evidence=_evidence(folio=True))
+    assert result['status'] == 'mechanic_loss'
+
+
+@pytest.mark.parametrize(('original', 'changed'), [
+    ('1d6', '1d8'), ('2d6', '1d6'), ('SAN 1/1D6', 'SAN 0/1D6'),
+    ('SAN 1/1D6', 'SAN 1/1D4'), ('STR 60', 'STR 50'),
+])
+def test_known_mechanics_changes_reject(original: str, changed: str):
+    result = _select('31\n' + original, changed + '\n' + FILLER,
+                     evidence=_evidence(folio=True))
+    assert result['status'] in {'mechanic_loss', 'pair_mismatch'}
+
+
+def test_mechanics_case_and_whitespace_are_safe_with_added_content():
+    result = _select('31\nRoll 1D6 + 2!\nSAN 1 / 1D6',
+                     'Roll 1d6+2!\nSAN 1/1d6\n' + FILLER,
+                     evidence=_evidence(folio=True))
+    assert result['status'] == 'accepted'
+
+
+def test_ordinary_prose_terminal_punctuation_is_not_new_mechanic():
+    result = _select('31\nDoor open.', 'Door open\n' + FILLER,
+                     evidence=_evidence(folio=True))
+    assert result['status'] == 'accepted'
 
 
 def test_pair_binding_cannot_be_overridden_by_rich_candidate():
