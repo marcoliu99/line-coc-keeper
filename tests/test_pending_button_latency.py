@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app import discord_bot, locks
 from app.check_identity import (
@@ -13,6 +13,7 @@ from app.commands import router
 from app.commands.handlers import buttons
 from app.models import GroupState
 from app.services import pending_buttons
+from tests.state_store import MemoryTransactions
 
 
 class _FakeView:
@@ -34,7 +35,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         conversation_id = "discord-channel-71001"
         state = GroupState(group_id=conversation_id)
         state.pending_checks["123"] = {"type": "skill", "skill": "DEX", "skill_value": 70}
-        save = MagicMock()
+        memory = MemoryTransactions(state)
         send = AsyncMock()
         acquired = asyncio.Event()
         release = asyncio.Event()
@@ -45,7 +46,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
 
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save), \
+                memory.patched(), \
                 patch.object(discord_bot.discord.ui, "View", _FakeView), \
                 patch.object(discord_bot, "CheckButton", _FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send):
@@ -66,7 +67,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(intents), 1)
         self.assertTrue(state.pending_checks["123"]["_buttons_posted"])
-        save.assert_called_once()
+        self.assertEqual(memory.commits, 1)
 
     async def test_failed_and_cancelled_send_release_claim(self):
         for failure in (RuntimeError("Discord failed"), asyncio.CancelledError()):
@@ -74,9 +75,9 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 conversation_id = f"discord-channel-{71002 + isinstance(failure, asyncio.CancelledError)}"
                 state = GroupState(group_id=conversation_id)
                 state.pending_checks["123"] = {"type": "skill", "skill": "DEX", "skill_value": 70}
-                save = MagicMock()
+                memory = MemoryTransactions(state)
                 with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                        patch("app.repositories.group_state.save_state", save), \
+                        memory.patched(), \
                         patch.object(discord_bot.discord.ui, "View", _FakeView), \
                         patch.object(discord_bot, "CheckButton", _FakeButton), \
                         patch.object(discord_bot, "_send_direct_message", AsyncMock(side_effect=failure)):
@@ -92,7 +93,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                             SimpleNamespace(), conversation_id, intents,
                         )
                 self.assertNotIn("_buttons_posted", state.pending_checks["123"])
-                self.assertEqual(save.call_count, 2)
+                self.assertEqual(memory.commits, 2)
 
     async def test_legacy_state_uses_timeline_created_by_claim_save(self):
         conversation_id = "discord-channel-71008"
@@ -100,11 +101,12 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         state.timeline_id = None
         state.pending_checks["123"] = {"type": "skill", "skill": "DEX", "skill_value": 70}
 
-        def save(current):
+        def created_by_save(current):
             current.timeline_id = "timeline-created-by-save"
 
+        memory = MemoryTransactions(state, on_commit=created_by_save)
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", side_effect=save):
+                memory.patched():
             async with locks.get_conversation_lock(conversation_id):
                 intents = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
 
@@ -123,9 +125,9 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         state = GroupState(group_id=conversation_id)
         old = {"type": "skill", "skill": "DEX", "skill_value": 70}
         state.pending_checks["123"] = dict(old)
-        save = MagicMock()
+        memory = MemoryTransactions(state)
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", save):
+                memory.patched():
             async with locks.get_conversation_lock(conversation_id):
                 first = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
                 second = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
@@ -137,7 +139,26 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second, [])
         self.assertEqual(len(replacement), 1)
         self.assertEqual(replacement[0].entry["skill"], "攀爬")
-        self.assertEqual(save.call_count, 2)
+        self.assertEqual(memory.commits, 2)
+
+    async def test_a_turn_with_no_new_button_never_opens_a_write_transaction(self):
+        conversation_id = "discord-channel-71010"
+        state = GroupState(group_id=conversation_id)
+        entry = {"type": "skill", "skill": "DEX", "skill_value": 70}
+        state.pending_checks["123"] = dict(entry)
+        state.pending_luck_decisions["123"] = {"options": [{"cost": 1, "tier": "regular"}], "_buttons_posted": True}
+
+        async def refuse_to_write(*_args, **_kwargs):
+            raise AssertionError("a write transaction was opened with nothing to claim")
+
+        with patch.object(pending_buttons, "load_state", return_value=state), \
+                patch.object(pending_buttons.state_transaction, "amutate", refuse_to_write):
+            async with locks.get_conversation_lock(conversation_id):
+                unchanged = await pending_buttons.claim_pending_buttons_locked(conversation_id, {"123": entry}, {})
+                luck_only = await pending_buttons.claim_pending_buttons_locked(
+                    conversation_id, {}, {}, kinds=frozenset({"luck"}),
+                )
+        self.assertEqual((unchanged, luck_only), ([], []))
 
     async def test_luck_is_rechecked_after_check_send(self):
         conversation_id = "discord-channel-71004"
@@ -146,7 +167,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         state.pending_luck_decisions["123"] = {"options": [{"cost": 1, "tier": "regular"}]}
         send = AsyncMock(side_effect=lambda *args, **kwargs: state.pending_luck_decisions.clear())
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", MagicMock()), \
+                MemoryTransactions(state).patched(), \
                 patch.object(discord_bot.discord.ui, "View", _FakeView), \
                 patch.object(discord_bot, "CheckButton", _FakeButton), \
                 patch.object(discord_bot, "_send_direct_message", send):
@@ -217,7 +238,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
             observed.append(not locks.get_conversation_lock(conversation_id).locked())
 
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", MagicMock()), \
+                MemoryTransactions(state).patched(), \
                 patch.object(discord_bot.command_router, "handle_text_message", side_effect=route), \
                 patch.object(discord_bot, "_make_reply", return_value=AsyncMock()), \
                 patch.object(discord_bot, "_make_send_image", return_value=AsyncMock()), \
@@ -260,7 +281,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(discord_bot, "_send_luck_button", side_effect=send_luck), \
                 patch.object(discord_bot, "_post_pending_buttons", AsyncMock()) as fallback, \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", MagicMock()):
+                MemoryTransactions(state).patched():
             await button.callback(interaction)
         self.assertEqual(observed, [True])
         self.assertTrue(state.pending_luck_decisions[owner_id]["_buttons_posted"])
@@ -300,7 +321,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(discord_bot, "_send_check_button", side_effect=send_check), \
                 patch.object(discord_bot, "_post_pending_buttons", AsyncMock()) as fallback, \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
-                patch("app.repositories.group_state.save_state", MagicMock()):
+                MemoryTransactions(state).patched():
             await button.callback(interaction)
         self.assertEqual(observed, [True])
         self.assertTrue(state.pending_checks[owner_id]["_buttons_posted"])

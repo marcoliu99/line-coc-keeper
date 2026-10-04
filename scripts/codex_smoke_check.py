@@ -7,17 +7,19 @@ from unittest.mock import patch
 
 
 async def run_check(provider):
-    from app import keeper, legacy_commands
+    from app import keeper
     from app.agents.tool_gateway import make_tool_executor
+    from app.commands.handlers import checks as check_commands
     from app.models import Character, GroupState
+    from app.repositories import group_state
     from app.services import turn_context
 
     state = GroupState(group_id='codex-smoke-check', active=True)
     state.characters['player'] = Character(name='Marco', owner_id='player',
                                           skills={'偵查': 70}, luck=0)
     state.scenario_text = 'A sealed desk contains a faded document. A successful Spot Hidden check reveals the date 1925.'
+    group_state.save_state(state)  # the first save assigns the timeline
     keeper._ensure_turn_timeline(state)
-    keeper.save_state(state)
     check_tool = next(t for t in keeper.TOOLS if t['name'] == 'skill_check')
     receipts = []
     gateway = make_tool_executor(state, [], [], 'player', [])
@@ -43,7 +45,7 @@ async def run_check(provider):
     assert '1925' not in pending_text, 'Premature clue disclosure'
     # Only the RNG is fixed for reproducibility. Resolution/persistence are real.
     with patch('app.dice.roll_percentile_with_dice_pool', return_value=20) as dice:
-        resolved = await asyncio.to_thread(legacy_commands._resolve_check_deterministically,
+        resolved = await asyncio.to_thread(check_commands.resolve_check,
                                           state.group_id, 'player', '/coc check')
     assert dice.call_count == 1, 'Player dice were rerolled'
     assert resolved.should_finalize and resolved.resolved_event, 'Resolution did not complete'

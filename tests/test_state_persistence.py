@@ -192,7 +192,7 @@ class StatePersistenceTests(unittest.TestCase):
 
         with patch.object(system_handler, "load_state", return_value=state), \
                 patch.object(system_handler.scenario_library, "load_context", return_value=context), \
-                patch.object(system_handler, "save_state"), \
+                patch("app.repositories.state_transaction.commit_snapshot"), \
                 patch.object(system_handler.scenario_activation, "refresh_after_commit", return_value=True), \
                 patch.object(system_handler.scenario_rag, "schedule_index_prewarm"):
             asyncio.run(system_handler.handle_system_command(
@@ -225,7 +225,7 @@ class StatePersistenceTests(unittest.TestCase):
         with patch.object(system_handler, "load_state", return_value=state), patch.object(
             system_handler.permissions, "may_manage_scenario_lifecycle", return_value=False
         ), patch.object(
-            system_handler, "_resolve_pdf_upload_choice_locked"
+            system_handler, "apply_pdf_upload_choice"
         ) as resolve:
             asyncio.run(system_handler.handle_system_command(
                 state.group_id, "player", reply, None, None, None,
@@ -254,8 +254,8 @@ class StatePersistenceTests(unittest.TestCase):
 
         async def run(parts, user_id):
             replies.clear()
-            with patch.object(system_handler, "load_state", return_value=state), patch.object(
-                system_handler, "save_state"
+            with patch.object(system_handler, "load_state", return_value=state), patch(
+                "app.repositories.state_transaction.commit_snapshot"
             ) as save:
                 await system_handler.handle_system_command(
                     state.group_id, user_id, reply, None, None, None, parts

@@ -205,7 +205,7 @@ def d100() -> int:
 TIER_RANK = {"fumble": 0, "fail": 1, "regular": 2, "hard": 3, "extreme": 4, "critical": 5}
 
 # Single source of truth for tier display text — code review flagged that
-# app/legacy_commands.py and app/discord_bot.py each maintained their own
+# the old app/legacy_commands.py and app/discord_bot.py each maintained their own
 # independent copy of this same tier->Chinese mapping, and the two had
 # silently drifted apart on "regular" ("成功" vs "一般成功"). Both call sites
 # now import this instead.
@@ -222,7 +222,7 @@ def is_counter_option(option: dict) -> bool:
 
     Code review flagged that this used to be a bare "反擊" in label
     substring match, independently re-implemented at four call sites across
-    app/keeper.py, app/legacy_commands.py and app/discord_bot.py — a future
+    app/keeper.py, the old app/legacy_commands.py and app/discord_bot.py — a future
     change to the Fight Back option's wording (e.g. "反擊！" or an alternate
     phrasing an LLM caller might use) would silently break all four without
     raising anything.
@@ -360,10 +360,21 @@ def skill_check(
     standard task), matching every existing caller that doesn't pass this.
     An unrecognized value falls back to "regular" rather than raising, same
     defensive style as the rest of this module."""
+    roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
+    return evaluate_roll(skill_value, roll, bonus_dice, penalty_dice, required_tier)
+
+
+def evaluate_roll(
+    skill_value: int, roll: int, bonus_dice: int = 0, penalty_dice: int = 0, required_tier: str = "regular"
+) -> SkillCheckResult:
+    """Classify an already-drawn d100 ``roll`` against ``skill_value``.
+
+    The pure half of ``skill_check``: no randomness, so a scripted dice port
+    can feed it chosen rolls and get exactly the tiers production would.
+    """
     skill_value = max(0, min(100, skill_value))
     if required_tier not in _VALID_REQUIRED_TIERS:
         required_tier = "regular"
-    roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
 
     extreme_bound = tier_upper_bound(skill_value, "extreme")
     hard_bound = tier_upper_bound(skill_value, "hard")
@@ -443,7 +454,7 @@ def sanity_check(current_san: int, loss_success: str, loss_failure: str) -> Sani
 # means the character truly grasps the horror and suffers an immediate Bout of
 # Madness (roll here), *failing* means they repress it and nothing happens —
 # easy to get backwards, since a passed check usually means "good outcome"
-# everywhere else in this project. app/keeper.py and app/legacy_commands.py
+# everywhere else in this project. app/keeper.py and app/checks/service.py
 # either register that INT check for the player or resolve it immediately,
 # according to the group's autoroll mode.
 #

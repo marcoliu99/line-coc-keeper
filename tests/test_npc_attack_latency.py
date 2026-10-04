@@ -25,40 +25,10 @@ sys.modules.setdefault(
     ),
 )
 
-from app import dice, keeper, legacy_commands, observability
+from app import dice, keeper, observability
+from app.commands.handlers import checks as check_commands
 from app.models import Character, GroupState
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(state.to_dict())
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState, *, reason: str = "command") -> None:
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            self.originals.append((module, module.load_state, module.save_state))
-            module.load_state = load_state
-            module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, load_state, save_state in reversed(self.originals):
-            module.load_state = load_state
-            module.save_state = save_state
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
+from tests.state_store import StateStorePatch, clone_state
 
 
 def _state_with_investigator() -> GroupState:
@@ -179,7 +149,7 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md: a
         ranged attack is never an opposed roll, so the attacker must NOT be
         rolled at registration time — only after the defender's own dive-
-        for-cover result is known (see legacy_commands._resolve_ranged_defense_outcome).
+        for-cover result is known (see app.checks.rules.resolve_ranged_defense_outcome).
         Regression guard for the bug this rebuild fixed: ranged attacks used
         to be pre-rolled exactly like melee."""
         state = _state_with_investigator()
@@ -215,7 +185,7 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         (COC7e allows no such thing against gunfire). If the LLM violated
         that instruction and a player picked "反擊" anyway, the is_ranged
         branch would resolve it as a dive-for-cover Dodge (see
-        legacy_commands._resolve_ranged_defense_outcome) and narrate a
+        app.checks.rules.resolve_ranged_defense_outcome) and narrate a
         result the player never actually chose — a rule-bypass class the PR
         explicitly guarded against for the melee-critical case but missed
         here."""
@@ -520,7 +490,7 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         # offered.md — can't trigger and interrupt what this test actually
         # means to exercise: the ranged attacker's penalty-die carry-through.
         state.characters["u1"].luck = 0
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
             keeper._execute_tool(
                 state, "offer_npc_attack_defense_choice",
@@ -541,10 +511,10 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
                 tier="fail", success=False, required_tier="regular",
             )
             with patch(
-                "app.legacy_commands.dice.skill_check",
+                "app.dice.skill_check",
                 side_effect=[dive_success_roll, attacker_miss_roll],
-            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock:
-                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+            ) as skill_check_mock, patch("app.dice.resolve_opposed") as resolve_opposed_mock:
+                resolution = check_commands.resolve_check("g", "u1", "/coc check 閃避")
 
         resolve_opposed_mock.assert_not_called()
         self.assertEqual(skill_check_mock.call_count, 2)
@@ -562,7 +532,7 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         # See test_successful_dive_gives_attacker_a_penalty_die above for why
         # luck=0 (leaving no affordable buyable_options for real) is set here.
         state.characters["u1"].luck = 0
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
             keeper._execute_tool(
                 state, "offer_npc_attack_defense_choice",
@@ -583,10 +553,10 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
                 tier="regular", success=True, required_tier="regular",
             )
             with patch(
-                "app.legacy_commands.dice.skill_check",
+                "app.dice.skill_check",
                 side_effect=[dive_fail_roll, attacker_hit_roll],
-            ) as skill_check_mock, patch("app.legacy_commands.dice.resolve_opposed") as resolve_opposed_mock:
-                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+            ) as skill_check_mock, patch("app.dice.resolve_opposed") as resolve_opposed_mock:
+                resolution = check_commands.resolve_check("g", "u1", "/coc check 閃避")
 
         resolve_opposed_mock.assert_not_called()
         _, attacker_call_kwargs = skill_check_mock.call_args_list[1]
@@ -607,7 +577,10 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         whatever the generated Keeper narration happened to say."""
         state = _state_with_investigator()
         state.active = True
-        timeline_id = state.timeline_id or f"legacy-{state.group_id}"
+        # Real storage assigns a timeline on the first save, so a pending entry
+        # that names one must be built against the stored value.
+        state.timeline_id = "timeline-g"
+        timeline_id = state.timeline_id
         state.pending_luck_decisions["u1"] = {
             "decision_id": "decision-1", "check_id": "check-1", "timeline_id": timeline_id,
             "origin_revision": state.state_revision + 1, "origin_turn_id": "", "origin_request_id": "",
@@ -618,14 +591,14 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
             "options": [], "major_wound_trigger": False,
             "ranged_attacker": {"skill_value": 55, "bonus_dice": 0, "penalty_dice": 0},
         }
-        with StateStorePatch(legacy_commands) as store:
+        with StateStorePatch(check_commands) as store:
             store.put(state)
             attacker_hit_roll = dice.SkillCheckResult(
                 skill_value=55, roll=30, bonus_dice=0, penalty_dice=0,
                 tier="regular", success=True, required_tier="regular",
             )
-            with patch("app.legacy_commands.dice.skill_check", return_value=attacker_hit_roll):
-                resolution = legacy_commands._resolve_luck_decision_deterministically("g", "u1", "skip")
+            with patch("app.dice.skill_check", return_value=attacker_hit_roll):
+                resolution = check_commands.resolve_luck("g", "u1", "skip")
 
         self.assertIn("遠程攻擊判定", resolution.roll_feedback_text)
         self.assertIn("命中了", resolution.roll_feedback_text)
@@ -634,7 +607,7 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
 class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
     """Connects offer_npc_attack_defense_choice's pending_checks write all
     the way through to /coc check's actual resolution
-    (legacy_commands._resolve_check_deterministically) — the two were only
+    (check_commands.resolve_check) — the two were only
     ever covered by separate, unconnected tests before (this tool's own
     pending_checks shape vs. the pre-existing choice+attacker_tier
     resolution logic), so nothing verified end-to-end that the "merge two
@@ -656,7 +629,7 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
         # comparison, not the (now much more frequently offered) Luck
         # buy-up decision.
         state.characters["u1"].luck = 0
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
             with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="extreme")):
                 tool_result = keeper._execute_tool(
@@ -675,8 +648,8 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
                 skill_value=60, roll=50, bonus_dice=0, penalty_dice=0,
                 tier="regular", success=True, required_tier="regular",
             )
-            with patch("app.legacy_commands.dice.skill_check", return_value=defender_roll):
-                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 反擊")
+            with patch("app.dice.skill_check", return_value=defender_roll):
+                resolution = check_commands.resolve_check("g", "u1", "/coc check 反擊")
             saved_state = store.store["g"]
 
         # The choice check is fully consumed — not left dangling for a
@@ -980,9 +953,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_check_command_does_not_start_a_new_skill_roll(self):
         state = _state_with_investigator()
         state.active = True
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
-            resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 射擊")
+            resolution = check_commands.resolve_check("g", "u1", "/coc check 射擊")
         self.assertFalse(resolution.should_finalize)
         self.assertIn("玩家用 /coc check 或按鈕擲骰", resolution.reply_text)
 

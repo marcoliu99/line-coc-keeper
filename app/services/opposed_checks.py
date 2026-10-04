@@ -44,10 +44,12 @@ def request_part(receipt: dict | None) -> dict | None:
     return {key: receipt[key] for key in FIELDS} if receipt else None
 
 
-def roll_opponent(request: dict | None) -> dict | None:
+def roll_opponent(request: dict | None, dice_port: Any = None) -> dict | None:
+    """Draw the opponent's roll once. ``dice_port`` is any object with ``skill_check``
+    (a check's dice port); it defaults to the real dice."""
     if request is None:
         return None
-    roll = dice.skill_check(request['opponent_value'])
+    roll = (dice_port or dice).skill_check(request['opponent_value'])
     return {**deepcopy(request), 'opponent_roll': roll.roll, 'opponent_tier': roll.tier}
 
 

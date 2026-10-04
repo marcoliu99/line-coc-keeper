@@ -4,14 +4,17 @@ from unittest.mock import patch
 
 import pytest
 
-from app import keeper, legacy_commands, scenario_authoring
+from app import keeper, scenario_authoring
 from app.agents.tool_gateway import _describe_tool_call
+from app.commands.handlers import checks as check_commands
 from app.domain.models import MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
+from app.repositories import group_state
 from app.scenario_references import link_records
 from app.services import opposed_checks, turn_context
 from app.services.prompt_config import build_resolved_check_outcome_block
 from app.services.turn_handoff import _unchanged_pending_reply
+from tests import state_store
 
 REQUEST = {
     'opponent_skill': 'POW', 'opponent_value': 90, 'tie_winner': 'opponent',
@@ -48,53 +51,34 @@ def test_opposed_result_uses_tiers_and_tie_rule(player_tier, opponent_tier, winn
 
 def test_manual_check_persists_one_opponent_roll_and_its_final_outcome():
     state = _state()
-    saved = {}
-
-    def load_state(_group_id):
-        return GroupState.from_dict(saved['state'].to_dict())
-
-    def save_state(new_state, **_kwargs):
-        saved['state'] = GroupState.from_dict(new_state.to_dict())
-
-    saved['state'] = GroupState.from_dict(state.to_dict())
+    state_store.replace_state(state)
     tool_input = {'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
                   'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀'}
-    with patch.object(keeper, 'load_state', load_state), patch.object(keeper, 'save_state', save_state), \
-         patch.object(legacy_commands, 'load_state', load_state), patch.object(legacy_commands, 'save_state', save_state), \
-         patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]) as dice_roll:
+    with patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]) as dice_roll:
         result = keeper._execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
         assert result['ok'] and not result.get('resolved')
-        first_receipt = deepcopy(saved['state'].pending_checks['u1']['opposed'])
+        first_receipt = deepcopy(group_state.load_state('scenario-check-test').pending_checks['u1']['opposed'])
         assert first_receipt['opponent_roll'] == 30
         duplicate = keeper._execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
         assert duplicate['ok'] and duplicate['opposed_pending'] is True
         assert 'opposed' not in duplicate and 'opposed' not in result
-        assert saved['state'].pending_checks['u1']['opposed'] == first_receipt
+        assert group_state.load_state('scenario-check-test').pending_checks['u1']['opposed'] == first_receipt
         assert dice_roll.call_count == 1
-        resolved = legacy_commands._resolve_check_deterministically('scenario-check-test', 'u1', '/coc check')
+        resolved = check_commands.resolve_check('scenario-check-test', 'u1', '/coc check')
 
     assert dice_roll.call_count == 2
     assert resolved.should_finalize
     assert resolved.resolved_event['opposed_outcome']['winner'] == 'opponent'
     assert resolved.resolved_event['player_declaration'] == '抓住飛來的刀'
     assert '對抗勝方=opponent' in resolved.resolved_event['outcome']
-    assert not saved['state'].pending_checks
+    assert not group_state.load_state('scenario-check-test').pending_checks
 
 
 def test_autoroll_success_field_reflects_opposed_loss():
     state = _state()
     state.autoroll_checks = True
-    saved = {}
-
-    def load_state(_group_id):
-        return GroupState.from_dict(saved['state'].to_dict())
-
-    def save_state(new_state, **_kwargs):
-        saved['state'] = GroupState.from_dict(new_state.to_dict())
-
-    saved['state'] = GroupState.from_dict(state.to_dict())
-    with patch.object(keeper, 'load_state', load_state), patch.object(keeper, 'save_state', save_state), \
-         patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]):
+    state_store.replace_state(state)
+    with patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]):
         result = keeper._execute_tool(state, 'skill_check', {
             'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
             'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀',
@@ -110,26 +94,16 @@ def test_autoroll_success_field_reflects_opposed_loss():
 def test_luck_resolution_reuses_opponent_receipt(choice, winner):
     state = _state()
     state.characters['u1'].luck = 50
-    saved = {}
-
-    def load_state(_group_id):
-        return GroupState.from_dict(saved['state'].to_dict())
-
-    def save_state(new_state, **_kwargs):
-        saved['state'] = GroupState.from_dict(new_state.to_dict())
-
-    saved['state'] = GroupState.from_dict(state.to_dict())
-    with patch.object(keeper, 'load_state', load_state), patch.object(keeper, 'save_state', save_state), \
-         patch.object(legacy_commands, 'load_state', load_state), patch.object(legacy_commands, 'save_state', save_state), \
-         patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]) as dice_roll:
+    state_store.replace_state(state)
+    with patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]) as dice_roll:
         keeper._execute_tool(state, 'skill_check', {
             'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
             'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀',
         }, [], [], speaker_role='player')
-        pending = legacy_commands._resolve_check_deterministically('scenario-check-test', 'u1', '/coc check')
+        pending = check_commands.resolve_check('scenario-check-test', 'u1', '/coc check')
         assert not pending.should_finalize
-        assert saved['state'].pending_luck_decisions['u1']['opposed']['opponent_roll'] == 30
-        final = legacy_commands._resolve_luck_decision_deterministically('scenario-check-test', 'u1', choice)
+        assert group_state.load_state('scenario-check-test').pending_luck_decisions['u1']['opposed']['opponent_roll'] == 30
+        final = check_commands.resolve_luck('scenario-check-test', 'u1', choice)
 
     assert dice_roll.call_count == 2
     assert final.should_finalize

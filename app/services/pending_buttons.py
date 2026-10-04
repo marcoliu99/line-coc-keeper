@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 
 from app import async_utils, locks, observability
@@ -19,6 +19,8 @@ from app.check_identity import (
     effective_decision_id,
 )
 from app.commands import sudo as sudo_policy
+from app.models import GroupState
+from app.repositories import state_transaction
 from app.repositories.group_state import load_state
 
 _logger = logging.getLogger(__name__)
@@ -102,6 +104,21 @@ class ControlCompletion:
             await publish_claimed_buttons(self.conversation_id, self.intents, send)
 
 
+def _new_entries(
+    state: GroupState, before_pending: dict, before_luck_pending: dict, kinds: frozenset[str],
+) -> Iterator[tuple[str, str, dict]]:
+    """Entries added or changed this turn that no button message has claimed yet."""
+    for kind, collection, before in (
+        ("check", state.pending_checks, before_pending),
+        ("luck", state.pending_luck_decisions, before_luck_pending),
+    ):
+        if kind not in kinds:
+            continue
+        for owner_id, entry in collection.items():
+            if before.get(owner_id) != entry and not entry.get("_buttons_posted"):
+                yield kind, owner_id, entry
+
+
 async def claim_pending_buttons_locked(
     conversation_id: str,
     before_pending: dict,
@@ -113,31 +130,31 @@ async def claim_pending_buttons_locked(
 ) -> list[PendingButtonIntent]:
     """Claim this turn's new buttons while its caller owns the conversation lock.
 
-    There is one state load and at most one save for both collections. No
+    A read-only load decides whether anything is new; the write transaction (and
+    its single save for both collections) is only opened when something is, so
+    the common turn with no new button never takes the database write lock. No
     Discord I/O occurs here; the caller sends returned intents after unlock.
     """
-    # Imported here, not at module level: tests intercept the repository's
-    # save_state, and the router imports this module.
+    # Imported here, not at module level: the router imports this module.
     from app.commands.router import sudo_public_marker
-    from app.repositories.group_state import save_state
 
-    state = await asyncio.to_thread(load_state, conversation_id)
-    marker = sudo_public_marker(state, sudo_command) if sudo_command else public_marker
-    timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+    snapshot = await asyncio.to_thread(load_state, conversation_id)
+    if not any(_new_entries(snapshot, before_pending, before_luck_pending, kinds)):
+        return []
+    marker = sudo_public_marker(snapshot, sudo_command) if sudo_command else public_marker
     claimed_at = time.perf_counter()
-    intents: list[PendingButtonIntent] = []
-    for kind, collection, before in (
-        ("check", state.pending_checks, before_pending),
-        ("luck", state.pending_luck_decisions, before_luck_pending),
-    ):
-        if kind not in kinds:
-            continue
-        for owner_id, entry in collection.items():
-            if before.get(owner_id) == entry or entry.get("_buttons_posted"):
-                continue
+
+    working: list[GroupState] = []
+
+    def claim(ctx: state_transaction.TxContext) -> list[PendingButtonIntent]:
+        latest = ctx.state
+        working.append(latest)
+        timeline_id = latest.timeline_id or f"legacy-{conversation_id}"
+        intents: list[PendingButtonIntent] = []
+        for kind, owner_id, entry in _new_entries(latest, before_pending, before_luck_pending, kinds):
             original = dict(entry)
             entry["_buttons_posted"] = True
-            character = state.get_active_character(owner_id)
+            character = latest.get_active_character(owner_id)
             intents.append(PendingButtonIntent(
                 kind=kind,
                 owner_id=owner_id,
@@ -147,14 +164,20 @@ async def claim_pending_buttons_locked(
                 public_marker=marker,
                 claimed_at=claimed_at,
             ))
-    if intents:
-        await asyncio.to_thread(save_state, state)
-        # Saving a legacy state can create its first timeline_id. Identity
-        # tokens must use the persisted value that callbacks will verify.
-        if state.timeline_id and state.timeline_id != timeline_id:
-            intents = [replace(intent, timeline_id=state.timeline_id) for intent in intents]
-        for intent in intents:
-            observability.event("pending_button.claimed", kind=intent.kind, status="success")
+        if not intents:
+            ctx.skip_save()
+        return intents
+
+    # One load and at most one save for both collections, on the latest state.
+    result = await state_transaction.amutate(conversation_id, claim, reason="pending_button_claim")
+    intents = result.value or []
+    # Saving a legacy state can create its first timeline_id. Identity tokens
+    # must use the persisted value that callbacks will verify.
+    persisted_timeline = working[0].timeline_id if working else ""
+    if intents and persisted_timeline and persisted_timeline != intents[0].timeline_id:
+        intents = [replace(intent, timeline_id=persisted_timeline) for intent in intents]
+    for intent in intents:
+        observability.event("pending_button.claimed", kind=intent.kind, status="success")
     return intents
 
 
@@ -190,18 +213,18 @@ def _collection_name(kind: str) -> str:
 
 async def release_stranded_claim(conversation_id: str, intent: PendingButtonIntent) -> None:
     """Release only the claimed entry when it still has the same identity/content."""
-    from app.repositories.group_state import save_state
+    def release(ctx: state_transaction.TxContext) -> None:
+        collection = getattr(ctx.state, _collection_name(intent.kind))
+        current = collection.get(intent.owner_id)
+        if (current is None or not current.get("_buttons_posted")
+                or not _equal_ignoring_posted_marker(current, intent.entry)):
+            ctx.skip_save()
+            return
+        current.pop("_buttons_posted", None)
 
     try:
         async with locks.get_conversation_lock(conversation_id):
-            state = await asyncio.to_thread(load_state, conversation_id)
-            collection = getattr(state, _collection_name(intent.kind))
-            current = collection.get(intent.owner_id)
-            if (current is None or not current.get("_buttons_posted")
-                    or not _equal_ignoring_posted_marker(current, intent.entry)):
-                return
-            current.pop("_buttons_posted", None)
-            await asyncio.to_thread(save_state, state)
+            await state_transaction.amutate(conversation_id, release, reason="pending_button_release")
     except Exception:
         _logger.exception("failed to release stranded posting claim for owner_id=%s in conversation_id=%s",
                           intent.owner_id, conversation_id)

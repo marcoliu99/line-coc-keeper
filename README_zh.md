@@ -2,7 +2,7 @@
 
 [English](README_zh.md) | **繁體中文**
 
-在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端支援 Claude（Anthropic）、Gemini（Google）、OpenAI 與已登入的 Codex CLI；Codex 可處理對話與一般文字分析，PDF／圖片／OCR 和預製角色卡分析則須使用 API Provider，因為量測到的 Codex 擷取正確率不足。詳見[安裝設定](docs/guides/setup_zh.md)及 [Codex OAuth 指南](docs/guides/codex_oauth_testing_zh.md)。
+在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，或檔名以 `scenario` 開頭的 UTF-8 Markdown 劇本，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端支援 Claude（Anthropic）、Gemini（Google）、OpenAI 與已登入的 Codex CLI；Codex 可處理對話與一般文字分析，PDF／圖片／OCR 和預製角色卡分析則須使用 API Provider，因為量測到的 Codex 擷取正確率不足。詳見[安裝設定](docs/guides/setup_zh.md)及 [Codex OAuth 指南](docs/guides/codex_oauth_testing_zh.md)。
 
 ## 快速開始
 
@@ -12,7 +12,7 @@
 
 ### Bot 已經跑起來、已經加進群組/伺服器？
 
-1. **上傳劇本**：把 COC7e 劇本 PDF 檔案直接傳到群組/頻道裡。圖片較多的劇本要等一下（會先回「處理中」，實際結果晚一點才會出現）。
+1. **上傳劇本**：把 COC7e 劇本 PDF，或檔名以 `scenario` 開頭的 UTF-8 `.md` 檔案直接傳到群組／頻道裡。Markdown 會直接匯入文字、不跑 PDF/OCR；圖片較多的 PDF 要等一下（會先回「處理中」，實際結果晚一點才會出現）。
 2. **建立角色**（任一位玩家都要做這步）：
    ```
    /coc pc 角色名 職業
@@ -26,7 +26,7 @@
 ```text
 Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
   |
-  +-- 指令／PDF -> commands/handlers/*.py -> legacy_commands.py
+  +-- 指令／劇本附件 -> commands/handlers/*.py -> services/{scenario_ingestion,map_service,character_service}.py
   |
   +-- 玩家文字 -> agents/supervisor.py
   |     -> context_builder.py（state／劇本與記憶檢索）
@@ -48,9 +48,9 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 
 **指令與訊息路由**
 - `app/discord_bot.py`：Discord 專用的常駐連線入口，把 Discord 的事件轉譯成呼叫 `app/commands/router.py`
-- `app/commands/router.py`：**平台無關**的指令路由入口（取代舊版單一檔案 `app/commands.py`，已重新命名為 `app/legacy_commands.py`）——依關鍵字分派到下面的 handler 模組，自由文字（不是 `/coc` 指令）交給 `app/agents/supervisor.py`
-- `app/commands/handlers/`：依領域拆開的指令處理模組——`character.py`（建角／角色卡等 9 個子指令）、`combat.py`、`system.py`（`newgame`／`pdf`／`kp`／`scenario`／`status`／`era`… 等 12 個子指令，含劇本庫的 `/coc scenario` 系列）、`map_handler.py`（`showpage`／`where`／`enter`／`leavemap`）——這些模組委派回 `app/legacy_commands.py` 裡既有、已驗證過的邏輯，不是重新實作
-- `app/legacy_commands.py`（原 `app/commands.py`）：PDF 上傳流程、`/coc check`／`/coc luck`（玩家自己在程式碼裡擲骰，結果交給同一個 Supervisor 的 `resolved_check_followup` 入口敘事，不得重擲已結算的骰）、預製角色合併、角色離開/回歸等仍集中在這裡的邏輯
+- `app/commands/router.py`：**平台無關**的指令路由入口（取代舊版單一檔案 `app/commands.py`）——依關鍵字分派到下面的 handler 模組，自由文字（不是 `/coc` 指令）交給 `app/agents/supervisor.py`
+- `app/commands/handlers/`：依領域拆開的指令處理模組——`character.py`（建角／角色卡等 9 個子指令）、`combat.py`、`system.py`（`newgame`／`pdf`／`kp`／`scenario`／`status`／`era`… 等 12 個子指令，含劇本庫的 `/coc scenario` 系列）、`map_handler.py`（`showpage`／`where`／`enter`／`leavemap`）——這些模組委派給 `app/services/` 下既有、已驗證過的邏輯，不是重新實作
+- `app/services/scenario_ingestion.py`、`map_service.py`、`character_service.py`：原本集中在單一檔案 `app/legacy_commands.py`（第 4 階段已刪除，見[架構重構](docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md)）的邏輯——PDF 上傳流程與預製角色合併、地圖上傳與移動解析、角色認領／離開回歸／治療／就緒名冊。`/coc check`／`/coc luck` 在 `app/checks`（玩家自己在程式碼裡擲骰，結果交給同一個 Supervisor 的 `resolved_check_followup` 入口敘事，不得重擲已結算的骰），戰鬥動作在 `app/services/combat_engine.py`
 
 **Agentic Keeper：自由文字（角色扮演／遊戲行動）走的多代理流水線**
 - `app/agents/supervisor.py`：純 Python 調度器，統一玩家一般回合、檢定結果後續與開場後備；依入口與訊息意圖決定機制及敘事流程
@@ -71,7 +71,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/providers/anthropic_provider.py`：Claude（Anthropic Messages API）介面卡，含 prompt caching
 - `app/providers/gemini_provider.py` / `app/providers/openai_provider.py` / `app/providers/codex_provider.py`：Gemini（google-genai SDK）／OpenAI／已登入 Codex CLI 介面卡；Codex 用於對話及一般文字分析
 - `app/locks.py`：per-conversation 鎖，防止同一個聊天室的兩則訊息互相覆蓋對方的存檔；KP 助手訊息另有優先權佇列
-- `app/combat.py`：正式戰鬥輪次狀態機（先攻順位、回合、HP）
+- `app/combat.py`：正式戰鬥輪次狀態機（先攻順位、回合、HP）；`app/combat_flow.py` 是建立在它之上、以收據為本的 managed 流程；`app/services/combat_engine.py`（`CombatEngine.handle(state, action)`）是指令、Keeper 工具與檢定引擎共用的唯一入口——只讀一次戰鬥模式（idle／legacy／managed），再執行對應的實作。`tests/test_architecture_combat.py` 確保 `combat` 不會到達 `combat_flow`（[規格](docs/specs/refactor/combat_engine_design_spec_zh.md)）
 - `app/creation.py`：互動式建角流程（擲屬性、分配職業/興趣技能點數）
 - `app/pregen_extractor.py`：從劇本文字中抽取內建的預製調查員
 - `app/intent_parser.py`：規則式（regex，不額外呼叫 LLM）偵測玩家訊息裡的移動意圖與「進入某地點」意圖
@@ -79,13 +79,15 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/scenario_rag.py`：BM25 與可選 embeddings 混合檢索（`SCENARIO_RAG_ENABLED=true` 時啟用），取代「整份劇本塞進 system prompt」，改成 Keeper 用 `search_scenario` 工具按需查詢
 - `app/memory_rag.py`：對已裁切掉的舊對話做語意檢索，補足 `campaign_summary` 滾動摘要「越壓越抽象」的細節遺失
 - `app/scenario_index.py`：抽取劇本的 NPC／怪物與地點數值索引（`/coc index`，上傳劇本時也會自動跑一次），給 Keeper 一份固定對照表，避免同一隻怪物前後講出不同數值
-- `app/scenario_library.py`：可重用的劇本 PDF 庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)**
+- `app/scenario_library.py`：可重用的 PDF／Markdown 劇本庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)**
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
 - `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
 - `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（文字層改用 MarkItDown + markitdown-ocr 預處理，PyMuPDF 負責頁面轉圖片與備援文字層；圖片偏多的頁面會用視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示；平面圖頁面會額外呼叫 `app/scene_map.py` 拆出結構化房間圖）；另有低成本的 `extract_preview()`，供劇本庫上傳去重使用
 - `app/markitdown_shim.py`：將 MarkItDown 的 OpenAI 型式視覺介面接到專案設定的 provider，包含 Anthropic 轉接
 - `app/db.py`：SQLite 存取層，把每個聊天室的遊戲狀態、角色索引鏡像、Scenario/Memory RAG 的索引快取都存成資料庫裡的一列（取代原本各自的 `data/groups/*.json` 檔案）
 - `app/repositories/group_state.py`（原 `app/state.py`）：呼叫 `app/db.py` 保存每個聊天室的遊戲狀態與角色索引鏡像；劇本頁面圖片仍另外存成 PNG 檔案（不進資料庫）
+- `app/checks/`：檢定引擎。`service.py` 把檢定規則套用到交易交給它的狀態（玩家的 `/coc check` 或按鈕、Luck 決定、Keeper 的自動擲骰）；`rules.py` 負責骰子與算術（走 `DicePort`）；`luck.py` 說明誰能花 Luck；`events.py` 把已結算的檢定只記錄一次。指令（`app/commands/handlers/checks.py`）與 Keeper 工具（`app/keeper_tools/checks.py`）都是它之上的薄轉接；`tests/test_architecture_checks.py` 讓引擎不匯入傳輸層、Keeper、provider 或戰鬥程式碼（[規格](docs/specs/refactor/check_engine_design_spec_zh.md)）
+- `app/repositories/state_transaction.py`：遊戲狀態唯一的寫入入口。鎖住該聊天室、在 `BEGIN IMMEDIATE` 交易內讀取最新資料、驗證 timeline／action ledger／revision、執行 mutation，並把狀態、事件與 action 結果一起提交。`tests/test_architecture_state_writes.py` 會在其他程式碼直接寫遊戲狀態時讓建置失敗（[規格](docs/specs/refactor/state_transaction_design_spec_zh.md)）
 
 只需要啟動 `app/discord_bot.py`；Discord 直接附加圖片，不需要 webhook、ngrok 或公開圖片網址。
 

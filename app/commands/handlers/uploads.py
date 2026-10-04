@@ -2,7 +2,7 @@
 
 Moved out of app/discord_bot.py so the transport only turns a Discord message
 into Upload values (docs/specs/refactor/discord_events_through_router_design_spec.md).
-PDF upload deliberately has no KP/Host check, even with
+Scenario-file upload deliberately has no KP/Host check, even with
 SCENARIO_LIFECYCLE_KP_ONLY: any player may upload, and the first upload of a
 conversation applies at once. Only the choice buttons and /coc scenario are
 KP/Host-only.
@@ -15,18 +15,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app import locks, scenario_library
-from app.legacy_commands import (
-    PdfChoice,
-    Reply,
-    handle_map_upload,
+from app import locks, scenario_library, scenario_templates
+from app.commands import permissions
+from app.commands.types import PdfChoice, Reply
+from app.repositories import state_transaction
+from app.repositories.group_state import load_state
+from app.services import mutation_admission
+from app.services.map_service import handle_map_upload
+from app.services.scenario_ingestion import (
+    apply_pdf_upload_choice,
     handle_pdf_upload,
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
-    resolve_pdf_upload_choice,
+    handle_scenario_markdown_upload,
 )
-from app.repositories.group_state import load_state, save_state
-from app.services import mutation_admission
 
 _PART_NAME = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
 
@@ -55,6 +57,21 @@ async def handle_uploads(
         # No reply-token/time-window constraint here, so the same callback
         # serves as both the immediate ack and the final result.
         await handle_pdf_upload(conversation_id, reply, reply, await pdfs[0].read(), pdfs[0].filename)
+        await post_pdf_buttons()
+        return True
+
+    scenario_markdowns = [
+        u for u in uploads
+        if u.filename.lower().startswith("scenario") and u.filename.lower().endswith(".md")
+    ]
+    if scenario_markdowns:
+        if len(scenario_markdowns) > 1:
+            await reply("一次請只上傳一份 scenario 開頭的 Markdown 劇本。")
+            return True
+        upload = scenario_markdowns[0]
+        await handle_scenario_markdown_upload(
+            conversation_id, reply, reply, await upload.read(), upload.filename
+        )
         await post_pdf_buttons()
         return True
 
@@ -112,11 +129,12 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
     for upload in pdfs:
         key = await asyncio.to_thread(scenario_library.stage_upload, await upload.read())
         staged.append({"key": key, "file_name": upload.filename})
+    def stage(ctx: state_transaction.TxContext) -> None:
+        ctx.state.staged_pdf_parts.extend(staged)
+
     async with locks.get_conversation_lock(conversation_id):
-        state = await asyncio.to_thread(load_state, conversation_id)
-        state.staged_pdf_parts.extend(staged)
         try:
-            save_state(state)
+            await state_transaction.amutate(conversation_id, stage, reason="pdf_stage")
         except mutation_admission.MutationHeld:
             # A content-addressed key may already be referenced by another
             # conversation or a pending similarity decision. Keep the bytes.
@@ -127,6 +145,29 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
         + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
         + "\n請由 KP 輸入 `/coc scenario merge 暫存ID1 暫存ID2 ...`。"
     )
+
+
+@mutation_admission.guard_async_entry
+async def resolve_pdf_upload_choice(
+    conversation_id: str,
+    choice: PdfChoice,
+    push: Reply,
+    user_id: str = "",
+) -> None:
+    """Called by Discord's PdfUploadChoiceButton once the GM picks between the
+    two options offered by handle_pdf_upload. `choice` must be "new" or "fix";
+    the text command remains available as a manual fallback. The actor is
+    checked again while holding the conversation lock so a button cannot
+    mutate the scenario from an unauthorized account."""
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not permissions.may_manage_scenario_lifecycle(state, user_id):
+            await push(permissions.kp_only("處理劇本檔案"))
+            return
+        text = apply_pdf_upload_choice(conversation_id, choice)
+        state = load_state(conversation_id)
+    scenario_templates.schedule_index_prewarm(state)
+    await push(text)
 
 
 async def handle_pdf_choice(conversation_id: str, choice: PdfChoice, user_id: str, reply: Reply) -> None:

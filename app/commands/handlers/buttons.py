@@ -15,14 +15,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app import locks, observability
-from app.legacy_commands import (
-    Reply,
-    SendDM,
-    SendDMImage,
-    SendImage,
-    handle_check_command,
-    handle_luck_decision,
-)
+from app.commands.handlers.checks import handle_check_command, handle_luck_decision
+from app.commands.types import Reply, SendDM, SendDMImage, SendImage
 from app.models import GroupState
 from app.repositories.group_state import load_state
 from app.services import pending_buttons

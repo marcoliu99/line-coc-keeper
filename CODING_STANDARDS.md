@@ -7,7 +7,7 @@ Each rule gives the target behaviour and the reason for it. When existing code b
 ## Layers
 
 **Discord events enter through the command router.** `discord_bot.py` translates Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
-_Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls `legacy_commands` directly skips them.
+_Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls a service such as `scenario_ingestion` directly skips them.
 
 **Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `keeper.py` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
 _Why:_ a copied guard drifts. The pre-combat checkpoint and the duplicate-enemy guard were once copied into the `/coc combat` handler, and the copies built the checkpoint `event_id` from a different field; both now live in `combat.py` (`begin_combat`, `add_combatant`).
@@ -22,6 +22,15 @@ _Why:_ the `anthropic`/`gemini`/`openai` map is currently copied into 9 modules.
 _Why:_ `_execute_tool` is about 1,180 lines of `if name == ...` branches, so each new branch makes review and testing harder.
 
 ## Game state
+
+**Every game-state write goes through `state_transaction`.** Change state with `state_transaction.mutate` (a delta applied to the latest row) or, when the change was computed on a loaded snapshot and cannot be a delta, `commit_snapshot`. Give an operation that can be re-sent an `action_id` from the code that owns it (turn id, check id, event id), never one derived from text. Write other tables that must land with the state through `ctx.conn`; never open a second transaction inside a mutation.
+_Why:_ writers that loaded outside the lock either lost updates or failed with a revision conflict, and nothing could tell a retry from a new action. `tests/test_architecture_state_writes.py` rejects direct use of `save_state`, `write_state_tx` or `db.set_json*` on the game-state tables.
+
+**Check rules live in `app/checks`, once.** A command, a button and a Keeper tool all call `checks.service`; they parse input and format replies, nothing more. Dice come in through a `DicePort`, who may spend Luck is decided in `checks.luck`, and a settled check is recorded with `checks.events.persist_resolved_event` (one `check-event:<event_id>` action). Do not copy tier wording, Luck handling or the SAN → INT chain into a handler.
+_Why:_ the same check used to resolve through three separate copies of these rules. `tests/test_architecture_checks.py` keeps the engine free of transport, Keeper, provider and combat imports and fails if a deleted duplicate comes back. Spec: `docs/specs/refactor/check_engine_design_spec.md`.
+
+**Battle actions go through `CombatEngine`.** Commands, tools and adapters call `combat_engine.handle(state, action)`; only the engine reads a battle's mode, and `combat` never imports `combat_flow`. A rule that differs between a legacy and a managed battle takes a `ModeOps` argument rather than testing the mode itself; a new action is a dataclass in `combat_actions` plus one handler. A repeatable action carries the stable `action_id`/`event_id` its ledger keys on.
+_Why:_ the two combat modules imported each other and re-asked "managed?" in fifteen places, so a managed-only call on an idle conversation could invent a battle. `tests/test_architecture_combat.py` checks the layers on the import graph, lazy imports included. Spec: `docs/specs/refactor/combat_engine_design_spec.md`.
 
 **Every new pending check goes through the ownership gate.** Before registering a skill, SAN or CON check, inspect both `pending_checks` and `pending_luck_decisions` on the freshly reloaded state inside `_mutate_and_save_state` (see `_reject_if_check_already_pending`). When the gate blocks, report the block to the player or the model.
 _Why:_ a check that returns silently loses a rules consequence. Spec: `docs/specs/bug/bugfix_duplicate_pending_checks.md`.

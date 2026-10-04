@@ -10,7 +10,8 @@
       "evidence": [
         "app/keeper.py",
         "app/check_identity.py",
-        "app/legacy_commands.py",
+        "app/checks/service.py",
+        "app/commands/handlers/checks.py",
         "tests/test_luck_buyup_gate.py",
         "tests/test_state_loss_amnesia.py"
       ],
@@ -40,7 +41,7 @@
       "category": "bug",
       "status": "implemented",
       "evidence": [
-        "app/legacy_commands.py",
+        "app/services/scenario_ingestion.py",
         "app/commands/router.py",
         "app/discord_bot.py",
         "app/config.py",
@@ -249,7 +250,7 @@
       "status": "implemented",
       "evidence": [
         "app/commands/router.py",
-        "app/legacy_commands.py",
+        "tests/test_architecture_legacy.py",
         "tests/test_unified_keeper_turn_flow.py",
         "tests/test_kp_assistant_v2.py"
       ],
@@ -296,7 +297,7 @@
       "category": "bug",
       "status": "implemented",
       "evidence": [
-        "app/legacy_commands.py",
+        "app/checks/events.py",
         "app/services/turn_context.py",
         "app/agents/context_builder.py",
         "tests/test_resolved_check_events.py",
@@ -347,7 +348,8 @@
       "evidence": [
         "app/dice.py",
         "app/keeper.py",
-        "app/legacy_commands.py",
+        "app/checks/service.py",
+        "app/checks/rules.py",
         "app/discord_bot.py",
         "tests/test_dice_resolve_opposed.py",
         "tests/test_discord_defense_hint.py",
@@ -401,7 +403,8 @@
       "status": "implemented",
       "evidence": [
         "app/keeper.py",
-        "app/legacy_commands.py",
+        "app/checks/service.py",
+        "app/commands/handlers/checks.py",
         "app/luck.py",
         "app/check_identity.py",
         "tests/test_luck_buyup_gate.py",
@@ -419,7 +422,8 @@
       "status": "implemented",
       "evidence": [
         "app/pregen_extractor.py",
-        "app/legacy_commands.py",
+        "app/commands/handlers/character.py",
+        "app/services/character_service.py",
         "app/skill_aliases.py",
         "tests/test_pregen_and_creation.py",
         "tests/test_pregen_extra_fields.py"
@@ -436,7 +440,8 @@
       "status": "implemented",
       "evidence": [
         "app/pregen_extractor.py",
-        "app/legacy_commands.py",
+        "app/services/scenario_ingestion.py",
+        "app/commands/handlers/character.py",
         "tests/test_pregen_and_creation.py",
         "tests/test_pregen_extra_fields.py"
       ],
@@ -452,7 +457,7 @@
       "status": "implemented",
       "evidence": [
         "app/repositories/manual_pregens.py",
-        "app/legacy_commands.py",
+        "app/services/scenario_ingestion.py",
         "app/db.py",
         "tests/test_manual_pregen_persistence.py"
       ],
@@ -609,7 +614,8 @@
       "evidence": [
         "app/luck.py",
         "app/keeper.py",
-        "app/legacy_commands.py",
+        "app/checks/luck.py",
+        "app/checks/service.py",
         "app/discord_bot.py",
         "tests/test_luck_buyup_gate.py",
         "tests/test_npc_attack_latency.py"
@@ -679,7 +685,8 @@
       "evidence": [
         "app/keeper.py",
         "app/agents/context_builder.py",
-        "app/legacy_commands.py",
+        "app/checks/service.py",
+        "app/commands/handlers/checks.py",
         "app/dice.py",
         "tests/test_npc_attack_latency.py"
       ],
@@ -698,7 +705,8 @@
         "app/agents/executor.py",
         "app/agents/narrator.py",
         "app/agents/assistant.py",
-        "app/legacy_commands.py",
+        "app/commands/handlers/checks.py",
+        "app/services/post_turn.py",
         "app/commands/handlers/system.py",
         "tests/test_unified_keeper_turn_flow.py"
       ],
@@ -772,7 +780,8 @@
         "app/character_matcher.py",
         "app/dictionary.py",
         "app/skill_aliases.py",
-        "app/legacy_commands.py",
+        "app/services/scenario_ingestion.py",
+        "app/services/character_service.py",
         "app/discord_bot.py",
         "tests/test_pregen_and_creation.py",
         "tests/test_pregen_extra_fields.py",
@@ -899,10 +908,14 @@
       "evidence": [
         "app/scenario_library.py",
         "app/pdf_loader.py",
-        "app/legacy_commands.py",
+        "app/services/scenario_ingestion.py",
+        "app/commands/handlers/uploads.py",
         "app/commands/handlers/system.py",
         "app/scene_map.py",
+        "app/trusted_scenario_source.py",
         "tests/test_scenario_library.py",
+        "tests/test_upload_routing.py",
+        "tests/test_trusted_scenario_source.py",
         "tests/test_spoiler_policy.py"
       ],
       "path": "docs/specs/feature/scenario_library_design_spec.md",
@@ -1264,7 +1277,7 @@
       "status": "implemented",
       "evidence": [
         "app/scenario_activation.py",
-        "app/legacy_commands.py",
+        "app/services/scenario_ingestion.py",
         "app/commands/handlers/system.py",
         "app/keeper_tools/scenario.py",
         "app/checkpoints.py",
@@ -1321,7 +1334,8 @@
         "app/commands/handlers/uploads.py",
         "app/commands/router.py",
         "app/discord_bot.py",
-        "app/legacy_commands.py",
+        "app/commands/handlers/messages.py",
+        "app/services/scenario_ingestion.py",
         "app/services/pending_buttons.py",
         "tests/test_button_routing.py",
         "tests/test_pending_button_latency.py",
@@ -1357,7 +1371,7 @@
         "app/commands/router.py",
         "app/commands/handlers/system.py",
         "app/commands/handlers/correct.py",
-        "app/legacy_commands.py",
+        "app/services/character_service.py",
         "app/services/movement.py",
         "app/agents/supervisor.py",
         "app/agents/executor.py",
@@ -1503,7 +1517,7 @@
         "app/keeper_tools/resource_bridge.py",
         "app/keeper.py",
         "app/keeper_prompt_policy.py",
-        "app/legacy_commands.py",
+        "app/services/combat_engine.py",
         "app/commands/handlers/buttons.py",
         "tests/test_combat_rules.py",
         "tests/test_compound_dice.py",
@@ -1539,16 +1553,180 @@
       "zh": "Paddle 雙欄原生文字閱讀順序",
       "category": "enhancement",
       "status": "implemented",
-      "evidence": ["app/pdf_layout.py", "app/pdf_loader.py", "scripts/setup_paddle_layout.py", "tests/test_pdf_paddle_layout.py", "tests/test_setup_paddle_layout.py", "tests/fixtures/paddle_layout/provenance.json", "docs/specs/enhancement/paddle_two_column_reading_order_results.json"],
+      "evidence": [
+        "app/pdf_layout.py",
+        "app/pdf_loader.py",
+        "scripts/setup_paddle_layout.py",
+        "tests/test_pdf_paddle_layout.py",
+        "tests/test_setup_paddle_layout.py",
+        "tests/fixtures/paddle_layout/provenance.json",
+        "docs/specs/enhancement/paddle_two_column_reading_order_results.json"
+      ],
       "path": "docs/specs/enhancement/paddle_two_column_reading_order.md",
       "zh_path": "docs/specs/enhancement/paddle_two_column_reading_order_zh.md"
+    },
+    {
+      "title": "Python 3.13 prewarm lifecycle and prepared-model migration",
+      "zh": "Python 3.13 預熱程序生命週期與既有模型搬移",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_rag.py",
+        "scripts/migrate_paddle_models.py",
+        "tests/test_embedding_timeout.py",
+        "tests/test_migrate_paddle_models.py"
+      ],
+      "path": "docs/specs/maintenance/python_313_prewarm_model_migration.md",
+      "zh_path": "docs/specs/maintenance/python_313_prewarm_model_migration_zh.md"
+    },
+    {
+      "title": "Paddle OCR selection logging",
+      "zh": "Paddle OCR 選用結果日誌",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_loader.py",
+        "tests/test_pdf_paddle_ocr.py"
+      ],
+      "path": "docs/specs/maintenance/paddle_ocr_selection_logging.md",
+      "zh_path": "docs/specs/maintenance/paddle_ocr_selection_logging_zh.md"
+    },
+    {
+      "title": "Disable PyMuPDF4LLM internal OCR",
+      "zh": "關閉 PyMuPDF4LLM 內建 OCR",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_loader.py",
+        "tests/test_pdf_loader.py"
+      ],
+      "path": "docs/specs/bug/pymupdf4llm_internal_ocr.md",
+      "zh_path": "docs/specs/bug/pymupdf4llm_internal_ocr_zh.md"
+    },
+    {
+      "title": "PDF final review warnings",
+      "zh": "PDF 最終人工核對警告修正",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_loader.py",
+        "tests/test_pdf_loader.py"
+      ],
+      "path": "docs/specs/bug/pdf_final_review_warnings.md",
+      "zh_path": "docs/specs/bug/pdf_final_review_warnings_zh.md",
+      "source_revision": "92b52e4da88063d14ae3c9585fda9d5060d19b37"
+    },
+    {
+      "title": "Architecture refactor, phases 1–4",
+      "zh": "架構重構（第 1–4 階段）",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/repositories/state_transaction.py",
+        "tests/test_state_transaction.py",
+        "tests/test_architecture_state_writes.py",
+        "app/checks/service.py",
+        "tests/test_check_engine.py",
+        "docs/refactor/phase1-result.md",
+        "docs/refactor/phase2-result.md",
+        "app/services/combat_engine.py",
+        "tests/test_combat_engine.py",
+        "docs/refactor/phase3-result.md",
+        "tests/test_architecture_legacy.py",
+        "docs/refactor/phase4-result.md"
+      ],
+      "path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec.md",
+      "zh_path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Game-state transaction",
+      "zh": "遊戲狀態交易",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/repositories/state_transaction.py",
+        "app/repositories/group_state.py",
+        "app/keeper.py",
+        "app/checkpoints.py",
+        "app/commands/handlers/transact.py",
+        "tests/test_state_transaction.py",
+        "tests/test_state_transaction_adapters.py",
+        "tests/test_architecture_state_writes.py"
+      ],
+      "path": "docs/specs/refactor/state_transaction_design_spec.md",
+      "zh_path": "docs/specs/refactor/state_transaction_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Check engine",
+      "zh": "檢定引擎",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/checks/service.py",
+        "app/checks/rules.py",
+        "app/checks/luck.py",
+        "app/checks/events.py",
+        "app/commands/handlers/checks.py",
+        "app/keeper_tools/checks.py",
+        "app/services/managed_checks.py",
+        "tests/test_check_engine.py",
+        "tests/test_architecture_checks.py"
+      ],
+      "path": "docs/specs/refactor/check_engine_design_spec.md",
+      "zh_path": "docs/specs/refactor/check_engine_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Combat engine",
+      "zh": "戰鬥引擎",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/combat_engine.py",
+        "app/services/combat_actions.py",
+        "app/combat.py",
+        "app/combat_flow.py",
+        "app/combat_resources.py",
+        "app/keeper_tools/combat.py",
+        "app/keeper_tools/managed_combat.py",
+        "tests/test_combat_engine.py",
+        "tests/test_architecture_combat.py"
+      ],
+      "path": "docs/specs/refactor/combat_engine_design_spec.md",
+      "zh_path": "docs/specs/refactor/combat_engine_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Retiring legacy_commands",
+      "zh": "移除 legacy_commands",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/scenario_ingestion.py",
+        "app/services/map_service.py",
+        "app/services/character_service.py",
+        "app/commands/handlers/messages.py",
+        "tests/test_architecture_legacy.py",
+        "tests/test_ingestion_trace.py"
+      ],
+      "path": "docs/specs/refactor/legacy_commands_retirement_design_spec.md",
+      "zh_path": "docs/specs/refactor/legacy_commands_retirement_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
     },
     {
       "title": "Conservative Paddle three-column native-text reading order",
       "zh": "保守的 Paddle 三欄原生文字閱讀順序",
       "category": "enhancement",
       "status": "implemented",
-      "evidence": ["app/pdf_layout.py", "tests/test_pdf_three_column_layout.py", "tests/test_pdf_paddle_layout.py", "tests/fixtures/paddle_layout/page_05.json", "docs/specs/enhancement/paddle_three_column_reading_order_results.json"],
+      "evidence": [
+        "app/pdf_layout.py",
+        "tests/test_pdf_three_column_layout.py",
+        "tests/test_pdf_paddle_layout.py",
+        "tests/fixtures/paddle_layout/page_05.json",
+        "docs/specs/enhancement/paddle_three_column_reading_order_results.json"
+      ],
       "path": "docs/specs/enhancement/paddle_three_column_reading_order.md",
       "zh_path": "docs/specs/enhancement/paddle_three_column_reading_order_zh.md"
     }

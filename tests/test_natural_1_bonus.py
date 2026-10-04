@@ -13,7 +13,7 @@ sys.modules.setdefault(
 )
 
 from app import dice
-from app import legacy_commands as commands
+from app.checks import narration
 from app.models import Character
 
 
@@ -38,31 +38,31 @@ class Natural1BonusTests(unittest.TestCase):
     def test_natural_1_appends_bonus_prompt_to_keeper_message_only(self):
         result = make_check_result(roll=1, tier="critical")
 
-        roll_line, keeper_message = commands._build_check_narration(
+        roll_line, keeper_message = narration.build_check_narration(
             self.char, "偵查", None, 70, result, 0, 0
         )
 
-        self.assertIn(commands.NATURAL_1_BONUS_PROMPT, keeper_message)
+        self.assertIn(narration.NATURAL_1_BONUS_PROMPT, keeper_message)
         self.assertIn("【大成功額外獎勵】", keeper_message)
-        self.assertNotIn(commands.NATURAL_1_BONUS_PROMPT, roll_line)
+        self.assertNotIn(narration.NATURAL_1_BONUS_PROMPT, roll_line)
         self.assertNotIn("【大成功額外獎勵】", roll_line)
 
     def test_non_one_extreme_success_does_not_append_bonus_prompt(self):
         result = make_check_result(roll=2, tier="extreme")
 
-        roll_line, keeper_message = commands._build_check_narration(
+        roll_line, keeper_message = narration.build_check_narration(
             self.char, "偵查", None, 70, result, 0, 0
         )
 
-        self.assertNotIn(commands.NATURAL_1_BONUS_PROMPT, keeper_message)
+        self.assertNotIn(narration.NATURAL_1_BONUS_PROMPT, keeper_message)
         self.assertNotIn("【大成功額外獎勵】", keeper_message)
-        self.assertNotIn(commands.NATURAL_1_BONUS_PROMPT, roll_line)
+        self.assertNotIn(narration.NATURAL_1_BONUS_PROMPT, roll_line)
         self.assertNotIn("【大成功額外獎勵】", roll_line)
 
     def test_luck_spend_tier_upgrade_does_not_trigger_natural_1_bonus(self):
         result = make_check_result(roll=52, tier="regular")
 
-        roll_line, keeper_message = commands._build_check_narration(
+        roll_line, keeper_message = narration.build_check_narration(
             self.char,
             "偵查",
             None,
@@ -75,19 +75,19 @@ class Natural1BonusTests(unittest.TestCase):
         )
 
         self.assertIn("花費 5 點 Luck", keeper_message)
-        self.assertNotIn(commands.NATURAL_1_BONUS_PROMPT, keeper_message)
+        self.assertNotIn(narration.NATURAL_1_BONUS_PROMPT, keeper_message)
         self.assertNotIn("【大成功額外獎勵】", keeper_message)
-        self.assertNotIn(commands.NATURAL_1_BONUS_PROMPT, roll_line)
+        self.assertNotIn(narration.NATURAL_1_BONUS_PROMPT, roll_line)
 
     def test_helper_uses_only_roll_equals_one(self):
         natural_one = make_check_result(roll=1, tier="critical")
         non_one_critical = make_check_result(roll=2, tier="critical")
 
         self.assertEqual(
-            commands._natural_1_bonus_prompt_for_result(natural_one),
-            commands.NATURAL_1_BONUS_PROMPT,
+            narration.natural_1_bonus_prompt_for_result(natural_one),
+            narration.NATURAL_1_BONUS_PROMPT,
         )
-        self.assertEqual(commands._natural_1_bonus_prompt_for_result(non_one_critical), "")
+        self.assertEqual(narration.natural_1_bonus_prompt_for_result(non_one_critical), "")
 
 
 if __name__ == "__main__":

@@ -4,10 +4,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import db, legacy_commands, scenario_library
+from app import db, scenario_library
 from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories.group_state import load_state, save_state
+from app.services import scenario_ingestion
 
 
 @pytest.fixture
@@ -40,10 +41,10 @@ def test_guarded_reparse_preserves_source_and_can_retry(staged):
         return 'parsed text', [], False, {}, {}
     context = {'text': 'parsed text', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [], 'scene_maps': {},
                'manifest': {'title': 'parsed title'}, 'active_chapter_id': 'one', 'context_chapter_ids': ['one']}
-    with patch.object(legacy_commands.pdf_loader, 'extract_text', side_effect=extract) as extraction, \
-         patch.object(legacy_commands.pdf_loader, 'extract_preview', return_value='preview'), \
-         patch.object(legacy_commands.scenario_index, 'extract_scenario_index', return_value={'npcs': [], 'locations': []}), \
-         patch.object(legacy_commands.pregen_extractor, 'extract_pregens', return_value=[]), \
+    with patch.object(scenario_ingestion.pdf_loader, 'extract_text', side_effect=extract) as extraction, \
+         patch.object(scenario_ingestion.pdf_loader, 'extract_preview', return_value='preview'), \
+         patch.object(scenario_ingestion.scenario_index, 'extract_scenario_index', return_value={'npcs': [], 'locations': []}), \
+         patch.object(scenario_ingestion.pregen_extractor, 'extract_pregens', return_value=[]), \
          patch.object(scenario_library, 'save_scenario', return_value='parsed-id'), \
          patch.object(scenario_library, 'load_context', return_value=context):
         asyncio.run(reparse(state))

@@ -110,7 +110,7 @@ def test_router_handles_ooc_correction_before_map_or_supervisor(tmp_path, monkey
     state.active = True
     save_state(state)
     reply = AsyncMock()
-    with patch.object(router, "_resolve_map_action_transaction") as movement, \
+    with patch.object(router, "resolve_map_action") as movement, \
          patch.object(router.supervisor, "run_turn", AsyncMock()) as keeper_turn, \
          patch.object(router.correction_adjudication, "schedule") as adjudicate:
         asyncio.run(router._handle_ordinary_text_message_locked(

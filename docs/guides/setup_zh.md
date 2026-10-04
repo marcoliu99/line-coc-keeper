@@ -16,6 +16,30 @@ cp .env.example .env
 
 開發依賴提供測試與 profiling 工具；.env 與 runtime 資料不要進 Git。
 
+### Python 3.13 的可選 Paddle 模型搬移
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pip install -r requirements-pdf-ocr.txt
+python scripts/migrate_paddle_models.py --dry-run \
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
+python scripts/migrate_paddle_models.py \
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
+```
+
+預設從 `~/.cache/line-coc-keeper/paddleocr` 與 `~/.cache/line-coc-keeper/paddle-layout` 複製完整模型；兩個目的地參數都必須明確指定。若模型在別處，使用 `--ocr-source`、`--layout-source` 指定。script 不下載模型，且只有明確加 `--remove-source` 才刪除舊來源。若來源缺失，應另外明確執行 `python scripts/setup_paddle_ocr.py --model-dir "$HOME/data/paddle/paddleocr"` 或 `python scripts/setup_paddle_layout.py --model-dir "$HOME/data/paddle/paddle-layout"`，不要用 migration 下載。準備完成後，把 script 印出的絕對路徑填入 `.env`：
+
+```dotenv
+PDF_PADDLE_OCR_ENABLED=true
+PDF_PADDLE_MODEL_DIR=/absolute/path/to/paddle/paddleocr
+PDF_PADDLE_LAYOUT_ENABLED=true
+PDF_PADDLE_LAYOUT_MODEL_DIR=/absolute/path/to/paddle/paddle-layout
+```
+
 ## 設定
 
 LLM_PROVIDER 設為 anthropic、gemini 或 openai 並提供對應 API key；精確模型／預設參考 .env.example 與 app/config.py。目前預設 KEEPER_REASONING_EFFORT=medium、MAX_TOOL_ITERATIONS=5、HIGH_ITERATION_WATERMARK=4，劇本預熱關閉；OPENAI_HISTORY_TOKEN_BUDGET=4000、OPENAI_HISTORY_MIN_TURNS=2 限制選用歷史，自適應准入預設開啟、階段輸出上限預設 0。環境設定變更後重新啟動。

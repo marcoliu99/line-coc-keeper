@@ -300,7 +300,7 @@ class ProtectedTermCollectionTests(unittest.TestCase):
 class PregenAndIndexCommandTests(unittest.TestCase):
     """§10.2: /coc pregen and /coc index behavior under the switch, exercised
     through the actual live handlers (app/commands/handlers/character.py and
-    system.py — not app/legacy_commands.py's `_handle_coc_command`, which
+    system.py — not the old legacy_commands `_handle_coc_command`, which
     this task discovered is unreachable dead code; see final report)."""
 
     def _pregen_state(self) -> GroupState:
@@ -346,7 +346,7 @@ class PregenAndIndexCommandTests(unittest.TestCase):
         reply = ReplyCollector()
         extracted = {"npcs": [{"name": "神秘管家", "hp": 15}], "locations": []}
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state", lambda *a, **k: None), \
+                patch("app.repositories.state_transaction.commit_snapshot", lambda *a, **k: None), \
                 patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=extracted), \
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
             asyncio.run(system_handler.handle_system_command(
@@ -361,7 +361,7 @@ class PregenAndIndexCommandTests(unittest.TestCase):
         reply = ReplyCollector()
         extracted = {"npcs": [{"name": "神秘管家", "hp": 15}], "locations": []}
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state", lambda *a, **k: None), \
+                patch("app.repositories.state_transaction.commit_snapshot", lambda *a, **k: None), \
                 patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=extracted), \
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
             asyncio.run(system_handler.handle_system_command(
@@ -374,7 +374,7 @@ class PregenAndIndexCommandTests(unittest.TestCase):
         reply = ReplyCollector()
         extracted = {"npcs": [{"name": "神秘管家", "hp": 15}], "locations": []}
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state", lambda *a, **k: None), \
+                patch("app.repositories.state_transaction.commit_snapshot", lambda *a, **k: None), \
                 patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=extracted), \
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False):
             asyncio.run(system_handler.handle_system_command(

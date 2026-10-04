@@ -1,6 +1,6 @@
 """Tests for docs/specs/enhancement/enhancement-luck-buyup-always-offered.md: the
 proactive Luck buy-up decision (app/keeper.py's skill_check tool handler,
-and app/legacy_commands.py's _resolve_check_deterministically) must now be
+and app/commands/handlers/checks.py's resolve_check) must now be
 offered whenever there's at least one affordable tier-improving option,
 not just when the cheapest one costs <= 7 Luck.
 
@@ -25,41 +25,11 @@ sys.modules.setdefault(
     ),
 )
 
-from app import keeper, legacy_commands
+from app import keeper
+from app.commands.handlers import checks as check_commands
 from app.luck import LuckOption
 from app.models import Character, GroupState
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(state.to_dict())
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState, *, reason: str = "command") -> None:
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            self.originals.append((module, module.load_state, module.save_state))
-            module.load_state = load_state
-            module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, load_state, save_state in reversed(self.originals):
-            module.load_state = load_state
-            module.save_state = save_state
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
+from tests.state_store import StateStorePatch
 
 
 def _state_with_investigator() -> GroupState:
@@ -125,7 +95,7 @@ class KeeperSkillCheckLuckGateTests(unittest.TestCase):
 
 
 class LegacyCheckResolutionLuckGateTests(unittest.TestCase):
-    """app/legacy_commands.py's _resolve_check_deterministically (the
+    """app/commands/handlers/checks.py's resolve_check (the
     /coc-check-resolves-a-pending-roll path)."""
 
     def test_offers_luck_buyup_even_when_cheapest_option_costs_more_than_7(self):
@@ -133,11 +103,11 @@ class LegacyCheckResolutionLuckGateTests(unittest.TestCase):
         state.active = True
         state.pending_checks["u1"] = {"type": "skill", "skill": "閃避", "skill_value": 45, "bonus_dice": 0, "penalty_dice": 0}
         fake_roll = MagicMock(roll=40, tier="fail", required_tier="regular", success=False)
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
-            with patch("app.legacy_commands.dice.skill_check", return_value=fake_roll), \
-                 patch("app.legacy_commands.luck.buyable_options", return_value=_EXPENSIVE_OPTION):
-                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+            with patch("app.dice.skill_check", return_value=fake_roll), \
+                 patch("app.luck.buyable_options", return_value=_EXPENSIVE_OPTION):
+                resolution = check_commands.resolve_check("g", "u1", "/coc check 閃避")
             saved_state = store.store["g"]
         self.assertFalse(resolution.should_finalize)
         self.assertIn("12", resolution.reply_text)
@@ -148,11 +118,11 @@ class LegacyCheckResolutionLuckGateTests(unittest.TestCase):
         state.active = True
         state.pending_checks["u1"] = {"type": "skill", "skill": "閃避", "skill_value": 45, "bonus_dice": 0, "penalty_dice": 0}
         fake_roll = MagicMock(roll=5, tier="extreme", required_tier="regular", success=True)
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
-            with patch("app.legacy_commands.dice.skill_check", return_value=fake_roll), \
-                 patch("app.legacy_commands.luck.buyable_options", return_value=[]):
-                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+            with patch("app.dice.skill_check", return_value=fake_roll), \
+                 patch("app.luck.buyable_options", return_value=[]):
+                resolution = check_commands.resolve_check("g", "u1", "/coc check 閃避")
             saved_state = store.store["g"]
         self.assertTrue(resolution.should_finalize)
         self.assertNotIn("u1", saved_state.pending_luck_decisions)
@@ -164,11 +134,11 @@ class LegacyCheckResolutionLuckGateTests(unittest.TestCase):
             "type": "skill", "skill": "閃避", "skill_value": 45, "bonus_dice": 0, "penalty_dice": 0, "pushed": True,
         }
         fake_roll = MagicMock(roll=40, tier="fail", required_tier="regular", success=False)
-        with StateStorePatch(keeper, legacy_commands) as store:
+        with StateStorePatch(keeper, check_commands) as store:
             store.put(state)
-            with patch("app.legacy_commands.dice.skill_check", return_value=fake_roll), \
-                 patch("app.legacy_commands.luck.buyable_options", return_value=_EXPENSIVE_OPTION) as buyable_mock:
-                resolution = legacy_commands._resolve_check_deterministically("g", "u1", "/coc check 閃避")
+            with patch("app.dice.skill_check", return_value=fake_roll), \
+                 patch("app.luck.buyable_options", return_value=_EXPENSIVE_OPTION) as buyable_mock:
+                resolution = check_commands.resolve_check("g", "u1", "/coc check 閃避")
             saved_state = store.store["g"]
         buyable_mock.assert_not_called()
         self.assertTrue(resolution.should_finalize)

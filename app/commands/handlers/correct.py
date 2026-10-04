@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.commands import permissions
-from app.legacy_commands import Reply
+from app.commands.types import Reply
 from app.models import GroupState
 from app.repositories.group_state import load_state
 from app.services import (

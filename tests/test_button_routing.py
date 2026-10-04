@@ -22,18 +22,19 @@ def _io() -> ButtonIO:
     )
 
 
-class LegacyImportBoundaryTests(unittest.TestCase):
-    """Step 5: discord_bot.py imports only transport/domain types from
-    legacy_commands, never behavior; everything it drives — check/Luck
-    buttons (step 3), uploads (step 2), the PDF choice button (step 5) —
-    enters through the router instead."""
+class DiscordBotImportBoundaryTests(unittest.TestCase):
+    """discord_bot.py imports only transport/domain types and never behavior;
+    everything it drives — check/Luck buttons, uploads, the PDF choice button —
+    enters through the router instead. The types live in ``app.commands.types``;
+    that nothing imports the retired ``legacy_commands`` is checked by
+    ``test_architecture_legacy.py``."""
 
-    def test_discord_bot_imports_only_types_from_legacy_commands(self):
+    def test_discord_bot_imports_only_types_from_the_command_types_module(self):
         source = (pathlib.Path(__file__).resolve().parents[1] / "app" / "discord_bot.py").read_text(encoding="utf-8")
         imported = {
             alias.asname or alias.name
             for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.ImportFrom) and node.module == "app.legacy_commands"
+            if isinstance(node, ast.ImportFrom) and node.module == "app.commands.types"
             for alias in node.names
         }
         self.assertEqual(imported, {"Reply", "SendImage", "PdfChoice"})

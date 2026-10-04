@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from app import checkpoints, db, keeper, legacy_commands, scenario_activation
+from app import checkpoints, db, keeper, scenario_activation
 from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories import group_state
+from app.services import scenario_ingestion
 
 
 @pytest.fixture
@@ -131,7 +132,7 @@ def test_scenario_use_commit_failure_does_not_touch_images(storage: Path, monkey
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"old")
     monkeypatch.setattr(system.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(system, "save_state", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
+    monkeypatch.setattr(system.state_transaction, "commit_snapshot", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     async def reply(_text: str) -> None:
         pass
@@ -165,7 +166,7 @@ def test_chapter_advance_commit_failure_preserves_images(storage: Path, monkeypa
     group_state.save_page_image("group", 1, b"old")
     monkeypatch.setattr(scenario_activation.scenario_library, "next_chapter_id", lambda *_: "second")
     monkeypatch.setattr(scenario_activation.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(keeper, "_save_state_checked",
+    monkeypatch.setattr(group_state, "write_state_tx",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     result = keeper._execute_tool(state, "advance_scenario_chapter", {}, [], [])
@@ -180,11 +181,11 @@ def test_upload_choice_image_failure_preserves_activation(storage: Path, monkeyp
     state.pending_pdf_upload = {"scenario_id": "new", "low_text_pages": [], "truncated": False}
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"old")
-    monkeypatch.setattr(legacy_commands.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(legacy_commands.scenario_library, "copy_context_images",
+    monkeypatch.setattr(scenario_ingestion.scenario_library, "load_context", lambda *_: _context())
+    monkeypatch.setattr(scenario_ingestion.scenario_library, "copy_context_images",
                         lambda *_: (_ for _ in ()).throw(OSError("image failed")))
 
-    result = legacy_commands._resolve_pdf_upload_choice_locked("group", "new")
+    result = scenario_ingestion.apply_pdf_upload_choice("group", "new")
 
     assert "圖片快取刷新失敗" in result
     assert group_state.load_state("group").scenario_library_id == "new"
@@ -196,12 +197,12 @@ def test_upload_choice_commit_failure_preserves_old_state(storage: Path, monkeyp
     state.pending_pdf_upload = {"scenario_id": "new", "low_text_pages": [], "truncated": False}
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"old")
-    monkeypatch.setattr(legacy_commands.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(legacy_commands, "save_state",
+    monkeypatch.setattr(scenario_ingestion.scenario_library, "load_context", lambda *_: _context())
+    monkeypatch.setattr(scenario_ingestion.state_transaction, "commit_snapshot",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     with pytest.raises(OSError, match="db failed"):
-        legacy_commands._resolve_pdf_upload_choice_locked("group", "new")
+        scenario_ingestion.apply_pdf_upload_choice("group", "new")
 
     assert group_state.load_state("group").scenario_library_id == ""
     assert group_state.load_page_image("group", 1) == b"old"
@@ -215,7 +216,7 @@ def test_rollback_commit_failure_does_not_refresh_images(storage: Path, monkeypa
     state.scenario_title = "New"
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"new")
-    monkeypatch.setattr(checkpoints, "_save_state_unlocked",
+    monkeypatch.setattr(group_state, "write_state_tx",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     with pytest.raises(OSError, match="db failed"):
