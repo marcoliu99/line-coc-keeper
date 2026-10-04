@@ -20,6 +20,8 @@ PyMuPDF4LLM 1.28.2 預設啟用自己的 Tesseract OCR。目前正式 `to_markdo
 
 相同 SHA 的 The Haunting 全書 smoke 共 27 頁：正常 Paddle OCR 12 次，數值第二證據 2 次（第 12、16 頁），沒有重複對第 17 頁推論。第 12 頁 `numeric_pair_review` 仍獲確認並解除最後 review。第 16 頁 layout 缺少一個重複出現的數值 `1918`，但無法唯一綁定遺失的局部上下文（合格 anchor 數 0），所以 Paddle 證據仍是 inconclusive，保留 warning 與最後 review。原生 canonical 文字維持不變。
 
+`vision_review_required` 留在歷史 warning；有實際 vision 候選、pair 檢查乾淨且最後文字可用時，不由它單獨造成待核對。原本標為 `low_text` 的頁面，不能只靠較長的衍生 vision 描述宣稱所選來源文字已足夠。重播 SHA 相符的正式匯入報告後，第 7、16、17 頁仍待核對：第 7 頁另有 `ocr_evidence_loss`，第 17 頁被選用的非 vision 候選仍短於門檻。第 7、17 頁地圖仍保留；沒有暗中解除地圖或 OCR 的其他 warning。
+
 ## 測試與驗證
 
 確認正式 PyMuPDF4LLM 呼叫明確傳入 `use_ocr=False`。比較單欄、雙欄原生文字及版面選擇；確認 raster／低文字頁進 Paddle，Paddle 採用時跳過 Tesseract，被拒絕或不可用時維持後備。測試數值確認、不一致、缺乏證據、Paddle 各種失敗狀態、無 warning 略過、低文字略過，以及 canonical 文字不變。用 Python 3.13 對 SHA256 相符的私人 PDF smoke，僅記錄第 12、16、17 頁的 sanitized 長度、狀態及 warning。執行完整 pytest、ruff、mypy、compileall、diff check。

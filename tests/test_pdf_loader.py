@@ -553,6 +553,54 @@ def test_low_text_page_skips_second_verification_inference():
 
 
 class PdfFinalReviewTests(unittest.TestCase):
+    def test_successful_vision_is_not_itself_a_review_problem(self):
+        row = {'warnings': ['vision_review_required'],
+               'candidates': {'vision': 'Verified visual description. ' * 10},
+               'vision_pair_checks': []}
+        self.assertFalse(pdf_loader._page_requires_review(row, 'x' * 300))
+        self.assertEqual(row['warnings'], ['vision_review_required'])
+
+    def test_vision_warning_remains_conditional(self):
+        base = {'method': 'markitdown',
+                'candidates': {'vision': 'Verified visual description. ' * 10,
+                               'markitdown': 'Verified source text. ' * 12},
+                'vision_pair_checks': []}
+        cases = [
+            (['vision_review_required', 'vision_pair_mismatch'], 300, True),
+            (['vision_review_required', 'vision_pair_review'], 300, True),
+            (['vision_review_required', 'vision_failed'], 300, True),
+            (['vision_review_required', 'low_text'], 199, True),
+            (['vision_review_required', 'low_text'], 200, False),
+            (['vision_review_required', 'future_unknown_warning'], 300, True),
+        ]
+        for warnings, length, expected in cases:
+            with self.subTest(warnings=warnings):
+                row = {**base, 'warnings': warnings.copy()}
+                self.assertEqual(pdf_loader._page_requires_review(row, 'x' * length), expected)
+                self.assertEqual(row['warnings'], warnings)
+
+    def test_successful_scene_map_does_not_hide_unresolved_low_text(self):
+        with pymupdf.open() as doc:
+            page = doc.new_page()
+            page.insert_image(pymupdf.Rect(20, 20, 80, 80), stream=_ONE_PIXEL_PNG)
+            payload = doc.tobytes()
+        report = {}
+        scene_map = {'locations': [{'id': 'room'}]}
+        with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value=None), \
+             patch.object(pdf_loader, '_markitdown_page_texts', return_value=None), \
+             patch.object(pdf_loader, '_analyze_graphic_page',
+                          return_value=('Map description. ' * 20, scene_map)):
+            _, review, _, _, maps = pdf_loader.extract_text(payload, quality_report=report)
+        self.assertEqual(maps, {1: scene_map})
+        self.assertEqual(review, [1])
+        self.assertIn('vision_review_required', report['pages'][0]['warnings'])
+
+    def test_derived_vision_length_does_not_clear_short_selected_source(self):
+        row = {'warnings': ['low_text', 'vision_review_required'], 'method': 'markitdown',
+               'candidates': {'markitdown': 'x' * 159, 'vision': 'y' * 603},
+               'vision_pair_checks': []}
+        self.assertTrue(pdf_loader._page_requires_review(row, 'x' * 778))
+
     def test_numeric_evidence_only_resolves_its_verified_warning(self):
         row = {'warnings': ['native_two_columns', 'numeric_pair_review'],
                'paddle_numeric_verification': {'status': 'confirmed',

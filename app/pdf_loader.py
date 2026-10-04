@@ -494,9 +494,21 @@ def _page_requires_review(row: dict, final_text: str) -> bool:
     """Keep warning history, but review only problems unresolved in final text."""
     verification = row.get('paddle_numeric_verification', {})
     resolved = set(verification.get('warnings_resolved', [])) if verification.get('status') in {'confirmed', 'partial'} else set()
+    vision_checks = row.get('vision_pair_checks')
+    # A long derived description cannot, by itself, establish that a short
+    # selected source/OCR candidate has become usable scenario text.
+    selected_source = row.get('candidates', {}).get(row.get('method'), '')
+    vision_complete = (bool(row.get('candidates', {}).get('vision'))
+                       and isinstance(vision_checks, list)
+                       and all(check.get('status') == 'matched' for check in vision_checks)
+                       and not {'vision_failed', 'vision_pair_review', 'vision_pair_mismatch'}
+                       .intersection(row['warnings'])
+                       and len(final_text) >= _LOW_TEXT_THRESHOLD
+                       and ('low_text' not in row['warnings'] or len(selected_source) >= _LOW_TEXT_THRESHOLD))
     return any(
         warning not in _INFORMATIONAL_WARNINGS and warning not in resolved
         and (warning != "low_text" or len(final_text) < _LOW_TEXT_THRESHOLD)
+        and (warning != 'vision_review_required' or not vision_complete)
         for warning in row["warnings"]
     )
 
