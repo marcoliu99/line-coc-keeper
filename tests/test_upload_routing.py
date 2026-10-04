@@ -7,8 +7,8 @@ admission hold.
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.commands import router
 from app import legacy_commands
+from app.commands import router
 from app.commands.handlers import uploads
 from app.commands.handlers.uploads import Upload
 from app.models import GroupState
