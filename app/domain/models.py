@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from app.services.turn_delivery import DeliveryEnvelope
 
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
+SpeakerRole = Literal["player", "kp_assistant"]
 
 
 @dataclass
@@ -107,7 +108,7 @@ class TurnPayload(TypedDict, total=False):
     conversation_id: str
     user_id: str
     display_name: str
-    speaker_role: str
+    speaker_role: SpeakerRole
     text: str
     resolved_location: dict[str, Any] | None
     state: GroupState

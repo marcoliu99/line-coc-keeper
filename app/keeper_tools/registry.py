@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
+from app.domain.models import SpeakerRole
 from app.keeper_tools import character as character_handlers
 from app.keeper_tools import checks as check_handlers
 from app.keeper_tools import combat as combat_handlers
@@ -16,8 +17,6 @@ from app.keeper_tools import messaging as messaging_handlers
 from app.keeper_tools import scenario as scenario_handlers
 from app.models import GroupState
 from app.services import opposed_checks
-
-SpeakerRole = Literal["player", "kp_assistant"]
 
 
 @dataclass

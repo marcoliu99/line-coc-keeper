@@ -34,6 +34,7 @@ from app.commands.types import (
     SendDMImage,
     SendImage,
 )
+from app.domain.models import SpeakerRole
 from app.repositories.group_state import load_state
 from app.services import (
     correction_adjudication,
@@ -933,7 +934,7 @@ async def _handle_ordinary_text_message_locked(
     is_kp_assistant = state.kp_assistant_user_id == user_id
     if is_kp_assistant:
         display_name = await get_display_name()
-        speaker_role = "kp_assistant"
+        speaker_role: SpeakerRole = "kp_assistant"
         resolved_location = None
     elif state.get_active_character(user_id) is None:
         display_name = await get_display_name()

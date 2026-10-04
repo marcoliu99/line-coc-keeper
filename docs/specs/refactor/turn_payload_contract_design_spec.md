@@ -24,7 +24,7 @@ A player turn passes through the Supervisor, Executor, Narrator and delivery, an
 | | `pending`, `pending_luck`, `resolved`, `waiting_for_name`, `current_turn_state` | `turn_handoff.prepare_narrator_handoff`, from the latest state |
 | | `pending`, `pending_luck` (cleared) | `turn_delivery.public_mechanic`, on a copy |
 
-`PlayerTurnKind` moved next to the payload so the type can name it; `supervisor` still exports it. `mypy app` now rejects an unknown key, a wrongly typed value and a key that is not a string literal. Two writes that used a computed key in `tool_gateway` and `turn_delivery.public_mechanic` were rewritten with literal keys; their effect is the same.
+`PlayerTurnKind` and `SpeakerRole` (`"player"` or `"kp_assistant"`, previously a `Literal` inside the tool registry) live next to the payload so the types can name them; `supervisor.run_turn`, `context_builder.build_context` and the router's local `speaker_role` are typed with `SpeakerRole`, so a misspelt role no longer passes mypy and silently routes as a player. `mypy app` now rejects an unknown key, a wrongly typed value and a key that is not a string literal. Two writes that used a computed key in `tool_gateway` and `turn_delivery.public_mechanic` were rewritten with literal keys; their effect is the same.
 
 ## Contract kept
 
@@ -32,7 +32,7 @@ No runtime behaviour changed: the annotations, the two rewritten writes and a `i
 
 ## Enforcement
 
-`tests/test_turn_payload_contract.py` fails if a declared key has no supplier or two, if `context_builder` builds a different set of input keys, or if any module other than the owning stage writes a payload key (`message.payload[...] = ...`, `setdefault`, `update`, `pop`), including a write with a computed key.
+`tests/test_turn_payload_contract.py` fails if a declared key has no supplier or two, if `context_builder` builds a different set of input keys, or if any module other than the owning stage writes a payload key (`message.payload[...] = ...`, `setdefault`, `update`, `pop`), including a write with a computed key. The same checks apply to `CheckStatus`: every key needs a writing stage, and a write from any other module (a subscript, `update`, or the dict literal that builds it) fails.
 
 ## Not changed
 

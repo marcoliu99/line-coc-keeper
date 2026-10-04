@@ -22,7 +22,7 @@ from app.config import (
     SCENARIO_RAG_ENABLED,
     SCENARIO_RAG_TOP_K,
 )
-from app.domain.models import AgentMessage, TurnPayload
+from app.domain.models import AgentMessage, SpeakerRole, TurnPayload
 from app.keeper_tools import resource_bridge
 from app.models import GroupState
 from app.services import narrative_corrections
@@ -83,7 +83,7 @@ def retrieval_binding(state: GroupState, user_id: str) -> tuple:
 
 async def prefetch_retrieval(
     state: GroupState, user_id: str, display_name: str, text: str,
-    resolved_location: dict[str, Any] | None, speaker_role: str, conversation_id: str,
+    resolved_location: dict[str, Any] | None, speaker_role: SpeakerRole, conversation_id: str,
 ) -> RetrievalPrefetch:
     """Run this turn's retrieval before the conversation lock is taken.
 
@@ -112,7 +112,7 @@ async def build_context(
     display_name: str,
     text: str,
     resolved_location: dict[str, Any] | None,
-    speaker_role: str,
+    speaker_role: SpeakerRole,
     conversation_id: str,
     prefetched: RetrievalPrefetch | None = None,
 ) -> AgentMessage:

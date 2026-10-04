@@ -24,7 +24,7 @@
 | | `pending`、`pending_luck`、`resolved`、`waiting_for_name`、`current_turn_state` | `turn_handoff.prepare_narrator_handoff`，依最新狀態 |
 | | `pending`、`pending_luck`（清除） | `turn_delivery.public_mechanic`，作用在副本上 |
 
-`PlayerTurnKind` 移到 payload 旁邊，型別才能引用它；`supervisor` 仍匯出它。`mypy app` 現在會拒絕未知的 key、型別不對的值，以及不是字串字面值的 key。`tool_gateway` 與 `turn_delivery.public_mechanic` 裡兩處用變數當 key 的寫入，改寫成字面 key，效果相同。
+`PlayerTurnKind` 與 `SpeakerRole`（`"player"` 或 `"kp_assistant"`，原本是工具 registry 裡的 `Literal`）放在 payload 旁邊，型別才能引用它們；`supervisor.run_turn`、`context_builder.build_context` 與 router 裡的區域變數 `speaker_role` 都改用 `SpeakerRole`，所以拼錯的角色不會再通過 mypy、默默被當成玩家處理。`mypy app` 現在會拒絕未知的 key、型別不對的值，以及不是字串字面值的 key。`tool_gateway` 與 `turn_delivery.public_mechanic` 裡兩處用變數當 key 的寫入，改寫成字面 key，效果相同。
 
 ## 維持不變
 
@@ -32,7 +32,7 @@
 
 ## 守門
 
-`tests/test_turn_payload_contract.py` 在以下情況失敗：宣告的 key 沒有提供者或有兩個、`context_builder` 建立的輸入 key 集合不同、或擁有者以外的模組寫入 payload key（`message.payload[...] = ...`、`setdefault`、`update`、`pop`），包含用變數當 key 的寫入。
+`tests/test_turn_payload_contract.py` 在以下情況失敗：宣告的 key 沒有提供者或有兩個、`context_builder` 建立的輸入 key 集合不同、或擁有者以外的模組寫入 payload key（`message.payload[...] = ...`、`setdefault`、`update`、`pop`），包含用變數當 key 的寫入。`CheckStatus` 套用同樣的檢查：每個 key 都要有負責寫入的階段，其他模組的寫入（下標、`update`，或建立它的 dict 字面值）一律失敗。
 
 ## 未更動
 

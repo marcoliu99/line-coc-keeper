@@ -28,6 +28,21 @@ WRITERS = {
 }
 MUTATORS = {"setdefault", "update", "pop", "popitem", "clear", "__setitem__"}
 
+# CheckStatus: the stage that may write each key (see the table in ``CheckStatus``).
+CHECK_STATUS_WRITERS = {
+    "app/agents/tool_gateway.py": {
+        "tool_called", "pending", "pending_luck", "resolved", "scenario_evidence_blocked", "cleared",
+    },
+    "app/agents/executor.py": {
+        "tool_called", "pending", "pending_luck", "resolved", "tool_event_count", "state_changed", "dice_rolled",
+    },
+    "app/services/turn_handoff.py": {
+        "pending", "pending_luck", "resolved", "waiting_for_name", "current_turn_state",
+    },
+    "app/services/turn_delivery.py": {"pending", "pending_luck"},
+}
+CHECK_STATUS_NAMES = {"status", "check_status"}
+
 
 def _is_payload(node: ast.expr, *, bare_name: bool) -> bool:
     """``message.payload``, or a parameter called ``payload`` inside the turn pipeline."""
@@ -54,6 +69,31 @@ def payload_writes(source: str, *, bare_name: bool = True) -> set[str]:
               and node.func.attr in MUTATORS and _is_payload(node.func.value, bare_name=bare_name)):
             written.add((_literal(node.args[0]) if node.args else None) or "*")
     return written
+
+
+def _is_check_status(node: ast.expr, *, bare_name: bool) -> bool:
+    """``result.check_status``, or a local called ``status`` / ``check_status`` in the turn pipeline."""
+    return (isinstance(node, ast.Attribute) and node.attr == "check_status") or (
+        bare_name and isinstance(node, ast.Name) and node.id in CHECK_STATUS_NAMES
+    )
+
+
+def check_status_writes(source: str, *, bare_name: bool = True) -> set[str]:
+    """Keys assigned into a check status, by subscript or in the dict literal that builds it."""
+    written: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) \
+                and _is_check_status(node.value, bare_name=bare_name):
+            written.add(_literal(node.slice) or "*")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr in MUTATORS and _is_check_status(node.func.value, bare_name=bare_name):
+            written.add((_literal(node.args[0]) if node.args else None) or "*")
+        literal: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in CHECK_STATUS_NAMES or isinstance(node, ast.keyword) and node.arg == "check_status":
+            literal = node.value
+        if isinstance(literal, ast.Dict):
+            written.update((_literal(key) or "*") if key is not None else "**" for key in literal.keys)
+    return written - {"**"}
 
 
 def _production() -> dict[str, str]:
@@ -102,8 +142,30 @@ def test_the_gate_catches_a_stray_write() -> None:
     assert payload_writes('name = message.payload["state"]; other = message.payload.get("text")') == set()
 
 
-def test_check_status_keys_are_declared() -> None:
-    assert set(CheckStatus.__annotations__) >= {
-        "tool_called", "pending", "pending_luck", "resolved", "tool_event_count",
-        "state_changed", "dice_rolled", "waiting_for_name", "current_turn_state",
+def test_every_check_status_key_has_a_stage_that_may_write_it() -> None:
+    assert set(CheckStatus.__annotations__) == set().union(*CHECK_STATUS_WRITERS.values())
+
+
+def test_a_check_status_key_is_only_written_by_a_stage_that_owns_it() -> None:
+    offenders: dict[str, set[str]] = {}
+    for path, source in _production().items():
+        written = check_status_writes(source, bare_name=_in_turn_pipeline(path) or path.endswith("prompt_config.py"))
+        if written - CHECK_STATUS_WRITERS.get(path, set()):
+            offenders[path] = written - CHECK_STATUS_WRITERS.get(path, set())
+    assert offenders == {}
+
+
+def test_the_stages_really_do_write_what_the_check_status_contract_says() -> None:
+    sources = _production()
+    for path, keys in CHECK_STATUS_WRITERS.items():
+        assert check_status_writes(sources[path]) == keys, path
+
+
+def test_the_check_status_gate_catches_a_stray_write() -> None:
+    assert check_status_writes('result.check_status["dice_rolled"] = True') == {"dice_rolled"}
+    assert check_status_writes('status["resolved"] = None; status.update({"x": 1})') == {"resolved", "*"}
+    assert check_status_writes('check_status: CheckStatus = {"tool_called": False, "pending": None}') == {
+        "tool_called", "pending",
     }
+    assert check_status_writes('run(check_status={**check_status, "state_changed": 1})') == {"state_changed"}
+    assert check_status_writes('value = result.check_status["pending"]; other = status.get("x")') == set()
