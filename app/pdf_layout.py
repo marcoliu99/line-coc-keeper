@@ -179,6 +179,9 @@ def order_native_lines(lines: list[NativeLine], regions: list[LayoutRegion], *,
     for column in range(column_count):
         native = sorted((line for i in ordered_regions if columns[i] == column
                          for line in assignments[i]), key=lambda line: line.bbox[0])
+        if column_count == 3 and any(line.bbox[0] < intervals[column][0]
+                                     or line.bbox[2] > intervals[column][1] for line in native):
+            return fallback('ambiguous_mapping')
         rightmost = native[0].bbox[2]
         for line in native[1:]:
             if line.bbox[0] - rightmost >= .02 * width:

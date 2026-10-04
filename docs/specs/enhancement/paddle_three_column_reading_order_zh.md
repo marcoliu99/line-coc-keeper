@@ -76,3 +76,5 @@ PDF 原生行 + PP-DocLayoutV3 區域
 未修改的 page_05 regression 實作前確定 RED（fallback/not_two_columns），實作後 GREEN 且逐字符合原 expected text。測試涵蓋普通／標題／圖片／不等寬 synthetic 與指定不安全版面，以及缺少／重複／無效模型 order 不影響三欄。真正 extract_text integration 只 stub 外部模型。原雙欄 expected text 逐字相同；單欄及故障 fallback 不變。
 
 Production 只有 app/pdf_layout.py 行為改動；loader/OCR/setup/Python/gameplay 未修改。本機 CPU smoke 重用五頁 subset 與本機模型，封鎖 socket。真實三欄 evidence 為 0 頁：成功三欄來自既有 synthetic fixture，不宣稱 corpus production 已驗證。[結果與時間](paddle_three_column_reading_order_results.json)。
+
+GitHub review regression：每個配到三欄正文的原生行，水平方向亦須完整位於計算出的欄區間。即使鄰欄 model 區域上下斷開、初始 overlap 檢查看不到，也拒絕跨欄行。此保護不改雙欄行為。

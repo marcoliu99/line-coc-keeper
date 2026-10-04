@@ -135,3 +135,21 @@ def test_sdk_without_order_metadata_still_orders_three_columns(monkeypatch, tmp_
                 page.insert_text((x, 200 + row * 90), data['lines'][1 + row * 3 + col]['text'], fontsize=10)
         result = pdf_layout.reorder_with_paddle(page)
     assert result.status == 'accepted' and result.text == data['expected_text']
+
+
+@pytest.mark.parametrize('source_column', [0, 1])
+def test_native_line_crossing_gutter_cannot_hide_in_adjacent_region_gap(source_column):
+    from dataclasses import replace
+    lines, regions, _ = synthetic_columns()
+    target = source_column + 1
+    source_box, target_box = regions[source_column].bbox, regions[target].bbox
+    lines[3 + source_column] = replace(lines[3 + source_column],
+        bbox=(source_box[0] + 5, 170, target_box[2] - 5, 184))
+    # The adjacent column still has three lines and the same overall body band,
+    # but has no detected region at the cross-column line's vertical position.
+    lines[3 + target] = replace(lines[3 + target],
+        bbox=(target_box[0] + 5, 200, target_box[2] - 5, 214))
+    regions[target] = replace(regions[target], bbox=(target_box[0], 90, target_box[2], 150))
+    regions.append(pdf_layout.LayoutRegion('text', (target_box[0], 190, target_box[2], 260), None))
+    result = arrange(lines, regions)
+    assert result.status == 'fallback' and result.reason == 'ambiguous_mapping'

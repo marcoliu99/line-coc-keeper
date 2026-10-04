@@ -6,8 +6,8 @@
       "page": 1,
       "status": "accepted",
       "reason": "two_columns",
-      "initialization_seconds": 2.6972932499775197,
-      "inference_seconds": 1.2351166250009555,
+      "initialization_seconds": 2.2327485830173828,
+      "inference_seconds": 1.2220917500089854,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -16,7 +16,7 @@
       "status": "accepted",
       "reason": "two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9406716249941383,
+      "inference_seconds": 0.9242414169711992,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -25,7 +25,7 @@
       "status": "accepted",
       "reason": "two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.959792457986623,
+      "inference_seconds": 0.96031066699652,
       "exact_expected_order": true,
       "native_unchanged": true
     },
@@ -34,7 +34,7 @@
       "status": "fallback",
       "reason": "not_two_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9535285829915665,
+      "inference_seconds": 0.9704452919540927,
       "exact_expected_order": null,
       "native_unchanged": true
     },
@@ -43,7 +43,7 @@
       "status": "accepted",
       "reason": "three_columns",
       "initialization_seconds": 0.0,
-      "inference_seconds": 0.9515893749776296,
+      "inference_seconds": 0.9227021249826066,
       "exact_expected_order": true,
       "native_unchanged": true
     }
@@ -67,11 +67,12 @@
     "ci_local": "Python 3.14; external model stub only, real extract_text"
   },
   "checks": {
-    "targeted": "59 passed",
-    "pytest": "1989 passed, 1 skipped; 152 subtests passed",
+    "targeted": "61 passed",
+    "pytest": "1991 passed, 1 skipped; 152 subtests passed",
     "ruff": "PASS",
     "mypy": "PASS: 128 source files",
     "compileall": "PASS",
     "diff_check": "PASS"
-  }
+  },
+  "github_review_correction": "Reject three-column native lines outside their computed horizontal column interval, even in adjacent-region vertical gaps"
 }
