@@ -8,6 +8,14 @@ from typing import Any
 VERSION = 'ai-import-repair-v5'
 _NUMBER = re.compile(r'\b\d+(?:[dD]\d+(?:[+-]\d+)?|\.\d+)?%?\b')
 _WORD = re.compile(r'[\w]+', re.UNICODE)
+_RICH_ATOM = r'(?:\d+[dD]\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+)'
+_RICH_VALUE = rf'[+-]?{_RICH_ATOM}(?:\s*/\s*{_RICH_ATOM})?%?'
+_RICH_STAT = re.compile(
+    rf'(?<!\w)(STR|CON|SIZ|DEX|APP|INT|POW|EDU|HP|MP|SAN|LUCK|MOV|BUILD|ARMOR|DB|DAMAGE)'
+    rf'\s*[:：|]?\s*({_RICH_VALUE})(?!\w)', re.IGNORECASE,
+)
+_RICH_FIELD = re.compile(rf'^\s*([A-Za-z][A-Za-z ]{{1,40}}?)\s*[:：|]?\s+({_RICH_VALUE})\s*$', re.IGNORECASE)
+_RICH_MECHANIC = re.compile(rf'(?<!\w)(?:{_RICH_VALUE})(?!\w)', re.IGNORECASE)
 
 
 def normalize(text: str) -> str:
@@ -48,6 +56,114 @@ def select_text(native: str, layout: str) -> tuple[str, str, list[str]]:
     if warnings:
         return native, 'native', warnings
     return layout, 'layout', []
+
+
+def rich_ocr_mechanics(text: str) -> Counter[tuple[str, str]]:
+    """Only source-bound mechanics can authorize a low-text OCR rescue."""
+    result: Counter[tuple[str, str]] = Counter()
+    for line in text.splitlines():
+        clean = re.sub(r'[*_`]', '', line).strip().strip('|').strip()
+        if '|' in clean:
+            cells = [cell.strip() for cell in clean.split('|')]
+            if len(cells) >= 3 and any(char.isalpha() for char in cells[0]):
+                label = cells[0].upper()
+                for base in re.finditer(r'\((\d+%)\)', label):
+                    result[(re.sub(r'\(\d+%\)', '', label).strip(), base.group(1).casefold())] += 1
+                for column, cell in enumerate(cells[1:], 1):
+                    if re.fullmatch(_RICH_VALUE, cell, re.IGNORECASE):
+                        result[(f'{label}[{column}]', re.sub(r'\s', '', cell).casefold())] += 1
+                continue
+        matches = list(_RICH_STAT.finditer(clean))
+        if matches:
+            result.update((match.group(1).upper(), re.sub(r'\s', '', match.group(2)).casefold())
+                          for match in matches)
+            continue
+        match = _RICH_FIELD.fullmatch(clean)
+        if match:
+            result[(match.group(1).strip().upper(), re.sub(r'\s', '', match.group(2)).casefold())] += 1
+    return result
+
+
+def rich_ocr_stage_one(baseline: str, candidate: str, pairs: list[dict], threshold: int) -> tuple[dict, Counter[tuple[str, str]]]:
+    """Keep short-source evidence while ignoring only obvious parser debris."""
+    evidence = {
+        'attempted': True, 'status': 'accepted', 'reason': 'low_text_source_rich_candidate_verified',
+        'selected_source_chars': len(baseline), 'candidate_chars': len(candidate),
+        'paddle_verification_attempted': False, 'paddle_status': 'not_required',
+        'confirmed_new_mechanics_count': 0, 'unconfirmed_new_mechanics_count': 0,
+        'conflicting_new_mechanics_count': 0, 'pair_check_status': 'matched',
+        'mechanics_check_status': 'pending',
+    }
+    old, new = rich_ocr_mechanics(baseline), rich_ocr_mechanics(candidate)
+    added = new - old
+    evidence.update(baseline_mechanics_count=old.total(), candidate_mechanics_count=new.total(),
+                    new_mechanics_count=added.total(), anchor_count=new.total())
+
+    def reject(reason: str) -> tuple[dict, Counter[tuple[str, str]]]:
+        evidence.update(status=reason, reason=reason)
+        evidence['mechanics_check_status'] = reason
+        if reason == 'pair_mismatch':
+            evidence['pair_check_status'] = reason
+        return evidence, added
+
+    if len(baseline) >= threshold:
+        return reject('not_low_text_source')
+    if len(candidate) < threshold:
+        return reject('candidate_too_short')
+    if '\ufffd' in candidate or re.search(r'(?<!\w)[lI|][dD]\d', candidate):
+        return reject('mechanic_loss')
+    if any(check['status'] != 'matched' for check in check_pairs(pairs, candidate)):
+        return reject('pair_mismatch')
+    if old - new:
+        return reject('mechanic_loss')
+    # A folio and markup are not source values. Numeric evidence in a phrase is.
+    meaningful_lines = []
+    for line in baseline.splitlines():
+        clean = re.sub(r'<!--.*?-->', '', line).strip().strip('#*_`| ').strip()
+        if not clean or clean.isdigit() or re.fullmatch(r'(?:[A-Za-z]\s+){2,}[A-Za-z]', clean):
+            continue
+        if ((re.search(r'\d', clean) and not re.fullmatch(r'\d+\s+[A-Z][A-Za-z ]{0,35}', clean))
+                or len(_WORD.findall(clean)) >= 5 or re.search(r'[.!?。！？]', clean)):
+            meaningful_lines.append(clean)
+    candidate_words = Counter(_WORD.findall(candidate.casefold()))
+    for line in meaningful_lines:
+        required = Counter(_WORD.findall(line.casefold()))
+        if required - candidate_words:
+            return reject('source_content_loss')
+        source_mechanics = Counter(re.sub(r'\s', '', match.group()).casefold()
+                                   for match in _RICH_MECHANIC.finditer(line))
+        candidate_mechanics = Counter(re.sub(r'\s', '', match.group()).casefold()
+                                      for match in _RICH_MECHANIC.finditer(candidate))
+        if source_mechanics - candidate_mechanics:
+            return reject('mechanic_loss')
+    if not new:
+        return reject('insufficient_anchor')
+    # Complete source-bound values are compared above; reject obvious unbound
+    # dice and percentages rather than trusting a rich-looking OCR paragraph.
+    bound_values = Counter(value for _, value in new.elements())
+    found_values = Counter(re.sub(r'\s', '', m.group()).casefold() for m in _RICH_MECHANIC.finditer(candidate))
+    critical = Counter(value for value in found_values.elements() if 'd' in value or '%' in value or '/' in value)
+    if critical - bound_values:
+        return reject('insufficient_anchor')
+    evidence['mechanics_check_status'] = 'stage_one_passed'
+    return evidence, added
+
+
+def rich_ocr_corroboration(added: Counter[tuple[str, str]], paddle_text: str) -> tuple[int, int, int]:
+    """Count exact label/value support, absence, and same-label conflicts."""
+    observed = rich_ocr_mechanics(paddle_text)
+    confirmed = (added & observed).total()
+    remaining = added - observed
+    labels = {label for label, _ in added}
+    extra = observed - added
+    mismatched_by_label = Counter({label: sum(count for (other, _), count in remaining.items()
+                                               if other == label)
+                                   for label in labels if any(other == label for other, _ in observed)})
+    mismatched = mismatched_by_label.total()
+    extra_by_label = Counter({label: sum(count for (other, _), count in extra.items() if other == label)
+                              for label in labels})
+    conflicts = sum(max(mismatched_by_label[label], extra_by_label[label]) for label in labels)
+    return confirmed, remaining.total() - mismatched, conflicts
 
 
 def continuation(previous: str, current: str) -> bool:
