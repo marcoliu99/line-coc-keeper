@@ -1,0 +1,113 @@
+{
+  "subset_sha256": "362531220b2ad0d5d4479b6c5fed754de9a3660d6d1245727cd5127f0f4b322e",
+  "baseline": "7d2cc8cab76d25aa1f47c47568ad2f9ff05d910b",
+  "model": "PP-DocLayoutV3",
+  "model_hashes": {
+    "README.md": "08b60d8d7a14ddfbe29bcef9e2c2c75bf012bb0412f4e41a2bdfe5687a741dc7",
+    "inference.json": "2b68367c5b312a03de5a6e1642c597c8f95165a7e40cd59c6700cf4a5042f4fd",
+    ".gitattributes": "a3a43406012ee8c7b9b38dfab1b11610f33e8245cd864a9a9302d042616a859e",
+    "inference.pdiparams": "70bd316b0582769ec968829fd1feb1a6a58b7c941b938327e551b6b12b45c137",
+    "inference.yml": "506fcfac13b3b546ae40d7886b44126420f392adb694e3f8bb6a6286a1f90fdc"
+  },
+  "versions": {
+    "paddleocr": "3.7.0",
+    "paddlex": "3.7.2",
+    "paddlepaddle": "3.3.0",
+    "pymupdf": "1.28.2"
+  },
+  "source_pages": [
+    1,
+    3,
+    15,
+    "synthetic_single",
+    "synthetic_three"
+  ],
+  "oracle": {
+    "basis": "previous rendered pages, before Paddle inference",
+    "regions": [
+      {
+        "header_y": 0,
+        "title_y": 200,
+        "footer_y": 710,
+        "columns": [
+          300
+        ]
+      },
+      {
+        "header_y": 60,
+        "title_y": 0,
+        "footer_y": 710,
+        "columns": [
+          300
+        ]
+      },
+      {
+        "header_y": 60,
+        "title_y": 0,
+        "footer_y": 710,
+        "columns": [
+          300
+        ]
+      },
+      {
+        "header_y": 0,
+        "title_y": 0,
+        "footer_y": 900,
+        "columns": []
+      },
+      {
+        "header_y": 0,
+        "title_y": 130,
+        "footer_y": 900,
+        "columns": [
+          200,
+          390
+        ]
+      }
+    ],
+    "anchors": [
+      [
+        "THE HAUNTING",
+        "This scenario",
+        "THE KEEPER",
+        "PREPARING FOR PLAY",
+        "LOCATION 1"
+      ],
+      [
+        "Pushing The Roll?",
+        "The Clippings Files",
+        "The pertinent clippings",
+        "Unpublished Story",
+        "If an investigator flirts",
+        "LOCATION 3"
+      ],
+      [
+        "Weapon",
+        "Armor",
+        "ABOUT W. CORBITT",
+        "Corbitt’s Spells",
+        "FLESH WARD"
+      ],
+      [
+        "SINGLE COLUMN",
+        "First paragraph",
+        "Second paragraph",
+        "Third paragraph",
+        "Fourth paragraph"
+      ],
+      [
+        "SPANNING TITLE",
+        "LEFT 1",
+        "LEFT 2",
+        "LEFT 3",
+        "MIDDLE 1",
+        "MIDDLE 2",
+        "MIDDLE 3",
+        "RIGHT 1",
+        "RIGHT 2",
+        "RIGHT 3"
+      ]
+    ]
+  },
+  "notes": "Native positions and local PP-DocLayoutV3 outputs from preserved subset; manual expected order frozen before inference. No model downloads in tests."
+}
