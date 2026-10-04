@@ -26,7 +26,7 @@ from app.legacy_commands import (
     handle_scenario_markdown_upload,
     resolve_pdf_upload_choice,
 )
-from app.repositories.group_state import load_state, save_state
+from app.repositories import state_transaction
 from app.services import mutation_admission
 
 _PART_NAME = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
@@ -128,11 +128,12 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
     for upload in pdfs:
         key = await asyncio.to_thread(scenario_library.stage_upload, await upload.read())
         staged.append({"key": key, "file_name": upload.filename})
+    def stage(ctx: state_transaction.TxContext) -> None:
+        ctx.state.staged_pdf_parts.extend(staged)
+
     async with locks.get_conversation_lock(conversation_id):
-        state = await asyncio.to_thread(load_state, conversation_id)
-        state.staged_pdf_parts.extend(staged)
         try:
-            save_state(state)
+            await state_transaction.amutate(conversation_id, stage, reason="pdf_stage")
         except mutation_admission.MutationHeld:
             # A content-addressed key may already be referenced by another
             # conversation or a pending similarity decision. Keep the bytes.

@@ -10,14 +10,15 @@ async def run_check(provider):
     from app import keeper, legacy_commands
     from app.agents.tool_gateway import make_tool_executor
     from app.models import Character, GroupState
+    from app.repositories import group_state
     from app.services import turn_context
 
     state = GroupState(group_id='codex-smoke-check', active=True)
     state.characters['player'] = Character(name='Marco', owner_id='player',
                                           skills={'偵查': 70}, luck=0)
     state.scenario_text = 'A sealed desk contains a faded document. A successful Spot Hidden check reveals the date 1925.'
+    group_state.save_state(state)  # the first save assigns the timeline
     keeper._ensure_turn_timeline(state)
-    keeper.save_state(state)
     check_tool = next(t for t in keeper.TOOLS if t['name'] == 'skill_check')
     receipts = []
     gateway = make_tool_executor(state, [], [], 'player', [])

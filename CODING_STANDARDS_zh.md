@@ -23,6 +23,9 @@ _理由：_ `_execute_tool` 已經是約 1,180 行的 `if name == ...` 分支，
 
 ## 遊戲狀態
 
+**所有遊戲狀態寫入都走 `state_transaction`。** 用 `state_transaction.mutate`（對最新資料列套用 delta）改狀態；若變更是在已載入的快照上算出、無法寫成 delta，就用 `commit_snapshot`。可能被重送的操作，要由擁有它的程式碼給 `action_id`（turn id、check id、event id），不可由文字推導。必須與狀態同時落地的其他資料表，透過 `ctx.conn` 寫入；mutation 內不可再開第二個交易。
+_理由：_ 在鎖外載入的寫入者不是遺失更新，就是以 revision 衝突失敗，而且沒有任何東西能分辨重試與新操作。`tests/test_architecture_state_writes.py` 會拒絕直接使用 `save_state`、`write_state_tx` 或對遊戲狀態資料表的 `db.set_json*`。
+
 **每個新的待處理檢定都要經過歸屬檢查。** 登記技能、SAN 或 CON 檢定前，在 `_mutate_and_save_state` 內、針對重新載入的狀態，同時檢查 `pending_checks` 和 `pending_luck_decisions`（參考 `_reject_if_check_already_pending`）。被擋下時要讓玩家或模型知道。
 _理由：_ 無聲返回的檢定會讓規則後果直接消失。規格：`docs/specs/bug/bugfix_duplicate_pending_checks.md`。
 

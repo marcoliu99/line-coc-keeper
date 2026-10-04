@@ -12,7 +12,7 @@ os.environ.update(DB_PATH=str(root/'state.db'),DATA_DIR=str(root/'groups'),BACKU
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import db
 from app.models import Character, GroupState
-from app.repositories.group_state import _save_state_unlocked, save_state
+from app.repositories.group_state import save_state, write_state_tx
 
 results=[]
 state=GroupState('target');state.characters['u']=Character('Ada','u',character_id='char-a');save_state(state)
@@ -28,7 +28,7 @@ for count in (1,10,100,1000):
         start=time.perf_counter()
         with db.transaction() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            receipt=_save_state_unlocked(state,conn=conn)
+            receipt=write_state_tx(state,conn=conn)
         receipt.apply(state)
         timings.append((time.perf_counter()-start)*1000)
         counts.append([receipt.mirror_reads,receipt.mirror_writes,receipt.mirror_deletes])

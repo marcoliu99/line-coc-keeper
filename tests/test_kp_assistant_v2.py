@@ -1,9 +1,7 @@
-import sqlite3
 import sys
 import tempfile
 import types
 import unittest
-from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -27,10 +25,7 @@ from app.domain.models import AgentMessage
 from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
 from tests.provider_fakes import use_fake_provider
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(deepcopy(state.to_dict()))
+from tests.state_store import StateStorePatch, clone_state
 
 
 class ReplyCollector:
@@ -39,43 +34,6 @@ class ReplyCollector:
 
     async def __call__(self, text: str) -> None:
         self.messages.append(text)
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-        self.conn = sqlite3.connect(":memory:")
-        self.conn.execute("CREATE TABLE manual_pregen_assets (key TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT)")
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState, *, reason: str = "command", mutate_tx=None) -> None:
-            if mutate_tx is not None:
-                mutate_tx(self.conn)
-                self.conn.commit()
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            self.originals.append((module, module.load_state, module.save_state))
-            module.load_state = load_state
-            module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, load_state, save_state in reversed(self.originals):
-            module.load_state = load_state
-            module.save_state = save_state
-        self.conn.close()
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
-
-    def get(self, group_id: str) -> GroupState:
-        return clone_state(self.store[group_id])
 
 
 class FakeProvider:

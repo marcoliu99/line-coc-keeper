@@ -67,6 +67,7 @@ async def _run_assistant_turn(
     session: ConversationSession,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     turn_timeline_id = keeper._ensure_turn_timeline(state)
+    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
     static_prompt = keeper._build_static_prompt(state)
     dynamic_prompt = keeper._build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
     manual_canon, effective_text = keeper._parse_kp_manual_canon_trigger(_ROLE, message_text)
@@ -136,6 +137,7 @@ async def _run_assistant_turn(
             openai_response_id=session.response_id,
             timeline_id=turn_timeline_id,
             invalidate_openai_response_chain=final_text != provider_text,
+            turn_id=turn_id,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []

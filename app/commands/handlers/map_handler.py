@@ -1,9 +1,30 @@
 from __future__ import annotations
 
 from app import scene_map as scene_map_engine
+from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.legacy_commands import Reply, SendImage
-from app.repositories.group_state import load_page_image, load_state, save_state
+from app.models import GroupState
+from app.repositories.group_state import load_page_image, load_state
 from app.services import mutation_admission
+
+
+def _enter(state: GroupState, user_id: str, page_key: str) -> Outcome:
+    scene_map = state.scene_maps.get(page_key)
+    if not scene_map:
+        available = "、".join(sorted(state.scene_maps.keys())) or "（沒有偵測到任何平面圖）"
+        return refuse(f"第 {page_key} 頁沒有偵測到平面圖。有地圖資料的頁碼：{available}")
+    state.current_map_page[user_id] = page_key
+    state.current_room_id[user_id] = scene_map.get("entry_room_id", "")
+    state.party_facing[user_id] = "N"
+    room = scene_map_engine.get_room(scene_map, state.current_room_id[user_id])
+    return done(f"已進入第 {page_key} 頁的地圖，目前在「{room.get('name', '') if room else '未知位置'}」。")
+
+
+def _leave_map(state: GroupState, user_id: str) -> Outcome:
+    state.current_map_page.pop(user_id, None)
+    state.current_room_id.pop(user_id, None)
+    state.party_facing.pop(user_id, None)
+    return done("已離開目前的地圖追蹤，移動改回完全由守密人自己判斷。")
 
 
 @mutation_admission.guard_async_entry
@@ -55,28 +76,14 @@ async def handle_map_command(
             await reply("用法：/coc enter 頁碼（先用 /coc showpage 或劇本內文找到平面圖在第幾頁）")
             return False
         page_key = parts[2]
-        state = load_state(conversation_id)
-        scene_map = state.scene_maps.get(page_key)
-        if not scene_map:
-            available = "、".join(sorted(state.scene_maps.keys())) or "（沒有偵測到任何平面圖）"
-            await reply(f"第 {page_key} 頁沒有偵測到平面圖。有地圖資料的頁碼：{available}")
-            return False
-        state.current_map_page[user_id] = page_key
-        state.current_room_id[user_id] = scene_map.get("entry_room_id", "")
-        state.party_facing[user_id] = "N"
-        save_state(state)
-        room = scene_map_engine.get_room(scene_map, state.current_room_id[user_id])
-        await reply(f"已進入第 {page_key} 頁的地圖，目前在「{room.get('name', '') if room else '未知位置'}」。")
-        return True
+        outcome = await transact(conversation_id, lambda state: _enter(state, user_id, page_key), reason="map")
+        await reply(outcome.text)
+        return outcome.ok
 
     if sub == "leavemap":
-        state = load_state(conversation_id)
-        state.current_map_page.pop(user_id, None)
-        state.current_room_id.pop(user_id, None)
-        state.party_facing.pop(user_id, None)
-        save_state(state)
-        await reply("已離開目前的地圖追蹤，移動改回完全由守密人自己判斷。")
-        return True
+        outcome = await transact(conversation_id, lambda state: _leave_map(state, user_id), reason="map")
+        await reply(outcome.text)
+        return outcome.ok
 
     await reply(f"未知的地圖指令：{sub}")
     return False

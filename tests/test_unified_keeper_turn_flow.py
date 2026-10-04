@@ -246,7 +246,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(system, "load_state", return_value=state),
-            patch.object(system, "save_state") as save,
+            patch("app.repositories.state_transaction.commit_snapshot") as save,
             patch.object(system, "_heal_character", return_value=[]),
             patch.object(system, "_build_readiness_roster", return_value="名冊"),
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={
@@ -279,7 +279,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(system, "load_state", return_value=state),
-            patch.object(system, "save_state") as save,
+            patch("app.repositories.state_transaction.commit_snapshot") as save,
             patch.object(system, "_heal_character", return_value=[]),
             patch.object(system, "_build_readiness_roster", return_value="名冊"),
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={

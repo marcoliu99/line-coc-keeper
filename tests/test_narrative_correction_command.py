@@ -14,7 +14,7 @@ class NarrativeCorrectionCommandTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.state = GroupState(group_id="correction-test")
         load_patch = patch.object(router.correct_handler, "load_state", return_value=self.state)
-        save_patch = patch("app.repositories.group_state.save_state", new_callable=Mock)
+        save_patch = patch("app.repositories.state_transaction.commit_snapshot", new_callable=Mock)
         load_patch.start()
         self.save_state = save_patch.start()
         self.addCleanup(load_patch.stop)

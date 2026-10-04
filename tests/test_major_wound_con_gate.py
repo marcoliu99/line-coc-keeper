@@ -9,8 +9,10 @@ import unittest
 from copy import deepcopy
 from unittest.mock import patch
 
-from app import combat, combat_resources, dice, keeper
+from app import combat, combat_resources, db, dice, keeper
 from app.models import Character, GroupState
+from app.repositories import group_state
+from tests import state_store
 
 SEARCH_CHECK = {"type": "skill", "skill": "偵查", "skill_value": 50, "check_id": "check-search"}
 LUCK_DECISION = {"options": [], "decision_id": "decision-luck"}
@@ -214,11 +216,22 @@ class KeeperToolTests(unittest.TestCase):
     """Keeper tools run against the reloaded state inside _mutate_and_save_state."""
 
     def _run(self, stored: GroupState, tool: str, tool_input: dict, *, caller: GroupState | None = None):
+        """Seed real storage with ``stored``, run the tool, return the states it committed."""
         saves: list[GroupState] = []
-        with patch.object(keeper, "load_state", lambda group_id: GroupState.from_dict(stored.to_dict())), \
-                patch.object(keeper, "_save_state_checked", lambda state, reason: saves.append(state)), \
-                patch.object(keeper.mutation_admission, "assert_admitted"):
-            result = keeper._execute_tool(caller or GroupState.from_dict(stored.to_dict()), tool, tool_input, [], [])
+        real_write = group_state.write_state_tx
+
+        def capture(state, **kwargs):
+            saves.append(state)
+            return real_write(state, **kwargs)
+
+        state_store.replace_state(stored)
+        try:
+            with patch.object(group_state, "write_state_tx", capture):
+                result = keeper._execute_tool(
+                    caller or GroupState.from_dict(stored.to_dict()), tool, tool_input, [], [],
+                )
+        finally:
+            db.delete_json("group_states", stored.group_id)
         return result, saves
 
     def test_adjust_character_checks_the_reloaded_state_not_the_callers(self):

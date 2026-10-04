@@ -16,7 +16,7 @@ class ScenarioTemplateReviewFixTests(unittest.TestCase):
             "indexes": {"npcs": [], "locations": []}, "scene_maps": {}, "pregens": [],
         }
         with patch.object(legacy_commands, "load_state", return_value=state), \
-                patch.object(legacy_commands, "save_state"), \
+                patch("app.repositories.state_transaction.commit_snapshot"), \
                 patch.object(legacy_commands.scenario_library, "load_context", return_value=context), \
                 patch.object(legacy_commands, "_apply_new_scenario"), \
                 patch.object(legacy_commands, "_install_library_context"), \

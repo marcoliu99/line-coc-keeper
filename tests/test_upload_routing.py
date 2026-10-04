@@ -13,6 +13,7 @@ from app.commands.handlers import uploads
 from app.commands.handlers.uploads import Upload
 from app.models import GroupState
 from app.services import mutation_admission
+from tests.state_store import MemoryTransactions
 
 
 def _upload(name: str, content: bytes = b"data") -> Upload:
@@ -108,7 +109,7 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
         reply = AsyncMock()
         with patch.object(uploads.mutation_admission, "is_held", return_value=True), \
                 patch.object(uploads.scenario_library, "stage_upload") as stage, \
-                patch.object(uploads, "save_state") as save:
+                patch.object(uploads.state_transaction, "amutate", new_callable=AsyncMock) as save:
             await uploads._stage_pdf_parts("g", [_upload("a.pdf"), _upload("b.pdf")], reply)
         reply.assert_awaited_once_with(mutation_admission.NOTICE)
         stage.assert_not_called()
@@ -122,8 +123,7 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(uploads.mutation_admission, "is_held", return_value=False), \
                 patch.object(uploads.scenario_library, "stage_upload", side_effect=lambda _b: next(keys)), \
                 patch.object(uploads.scenario_library, "discard_staged_upload") as discard, \
-                patch.object(uploads, "load_state", return_value=state), \
-                patch.object(uploads, "save_state", side_effect=mutation_admission.MutationHeld("held")):
+                patch.object(uploads.state_transaction, "amutate", side_effect=mutation_admission.MutationHeld("held")):
             await uploads._stage_pdf_parts("g", [_upload("kept.pdf"), _upload("b.pdf")], reply)
         reply.assert_awaited_once_with(mutation_admission.NOTICE)
         discard.assert_not_called()
@@ -134,10 +134,9 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
         keys = iter(["a" * 64, "b" * 64])
         with patch.object(uploads.mutation_admission, "is_held", return_value=False), \
                 patch.object(uploads.scenario_library, "stage_upload", side_effect=lambda _b: next(keys)), \
-                patch.object(uploads, "load_state", return_value=state), \
-                patch.object(uploads, "save_state") as save:
+                MemoryTransactions(state).patched() as memory:
             await uploads._stage_pdf_parts("g", [_upload("a.pdf"), _upload("b.pdf")], reply)
-        save.assert_called_once_with(state)
+        self.assertEqual(memory.commits, 1)
         self.assertEqual([p["file_name"] for p in state.staged_pdf_parts], ["a.pdf", "b.pdf"])
         self.assertIn("/coc scenario merge", reply.await_args.args[0])
 

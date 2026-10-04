@@ -14,7 +14,7 @@ import logging
 import re
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Generic, TypeVar, cast, overload
@@ -25,7 +25,6 @@ from app import (
     check_lifecycle,
     combat,
     combat_resources,
-    db,
     dice,
     keeper_prompt_policy,
     locks,
@@ -50,11 +49,8 @@ from app.keeper_tools import resource_bridge
 from app.keeper_tools.registry import ToolCall
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers.registry import conversation_provider
-from app.repositories.group_state import (
-    _save_state_unlocked,
-    load_state,
-    save_state,
-)
+from app.repositories import state_transaction
+from app.repositories.group_state import load_state
 from app.services import history_authority, mutation_admission
 from app.skill_aliases import canonical_skill_name
 
@@ -326,11 +322,6 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
 
 
-def _sync_state_snapshot(target: GroupState, source: GroupState) -> None:
-    for field in fields(GroupState):
-        setattr(target, field.name, getattr(source, field.name))
-
-
 def _ensure_turn_timeline(state: GroupState) -> str:
     """Ensure a turn captures one authoritative timeline before any await.
 
@@ -338,46 +329,23 @@ def _ensure_turn_timeline(state: GroupState) -> str:
     timeline only after the provider call starts, the turn would capture the
     fallback ``legacy-*`` value and its final log commit could be rejected as
     a false timeline mismatch. Initialize it before prompt construction and
-    reload the latest persisted snapshot when the caller's object is stale.
+    refresh the caller's snapshot from the committed row.
     """
     if state.timeline_id:
         return state.timeline_id
-    with locks.get_state_lock(state.group_id):
-        latest_state = load_state(state.group_id)
-        if latest_state.timeline_id:
-            _sync_state_snapshot(state, latest_state)
-        else:
-            state.timeline_id = f"timeline-{uuid4().hex[:8]}"
-            save_state(state, reason="timeline_init")
+
+    def initialize(ctx: state_transaction.TxContext) -> None:
+        # The first write assigns the timeline; if another path already did,
+        # there is nothing left to save.
+        if ctx.state.timeline_id:
+            ctx.skip_save()
+
+    state_transaction.run_snapshot(state, initialize, reason="timeline_init")
     return state.timeline_id
 
 
 def _refresh_state_snapshot(state: GroupState) -> GroupState:
-    with locks.get_state_lock(state.group_id):
-        latest_state = load_state(state.group_id)
-        _sync_state_snapshot(state, latest_state)
-    return state
-
-
-def _save_state_checked(state: GroupState, *, reason: str) -> None:
-    """Persist state and make failures observable without swallowing them.
-
-    ``save_state`` raises on SQLite/serialization/revision failures; it does
-    not return a success flag.  Keep that fail-closed contract, but emit a
-    structured event before re-raising so callers never mistake a failed
-    canonical commit for a successful Discord response.
-    """
-    try:
-        save_state(state, reason=reason)
-    except Exception as exc:
-        observability.event(
-            "state.save.failed",
-            level=logging.ERROR,
-            reason=reason,
-            error_type=type(exc).__name__,
-            group_id_hash=observability.safe_identifier(state.group_id),
-        )
-        raise
+    return state_transaction.refresh_snapshot(state)
 
 
 @overload
@@ -385,38 +353,30 @@ def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _S
 @overload
 def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], _T]) -> _T: ...
 def _mutate_and_save_state(state: GroupState, mutator: Callable[[GroupState], Any]) -> Any:
-    """Small boundary for Keeper tool state mutation.
+    """Keeper-tool adapter over the shared state transaction.
 
-    Reloads the latest state under the synchronous state lock, mutates/saves it,
-    then refreshes the caller's existing state object so later tools in the same
-    Keeper turn see the updated snapshot.
+    ``mutator`` runs against the latest committed state inside
+    ``state_transaction.mutate`` (conversation lock, ``BEGIN IMMEDIATE``,
+    timeline check); the caller's snapshot is then refreshed so later tools in
+    the same Keeper turn see the result.
 
-    Two call shapes, both handled by the single implementation below (the
-    @overload pair above just tells mypy the actual return type each one
-    produces, since the plain-_T signature this used to have couldn't express
-    that a mutator returning _StateMutation[_T] makes this function return
-    _T, not a _StateMutation object — mypy had no way to know the isinstance
-    check below unwraps it before returning): `mutator` can return
-    _StateMutation(value, should_save) when a tool needs to skip a genuinely
-    no-op save (see add_carried_item/remove_carried_item/add_status_tag/
-    remove_status_tag above — should_save=False when the item/tag was already
-    (not) present), or return its actual value directly when every call
-    always needs a save.
+    Two call shapes: ``mutator`` can return ``_StateMutation(value,
+    should_save)`` when a tool needs to skip a genuinely no-op save (see
+    add_carried_item/remove_carried_item/add_status_tag/remove_status_tag —
+    ``should_save=False`` when the item/tag was already (not) present), or
+    return its actual value directly when every call always needs a save. The
+    ``@overload`` pair tells mypy that a ``_StateMutation[_T]`` result is
+    unwrapped to ``_T``.
     """
-    with locks.get_state_lock(state.group_id):
-        latest_state = load_state(state.group_id)
-        mutation_admission.assert_admitted(state.group_id, timeline_id=latest_state.timeline_id)
-        if state.timeline_id and latest_state.timeline_id and state.timeline_id != latest_state.timeline_id:
-            raise mutation_admission.MutationHeld("stale tool timeline")
-        result = mutator(latest_state)
-        should_save = True
+    def run(ctx: state_transaction.TxContext) -> Any:
+        result = mutator(ctx.state)
         if isinstance(result, _StateMutation):
-            should_save = result.should_save
-            result = result.value
-        if should_save:
-            _save_state_checked(latest_state, reason="tool")
-        _sync_state_snapshot(state, latest_state)
-    return result
+            if not result.should_save:
+                ctx.skip_save()
+            return result.value
+        return result
+
+    return state_transaction.run_snapshot(state, run, reason="tool")
 
 
 # Public migration seam for handlers in app/keeper_tools/. State still reloads,
@@ -526,20 +486,28 @@ def _character_attribute_snapshot(char: Character) -> dict[str, int]:
 
 
 def _persist_resolved_check_event(state: GroupState, event_seed: dict[str, Any]) -> None:
-    """Persist a resolved Keeper-tool check against the committed character state."""
-    with locks.get_state_lock(state.group_id):
-        latest = load_state(state.group_id)
+    """Persist a resolved Keeper-tool check against the committed character state.
+
+    One action per resolved check (``check-event:<event_id>``): a continuation
+    or narration retry that reaches this point again finds the first commit in
+    the action ledger and records nothing a second time.
+    """
+    def record(ctx: state_transaction.TxContext) -> None:
+        latest = ctx.state
         timeline_id = latest.timeline_id or f"legacy-{latest.group_id}"
         if timeline_id != event_seed["timeline_id"]:
+            ctx.skip_save()
             return
         if any(
             event.get("event_id") == event_seed["event_id"]
             for event in latest.resolved_check_events
             if isinstance(event, dict)
         ):
+            ctx.skip_save()
             return
         char = latest.get_active_character(event_seed["owner_id"])
         if char is None or char.character_id != event_seed["character_id"]:
+            ctx.skip_save()
             return
         resolved_check_consequences.persist_origin(latest, event_seed)
         after = _character_attribute_snapshot(char)
@@ -567,8 +535,20 @@ def _persist_resolved_check_event(state: GroupState, event_seed: dict[str, Any])
         event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         latest.resolved_check_events.append(event)
         del latest.resolved_check_events[:-20]
-        _save_state_checked(latest, reason="resolved_check_event")
-        _sync_state_snapshot(state, latest)
+        ctx.stage_event(
+            "check_resolved", event_id=str(event_seed["event_id"]),
+            causation_id=str(event_seed.get("check_id") or ""),
+        )
+
+    event_id = str(event_seed["event_id"])
+    state_transaction.commit_for_snapshot(
+        state, record, reason="resolved_check_event", expected_timeline=None,
+        action_id=f"check-event:{event_id}",
+        request_fingerprint=state_transaction.request_fingerprint(
+            {"event_id": event_id, "timeline_id": event_seed["timeline_id"],
+             "owner_id": event_seed["owner_id"], "character_id": event_seed["character_id"]}
+        ),
+    )
 
 
 def _record_tool_recovery_marker_sync(
@@ -649,27 +629,31 @@ def _commit_turn_result(
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
+    turn_id: str | None = None,
 ) -> bool:
-    with locks.get_state_lock(state.group_id):
-        latest_state = load_state(state.group_id)
-        expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
-        current_timeline_id = latest_state.timeline_id or f"legacy-{state.group_id}"
-        if current_timeline_id != expected_timeline_id:
-            observability.event(
-                "state.turn_commit_skipped",
-                level=logging.WARNING,
-                reason="timeline_mismatch",
-                expected_timeline_id=expected_timeline_id,
-                current_timeline_id=current_timeline_id,
-            )
-            _sync_state_snapshot(state, latest_state)
-            return False
+    """Append a turn's log entries to the latest committed state.
+
+    The action id is the turn id plus a digest of what is being committed, so a
+    delivery or narration retry that reaches this call again with the same
+    turn is answered from the action ledger instead of logging it twice, while
+    a separate turn (new turn id) or different content is a new action. The
+    turn id comes from the caller that owns the turn (``run_turn``), falling
+    back to the request context, and is only random when neither exists.
+    """
+    expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
+    turn_id = str(turn_id or observability.current_context().get("turn_id") or uuid4().hex)
+    fingerprint = state_transaction.request_fingerprint({
+        "entries": log_entries, "openai_response_id": openai_response_id,
+        "invalidate": invalidate_openai_response_chain, "start_game": start_game,
+    })
+
+    def append_entries(ctx: state_transaction.TxContext) -> bool:
+        latest_state = ctx.state
         if start_game and latest_state.game_started:
-            _sync_state_snapshot(state, latest_state)
+            ctx.skip_save()
             return False
-        turn_id = str(observability.current_context().get("turn_id") or uuid4().hex)
         latest_state.log.extend(
-            history_authority.annotate_entry(entry, turn_id=turn_id, timeline_id=current_timeline_id)
+            history_authority.annotate_entry(entry, turn_id=turn_id, timeline_id=ctx.timeline_id)
             for entry in log_entries
         )
         if start_game:
@@ -682,9 +666,25 @@ def _commit_turn_result(
             latest_state.openai_previous_response_timeline_id = (
                 latest_state.timeline_id or f"legacy-{latest_state.group_id}"
             )
-        _save_state_checked(latest_state, reason="turn")
-        _sync_state_snapshot(state, latest_state)
+        ctx.stage_event("turn_committed", event_id=f"turn:{turn_id}", entries=len(log_entries))
         return True
+
+    result = state_transaction.commit_for_snapshot(
+        state, append_entries, reason="turn", expected_timeline=expected_timeline_id,
+        action_id=f"turn:{turn_id}:{fingerprint[:16]}", request_fingerprint=fingerprint,
+    )
+    if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
+        observability.event(
+            "state.turn_commit_skipped",
+            level=logging.WARNING,
+            reason="timeline_mismatch",
+            expected_timeline_id=expected_timeline_id,
+            current_timeline_id=result.timeline_id,
+        )
+        return False
+    if result.outcome is state_transaction.Outcome.CONFLICT:
+        raise state_transaction.StateTransactionFailed(result)
+    return result.outcome is state_transaction.Outcome.DUPLICATE or bool(result.value)
 
 
 def _commit_kp_ooc_turn_result(
@@ -692,24 +692,14 @@ def _commit_kp_ooc_turn_result(
 ) -> bool:
     """Persist KP Assistant OOC working memory without touching public history.
 
-    Reloads the latest state under the state lock before appending so this
-    ephemeral OOC write cannot overwrite deterministic tool updates that may
-    have happened earlier in the same Keeper turn.
+    Appends to the latest committed state so this ephemeral OOC write cannot
+    overwrite deterministic tool updates that happened earlier in the same
+    Keeper turn.
     """
-    with locks.get_state_lock(state.group_id):
-        latest_state = load_state(state.group_id)
-        expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
-        current_timeline_id = latest_state.timeline_id or f"legacy-{state.group_id}"
-        if current_timeline_id != expected_timeline_id:
-            observability.event(
-                "state.kp_ooc_commit_skipped",
-                level=logging.WARNING,
-                reason="timeline_mismatch",
-                expected_timeline_id=expected_timeline_id,
-                current_timeline_id=current_timeline_id,
-            )
-            _sync_state_snapshot(state, latest_state)
-            return False
+    expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
+
+    def append_ooc(ctx: state_transaction.TxContext) -> None:
+        latest_state = ctx.state
         latest_state.kp_ooc_log.extend(
             [
                 {"role": "kp_assistant", "content": message_text},
@@ -717,9 +707,20 @@ def _commit_kp_ooc_turn_result(
             ]
         )
         latest_state.kp_ooc_log = latest_state.kp_ooc_log[-_KP_OOC_LOG_MAX_MESSAGES:]
-        _save_state_checked(latest_state, reason="kp_ooc")
-        _sync_state_snapshot(state, latest_state)
-        return True
+
+    result = state_transaction.commit_for_snapshot(
+        state, append_ooc, reason="kp_ooc", expected_timeline=expected_timeline_id,
+    )
+    if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
+        observability.event(
+            "state.kp_ooc_commit_skipped",
+            level=logging.WARNING,
+            reason="timeline_mismatch",
+            expected_timeline_id=expected_timeline_id,
+            current_timeline_id=result.timeline_id,
+        )
+        return False
+    return True
 
 
 def _parse_kp_manual_canon_trigger(speaker_role: str, message_text: str) -> tuple[bool, str]:
@@ -804,37 +805,9 @@ def _persist_memory_maintenance_state(
         source_revision=source_revision,
         idempotency_key_hash=idempotency_hash,
     )
-    with locks.get_state_lock(group_id), db.transaction() as conn:
-        mutation_admission.assert_admitted(group_id)
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT data FROM group_states WHERE key = ?", (group_id,)).fetchone()
-        if row is None:
-            latest_state = GroupState(group_id=group_id)
-        else:
-            try:
-                latest_state = GroupState.from_dict(json.loads(row[0]))
-            except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
-                observability.event(
-                    "maintenance.commit_skipped",
-                    level=logging.WARNING,
-                    reason="corrupt_group_state",
-                    source_revision=source_revision,
-                    requested_timeline_id=timeline_id,
-                    idempotency_key_hash=idempotency_hash,
-                    error_type=type(exc).__name__,
-                )
-                return "corrupt_group_state"
-        latest_timeline_id = latest_state.timeline_id or f"legacy-{group_id}"
-        if latest_timeline_id != timeline_id:
-            observability.event(
-                "maintenance.commit_skipped", level=logging.WARNING,
-                reason="timeline_mismatch", source_revision=source_revision,
-                current_revision=latest_state.state_revision,
-                requested_timeline_id=timeline_id,
-                current_timeline_id=latest_timeline_id,
-                idempotency_key_hash=idempotency_hash,
-            )
-            return "stale_timeline"
+    def commit_trim(ctx: state_transaction.TxContext) -> str:
+        latest_state = ctx.state
+        latest_timeline_id = ctx.timeline_id
         if latest_state.campaign_summary != base_summary:
             observability.event(
                 "maintenance.commit_skipped", level=logging.WARNING,
@@ -844,8 +817,9 @@ def _persist_memory_maintenance_state(
                 current_timeline_id=latest_timeline_id,
                 idempotency_key_hash=idempotency_hash,
             )
+            ctx.skip_save()
             return "stale_summary"
-        memory_row = conn.execute("SELECT data FROM memory_chunks WHERE key = ?", (group_id,)).fetchone()
+        memory_row = ctx.conn.execute("SELECT data FROM memory_chunks WHERE key = ?", (group_id,)).fetchone()
         if memory_row is not None:
             try:
                 existing_chunks = json.loads(memory_row[0])
@@ -865,6 +839,7 @@ def _persist_memory_maintenance_state(
                     current_timeline_id=latest_timeline_id,
                     idempotency_key_hash=idempotency_hash,
                 )
+                ctx.skip_save()
                 return "duplicate"
         # Only apply anything if the front of the freshly-reloaded log still
         # matches what was actually dropped — guards against e.g. a
@@ -888,11 +863,12 @@ def _persist_memory_maintenance_state(
                 current_timeline_id=latest_timeline_id,
                 idempotency_key_hash=idempotency_hash,
             )
+            ctx.skip_save()
             return "stale_log_prefix"
         latest_state.log = latest_state.log[n:]
         latest_state.campaign_summary = campaign_summary
         memory_appended = memory_rag.append_memory_tx(
-            conn,
+            ctx.conn,
             group_id,
             "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk),
             timeline_id=timeline_id,
@@ -901,14 +877,41 @@ def _persist_memory_maintenance_state(
             embedding=embedding,
             source_messages=history_authority.memory_source_messages(dropped_chunk),
         )
-        committed = _save_state_unlocked(latest_state, reason="maintenance", conn=conn)
-    committed.apply(latest_state)
+        ctx.set_result({"memory_appended": bool(memory_appended)})
+        return "committed"
+
+    try:
+        result = state_transaction.mutate(
+            group_id, commit_trim, reason="maintenance", expected_timeline=timeline_id,
+        )
+    except state_transaction.CorruptStateError as exc:
+        observability.event(
+            "maintenance.commit_skipped",
+            level=logging.WARNING,
+            reason="corrupt_group_state",
+            source_revision=source_revision,
+            requested_timeline_id=timeline_id,
+            idempotency_key_hash=idempotency_hash,
+            error_type=type(exc.__cause__ or exc).__name__,
+        )
+        return "corrupt_group_state"
+    if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
+        observability.event(
+            "maintenance.commit_skipped", level=logging.WARNING,
+            reason="timeline_mismatch", source_revision=source_revision,
+            requested_timeline_id=timeline_id,
+            current_timeline_id=result.timeline_id,
+            idempotency_key_hash=idempotency_hash,
+        )
+        return "stale_timeline"
+    if result.value != "committed":
+        return str(result.value)
     observability.event(
         "maintenance.commit_completed", source_revision=source_revision,
-        committed_revision=latest_state.state_revision,
-        memory_appended=memory_appended,
+        committed_revision=result.revision,
+        memory_appended=result.result.get("memory_appended"),
         requested_timeline_id=timeline_id,
-        current_timeline_id=latest_timeline_id,
+        current_timeline_id=result.timeline_id,
         idempotency_key_hash=idempotency_hash,
     )
     return "committed"

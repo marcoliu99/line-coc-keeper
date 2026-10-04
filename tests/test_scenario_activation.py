@@ -131,7 +131,7 @@ def test_scenario_use_commit_failure_does_not_touch_images(storage: Path, monkey
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"old")
     monkeypatch.setattr(system.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(system, "save_state", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
+    monkeypatch.setattr(system.state_transaction, "commit_snapshot", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     async def reply(_text: str) -> None:
         pass
@@ -165,7 +165,7 @@ def test_chapter_advance_commit_failure_preserves_images(storage: Path, monkeypa
     group_state.save_page_image("group", 1, b"old")
     monkeypatch.setattr(scenario_activation.scenario_library, "next_chapter_id", lambda *_: "second")
     monkeypatch.setattr(scenario_activation.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(keeper, "_save_state_checked",
+    monkeypatch.setattr(group_state, "write_state_tx",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     result = keeper._execute_tool(state, "advance_scenario_chapter", {}, [], [])
@@ -197,7 +197,7 @@ def test_upload_choice_commit_failure_preserves_old_state(storage: Path, monkeyp
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"old")
     monkeypatch.setattr(legacy_commands.scenario_library, "load_context", lambda *_: _context())
-    monkeypatch.setattr(legacy_commands, "save_state",
+    monkeypatch.setattr(legacy_commands.state_transaction, "commit_snapshot",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     with pytest.raises(OSError, match="db failed"):
@@ -215,7 +215,7 @@ def test_rollback_commit_failure_does_not_refresh_images(storage: Path, monkeypa
     state.scenario_title = "New"
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"new")
-    monkeypatch.setattr(checkpoints, "_save_state_unlocked",
+    monkeypatch.setattr(group_state, "write_state_tx",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     with pytest.raises(OSError, match="db failed"):
