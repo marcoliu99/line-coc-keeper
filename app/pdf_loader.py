@@ -588,6 +588,19 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                                       "inference_seconds": paddle_layout.inference_seconds},
                                     "candidates": {"native": native, "layout": layout_text}})
         pdf_quality.bind_repeated_vertical_evidence(report["pages"])
+        for index, row in enumerate(report['pages']):
+            repaired, decision = pdf_quality.repair_decorative_layout(
+                texts[index], row['evidence'], warnings=row['warnings'],
+                method=row['method'], pairs=row['numeric_pairs'],
+            )
+            if decision['status'] != 'not_applicable':
+                row['decorative_reading_order'] = decision
+            if decision['status'] == 'repaired':
+                row['layout_original_sha256'] = hashlib.sha256(texts[index].encode('utf-8')).hexdigest()
+                texts[index] = repaired
+                row['candidates']['layout'] = repaired
+                if len(repaired) < _LOW_TEXT_THRESHOLD and row['page'] in images:
+                    pending[row['page']] = images[row['page']]
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None

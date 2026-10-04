@@ -1,6 +1,7 @@
 """Conservative, local PDF evidence checks; these do not prove semantic fidelity."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import re
 import statistics
@@ -367,6 +368,158 @@ def bind_repeated_vertical_evidence(pages: list[dict]) -> None:
         evidence = row['evidence']
         evidence['repeated_vertical_signatures'] = [span['signature'] for span in evidence.get('vertical_spans', [])
                                                     if counts[span['signature']] >= 3]
+
+
+def _alnum_alignment(value: str) -> tuple[str, list[int]]:
+    """Use punctuation-free characters only to locate edits, never to validate mechanics."""
+    chars: list[str] = []
+    offsets: list[int] = []
+    for index, char in enumerate(value):
+        folded = char.casefold()
+        if char.isalnum():
+            chars.append(folded if len(folded) == 1 else char)
+            offsets.append(index)
+    return ''.join(chars), offsets
+
+
+def _qualified_decorative_span(evidence: dict) -> tuple[dict, list[str], list[dict]] | None:
+    """Bind a repeated margin trace to isolated glyph blocks and adjacent body blocks."""
+    width = evidence.get('width', 0)
+    repeated = set(evidence.get('repeated_vertical_signatures', []))
+    candidates = []
+    for span in evidence.get('vertical_spans', []):
+        if (span['signature'] not in repeated or not span['margin'] or not span['large']
+                or span['body_font_used'] or not width):
+            continue
+        x0, y0, x1, y1 = span['bbox']
+        glyph_words = sorted((word for word in evidence.get('words', [])
+                              if word.get('font') == span['font']
+                              and len(word['text'].strip()) == 1
+                              and x0 - 2 <= word['bbox'][0] and word['bbox'][2] <= x1 + 2
+                              and y0 - 2 <= word['bbox'][1] and word['bbox'][3] <= y1 + 2),
+                             key=lambda word: (word['bbox'][1], word['bbox'][0]))
+        glyphs = [word['text'].strip() for word in glyph_words]
+        if (len(glyphs) < 3 or ''.join(glyphs).casefold() != span['joined']
+                or any(abs(word.get('font_size', 0) - span['size']) > span['size'] * .1
+                       for word in glyph_words)
+                or any(glyph_words[i + 1]['bbox'][1] < glyph_words[i]['bbox'][1]
+                       or glyph_words[i + 1]['bbox'][1] - glyph_words[i]['bbox'][3] > span['size']
+                       for i in range(len(glyph_words) - 1))):
+            continue
+        glyph_blocks = {word['block'] for word in glyph_words}
+        containers = [block for block in evidence['blocks'] if block['id'] in glyph_blocks]
+        if (len(containers) != len(glyph_blocks)
+                or any(any((line['bbox'][0] >= x0 - 2 and line['bbox'][2] <= x1 + 2
+                            and len(_alnum_alignment(line['text'])[0]) != 1)
+                           or (line['bbox'][2] > x1 + 2 and line['bbox'][0] <= x1 + width * .08)
+                           for line in block['lines']) for block in containers)):
+            continue
+        body = sorted((block for block in evidence['blocks']
+                       if block['id'] not in glyph_blocks
+                       and x1 < block['bbox'][0] <= x1 + width * .08
+                       and min(y1, block['bbox'][3]) > max(y0, block['bbox'][1])
+                       and any(len(_alnum_alignment(line['text'])[0]) >= 20 for line in block['lines'])),
+                      key=lambda block: (block['bbox'][1], block['bbox'][0]))
+        if (not body or max(block['bbox'][0] for block in body) - min(block['bbox'][0] for block in body) > width * .03
+                or any(body[i + 1]['bbox'][1] - body[i]['bbox'][3] > span['size'] * 2
+                       for i in range(len(body) - 1))):
+            continue
+        candidates.append((span, glyphs, body))
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def repair_decorative_layout(layout: str, evidence: dict, *, warnings: list[str],
+                             method: str, pairs: list[dict]) -> tuple[str, dict]:
+    """Remove only uniquely aligned, source-bound margin glyph insertions."""
+    result = {'status': 'not_applicable', 'removed_glyphs': 0}
+    if method != 'layout' or 'ambiguous_columns' not in warnings:
+        return layout, result
+    qualified = _qualified_decorative_span(evidence)
+    if qualified is None:
+        return layout, result
+    span, glyphs, body = qualified
+    result['status'] = 'ambiguous_alignment'
+    reference = ' '.join(line['text'] for block in body for line in block['lines'])
+    source, _ = _alnum_alignment(reference)
+    candidate, offsets = _alnum_alignment(layout)
+    if len(source) < 24 or len(candidate) < len(source):
+        return layout, result
+    anchor_length = 8
+    start_anchor, end_anchor = source[:anchor_length], source[-anchor_length:]
+    if candidate.count(start_anchor) != 1 or candidate.count(end_anchor) != 1:
+        return layout, result
+    start_index = candidate.index(start_anchor)
+    end_index = candidate.index(end_anchor)
+    if end_index <= start_index:
+        return layout, result
+    first_raw = offsets[start_index]
+    previous_paragraph = layout.rfind('\n\n', 0, first_raw)
+    start_raw = previous_paragraph + 2 if previous_paragraph >= 0 else 0
+    end_raw = offsets[end_index + anchor_length - 1] + 1
+    if end_raw <= start_raw or end_raw - start_raw > len(reference) * 3 + 200:
+        return layout, result
+    window = layout[start_raw:end_raw]
+    sequence, mapping = _alnum_alignment(window)
+    edits: list[int] = []
+    residual_insertion = False
+    expected = [glyph.casefold() for glyph in glyphs]
+    for tag, source_start, source_end, target_start, target_end in difflib.SequenceMatcher(
+            None, source, sequence, autojunk=False).get_opcodes():
+        if tag == 'equal':
+            continue
+        if tag != 'insert' or len(edits) >= len(expected):
+            return layout, result
+        inserted = sequence[target_start:target_end]
+        if not inserted.startswith(expected[len(edits)]):
+            return layout, result
+        # An already-duplicated body prefix may share this inserted run. It
+        # remains untouched; only the first, independently bound glyph is cut.
+        remainder = inserted[1:]
+        if remainder and (len(remainder) < anchor_length
+                          or not source[source_start:].startswith(remainder)):
+            return layout, result
+        residual_insertion |= bool(remainder)
+        proposed = mapping[target_start] + start_raw
+        nearby = [position for position in range(max(start_raw, proposed - 3),
+                                                 min(end_raw, proposed + 4))
+                  if layout[position].casefold() == expected[len(edits)]]
+        standalone = [position for position in nearby
+                      if (position == 0 or not layout[position - 1].isalnum())
+                      and (position + 1 == len(layout) or not layout[position + 1].isalnum())]
+        if len(standalone) == 1:
+            edits.append(standalone[0])
+        elif len(nearby) == 1 and nearby[0] == proposed:
+            edits.append(proposed)
+        else:
+            return layout, result
+    if len(edits) != len(expected):
+        return layout, result
+    removed = set(edits)
+    for position in edits:
+        if (position + 1 < len(layout) and layout[position + 1] == ' '
+                and (position == start_raw or layout[position - 1].isspace())):
+            removed.add(position + 1)
+    repaired = ''.join(char for index, char in enumerate(layout) if index not in removed)
+    repaired_sequence, _ = _alnum_alignment(repaired[start_raw:end_raw - len(removed)])
+    # Every source character must still occur in order; generic alignment
+    # punctuation never authorizes a mechanics or numeric change.
+    iterator = iter(repaired_sequence)
+    if not all(any(char == item for item in iterator) for char in source):
+        return layout, result
+    if (_mechanic_tokens(layout) - _mechanic_tokens(repaired)
+            or _mechanic_tokens(reference) - _mechanic_tokens(repaired)
+            or rich_ocr_mechanics(layout) - rich_ocr_mechanics(repaired)
+            or rich_ocr_mechanics(reference) - rich_ocr_mechanics(repaired)
+            or Counter(x.casefold() for x in _NUMBER.findall(layout))
+            - Counter(x.casefold() for x in _NUMBER.findall(repaired))
+            or any(check['status'] == 'matched' for check in check_pairs(pairs, layout))
+            and any(check['status'] != 'matched' for check in check_pairs(pairs, repaired))):
+        result['status'] = 'source_loss'
+        return layout, result
+    result.update(status='repaired', removed_glyphs=len(edits),
+                  body_blocks=[block['id'] for block in body], span_signature=span['signature'],
+                  residual_source_duplicate=residual_insertion)
+    return repaired, result
 
 
 def numeric_pairs(evidence: dict) -> list[dict]:
