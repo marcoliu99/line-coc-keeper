@@ -1556,7 +1556,7 @@
       "title": "Paddle OCR selection logging",
       "zh": "Paddle OCR 選用結果日誌",
       "category": "maintenance",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": ["app/pdf_loader.py", "tests/test_pdf_paddle_ocr.py"],
       "path": "docs/specs/maintenance/paddle_ocr_selection_logging.md",
       "zh_path": "docs/specs/maintenance/paddle_ocr_selection_logging_zh.md"
