@@ -14,11 +14,10 @@ sys.modules.setdefault(
     ),
 )
 
-from app import legacy_commands as commands
 from app import locks
 from app.commands import router
 from app.models import Character, GroupState
-from app.services import post_turn
+from app.services import post_turn, scenario_ingestion
 from tests.state_store import StateStorePatch
 
 
@@ -42,7 +41,7 @@ class GateCallForbidden:
 class FakeSupervisorRunner:
     """Stands in for app.agents.supervisor.run_turn. Runs entirely on this
     test's own event loop (router.py awaits supervisor.run_turn directly —
-    unlike the old app.legacy_commands.py path this replaces, it is never
+    unlike the old legacy_commands path this replaces, it is never
     dispatched via asyncio.to_thread onto a real worker thread), so ordering
     and blocking are coordinated with a plain asyncio.Event instead of the
     threading primitives a thread-dispatched fake would need."""
@@ -134,20 +133,20 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run_with_patched_commands(self, state: GroupState, runner: FakeSupervisorRunner, scenario):
         original_run_turn = router.supervisor.run_turn
-        original_resolve = router._resolve_map_action_transaction
+        original_resolve = router.resolve_map_action
         original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             store.put(state)
-            router.load_state = commands.load_state
+            router.load_state = scenario_ingestion.load_state
             router.supervisor.run_turn = runner
-            router._resolve_map_action_transaction = lambda *args: None
+            router.resolve_map_action = lambda *args: None
             post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 return await scenario()
             finally:
                 router.supervisor.run_turn = original_run_turn
-                router._resolve_map_action_transaction = original_resolve
+                router.resolve_map_action = original_resolve
                 post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
@@ -207,7 +206,7 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_without_kp_ordinary_concurrency_stays_fifo_and_bypasses_gate(self):
         runner = FakeSupervisorRunner()
         forbidden_gate = GateCallForbidden()
-        original_gate = commands.locks.get_keeper_priority_gate
+        original_gate = scenario_ingestion.locks.get_keeper_priority_gate
 
         async def scenario():
             task_a = asyncio.create_task(self._send("A"))
@@ -219,10 +218,10 @@ class KeeperPriorityIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(task_a, *tasks)
 
         try:
-            commands.locks.get_keeper_priority_gate = forbidden_gate
+            scenario_ingestion.locks.get_keeper_priority_gate = forbidden_gate
             await self._run_with_patched_commands(self._active_state(with_kp=False), runner, scenario)
         finally:
-            commands.locks.get_keeper_priority_gate = original_gate
+            scenario_ingestion.locks.get_keeper_priority_gate = original_gate
 
         self.assertFalse(forbidden_gate.called)
         self.assertEqual(runner.started_order, ["A", "B", "C", "D"])

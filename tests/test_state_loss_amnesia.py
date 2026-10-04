@@ -245,7 +245,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertIsNone(db.get_json("memory_chunks", group_id))
 
     def test_new_scenario_invalidates_pending_decisions_and_check_cache(self) -> None:
-        from app.legacy_commands import _apply_new_scenario
+        from app.services.scenario_ingestion import _apply_new_scenario
 
         state = GroupState("scenario-reset", timeline_id="timeline-old")
         state.pending_checks["p1"] = {"type": "skill", "timeline_id": "timeline-old"}

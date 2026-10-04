@@ -1,8 +1,9 @@
 import unittest
 from unittest.mock import patch
 
-from app import legacy_commands, scenario_rag, scenario_templates
+from app import scenario_rag, scenario_templates
 from app.models import GroupState
+from app.services import scenario_ingestion
 
 
 class ScenarioTemplateReviewFixTests(unittest.TestCase):
@@ -15,15 +16,15 @@ class ScenarioTemplateReviewFixTests(unittest.TestCase):
             "manifest": {"title": "Scenario"}, "text": "scene",
             "indexes": {"npcs": [], "locations": []}, "scene_maps": {}, "pregens": [],
         }
-        with patch.object(legacy_commands, "load_state", return_value=state), \
+        with patch.object(scenario_ingestion, "load_state", return_value=state), \
                 patch("app.repositories.state_transaction.commit_snapshot"), \
-                patch.object(legacy_commands.scenario_library, "load_context", return_value=context), \
-                patch.object(legacy_commands, "_apply_new_scenario"), \
-                patch.object(legacy_commands, "_install_library_context"), \
-                patch.object(legacy_commands.scenario_activation, "refresh_after_commit", return_value=True), \
-                patch.object(legacy_commands, "_pdf_upload_confirmation_text", return_value="loaded"), \
+                patch.object(scenario_ingestion.scenario_library, "load_context", return_value=context), \
+                patch.object(scenario_ingestion, "_apply_new_scenario"), \
+                patch.object(scenario_ingestion, "_install_library_context"), \
+                patch.object(scenario_ingestion.scenario_activation, "refresh_after_commit", return_value=True), \
+                patch.object(scenario_ingestion, "_pdf_upload_confirmation_text", return_value="loaded"), \
                 patch.object(scenario_templates, "preference_notice", return_value="已改用原文檢索"):
-            response = legacy_commands._resolve_pdf_upload_choice_locked("group", "new")
+            response = scenario_ingestion.apply_pdf_upload_choice("group", "new")
         self.assertIn("已改用原文檢索", response)
 
     def test_record_results_keep_public_and_kp_scopes(self):

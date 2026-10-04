@@ -15,17 +15,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app import locks, scenario_library
+from app import locks, scenario_library, scenario_templates
+from app.commands import permissions
 from app.commands.types import PdfChoice, Reply
-from app.legacy_commands import (
-    handle_map_upload,
+from app.repositories import state_transaction
+from app.repositories.group_state import load_state
+from app.services import mutation_admission
+from app.services.map_service import handle_map_upload
+from app.services.scenario_ingestion import (
+    apply_pdf_upload_choice,
     handle_pdf_upload,
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
-    resolve_pdf_upload_choice,
 )
-from app.repositories import state_transaction
-from app.services import mutation_admission
 
 _PART_NAME = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
 
@@ -127,6 +129,29 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
         + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
         + "\n請由 KP 輸入 `/coc scenario merge 暫存ID1 暫存ID2 ...`。"
     )
+
+
+@mutation_admission.guard_async_entry
+async def resolve_pdf_upload_choice(
+    conversation_id: str,
+    choice: PdfChoice,
+    push: Reply,
+    user_id: str = "",
+) -> None:
+    """Called by Discord's PdfUploadChoiceButton once the GM picks between the
+    two options offered by handle_pdf_upload. `choice` must be "new" or "fix";
+    the text command remains available as a manual fallback. The actor is
+    checked again while holding the conversation lock so a button cannot
+    mutate the scenario from an unauthorized account."""
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not permissions.may_manage_scenario_lifecycle(state, user_id):
+            await push(permissions.kp_only("處理劇本 PDF"))
+            return
+        text = apply_pdf_upload_choice(conversation_id, choice)
+        state = load_state(conversation_id)
+    scenario_templates.schedule_index_prewarm(state)
+    await push(text)
 
 
 async def handle_pdf_choice(conversation_id: str, choice: PdfChoice, user_id: str, reply: Reply) -> None:

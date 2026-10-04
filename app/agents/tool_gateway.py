@@ -83,7 +83,7 @@ def make_tool_executor(
     provider.run_conversation expects for its execute_tool parameter.
 
     Delegates every call straight to keeper._execute_tool — the same
-    function app/legacy_commands.py's Keeper turn uses — so dice rolls,
+    function the Keeper turn uses — so dice rolls,
     pending_checks registration, and all state mutation go through the
     identical, already-locked (_mutate_and_save_state) path. `facts`
     collects one human-readable line per call for MechanicResult.

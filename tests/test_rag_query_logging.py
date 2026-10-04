@@ -8,7 +8,7 @@ embeddings API call for a query string):
   RAG *proactively* once per turn (memory unconditionally whenever the
   speaker has a character, scenario when SCENARIO_RAG_ENABLED) — a call
   site a first pass at this fix missed entirely, discovered during review.
-- app/legacy_commands.py's _find_room_via_rag, the Map/Scene Engine's RAG
+- app/services/map_service.py's _find_room_via_rag, the Map/Scene Engine's RAG
   fallback for room-name resolution.
 
 Before this, none of these captured the query string itself anywhere in the
@@ -20,8 +20,9 @@ per-turn context_builder search instead of any explicit tool call at all."""
 import unittest
 from unittest.mock import patch
 
-from app import keeper, legacy_commands, memory_rag, scenario_rag
+from app import keeper, memory_rag, scenario_rag
 from app.models import Character, GroupState
+from app.services import map_service
 
 
 class RagQueryLoggingTests(unittest.TestCase):
@@ -65,8 +66,8 @@ class RagQueryLoggingTests(unittest.TestCase):
     def test_find_room_via_rag_logs_the_query_text(self):
         with patch.object(scenario_rag, "get_index", return_value="fake-index"), \
              patch.object(scenario_rag, "search", return_value=[]), \
-             self.assertLogs("app.legacy_commands", level="INFO") as logs:
-            legacy_commands._find_room_via_rag("g", "scenario text", {"rooms": []}, "廚房")
+             self.assertLogs("app.services.map_service", level="INFO") as logs:
+            map_service._find_room_via_rag("g", "scenario text", {"rooms": []}, "廚房")
         self.assertTrue(any("_find_room_via_rag" in line and "廚房" in line for line in logs.output))
 
 

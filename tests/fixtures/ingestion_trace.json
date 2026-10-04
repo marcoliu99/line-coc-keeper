@@ -1,0 +1,134 @@
+{
+  "first_upload": {
+    "accepted": true,
+    "calls": [
+      [
+        "extract_text",
+        "(b'%PDF',)",
+        "[('quality_report', {})]"
+      ],
+      [
+        "guess_title",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[('file_name', 'scenario.pdf')]"
+      ],
+      [
+        "extract_scenario_index",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[]"
+      ],
+      [
+        "extract_pregens",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[]"
+      ],
+      [
+        "extract_preview",
+        "(b'%PDF',)",
+        "[]"
+      ],
+      [
+        "refresh_after_commit",
+        "('trace-first', 'trace-scenario-3fe63d06', {'manifest': {'id': 'trace-scenario-3fe63d06', 'title': 'Trace Scenario', 'source_filename': 'scenario.pdf', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '5975cf1bba432391c94667f5886225f69377c0aa8b9fa21fddfb21c89bcf9092', 'content_hash': '3fe63d0639f7bd131537e2081ebb784ae162e13cd332ce2b01ac5255caaaec02', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '第一章 書房。\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-scenario-3fe63d06/images'), 'page_numbers': {1}})",
+        "[]"
+      ]
+    ],
+    "messages": [
+      "收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...",
+      "已載入劇本《Trace Scenario》（17 字）。\n這份劇本沒有偵測到內建的預製調查員，直接用「/coc pc 角色名 職業」快速生成即可，這時職業可選：\n記者、私家偵探、醫生、教授、警察、骨董商、神職人員、流浪漢、藝術家、海洋生物學家、FBI探員\n建好角色後，直接在群組打字描述行動即可開始冒險！\n\n⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。\n\n⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,可能重複推導同一個地點的細節。可用 /coc index 重建。"
+    ],
+    "state": {
+      "autoroll_checks": false,
+      "log": 0,
+      "pending_checks": [],
+      "pending_pdf_upload": null,
+      "pending_scenario_upload": null,
+      "pregens": [],
+      "scenario_library_id": "trace-scenario-3fe63d06",
+      "scenario_text": "第一章 書房。\n書房裡有一本日記。",
+      "scenario_title": "Trace Scenario"
+    }
+  },
+  "map_upload": {
+    "messages": [
+      "地圖「書房」已儲存（1 個房間）。\n用「/coc enter custom_map_study」載入這張地圖。"
+    ],
+    "scene_maps": [
+      "custom_map_study"
+    ]
+  },
+  "role_sheet": {
+    "calls": [
+      [
+        "parse_role_sheet_text",
+        "('角色卡內文',)",
+        "[]"
+      ],
+      [
+        "load_context",
+        "('trace-scenario',)",
+        "[]"
+      ]
+    ],
+    "messages": [
+      "角色卡已新增（資產 ID：<id>）：「林文」，職業「記者」，1 項技能。用「/coc pregens」查看目前所有預製角色。"
+    ],
+    "pregens": [
+      [
+        "林文",
+        65,
+        "manual"
+      ]
+    ]
+  },
+  "similar_reupload": {
+    "accepted": false,
+    "calls": [
+      [
+        "extract_preview",
+        "(b'%PDF',)",
+        "[]"
+      ],
+      [
+        "guess_title",
+        "('preview text',)",
+        "[('file_name', 'scenario.pdf')]"
+      ],
+      [
+        "find_similar",
+        "('Trace Scenario', 'preview text')",
+        "[]"
+      ],
+      [
+        "stage_upload",
+        "(b'%PDF',)",
+        "[]"
+      ]
+    ],
+    "messages": [
+      "偵測到相似劇本：existing-scenario《Existing》（90%）。若要重新解析請輸入 /coc scenario reparse；放棄請輸入 /coc scenario cancel。"
+    ],
+    "state": {
+      "autoroll_checks": false,
+      "log": 0,
+      "pending_checks": [],
+      "pending_pdf_upload": null,
+      "pending_scenario_upload": {
+        "file_name": "scenario.pdf",
+        "key": "staged-key",
+        "matches": [
+          {
+            "id": "existing-scenario",
+            "score": 0.9,
+            "title": "Existing"
+          }
+        ],
+        "title": "Trace Scenario"
+      },
+      "pregens": [],
+      "scenario_library_id": "existing-scenario",
+      "scenario_text": "舊劇本",
+      "scenario_title": "Existing"
+    }
+  }
+}

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import checkpoints, config, db, keeper, legacy_commands, locks, spoiler_policy
+from app import checkpoints, config, db, keeper, locks, spoiler_policy
 from app.agents import executor, guard, narrator, supervisor, tool_gateway
 from app.commands import router
 from app.commands.handlers import (
@@ -28,8 +28,8 @@ from app.domain.models import (
 from app.models import Character, GroupState
 from app.providers import registry
 from app.repositories.group_state import load_state, save_state
+from app.services import map_service, post_turn, scenario_ingestion, turn_delivery
 from app.services import mutation_admission as admission
-from app.services import post_turn, turn_delivery
 from app.services.canonical_facts import CanonicalFactRef
 
 
@@ -240,9 +240,9 @@ def test_router_mutation_entry_matrix_is_held_before_dispatch(state, held, text)
 @pytest.mark.parametrize("handler,kwargs", [
     (character.handle_character_command, {"parts": ["/coc", "switch", "other"], "user_id": "u", "send_dm": None}),
     (correct.handle_correct_command, {"parts": ["/coc", "correct", "issue"], "user_id": "u"}),
-    (legacy_commands.handle_role_sheet_upload, {"file_text": "", "file_name": "role_test.md"}),
-    (legacy_commands.handle_map_upload, {"push": None, "yaml_bytes": b"", "file_name": "map.yaml"}),
-    (legacy_commands.handle_pdf_upload, {"push": None, "pdf_bytes": b"", "file_name": "scenario.pdf"}),
+    (scenario_ingestion.handle_role_sheet_upload, {"file_text": "", "file_name": "role_test.md"}),
+    (map_service.handle_map_upload, {"push": None, "yaml_bytes": b"", "file_name": "map.yaml"}),
+    (scenario_ingestion.handle_pdf_upload, {"push": None, "pdf_bytes": b"", "file_name": "scenario.pdf"}),
     (combat.handle_combat_command, {"parts": ["/coc", "combat", "next"]}),
     (map_handler.handle_map_command, {"parts": ["/coc", "go", "room"], "user_id": "u", "send_image": None}),
     (system.handle_system_command, {"parts": ["/coc", "newgame"], "user_id": "u", "send_dm": None,
@@ -258,7 +258,7 @@ def test_direct_command_entry_matrix(state, held, handler, kwargs):
     lambda s: keeper._execute_tool(s, "roll_dice", {"expression": "1d100"}, [], []),
     lambda s: check_commands.resolve_check(s.group_id, "u", "/coc check"),
     lambda s: check_commands.resolve_luck(s.group_id, "u", "skip"),
-    lambda s: legacy_commands._resolve_map_action_transaction(s.group_id, "u", "go hallway"),
+    lambda s: map_service.resolve_map_action(s.group_id, "u", "go hallway"),
     lambda s: keeper._mutate_and_save_state(s, lambda latest: setattr(latest, "scenario_title", "bad")),
     lambda s: save_state(GroupState(s.group_id), reason="newgame"),
     lambda s: checkpoints.rollback(s.group_id, "checkpoint", actor_id="kp"),

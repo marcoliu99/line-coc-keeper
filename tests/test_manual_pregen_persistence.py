@@ -4,10 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import db, legacy_commands
+from app import db
 from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories import group_state, manual_pregens
+from app.services import scenario_ingestion
 
 
 def _card(name="林文", strength=65):
@@ -161,10 +162,10 @@ class ManualPregenPersistenceTests(unittest.TestCase):
         async def reply(message):
             replies.append(message)
         replies = []
-        with patch.object(legacy_commands.pregen_extractor, "parse_role_sheet_text", side_effect=[_card(), _card(strength=80)]), \
-                patch.object(legacy_commands.scenario_library, "load_context", return_value=_context("s")):
-            asyncio.run(legacy_commands.handle_role_sheet_upload("g", reply, "first", "role_lin.md"))
-            asyncio.run(legacy_commands.handle_role_sheet_upload("g", reply, "updated", "role_lin.md"))
+        with patch.object(scenario_ingestion.pregen_extractor, "parse_role_sheet_text", side_effect=[_card(), _card(strength=80)]), \
+                patch.object(scenario_ingestion.scenario_library, "load_context", return_value=_context("s")):
+            asyncio.run(scenario_ingestion.handle_role_sheet_upload("g", reply, "first", "role_lin.md"))
+            asyncio.run(scenario_ingestion.handle_role_sheet_upload("g", reply, "updated", "role_lin.md"))
         assets = manual_pregens.list_assets("g", "s")
         self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0]["pregen"]["str_"], 80)

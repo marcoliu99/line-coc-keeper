@@ -127,13 +127,13 @@ class HelpDiscordControlTests(unittest.TestCase):
         self.assertEqual(route.await_args.kwargs["expected_revision"], 7)
 
     def test_long_pdf_import_rejects_changed_help_revision_before_extraction(self):
-        from app.legacy_commands import handle_pdf_upload
+        from app.services.scenario_ingestion import handle_pdf_upload
 
         state = GroupState(group_id="g")
         state.state_revision = 8
         reply = AsyncMock()
-        with patch("app.legacy_commands.load_state", return_value=state), \
-             patch("app.legacy_commands.pdf_loader.extract_preview") as extract:
+        with patch("app.services.scenario_ingestion.load_state", return_value=state), \
+             patch("app.services.scenario_ingestion.pdf_loader.extract_preview") as extract:
             accepted = asyncio.run(handle_pdf_upload(
                 "g", reply, reply, b"fake", "book.pdf", expected_revision=7,
             ))

@@ -37,13 +37,6 @@ from app.commands.types import (
 )
 from app.config import IMPORT_DIR
 from app.keeper_tools import resource_bridge
-from app.legacy_commands import (
-    _build_readiness_roster,
-    _heal_character,
-    _resolve_pdf_upload_choice_locked,
-    _set_character_away_state,
-    handle_pdf_upload,
-)
 from app.models import GroupState
 from app.repositories import manual_pregens, state_transaction
 from app.repositories.group_state import (
@@ -55,7 +48,13 @@ from app.services import (
     history_authority,
     mutation_admission,
 )
+from app.services.character_service import (
+    build_readiness_roster,
+    heal_character,
+    set_away_state,
+)
 from app.services.post_turn import run_post_turn_maintenance_after_output
+from app.services.scenario_ingestion import apply_pdf_upload_choice, handle_pdf_upload
 
 
 async def _handle_local_import(
@@ -702,7 +701,7 @@ async def handle_system_command(
         if choice is None:
             await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
             return
-        await reply(_resolve_pdf_upload_choice_locked(conversation_id, choice))
+        await reply(apply_pdf_upload_choice(conversation_id, choice))
         return
 
     if sub == "kp":
@@ -876,7 +875,7 @@ async def handle_system_command(
         return
 
     if sub == "away":
-        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, True)
+        result = await asyncio.to_thread(set_away_state, conversation_id, user_id, True)
         if result.error_text:
             await reply(result.error_text)
             return
@@ -884,7 +883,7 @@ async def handle_system_command(
         return
 
     if sub == "back":
-        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, False)
+        result = await asyncio.to_thread(set_away_state, conversation_id, user_id, False)
         if result.error_text:
             await reply(result.error_text)
             return
@@ -915,12 +914,12 @@ async def handle_system_command(
             state = load_state(conversation_id)
             healed_notes: dict[str, list[str]] = {}
             for owner_id, char in state.characters.items():
-                notes = _heal_character(char)
+                notes = heal_character(char)
                 if notes:
                     healed_notes[owner_id] = notes
             if healed_notes:
                 state_transaction.commit_snapshot(state)
-        await reply(_build_readiness_roster(state, healed_notes, format_mention))
+        await reply(build_readiness_roster(state, healed_notes, format_mention))
 
         opening_data: dict[str, Any] = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
 
