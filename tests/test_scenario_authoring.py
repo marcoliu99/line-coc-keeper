@@ -113,7 +113,7 @@ def test_multiple_independent_diagnostics_and_no_variant_on_failure(library):
 def test_unheaded_long_source_batches_preserve_all_unicode_ranges(library):
     source = ('A room. 😀\n\n' * 3000)
     _path, payload = library(source)
-    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    directory = scenario_library.exports_dir('sample') / payload['export_id']
     registry = authoring.read_json(directory / 'registry.json')
     units = registry['units']
     assert len(units) > 3 and len(registry['batches']) > 1
@@ -165,7 +165,7 @@ def test_stale_exports_and_bad_rules_fail_closed(library, damage):
                                      'evidence': [{'unit_id': 'u1', 'source_quote': 'Armor 2' if damage == 'quote' else 'Armor 2. Armor 2.'}]}}]
     if damage == 'privacy':
         record['public_text'] = '秘密'
-    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    directory = scenario_library.exports_dir('sample') / payload['export_id']
     if damage == 'hash':
         registry = authoring.read_json(directory / 'registry.json')
         registry['units'][0]['page'] = 99
@@ -301,7 +301,7 @@ def test_atomic_save_failure_does_not_publish_candidate(library, monkeypatch):
     monkeypatch.setattr(templates, '_save_variant', fail)
     with pytest.raises(OSError):
         templates.import_markdown('sample', relative(path))
-    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    directory = scenario_library.exports_dir('sample') / payload['export_id']
     assert not (directory / 'draft.json').exists()
     assert templates.status('sample')['variants'] == []
 
@@ -330,7 +330,7 @@ def test_many_chapters_and_large_dependency_groups_do_not_reject_storage(library
     text = '\n'.join(f'Page {i} text.' for i in range(1,301))
     monkeypatch.setattr(scenario_rag, 'split_pages', lambda _: [(i, f'Page {i} text.') for i in range(1,301)])
     _path, payload = library(text)
-    registry = authoring.read_json(templates._root() / 'sample' / 'exports' / payload['export_id'] / 'registry.json')
+    registry = authoring.read_json(scenario_library.exports_dir('sample') / payload['export_id'] / 'registry.json')
     assert registry['units'][0]['source_pages'] == list(range(1,301))
     a = v4_record('a', related_record_ids=['b'])
     b = v4_record('b', related_record_ids=['a'])
@@ -552,7 +552,7 @@ def test_v2_invalid_submission_never_changes_saved_draft(library, damage):
     payload['batches'] = [deepcopy(full['batches'][0])]
     write(path, payload)
     templates.import_markdown('sample', relative(path))
-    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    directory = scenario_library.exports_dir('sample') / payload['export_id']
     before = (directory / 'draft.json').read_bytes()
     registry = authoring.read_json(directory / 'registry.json')
     payload = deepcopy(full)
@@ -582,7 +582,7 @@ def test_v2_invalid_submission_never_changes_saved_draft(library, damage):
 def test_candidate_identity_is_independent_of_arrival_order(library):
     path, _ = library('A' * 80000)
     first = authoring.parse_markdown(path.read_text())
-    directory = templates._root() / 'sample' / 'exports' / first['export_id']
+    directory = scenario_library.exports_dir('sample') / first['export_id']
     files = authoring.read_json(directory / 'files.json')
     outputs = []
     for filename in files:
@@ -609,7 +609,7 @@ def test_candidate_identity_is_independent_of_arrival_order(library):
 
 def test_legacy_authoring_v1_registry_and_batch_replacement_still_import(library):
     path, package = library('A' * 16000)
-    directory = templates._root() / 'sample' / 'exports' / package['export_id']
+    directory = scenario_library.exports_dir('sample') / package['export_id']
     registry = authoring.read_json(directory / 'registry.json')
     for key in ('authoring_version', 'packaging_version', 'packages', 'filename_prefix'):
         registry.pop(key)
@@ -815,7 +815,7 @@ def test_plain_json_does_not_bypass_source_and_evidence_validation(library, monk
     path.write_text(json.dumps(payload, ensure_ascii=False))
     with pytest.raises(ValueError):
         templates.import_markdown('sample', relative(path))
-    directory = templates._root() / 'sample' / 'exports' / payload['export_id']
+    directory = scenario_library.exports_dir('sample') / payload['export_id']
     assert not (directory / 'draft.json').exists()
     if damage == 'source':
         source.write_text(original_source)

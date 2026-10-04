@@ -35,6 +35,9 @@ _理由：_ 兩個戰鬥模組曾互相匯入，並在 15 個地方反覆詢問�
 **回合各階段之間的交接要宣告在 `TurnPayload` 與 `CheckStatus`。** 先到 `app/domain/models.py` 的 TypedDict 加 key，payload 的 key 只從擁有它的階段（`context_builder`、`supervisor`、`executor`、`narrator`、`turn_delivery`）寫入，`CheckStatus` 的 key 只從 `tool_gateway`、`executor`、`turn_handoff` 或 `turn_delivery.public_mechanic` 寫入（依型別 docstring 的表格）；後面的階段只讀。
 _理由：_ 兩者原本都是 `dict[str, Any]`，key 打錯會默默讀到預設值，也沒有地方說明哪個階段可以加哪些證據。現在 `mypy app` 與 `tests/test_turn_payload_contract.py` 都會擋。規格：`docs/specs/refactor/turn_payload_contract_design_spec_zh.md`。
 
+**只有 `scenario_library` 知道劇本來源與版本存在哪裡。** 用 `read_source`、`read_variant`、`variant_manifests` 讀取，用 `publish_variant`、`write_variant_manifest` 寫入，用 `exports_dir` 取得匯出套件。library 以上的模組不要呼叫 `_` 開頭的 library 名稱，也不要寫出 `manifest.json`／`records.json`。
+_理由：_ 模板模組原本自己組來源與版本的路徑，改目錄結構就得改好幾個模組。`tests/test_architecture_scenario_store.py` 兩種情況都會擋。規格：`docs/specs/refactor/scenario_source_store_design_spec_zh.md`。
+
 **每個新的待處理檢定都要經過歸屬檢查。** 登記技能、SAN 或 CON 檢定前，在 `_mutate_and_save_state` 內、針對重新載入的狀態，同時檢查 `pending_checks` 和 `pending_luck_decisions`（參考 `_reject_if_check_already_pending`）。被擋下時要讓玩家或模型知道。
 _理由：_ 無聲返回的檢定會讓規則後果直接消失。規格：`docs/specs/bug/bugfix_duplicate_pending_checks.md`。
 
