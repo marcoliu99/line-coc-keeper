@@ -997,13 +997,13 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or _conversation_id(channel.id) != self.conversation_id:
-            text = "這個 PDF 按鈕不屬於目前頻道。"
+            text = "這個劇本上傳按鈕不屬於目前頻道。"
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
         state = await asyncio.to_thread(load_group_state, self.conversation_id)
         if not permissions.may_manage_scenario_lifecycle(state, str(interaction.user.id)):
             _note_ignored_keeper_role(interaction.user, state, "pdf_choice")
-            text = permissions.kp_only("處理劇本 PDF")
+            text = permissions.kp_only("處理劇本檔案")
             await _send_interaction_message(interaction, text, ephemeral=True)
             return
         await _edit_interaction_view(interaction, view=None)

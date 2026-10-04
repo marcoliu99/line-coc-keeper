@@ -29,7 +29,7 @@
       ],
       [
         "refresh_after_commit",
-        "('trace-first', 'trace-scenario-3fe63d06', {'manifest': {'id': 'trace-scenario-3fe63d06', 'title': 'Trace Scenario', 'source_filename': 'scenario.pdf', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '5975cf1bba432391c94667f5886225f69377c0aa8b9fa21fddfb21c89bcf9092', 'content_hash': '3fe63d0639f7bd131537e2081ebb784ae162e13cd332ce2b01ac5255caaaec02', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '第一章 書房。\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-scenario-3fe63d06/images'), 'page_numbers': {1}})",
+        "('trace-first', 'trace-scenario-3fe63d06', {'manifest': {'id': 'trace-scenario-3fe63d06', 'title': 'Trace Scenario', 'source_filename': 'scenario.pdf', 'source_format': 'pdf', 'source_file': 'source.pdf', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '5975cf1bba432391c94667f5886225f69377c0aa8b9fa21fddfb21c89bcf9092', 'content_hash': '3fe63d0639f7bd131537e2081ebb784ae162e13cd332ce2b01ac5255caaaec02', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '第一章 書房。\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-scenario-3fe63d06/images'), 'page_numbers': {1}})",
         "[]"
       ]
     ],
@@ -56,6 +56,41 @@
     "scene_maps": [
       "custom_map_study"
     ]
+  },
+  "markdown_upload": {
+    "accepted": true,
+    "calls": [
+      [
+        "extract_scenario_index",
+        "('--- 第 1 頁 ---\\n# 書房\\n書房裡有一本日記。\\n',)",
+        "[]"
+      ],
+      [
+        "extract_pregens",
+        "('--- 第 1 頁 ---\\n# 書房\\n書房裡有一本日記。\\n',)",
+        "[]"
+      ],
+      [
+        "refresh_after_commit",
+        "('trace-markdown', 'trace-study-24e467d6', {'manifest': {'id': 'trace-study-24e467d6', 'title': 'Trace Study', 'source_filename': 'scenario_Trace_Study.md', 'source_format': 'markdown', 'source_file': 'source.md', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '24e467d6db57947322395a8f2720387bad81c412882ac11aa8e3dc5872e91136', 'content_hash': '24e467d6db57947322395a8f2720387bad81c412882ac11aa8e3dc5872e91136', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '--- 第 1 頁 ---\\n# 書房\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-study-24e467d6/images'), 'page_numbers': {1}})",
+        "[]"
+      ]
+    ],
+    "messages": [
+      "收到了，正在讀取 Markdown 劇本並建立索引；這條路徑不會執行 PDF OCR。",
+      "已載入劇本《Trace Study》（28 字）。\n這份劇本沒有偵測到內建的預製調查員，直接用「/coc pc 角色名 職業」快速生成即可，這時職業可選：\n記者、私家偵探、醫生、教授、警察、骨董商、神職人員、流浪漢、藝術家、海洋生物學家、FBI探員\n建好角色後，直接在群組打字描述行動即可開始冒險！\n\n⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。\n\n⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,可能重複推導同一個地點的細節。可用 /coc index 重建。"
+    ],
+    "state": {
+      "autoroll_checks": false,
+      "log": 0,
+      "pending_checks": [],
+      "pending_pdf_upload": null,
+      "pending_scenario_upload": null,
+      "pregens": [],
+      "scenario_library_id": "trace-study-24e467d6",
+      "scenario_text": "--- 第 1 頁 ---\n# 書房\n書房裡有一本日記。",
+      "scenario_title": "Trace Study"
+    }
   },
   "role_sheet": {
     "calls": [

@@ -11,7 +11,7 @@ from app.commands import router
 from app.commands.handlers import uploads
 from app.commands.handlers.uploads import Upload
 from app.models import GroupState
-from app.services import mutation_admission
+from app.services import mutation_admission, scenario_ingestion
 from tests.state_store import MemoryTransactions
 
 
@@ -24,6 +24,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         reply, buttons = AsyncMock(), AsyncMock()
         handlers = {name: AsyncMock() for name in (
             "handle_pdf_upload", "handle_map_upload", "handle_role_sheet_upload", "handle_scenario_compare_upload",
+            "handle_scenario_markdown_upload",
         )}
         stage = AsyncMock()
         with patch.multiple(uploads, **handlers), patch.object(uploads, "_stage_pdf_parts", stage):
@@ -38,6 +39,31 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         buttons.assert_awaited_once()
         stage.assert_not_awaited()
 
+    async def test_scenario_markdown_is_ingested_and_gets_its_buttons(self):
+        handled, handlers, stage, _, buttons = await self._route("scenario_the_haunting.md")
+        self.assertTrue(handled)
+        handlers["handle_scenario_markdown_upload"].assert_awaited_once()
+        self.assertEqual(
+            handlers["handle_scenario_markdown_upload"].await_args.args[3:],
+            (b"data", "scenario_the_haunting.md"),
+        )
+        handlers["handle_scenario_compare_upload"].assert_not_awaited()
+        buttons.assert_awaited_once()
+        stage.assert_not_awaited()
+
+    async def test_markdown_scenario_helpers_recognize_page_markers_and_title(self):
+        self.assertIsNotNone(
+            scenario_ingestion._MARKDOWN_PAGE_MARKER_RE.search("--- 第 7 頁 ---\n內容")
+        )
+        self.assertEqual(
+            scenario_ingestion._markdown_scenario_title("# Ignored", "scenario_The_Haunting.md"),
+            "The Haunting",
+        )
+        self.assertEqual(
+            scenario_ingestion._markdown_scenario_title("# The Haunting\nBody", "scenario.md"),
+            "The Haunting",
+        )
+
     async def test_several_pdfs_or_a_part_name_are_staged(self):
         for names in (("a.pdf", "b.pdf"), ("scenario_part1.pdf",)):
             with self.subTest(names=names):
@@ -49,6 +75,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         cases = {
             "map_lighthouse.yaml": "handle_map_upload",
             "role_ken.txt": "handle_role_sheet_upload",
+            "scenario_lightless_beacon.md": "handle_scenario_markdown_upload",
             "alt_extraction.md": "handle_scenario_compare_upload",
         }
         for name, expected in cases.items():

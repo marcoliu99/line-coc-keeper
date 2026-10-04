@@ -23,7 +23,7 @@ async def handle_unsupported_message(conversation_id: str, reply: Reply, label: 
         active = state.active
     if active:
         await reply(
-            f"（守密人目前只讀得懂文字訊息和 PDF 檔案，收到的{label}不會被處理；"
+            f"（守密人目前只讀得懂文字訊息、PDF 劇本和 scenario 開頭的 Markdown 劇本，收到的{label}不會被處理；"
             "如果裡面有重要內容，麻煩用文字描述一下發生了什麼事。）"
         )
 

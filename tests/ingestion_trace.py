@@ -127,6 +127,20 @@ def _flow_role_sheet(ingestion: Any, library_dir: Path) -> dict[str, Any]:
     }
 
 
+def _flow_markdown_upload(ingestion: Any, library_dir: Path) -> dict[str, Any]:
+    recorder = Recorder()
+    _seed("trace-markdown")
+    with patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", library_dir), \
+            patch.object(scenario_index, "extract_scenario_index", recorder.wrap("extract_scenario_index", {"npcs": [], "locations": []})), \
+            patch.object(pregen_extractor, "extract_pregens", recorder.wrap("extract_pregens", [])), \
+            patch.object(scenario_activation, "refresh_after_commit", recorder.wrap("refresh_after_commit", True)):
+        accepted = asyncio.run(ingestion.handle_scenario_markdown_upload(
+            "trace-markdown", recorder.message, recorder.message,
+            "# 書房\n書房裡有一本日記。\n".encode(), "scenario_Trace_Study.md",
+        ))
+    return {"accepted": accepted, "calls": recorder.calls, "messages": recorder.messages, "state": _state_view("trace-markdown")}
+
+
 def _flow_map_upload(mapping: Any) -> dict[str, Any]:
     recorder = Recorder()
     _seed("trace-map", active=True)
@@ -147,6 +161,7 @@ def record() -> dict[str, Any]:
             "first_upload": _flow_first_upload(ingestion, library_dir),
             "similar_reupload": _flow_similar_reupload(ingestion, library_dir),
             "role_sheet": _flow_role_sheet(ingestion, library_dir),
+            "markdown_upload": _flow_markdown_upload(ingestion, library_dir),
             "map_upload": _flow_map_upload(mapping),
         }
 

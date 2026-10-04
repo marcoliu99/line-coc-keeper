@@ -35,7 +35,7 @@
 ```text
 ruff check .          # All checks passed
 mypy app              # Success: no issues found in 149 source files
-pytest                # 2224 passed, 1 skipped, 222 subtests passed（第 3 階段 2202 項 → +22；其中 5 項是 code review 後新增）
+pytest                # 2228 passed, 1 skipped, 223 subtests passed（第 3 階段 2202 項 → +26；其中 5 項是 code review 後新增，其餘來自併入的 `main_v2`）
 ```
 
 唯一的 skip 同前（`tests/test_codex_analysis_smoke.py`，需已登入的 Codex CLI），**未執行**。
@@ -68,6 +68,8 @@ pytest                # 2224 passed, 1 skipped, 222 subtests passed（第 3 階�
 | #165 引入後修復（code review） | `handle_pregen_luck_roll` 在交易外載入快照、抽 Luck，再直接在 event loop 上用阻塞的 `commit_snapshot` 提交；背景寫入讓 revision 變動時玩家會看到沒被接住的 `StateRevisionConflict`，抽到的值也作廢。改為 `transact` 的 delta：骰值在最新 state 的交易內抽取與套用（`test_pregen_luck_roll_applies_to_the_latest_state_and_a_refusal_writes_nothing`） |
 | #165 引入後修復（code review） | `claim_pending_buttons_locked` 每回合都開 `BEGIN IMMEDIATE`，即使沒有任何新按鈕；基線是先讀、有新項目才寫。恢復為先用唯讀載入判斷，只有確實有東西要認領時才開寫入交易（`test_a_turn_with_no_new_button_never_opens_a_write_transaction`） |
 | #165 引入後修復（code review） | `ctx.skip_save()` 只略過 state 與 ledger，已透過 `ctx.conn` 寫入的列（例如為沒有存檔的戰鬥所建的開戰前 checkpoint）仍會提交，與「全部成功才提交」不符。現在與拒絕相同，一併 rollback（`test_skip_save_also_drops_rows_already_written_through_the_connection`；所有現有的 `skip_save` 呼叫都在寫入之前，不受影響） |
+| 併入 `main_v2` 時處理（上游新功能） | `main_v2` 在本階段進行期間合併了 #169（以 `scenario` 開頭的 Markdown 劇本上傳），其 `handle_scenario_markdown_upload` 加在 `legacy_commands.py`。本 PR 將它移到 `scenario_ingestion`（`_MARKDOWN_PAGE_MARKER_RE`、`_markdown_scenario_title` 一併），`handlers/uploads.py` 的路由、`handlers/messages.py` 的不支援訊息文字與三處「請重新上傳劇本檔案」訊息、`處理劇本檔案` 的 KP 提示照上游原樣帶過來。trace 新增 `markdown_upload` 流程；`tests/fixtures/ingestion_trace.json` 在 `main_v2` `f183e9f`（仍有 `legacy_commands`）上重新錄製，與本分支的輸出逐項相同。舊的 golden 與新錄製只差 `first_upload` 的 manifest 多了 #169 加的 `source_format`／`source_file` 兩個欄位，不是本 PR 的行為改動 |
+| 本 PR 修復（我的失誤） | #166／#167 在併入 `main_v2` 時，`README.md` 帶著未解決的衝突標記（`<<<<<<<`／`>>>>>>>`）進了 `main_v2`：phase 2 分支合併 phase 1 時我只處理了 `legacy_commands.py` 的衝突而漏看 README。本 PR 的合併已把 README 解成正確內容 |
 | 文件與死碼整理（code review） | `TxContext.revision_before` 與 `TxContext.replaced` 沒有任何讀取者，已刪除。`awaiting_input` 是需求規定要能表達的 outcome，予以保留，但規格與模組說明改為如實說明：目前檢定與戰鬥 service 不呼叫它，等待玩家以一般狀態提交、結果為 `applied`。`retryable`（revision 衝突時設定）與 `original_outcome`（重播時設定）有 production 設定者與測試，保留 |
 | 文件修正（code review） | 傷勢檢定不可用 Luck 的範圍限於戰鬥引擎登記的傷勢檢定；戰鬥以外由 `adjust_character` 串在重傷後的 CON 檢定從基線起就提供 Luck，現況不變，新增 `test_c5_a_major_wound_con_check_outside_combat_keeps_offering_luck` 釘住。另清掉 `pyproject.toml` 裡已刪除檔案的 SLF001 例外、`catalog.json` 中 18 筆指向 `app/legacy_commands.py` 的證據連結，以及兩處舊函式名稱的註解 |
 | 限制 | typed extraction result 與 provider 抽象依規格留待後續階段；PDF／預製角色流程只做原樣搬移 |

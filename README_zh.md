@@ -2,7 +2,7 @@
 
 [English](README_zh.md) | **繁體中文**
 
-在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端支援 Claude（Anthropic）、Gemini（Google）、OpenAI 與已登入的 Codex CLI；Codex 可處理對話與一般文字分析，PDF／圖片／OCR 和預製角色卡分析則須使用 API Provider，因為量測到的 Codex 擷取正確率不足。詳見[安裝設定](docs/guides/setup_zh.md)及 [Codex OAuth 指南](docs/guides/codex_oauth_testing_zh.md)。
+在 Discord 頻道裡上傳一份《克蘇魯的呼喚》第七版（COC7e）劇本 PDF，或檔名以 `scenario` 開頭的 UTF-8 Markdown 劇本，就能讓 LLM 扮演守密人（Keeper），直接在聊天室裡跑團。規則判定（技能檢定、SAN 值、擲骰）由程式碼負責計算，LLM 負責讀劇本、敘事、決定什麼時候該擲骰。後端支援 Claude（Anthropic）、Gemini（Google）、OpenAI 與已登入的 Codex CLI；Codex 可處理對話與一般文字分析，PDF／圖片／OCR 和預製角色卡分析則須使用 API Provider，因為量測到的 Codex 擷取正確率不足。詳見[安裝設定](docs/guides/setup_zh.md)及 [Codex OAuth 指南](docs/guides/codex_oauth_testing_zh.md)。
 
 ## 快速開始
 
@@ -12,7 +12,7 @@
 
 ### Bot 已經跑起來、已經加進群組/伺服器？
 
-1. **上傳劇本**：把 COC7e 劇本 PDF 檔案直接傳到群組/頻道裡。圖片較多的劇本要等一下（會先回「處理中」，實際結果晚一點才會出現）。
+1. **上傳劇本**：把 COC7e 劇本 PDF，或檔名以 `scenario` 開頭的 UTF-8 `.md` 檔案直接傳到群組／頻道裡。Markdown 會直接匯入文字、不跑 PDF/OCR；圖片較多的 PDF 要等一下（會先回「處理中」，實際結果晚一點才會出現）。
 2. **建立角色**（任一位玩家都要做這步）：
    ```
    /coc pc 角色名 職業
@@ -26,7 +26,7 @@
 ```text
 Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
   |
-  +-- 指令／PDF -> commands/handlers/*.py -> services/{scenario_ingestion,map_service,character_service}.py
+  +-- 指令／劇本附件 -> commands/handlers/*.py -> services/{scenario_ingestion,map_service,character_service}.py
   |
   +-- 玩家文字 -> agents/supervisor.py
   |     -> context_builder.py（state／劇本與記憶檢索）
@@ -79,7 +79,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/scenario_rag.py`：BM25 與可選 embeddings 混合檢索（`SCENARIO_RAG_ENABLED=true` 時啟用），取代「整份劇本塞進 system prompt」，改成 Keeper 用 `search_scenario` 工具按需查詢
 - `app/memory_rag.py`：對已裁切掉的舊對話做語意檢索，補足 `campaign_summary` 滾動摘要「越壓越抽象」的細節遺失
 - `app/scenario_index.py`：抽取劇本的 NPC／怪物與地點數值索引（`/coc index`，上傳劇本時也會自動跑一次），給 Keeper 一份固定對照表，避免同一隻怪物前後講出不同數值
-- `app/scenario_library.py`：可重用的劇本 PDF 庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)**
+- `app/scenario_library.py`：可重用的 PDF／Markdown 劇本庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)**
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
 - `app/models.py`：角色卡／聊天室狀態資料結構與快速生成（3d6 法）
 - `app/pdf_loader.py`：抽取上傳 PDF 的文字內容（文字層改用 MarkItDown + markitdown-ocr 預處理，PyMuPDF 負責頁面轉圖片與備援文字層；圖片偏多的頁面會用視覺理解／OCR 備援，並保留這些頁面的實際圖片供之後展示；平面圖頁面會額外呼叫 `app/scene_map.py` 拆出結構化房間圖）；另有低成本的 `extract_preview()`，供劇本庫上傳去重使用

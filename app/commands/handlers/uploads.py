@@ -2,7 +2,7 @@
 
 Moved out of app/discord_bot.py so the transport only turns a Discord message
 into Upload values (docs/specs/refactor/discord_events_through_router_design_spec.md).
-PDF upload deliberately has no KP/Host check, even with
+Scenario-file upload deliberately has no KP/Host check, even with
 SCENARIO_LIFECYCLE_KP_ONLY: any player may upload, and the first upload of a
 conversation applies at once. Only the choice buttons and /coc scenario are
 KP/Host-only.
@@ -27,6 +27,7 @@ from app.services.scenario_ingestion import (
     handle_pdf_upload,
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
+    handle_scenario_markdown_upload,
 )
 
 _PART_NAME = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
@@ -56,6 +57,21 @@ async def handle_uploads(
         # No reply-token/time-window constraint here, so the same callback
         # serves as both the immediate ack and the final result.
         await handle_pdf_upload(conversation_id, reply, reply, await pdfs[0].read(), pdfs[0].filename)
+        await post_pdf_buttons()
+        return True
+
+    scenario_markdowns = [
+        u for u in uploads
+        if u.filename.lower().startswith("scenario") and u.filename.lower().endswith(".md")
+    ]
+    if scenario_markdowns:
+        if len(scenario_markdowns) > 1:
+            await reply("一次請只上傳一份 scenario 開頭的 Markdown 劇本。")
+            return True
+        upload = scenario_markdowns[0]
+        await handle_scenario_markdown_upload(
+            conversation_id, reply, reply, await upload.read(), upload.filename
+        )
         await post_pdf_buttons()
         return True
 
@@ -146,7 +162,7 @@ async def resolve_pdf_upload_choice(
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if not permissions.may_manage_scenario_lifecycle(state, user_id):
-            await push(permissions.kp_only("處理劇本 PDF"))
+            await push(permissions.kp_only("處理劇本檔案"))
             return
         text = apply_pdf_upload_choice(conversation_id, choice)
         state = load_state(conversation_id)

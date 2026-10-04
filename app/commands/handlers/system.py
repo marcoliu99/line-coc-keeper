@@ -170,7 +170,7 @@ async def _handle_newgame(conversation_id: str, reply: Reply) -> None:
             reason="newgame",
         )
         if outcome.ok:
-            await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF 檔案開始新的冒險。")
+            await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF，或上傳檔名以 scenario 開頭的 .md 劇本開始新的冒險。")
             return
         if outcome.reason != "scenario_changed":
             break
@@ -487,7 +487,7 @@ async def handle_system_command(
         if action == "list":
             entries = scenario_library.list_scenarios()
             if not entries:
-                await reply("劇本庫目前是空的，請先上傳 PDF。")
+                await reply("劇本庫目前是空的，請先上傳 PDF，或上傳檔名以 scenario 開頭的 .md 劇本。")
                 return
             lines = ["劇本庫："]
             for item in entries:
