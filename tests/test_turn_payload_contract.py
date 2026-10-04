@@ -55,6 +55,15 @@ def _in_turn_pipeline(path: str) -> bool:
     return path.startswith("app/agents/") or Path(path).name.startswith("turn_")
 
 
+def _replaces(node: ast.AST, attribute: str, matches, *, bare_name: bool) -> bool:
+    """``x.payload = ...`` or ``payload |= ...``: the whole object is replaced or merged into."""
+    if isinstance(node, ast.Assign):
+        return any(isinstance(target, ast.Attribute) and target.attr == attribute for target in node.targets)
+    if isinstance(node, ast.AugAssign):
+        return matches(node.target, bare_name=bare_name)
+    return False
+
+
 def _literal(node: ast.expr) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
@@ -63,7 +72,9 @@ def payload_writes(source: str, *, bare_name: bool = True) -> set[str]:
     """Keys assigned to or set on a payload; ``"*"`` for a write whose key is not a literal."""
     written: set[str] = set()
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and _is_payload(node.value, bare_name=bare_name):
+        if _replaces(node, "payload", _is_payload, bare_name=bare_name):
+            written.add("*")  # the whole payload replaced or merged into
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and _is_payload(node.value, bare_name=bare_name):
             written.add(_literal(node.slice) or "*")
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
               and node.func.attr in MUTATORS and _is_payload(node.func.value, bare_name=bare_name)):
@@ -82,7 +93,9 @@ def check_status_writes(source: str, *, bare_name: bool = True) -> set[str]:
     """Keys assigned into a check status, by subscript or in the dict literal that builds it."""
     written: set[str] = set()
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) \
+        if _replaces(node, "check_status", _is_check_status, bare_name=bare_name):
+            written.add("*")  # the whole status replaced or merged into
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) \
                 and _is_check_status(node.value, bare_name=bare_name):
             written.add(_literal(node.slice) or "*")
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
@@ -103,11 +116,17 @@ def _production() -> dict[str, str]:
     }
 
 
-def test_every_declared_key_has_exactly_one_stage_that_supplies_it() -> None:
+def test_every_declared_key_has_a_supplier_and_only_one_key_has_two() -> None:
     declared = set(TurnPayload.__annotations__)
-    owned = BUILT_BY_CONTEXT_BUILDER | set().union(*WRITERS.values())
-    assert declared == owned
-    assert BUILT_BY_CONTEXT_BUILDER.isdisjoint(set().union(*WRITERS.values()))
+    suppliers = {
+        key: int(key in BUILT_BY_CONTEXT_BUILDER) + sum(key in keys for keys in WRITERS.values())
+        for key in declared
+    }
+    assert set().union(BUILT_BY_CONTEXT_BUILDER, *WRITERS.values()) == declared
+    # The Executor creates ``observed_outcomes`` and the Narrator appends to it; every other
+    # key has exactly one stage that supplies it.
+    assert {key for key, count in suppliers.items() if count != 1} == {"observed_outcomes"}
+    assert suppliers["observed_outcomes"] == 2
 
 
 def test_the_payload_is_built_with_the_declared_input_keys() -> None:
@@ -133,6 +152,13 @@ def test_the_stages_really_do_write_what_the_contract_says_they_own() -> None:
     sources = _production()
     for path, keys in WRITERS.items():
         assert payload_writes(sources[path]) == keys, path
+
+
+def test_the_gate_catches_replacing_the_whole_object() -> None:
+    assert payload_writes("message.payload = {}") == {"*"}
+    assert payload_writes("payload |= {'x': 1}") == {"*"}
+    assert check_status_writes("result.check_status = {}") == {"*"}
+    assert check_status_writes("status |= {'x': 1}") == {"*"}
 
 
 def test_the_gate_catches_a_stray_write() -> None:

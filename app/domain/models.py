@@ -90,7 +90,7 @@ class MechanicResult:
     narrative_facts: list[str]
     state_delta: StateDelta
     events: list[GameEvent] = field(default_factory=list)
-    check_status: CheckStatus = field(default_factory=lambda: CheckStatus())
+    check_status: CheckStatus = field(default_factory=CheckStatus)
     turn_resolution: TurnResolution | None = None
     execution_health: str = "completed"
     observed_outcomes: list[ObservedOutcome] = field(default_factory=list)

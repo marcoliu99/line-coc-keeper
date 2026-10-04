@@ -32,7 +32,7 @@ _理由：_ 同一個檢定過去會經過三份各自維護的規則。`tests/t
 **戰鬥 action 一律走 `CombatEngine`。** 指令、工具與轉接層呼叫 `combat_engine.handle(state, action)`；只有引擎讀取戰鬥模式，`combat` 絕不匯入 `combat_flow`。legacy 與 managed 戰鬥規則不同的地方，接收一個 `ModeOps` 參數，而不是自己判斷模式；新增 action 就是在 `combat_actions` 加一個 dataclass 與一個 handler。可重複的 action 帶上其 ledger 所用的穩定 `action_id`／`event_id`。
 _理由：_ 兩個戰鬥模組曾互相匯入，並在 15 個地方反覆詢問「是不是 managed」，所以對沒有戰鬥的對話呼叫只屬於 managed 的操作，會憑空造出一場戰鬥。`tests/test_architecture_combat.py` 在匯入圖上檢查分層，含延遲匯入。規格：`docs/specs/refactor/combat_engine_design_spec_zh.md`。
 
-**回合各階段之間的交接要宣告在 `TurnPayload` 與 `CheckStatus`。** 先到 `app/domain/models.py` 的 TypedDict 加 key，並且只從擁有它的階段（`context_builder`、`supervisor`、`executor`、`narrator`、`turn_delivery`）寫入；後面的階段只讀。
+**回合各階段之間的交接要宣告在 `TurnPayload` 與 `CheckStatus`。** 先到 `app/domain/models.py` 的 TypedDict 加 key，payload 的 key 只從擁有它的階段（`context_builder`、`supervisor`、`executor`、`narrator`、`turn_delivery`）寫入，`CheckStatus` 的 key 只從 `tool_gateway`、`executor`、`turn_handoff` 或 `turn_delivery.public_mechanic` 寫入（依型別 docstring 的表格）；後面的階段只讀。
 _理由：_ 兩者原本都是 `dict[str, Any]`，key 打錯會默默讀到預設值，也沒有地方說明哪個階段可以加哪些證據。現在 `mypy app` 與 `tests/test_turn_payload_contract.py` 都會擋。規格：`docs/specs/refactor/turn_payload_contract_design_spec_zh.md`。
 
 **每個新的待處理檢定都要經過歸屬檢查。** 登記技能、SAN 或 CON 檢定前，在 `_mutate_and_save_state` 內、針對重新載入的狀態，同時檢查 `pending_checks` 和 `pending_luck_decisions`（參考 `_reject_if_check_already_pending`）。被擋下時要讓玩家或模型知道。
