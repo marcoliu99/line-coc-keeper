@@ -1623,6 +1623,15 @@
       "zh_path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec_zh.md"
     },
     {
+      "title": "Deduplicate repeated PDF source emission, not repeated prose",
+      "zh": "依 PDF 來源證據去重，不依正文文字去重",
+      "category": "bug",
+      "status": "design-ready",
+      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py"],
+      "path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec.md",
+      "zh_path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec_zh.md"
+    },
+    {
       "title": "PDF final review warnings",
       "zh": "PDF 最終人工核對警告修正",
       "category": "bug",
