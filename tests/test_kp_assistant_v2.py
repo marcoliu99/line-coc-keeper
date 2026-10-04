@@ -1,9 +1,7 @@
-import sqlite3
 import sys
 import tempfile
 import types
 import unittest
-from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -19,18 +17,15 @@ sys.modules.setdefault(
 )
 
 from app import combat, dice, keeper
-from app import legacy_commands as commands
 from app.agents import assistant
 from app.commands import router
 from app.commands.handlers import system as system_handler
 from app.domain.models import AgentMessage
 from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
+from app.services import post_turn, scenario_ingestion
 from tests.provider_fakes import use_fake_provider
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(deepcopy(state.to_dict()))
+from tests.state_store import StateStorePatch, clone_state
 
 
 class ReplyCollector:
@@ -39,43 +34,6 @@ class ReplyCollector:
 
     async def __call__(self, text: str) -> None:
         self.messages.append(text)
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-        self.conn = sqlite3.connect(":memory:")
-        self.conn.execute("CREATE TABLE manual_pregen_assets (key TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT)")
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState, *, reason: str = "command", mutate_tx=None) -> None:
-            if mutate_tx is not None:
-                mutate_tx(self.conn)
-                self.conn.commit()
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            self.originals.append((module, module.load_state, module.save_state))
-            module.load_state = load_state
-            module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, load_state, save_state in reversed(self.originals):
-            module.load_state = load_state
-            module.save_state = save_state
-        self.conn.close()
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
-
-    def get(self, group_id: str) -> GroupState:
-        return clone_state(self.store[group_id])
 
 
 class FakeProvider:
@@ -335,7 +293,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
     async def test_kp_ooc_lifecycle_cleanup_commands(self):
         # Exercises the real /coc kp, /coc end, /coc newgame dispatch path
         # (app.commands.handlers.system.handle_system_command) rather than the
-        # orphaned app.legacy_commands._handle_coc_command it used to call —
+        # orphaned legacy _handle_coc_command it used to call —
         # see docs/specs/refactor/bug-remove-dead-legacy-coc-command-handler.md.
         async def noop_dm(*args):
             raise AssertionError("DM should not be called")
@@ -391,27 +349,27 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pdf_success_clears_kp_ooc_log_but_parse_failure_does_not(self):
         temp_library = tempfile.TemporaryDirectory()
-        original_library_dir = commands.scenario_library.SCENARIO_LIBRARY_DIR
-        commands.scenario_library.SCENARIO_LIBRARY_DIR = Path(temp_library.name)
-        original_extract = commands.pdf_loader.extract_text
-        original_guess_title = commands.pdf_loader.guess_title
-        original_extract_preview = commands.pdf_loader.extract_preview
-        original_extract_index = commands.scenario_index.extract_scenario_index
-        original_refresh_images = commands.scenario_activation.refresh_after_commit
+        original_library_dir = scenario_ingestion.scenario_library.SCENARIO_LIBRARY_DIR
+        scenario_ingestion.scenario_library.SCENARIO_LIBRARY_DIR = Path(temp_library.name)
+        original_extract = scenario_ingestion.pdf_loader.extract_text
+        original_guess_title = scenario_ingestion.pdf_loader.guess_title
+        original_extract_preview = scenario_ingestion.pdf_loader.extract_preview
+        original_extract_index = scenario_ingestion.scenario_index.extract_scenario_index
+        original_refresh_images = scenario_ingestion.scenario_activation.refresh_after_commit
 
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             state = GroupState(group_id="g")
             state.kp_ooc_log = [{"role": "kp_assistant", "content": "old scenario note"}]
             store.put(state)
-            commands.pdf_loader.extract_text = lambda pdf_bytes, **kwargs: ("new scenario text", [], False, {}, {})
-            commands.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
-            commands.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
-            commands.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
-            commands.scenario_activation.refresh_after_commit = lambda *args: True
+            scenario_ingestion.pdf_loader.extract_text = lambda pdf_bytes, **kwargs: ("new scenario text", [], False, {}, {})
+            scenario_ingestion.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
+            scenario_ingestion.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
+            scenario_ingestion.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
+            scenario_ingestion.scenario_activation.refresh_after_commit = lambda *args: True
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
-                await commands.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf", skip_similarity=True)
+                await scenario_ingestion.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf", skip_similarity=True)
                 saved = store.get("g")
                 self.assertEqual(saved.scenario_text, "new scenario text")
                 self.assertEqual(saved.kp_ooc_log, [])
@@ -423,21 +381,21 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 def fail_extract(pdf_bytes, **kwargs):
                     raise ValueError("bad pdf")
 
-                commands.pdf_loader.extract_text = fail_extract
+                scenario_ingestion.pdf_loader.extract_text = fail_extract
                 reply = ReplyCollector()
                 push = ReplyCollector()
-                await commands.handle_pdf_upload("g", reply, push, b"bad", "broken.pdf", skip_similarity=True)
+                await scenario_ingestion.handle_pdf_upload("g", reply, push, b"bad", "broken.pdf", skip_similarity=True)
                 self.assertEqual(
                     store.get("g").kp_ooc_log,
                     [{"role": "kp_assistant", "content": "must survive failed parse"}],
                 )
             finally:
-                commands.pdf_loader.extract_text = original_extract
-                commands.pdf_loader.guess_title = original_guess_title
-                commands.pdf_loader.extract_preview = original_extract_preview
-                commands.scenario_index.extract_scenario_index = original_extract_index
-                commands.scenario_activation.refresh_after_commit = original_refresh_images
-                commands.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
+                scenario_ingestion.pdf_loader.extract_text = original_extract
+                scenario_ingestion.pdf_loader.guess_title = original_guess_title
+                scenario_ingestion.pdf_loader.extract_preview = original_extract_preview
+                scenario_ingestion.scenario_index.extract_scenario_index = original_extract_index
+                scenario_ingestion.scenario_activation.refresh_after_commit = original_refresh_images
+                scenario_ingestion.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
                 temp_library.cleanup()
 
     async def test_similar_pdf_upload_reloads_state_before_saving_pending_scenario_upload(self):
@@ -445,14 +403,14 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         asyncio.to_thread) before the pending_scenario_upload save. A turn
         landing on this conversation in that window must not be silently
         reverted by that save — see the review finding this guards against."""
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             state = GroupState(group_id="g")
             state.log = [{"role": "user", "content": "original"}]
             store.put(state)
 
-            original_extract_preview = commands.pdf_loader.extract_preview
-            original_find_similar = commands.scenario_library.find_similar
-            original_stage_upload = commands.scenario_library.stage_upload
+            original_extract_preview = scenario_ingestion.pdf_loader.extract_preview
+            original_find_similar = scenario_ingestion.scenario_library.find_similar
+            original_stage_upload = scenario_ingestion.scenario_library.stage_upload
 
             def concurrent_extract_preview(pdf_bytes):
                 # Simulate another turn saving fresh state while this
@@ -462,24 +420,24 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 store.put(concurrent)
                 return "preview text"
 
-            commands.pdf_loader.extract_preview = concurrent_extract_preview
-            commands.scenario_library.find_similar = lambda title, preview: [
+            scenario_ingestion.pdf_loader.extract_preview = concurrent_extract_preview
+            scenario_ingestion.scenario_library.find_similar = lambda title, preview: [
                 {"id": "existing-scenario", "title": "Existing", "score": 0.9}
             ]
-            commands.scenario_library.stage_upload = lambda pdf_bytes: "staged-key"
+            scenario_ingestion.scenario_library.stage_upload = lambda pdf_bytes: "staged-key"
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
-                await commands.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf")
+                await scenario_ingestion.handle_pdf_upload("g", reply, push, b"%PDF", "scenario.pdf")
 
                 saved = store.get("g")
                 self.assertEqual(len(saved.log), 2, "the concurrent turn's log entry must survive")
                 self.assertIsNotNone(saved.pending_scenario_upload)
                 self.assertEqual(saved.pending_scenario_upload["key"], "staged-key")
             finally:
-                commands.pdf_loader.extract_preview = original_extract_preview
-                commands.scenario_library.find_similar = original_find_similar
-                commands.scenario_library.stage_upload = original_stage_upload
+                scenario_ingestion.pdf_loader.extract_preview = original_extract_preview
+                scenario_ingestion.scenario_library.find_similar = original_find_similar
+                scenario_ingestion.scenario_library.stage_upload = original_stage_upload
 
     def test_show_scenario_image_and_search_reject_kp_only_assets_for_players(self):
         """Regression test: scenario_library previously hardcoded every image
@@ -1120,28 +1078,28 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         def forbidden_gate(*args, **kwargs):
             raise AssertionError("priority gate must be bypassed when no KP Assistant exists")
 
-        original_gate = commands.locks.get_keeper_priority_gate
+        original_gate = scenario_ingestion.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
-        original_resolve = router._resolve_map_action_transaction
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_resolve = router.resolve_map_action
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             store.put(state)
-            router.load_state = commands.load_state
-            commands.locks.get_keeper_priority_gate = forbidden_gate
+            router.load_state = scenario_ingestion.load_state
+            scenario_ingestion.locks.get_keeper_priority_gate = forbidden_gate
             router.supervisor.run_turn = fake_run_turn
-            router._resolve_map_action_transaction = lambda *args: None
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            router.resolve_map_action = lambda *args: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
                     "g", "p1", lambda: None, reply, noop_dm, noop_image, noop_image, "look around"
                 )
             finally:
-                commands.locks.get_keeper_priority_gate = original_gate
+                scenario_ingestion.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
-                router._resolve_map_action_transaction = original_resolve
-                commands._spawn_post_turn_maintenance = original_spawn
+                router.resolve_map_action = original_resolve
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(reply.messages, ["keeper reply"])
@@ -1165,25 +1123,25 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             calls.append(kwargs)
             return "kp reply", [], []
 
-        original_gate = commands.locks.get_keeper_priority_gate
+        original_gate = scenario_ingestion.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             store.put(state)
-            router.load_state = commands.load_state
-            commands.locks.get_keeper_priority_gate = gate
+            router.load_state = scenario_ingestion.load_state
+            scenario_ingestion.locks.get_keeper_priority_gate = gate
             router.supervisor.run_turn = fake_run_turn
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
                     "g", "kp-user", display_name, reply, noop_dm, noop_image, noop_image, "幕後提醒"
                 )
             finally:
-                commands.locks.get_keeper_priority_gate = original_gate
+                scenario_ingestion.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
-                commands._spawn_post_turn_maintenance = original_spawn
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", True)])
@@ -1206,28 +1164,28 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             calls.append(kwargs)
             return "player reply", [], []
 
-        original_gate = commands.locks.get_keeper_priority_gate
+        original_gate = scenario_ingestion.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
-        original_resolve = router._resolve_map_action_transaction
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_resolve = router.resolve_map_action
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             store.put(state)
-            router.load_state = commands.load_state
-            commands.locks.get_keeper_priority_gate = gate
+            router.load_state = scenario_ingestion.load_state
+            scenario_ingestion.locks.get_keeper_priority_gate = gate
             router.supervisor.run_turn = fake_run_turn
-            router._resolve_map_action_transaction = lambda *args: None
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            router.resolve_map_action = lambda *args: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
                     "g", "p1", lambda: None, reply, noop_dm, noop_image, noop_image, "look around"
                 )
             finally:
-                commands.locks.get_keeper_priority_gate = original_gate
+                scenario_ingestion.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
-                router._resolve_map_action_transaction = original_resolve
-                commands._spawn_post_turn_maintenance = original_spawn
+                router.resolve_map_action = original_resolve
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", False)])
@@ -1269,29 +1227,29 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
                 return _GateContext()
 
-        original_gate = commands.locks.get_keeper_priority_gate
+        original_gate = scenario_ingestion.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
-        original_resolve = router._resolve_map_action_transaction
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_resolve = router.resolve_map_action
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
-        with StateStorePatch(commands) as store:
+        with StateStorePatch(scenario_ingestion) as store:
             store.put(state)
-            router.load_state = commands.load_state
+            router.load_state = scenario_ingestion.load_state
             gate = MutatingGateSpy(store)
-            commands.locks.get_keeper_priority_gate = gate
+            scenario_ingestion.locks.get_keeper_priority_gate = gate
             router.supervisor.run_turn = fake_run_turn
-            router._resolve_map_action_transaction = lambda *args: None
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            router.resolve_map_action = lambda *args: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
                     "g", "kp-user", lambda: None, reply, noop_dm, noop_image, noop_image, "now IC"
                 )
             finally:
-                commands.locks.get_keeper_priority_gate = original_gate
+                scenario_ingestion.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
-                router._resolve_map_action_transaction = original_resolve
-                commands._spawn_post_turn_maintenance = original_spawn
+                router.resolve_map_action = original_resolve
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", True)])

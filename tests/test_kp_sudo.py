@@ -14,14 +14,11 @@ sys.modules.setdefault(
     ),
 )
 
-from app import legacy_commands as commands
 from app.commands import router
 from app.commands.sudo import parse_sudo_command
 from app.models import Character, Combatant, CombatState, EffectState, GroupState
-
-
-def clone_state(state: GroupState) -> GroupState:
-    return GroupState.from_dict(state.to_dict())
+from tests import combat_calls as calls
+from tests.state_store import StateStorePatch
 
 
 class ReplyCollector:
@@ -30,39 +27,6 @@ class ReplyCollector:
 
     async def __call__(self, text: str) -> None:
         self.messages.append(text)
-
-
-class StateStorePatch:
-    def __init__(self, *modules) -> None:
-        self.modules = modules
-        self.store: dict[str, GroupState] = {}
-        self.originals = []
-
-    def __enter__(self):
-        def load_state(group_id: str) -> GroupState:
-            return clone_state(self.store.get(group_id, GroupState(group_id=group_id)))
-
-        def save_state(state: GroupState, *, reason: str = "command") -> None:
-            self.store[state.group_id] = clone_state(state)
-
-        for module in self.modules:
-            if hasattr(module, "load_state"):
-                self.originals.append((module, "load_state", module.load_state))
-                module.load_state = load_state
-            if hasattr(module, "save_state"):
-                self.originals.append((module, "save_state", module.save_state))
-                module.save_state = save_state
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        for module, name, original in reversed(self.originals):
-            setattr(module, name, original)
-
-    def put(self, state: GroupState) -> None:
-        self.store[state.group_id] = clone_state(state)
-
-    def get(self, group_id: str) -> GroupState:
-        return clone_state(self.store[group_id])
 
 
 async def _noop(*args) -> None:
@@ -116,7 +80,7 @@ class SudoStateTests(unittest.TestCase):
         state.pending_luck_decisions["p1"] = {"options": []}
         state.pending_pregen_luck["p1"] = character.character_id
 
-        retired = state.retire_active_character("p1", "小明")
+        retired = calls.retire_active_character(state, "p1", "小明")
 
         self.assertIs(retired, state.characters_by_id[retired.character_id])
         self.assertIsNone(state.get_active_character("p1"))
@@ -161,7 +125,7 @@ class SudoStateTests(unittest.TestCase):
             f"enemy:2:{survivor_id}": "near",
         }
 
-        state.retire_active_character("p1", "小明")
+        calls.retire_active_character(state, "p1", "小明")
 
         self.assertEqual([item.character_id for item in state.combat.order], [second.character_id])
         self.assertEqual(state.combat.current_index, 0)
@@ -182,7 +146,7 @@ class SudoStateTests(unittest.TestCase):
             current_index=0,
         )
 
-        state.retire_active_character("p1", "小明")
+        calls.retire_active_character(state, "p1", "小明")
 
         self.assertEqual(state.combat.order, [])
         self.assertFalse(state.combat.active)
@@ -217,7 +181,7 @@ class SudoStateTests(unittest.TestCase):
             effects=[EffectState(id="next-turn", label="毒", target_id=next_id, timing="turn_start", damage="3")],
         )
 
-        state.retire_active_character("p1", first.name)
+        calls.retire_active_character(state, "p1", first.name)
 
         self.assertEqual(state.combat.order[state.combat.current_index].combatant_id, next_id)
         self.assertEqual(state.combat.order[state.combat.current_index].hp, 7)
@@ -248,7 +212,7 @@ class SudoStateTests(unittest.TestCase):
             current_index=1,
         )
 
-        state.retire_active_character("p1", first.name)
+        calls.retire_active_character(state, "p1", first.name)
 
         self.assertEqual(state.combat.round_number, 2)
         self.assertEqual(state.combat.current_index, 0)
@@ -281,7 +245,7 @@ class SudoStateTests(unittest.TestCase):
             effects=[EffectState(id="round-end", label="毒", timing="round_end", remaining_rounds=2)],
         )
 
-        state.retire_active_character("p2", current.name)
+        calls.retire_active_character(state, "p2", current.name)
 
         self.assertEqual(state.combat.round_number, 3)
         self.assertEqual(state.combat.current_index, 0)
@@ -335,7 +299,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_kp_actor_cannot_sudo_or_mutate_target(self):
         state = self._state()
-        with StateStorePatch(router, commands) as store:
+        with StateStorePatch(router) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -354,7 +318,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         run_turn = router.supervisor.run_turn
         router.supervisor.run_turn = lambda **kwargs: self.fail("run_turn must not be called")
         try:
-            with StateStorePatch(router, commands) as store:
+            with StateStorePatch(router) as store:
                 store.put(state)
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -369,7 +333,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_can_mark_missing_player_away(self):
         state = self._state()
-        with StateStorePatch(router, commands, router.system_handler) as store:
+        with StateStorePatch(router, router.system_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -385,7 +349,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_kp_can_retire_missing_player_without_deleting_history(self):
         state = self._state()
-        with StateStorePatch(router, commands, router.character_handler) as store:
+        with StateStorePatch(router, router.character_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -413,13 +377,13 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             await reply(public_message)
 
         original_run_turn = router.supervisor.run_turn
-        original_resolve = router._resolve_map_action_transaction
-        original_maintenance = router._run_post_turn_maintenance_after_output
+        original_resolve = router.resolve_map_action
+        original_maintenance = router.run_post_turn_maintenance_after_output
         router.supervisor.run_turn = fake_run_turn
-        router._resolve_map_action_transaction = lambda *args: None
-        router._run_post_turn_maintenance_after_output = fake_maintenance
+        router.resolve_map_action = lambda *args: None
+        router.run_post_turn_maintenance_after_output = fake_maintenance
         try:
-            with StateStorePatch(router, commands) as store:
+            with StateStorePatch(router) as store:
                 store.put(state)
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -429,8 +393,8 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
                 )
         finally:
             router.supervisor.run_turn = original_run_turn
-            router._resolve_map_action_transaction = original_resolve
-            router._run_post_turn_maintenance_after_output = original_maintenance
+            router.resolve_map_action = original_resolve
+            router.run_post_turn_maintenance_after_output = original_maintenance
 
         self.assertEqual(calls[0]["user_id"], "p1")
         self.assertEqual(calls[0]["speaker_role"], "player")
@@ -439,7 +403,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_actor_with_player_role_cannot_sudo_and_luck_roll_is_unchanged(self):
         state = self._state(actor_has_character=True)
-        with StateStorePatch(router, commands, router.system_handler) as store:
+        with StateStorePatch(router, router.system_handler) as store:
             store.put(state)
             role_conflict = ReplyCollector()
             await router.handle_text_message(
@@ -464,7 +428,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         character = Character(name="小明", owner_id="p1")
         state.characters["p1"] = character
         state.set_active_character("p1", character.character_id)
-        with StateStorePatch(router, commands, router.character_handler, router.system_handler) as store:
+        with StateStorePatch(router, router.character_handler, router.system_handler) as store:
             store.put(state)
             retire_reply = ReplyCollector()
             await router.handle_text_message(
@@ -488,9 +452,9 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         current = state.get_active_character("p1")
         historical = Character(name="小華", owner_id="p1")
         state.characters_by_id[historical.character_id] = historical
-        state.retire_active_character("p1", current.name)
+        calls.retire_active_character(state, "p1", current.name)
 
-        with StateStorePatch(router, commands, router.character_handler) as store:
+        with StateStorePatch(router, router.character_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -510,7 +474,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         state.characters_by_id[historical.character_id] = historical
         state.pending_pregen_luck["p1"] = historical.character_id
 
-        with StateStorePatch(router, commands, router.character_handler) as store:
+        with StateStorePatch(router, router.character_handler) as store:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -525,7 +489,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sudo_audit_events_use_redacted_actor_and_subject_ids(self):
         state = self._state()
-        with StateStorePatch(router, commands, router.system_handler) as store, patch.object(
+        with StateStorePatch(router, router.system_handler) as store, patch.object(
             router.observability, "event"
         ) as event:
             store.put(state)
@@ -545,7 +509,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sudo_completed_status_is_rejected_for_handler_guard(self):
         state = self._state()
-        with StateStorePatch(router, commands) as store, patch.object(router.observability, "event") as event:
+        with StateStorePatch(router) as store, patch.object(router.observability, "event") as event:
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(
@@ -570,7 +534,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         async def unexpected_check(*args, **kwargs):
             self.fail("mismatched sudo check must not reach the roll handler")
 
-        with StateStorePatch(router, commands) as store, patch.object(
+        with StateStorePatch(router) as store, patch.object(
             router, "handle_check_command", unexpected_check
         ):
             store.put(state)
@@ -600,7 +564,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
             calls.append((args, kwargs))
             return True
 
-        with StateStorePatch(router, commands) as store, patch.object(router, "handle_check_command", fake_check):
+        with StateStorePatch(router) as store, patch.object(router, "handle_check_command", fake_check):
             store.put(state)
             reply = ReplyCollector()
             await router.handle_text_message(

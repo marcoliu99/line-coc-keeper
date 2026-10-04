@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from app import help_service, locks, observability
 from app.agents import context_builder, supervisor
+from app.checks.narration import skill_names_match
 from app.commands import permissions
 from app.commands import sudo as sudo_policy
 from app.commands.handlers import buttons as buttons_handler
@@ -17,8 +18,14 @@ from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import map_handler
 from app.commands.handlers import system as system_handler
 from app.commands.handlers import uploads as uploads_handler
+from app.commands.handlers.character import handle_pregen_luck_roll
+from app.commands.handlers.checks import handle_check_command, handle_luck_decision
+from app.commands.handlers.messages import (
+    handle_roll_command,
+    handle_unsupported_message,
+)
 from app.commands.handlers.uploads import Upload
-from app.legacy_commands import (
+from app.commands.types import (
     FormatMention,
     GetDisplayName,
     PdfChoice,
@@ -26,15 +33,6 @@ from app.legacy_commands import (
     SendDM,
     SendDMImage,
     SendImage,
-    _resolve_map_action_transaction,
-    _run_post_turn_maintenance_after_output,
-    _set_character_away_state,
-    _skill_names_match,
-    handle_check_command,
-    handle_luck_decision,
-    handle_pregen_luck_roll,
-    handle_roll_command,
-    handle_unsupported_message,
 )
 from app.repositories.group_state import load_state
 from app.services import (
@@ -43,6 +41,9 @@ from app.services import (
     mutation_admission,
     natural_corrections,
 )
+from app.services.character_service import set_away_state
+from app.services.map_service import resolve_map_action
+from app.services.post_turn import run_post_turn_maintenance_after_output
 
 _logger = logging.getLogger(__name__)
 PostTurnHook = Callable[[], Awaitable[None]]
@@ -84,7 +85,7 @@ def _sudo_check_matches_pending(pending: dict | None, args: tuple[str, ...]) -> 
     if pending_type == "sanity":
         return skill_arg is None
     if pending_type == "skill":
-        return skill_arg is None or _skill_names_match(str(pending.get("skill", "")), skill_arg)
+        return skill_arg is None or skill_names_match(str(pending.get("skill", "")), skill_arg)
     if pending_type == "choice":
         if skill_arg is None:
             return True
@@ -92,8 +93,8 @@ def _sudo_check_matches_pending(pending: dict | None, args: tuple[str, ...]) -> 
         if not isinstance(options, list):
             return False
         return any(
-            _skill_names_match(str(option.get("label", "")), skill_arg)
-            or _skill_names_match(str(option.get("skill", "")), skill_arg)
+            skill_names_match(str(option.get("label", "")), skill_arg)
+            or skill_names_match(str(option.get("skill", "")), skill_arg)
             for option in options
             if isinstance(option, dict)
         )
@@ -189,7 +190,7 @@ async def _run_sudo_act_locked(
     canonical_text = f"[KP Assistant 代操作 {character.name}] {action_text}"
     async with locks.narrating_turn(conversation_id):
         resolved_location = await asyncio.to_thread(
-            _resolve_map_action_transaction, conversation_id, subject_user_id, action_text
+            resolve_map_action, conversation_id, subject_user_id, action_text
         )
         state = load_state(conversation_id)
         with observability.context(turn_id=observability.new_id("turn")):
@@ -202,7 +203,7 @@ async def _run_sudo_act_locked(
                 speaker_role="player",
                 conversation_id=conversation_id,
             )
-        await _run_post_turn_maintenance_after_output(
+        await run_post_turn_maintenance_after_output(
             conversation_id,
             reply,
             reply_text,
@@ -309,7 +310,7 @@ async def _dispatch_sudo_locked(
         player_parts = parsed.player_parts
         if parsed.command in {"away", "back"}:
             away_result = await asyncio.to_thread(
-                _set_character_away_state,
+                set_away_state,
                 conversation_id,
                 acting_context.subject_user_id,
                 parsed.command == "away",
@@ -960,7 +961,7 @@ async def _handle_ordinary_text_message_locked(
         state = load_state(conversation_id)
         if not is_kp_assistant:
             resolved_location = await asyncio.to_thread(
-                _resolve_map_action_transaction, conversation_id, user_id, text
+                resolve_map_action, conversation_id, user_id, text
             )
             state = load_state(conversation_id)
         with observability.context(turn_id=observability.new_id("turn")):
@@ -975,7 +976,7 @@ async def _handle_ordinary_text_message_locked(
                 prefetched_retrieval=prefetched,
                 handoff=handoff,
             )
-        await _run_post_turn_maintenance_after_output(
+        await run_post_turn_maintenance_after_output(
             conversation_id,
             reply,
             reply_text,

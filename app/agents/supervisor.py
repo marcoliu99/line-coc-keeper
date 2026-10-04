@@ -86,6 +86,9 @@ async def run_turn(
     # early capture, a legacy state with no timeline would later fall back to
     # ``legacy-*`` and the canonical log commit could reject the whole turn.
     turn_timeline_id = keeper._ensure_turn_timeline(state)
+    # One id for this run of the turn: a retry of its final commit is the same
+    # action, a later turn is not.
+    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
 
     from app.services.narrative_corrections import blocking_reply
     correction_block = blocking_reply(state, [text, resolved_location])
@@ -253,6 +256,7 @@ async def run_turn(
             timeline_id=turn_timeline_id,
             start_game=(turn_kind == "opening_fallback"),
             invalidate_openai_response_chain=True,
+            turn_id=turn_id,
         )
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []

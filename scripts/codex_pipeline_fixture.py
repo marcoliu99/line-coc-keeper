@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 
 async def run_pipeline(kind='check_success'):
-    from app import keeper, legacy_commands
+    from app import keeper
     from app.agents import supervisor
+    from app.commands.handlers import checks as check_commands
     from app.models import Character, GroupState
+    from app.repositories import group_state
 
     state = GroupState(group_id='codex-eval-' + uuid.uuid4().hex, active=True)
     state.characters['player'] = Character(name='Marco', owner_id='player',
@@ -20,8 +22,8 @@ async def run_pipeline(kind='check_success'):
         '桌上的黃銅鑰匙可以直接拾取，不需檢定。房內沒有敵人、危險或其他線索。'
     )
     state.narrative_locations['player'] = '書房'
+    group_state.save_state(state)  # the first save assigns the timeline
     keeper._ensure_turn_timeline(state)
-    keeper.save_state(state)
     rolls = []
 
     def roll(*_args, **_kwargs):
@@ -56,7 +58,7 @@ async def run_pipeline(kind='check_success'):
             elif '1925' in reply:
                 failures.append('premature_clue_disclosure')
             if not failures:
-                resolved = await asyncio.to_thread(legacy_commands._resolve_check_deterministically,
+                resolved = await asyncio.to_thread(check_commands.resolve_check,
                     state.group_id, 'player', '/coc check')
                 state = keeper.load_state(state.group_id)
                 if not resolved.should_finalize or not resolved.resolved_event:

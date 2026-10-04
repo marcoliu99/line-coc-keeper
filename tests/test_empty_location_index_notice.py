@@ -100,9 +100,9 @@ class UploadConfirmationTests(unittest.TestCase):
     is how the missing-floor-plan case went unseen: it only read the index."""
 
     def _text(self, notice):
-        from app import legacy_commands
+        from app.services import scenario_ingestion
 
-        return legacy_commands._pdf_upload_confirmation_text(
+        return scenario_ingestion._pdf_upload_confirmation_text(
             "劇本", "內文", [], False, {}, {"npcs": [], "locations": []}, 0, notice)
 
     def test_the_reporters_notice_is_shown(self):

@@ -16,6 +16,7 @@ from app.commands import permissions, router
 from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import system as system_handler
 from app.models import Character, GroupState
+from app.repositories import state_transaction
 
 KP_ONLY = "只有目前的 KP 助手"
 
@@ -39,7 +40,7 @@ def _run(state: GroupState, user_id: str, text: str, **kwargs) -> tuple[list[str
         replies.append(message)
 
     with patch.object(system_handler, "load_state", return_value=state), \
-            patch.object(system_handler, "save_state") as save:
+            patch.object(state_transaction, "commit_snapshot") as save:
         asyncio.run(system_handler.handle_system_command(
             "g", user_id, reply, AsyncMock(), AsyncMock(), AsyncMock(), text.split(),
             lambda owner_id: f"<@{owner_id}>", **kwargs,

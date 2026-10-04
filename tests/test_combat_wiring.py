@@ -1,16 +1,67 @@
 """Real tool/transport seams preserve provisional resources and owned controls."""
 import asyncio
+import json
 from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
 
-from app import combat_resources, dice, keeper, legacy_commands
+from app import combat_resources, db, dice, keeper
+from app.checks import rules as check_rules
 from app.commands.handlers import character as character_handler
+from app.commands.handlers import checks as check_commands
 from app.commands.handlers import combat as combat_handler
 from app.keeper_tools import registry
 from app.models import Character, Combatant, GroupState
+from app.repositories import group_state, state_transaction
 from app.services import canonical_facts, turn_delivery
+from tests import state_store
+
+
+def normalized(state):
+    """The state as storage returns it (JSON turns tuples into lists)."""
+    return json.loads(json.dumps(state.to_dict()))
+
+
+def _content(state):
+    data = state.to_dict()
+    data.pop('state_revision', None)
+    return data
+
+
+class LiveStore:
+    """A state the test edits in place, mirrored to real storage around each call.
+
+    ``push`` stores the live object; ``pull`` refreshes it from storage. The
+    helpers below call them around every tool or handler call, so the code under
+    test runs against the real transaction while the tests keep their in-place
+    setup style. ``store['writes']`` counts transaction commits only.
+    """
+
+    def __init__(self, state):
+        self.state = state
+        self.commits = 0
+        self._seeding = False
+
+    def __getitem__(self, key):
+        return {'state': self.state, 'writes': self.commits}[key]
+
+    def push(self):
+        if db.get_json('group_states', self.state.group_id) is not None:
+            stored = group_state.load_state(self.state.group_id)
+            if _content(stored) == _content(self.state):
+                return  # nothing edited in place since the last call
+        self._seeding = True
+        try:
+            stored = state_store.replace_state(self.state, keep_revision=True)
+        finally:
+            self._seeding = False
+        self.state.timeline_id = stored.timeline_id
+        self.state.loaded_timeline_id = stored.timeline_id
+        self.state.state_revision = stored.state_revision
+
+    def pull(self):
+        state_transaction.sync_snapshot(self.state, group_state.load_state(self.state.group_id))
 
 
 @pytest.fixture
@@ -23,20 +74,40 @@ def store(monkeypatch):
     state.combat.active = True
     state.combat.order = [Combatant(name='Ada', character_id=character.character_id, is_pc=True, dex=50, hp=10, hp_max=10)]
     combat_resources.initialize_working_state(state, combat_id='combat:wiring', new_combat=True)
-    saved = {'state': GroupState.from_dict(state.to_dict()), 'writes': 0}
-    def load(group_id):
-        return GroupState.from_dict(saved['state'].to_dict())
-    def save(current, **kwargs):
-        saved['state'] = GroupState.from_dict(current.to_dict())
-        saved['writes'] += 1
-    for module in (keeper, legacy_commands, character_handler, combat_handler):
-        monkeypatch.setattr(module, 'load_state', load)
-        monkeypatch.setattr(module, 'save_state', save)
-    monkeypatch.setattr(keeper, '_save_state_checked', save)
-    return saved
+    live = LiveStore(state)
+    real_write = group_state.write_state_tx
+
+    def counting_write(*args, **kwargs):
+        if not live._seeding:
+            live.commits += 1
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(group_state, 'write_state_tx', counting_write)
+    live.push()
+    live.pull()  # start from the normalized shape storage returns
+    yield live
+    db.delete_json('group_states', 'wiring')
+
+
+def call(store, function, *args, **kwargs):
+    """Run a direct handler/resolver call against the stored copy of the live state."""
+    store.push()
+    try:
+        return function(*args, **kwargs)
+    finally:
+        store.pull()
+
+
+def run_async(store, coroutine):
+    store.push()
+    try:
+        return asyncio.run(coroutine)
+    finally:
+        store.pull()
 
 
 def tool(store, name, args=None, actor='player'):
+    store.push()
     return keeper._execute_tool(store['state'], name, args or {}, [], [], actor_id=actor)
 
 
@@ -101,7 +172,7 @@ def test_manual_sanity_and_noncombat_luck_during_battle_reconcile_working_only(s
     assert outcome['pending']
     with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(
         skill_value=50, roll=1, bonus_dice=0, penalty_dice=0, tier='critical', success=True, required_tier='regular')):
-        resolved = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+        resolved = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert resolved.should_finalize
     assert effective(store).san == 49 and store['state'].characters['player'].san == 50
     state = store['state']
@@ -111,7 +182,7 @@ def test_manual_sanity_and_noncombat_luck_during_battle_reconcile_working_only(s
         'bonus_dice': 0, 'penalty_dice': 0, 'original_tier': 'fail', 'difficulty': 'regular',
         'options': [{'tier': 'regular', 'cost': 5}],
     }
-    result = legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'regular')
+    result = call(store, check_commands.resolve_luck, 'wiring', 'player', 'regular')
     assert result.should_finalize
     assert effective(store).luck == 45 and store['state'].characters['player'].luck == 50
 
@@ -123,10 +194,10 @@ def test_manual_sanity_and_noncombat_luck_during_battle_reconcile_working_only(s
     ('resolve_enemy_action', {'action_id': 'injected', 'hit': True, 'damage': 3}),
 ])
 def test_legacy_raw_outcomes_cannot_authorize_managed_damage(store, name, args):
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     result = tool(store, name, args)
     assert not result['ok']
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
     assert store['writes'] == 0
 
 
@@ -152,7 +223,7 @@ def test_player_cannot_directly_confirm_rollback_or_clear_battle(store):
             await combat_handler.handle_combat_command('wiring', reply, ['/coc', 'combat', action], user_id='player')
             assert store['state'].combat.active
         assert store['writes'] == 0 and len(replies) == 5
-    asyncio.run(run())
+    run_async(store, run())
 
 
 def test_sheet_is_provisional_and_character_replacement_is_guarded(store):
@@ -163,11 +234,12 @@ def test_sheet_is_provisional_and_character_replacement_is_guarded(store):
         async def dm(*args):
             pass
         combat_resources.adjust_resource(store['state'], store['state'].characters['player'], 'hp', -2, event_id='hit')
+        store.push()  # the handler reads storage
         await character_handler.handle_character_command('wiring', 'player', reply, dm, ['/coc', 'sheet'])
         assert '暫定' in replies[-1] and '8/10' in replies[-1]
         assert not await character_handler.handle_character_command('wiring', 'player', reply, dm, ['/coc', 'retire'])
         assert store['state'].characters['player'].hp == 10
-    asyncio.run(run())
+    run_async(store, run())
 
 
 def test_provisional_delivery_and_canonical_projection_remain_distinct(store):
@@ -210,16 +282,16 @@ def test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_r
         assert declared['ok'], declared
         pending_before = deepcopy(store['state'].pending_checks['player'])
         assert pending_before['combat_context']['check_role'] == 'attack'
-        result = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+        result = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
         assert result.decision_id
         decision = store['state'].pending_luck_decisions['player']
         assert decision['combat_context'] == pending_before['combat_context']
         assert decision['check_id'] == pending_before['check_id']
         assert store['state'].combat.phase == 'LUCK_DECISION'
         assert len(store['state'].combat.roll_receipts) == 2  # NPC dive and investigator attack.
-        with (patch.object(legacy_commands, '_resolve_ranged_defense_outcome', side_effect=AssertionError('extra RNG')),
+        with (patch.object(check_rules, 'resolve_ranged_defense_outcome', side_effect=AssertionError('extra RNG')),
               patch.object(dice.random, 'randint', return_value=2)):
-            finalized = legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'regular')
+            finalized = call(store, check_commands.resolve_luck, 'wiring', 'player', 'regular')
         assert finalized.should_finalize
         assert rolls.call_count == 2
     assert effective(store).luck == 45
@@ -246,11 +318,11 @@ def test_managed_autoroll_has_same_luck_bridge_and_stale_control_consumes_nothin
     decision = store['state'].pending_luck_decisions['player']
     assert decision['combat_context']['check_role'] == 'attack'
     decision['combat_context']['interaction_id'] = 'stale'
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     with patch.object(dice, 'skill_check', side_effect=AssertionError('stale roll')):
-        rejected = legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'regular')
+        rejected = call(store, check_commands.resolve_luck, 'wiring', 'player', 'regular')
     assert not rejected.should_finalize
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 def test_bot_settlement_has_no_human_kp_gate_and_old_confirmation_retry_is_safe_in_next_battle(store):
@@ -264,10 +336,10 @@ def test_bot_settlement_has_no_human_kp_gate_and_old_confirmation_retry_is_safe_
     assert confirmation['ok'] and store['state'].characters['player'].mp == 8
     assert not store['state'].combat.active
     combat.begin_combat(store['state'])
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     retry = tool(store, 'confirm_combat_settlement', args)
     assert retry['ok'] and retry['receipt']['settlement_id'] == args['settlement_id']
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 def test_rollback_retry_after_new_battle_returns_source_receipt_without_touching_it(store):
@@ -275,9 +347,9 @@ def test_rollback_retry_after_new_battle_returns_source_receipt_without_touching
     args = {'combat_id': 'combat:wiring', 'event_id': 'rollback:1', 'reason': 'Explicit cancellation'}
     assert tool(store, 'rollback_combat', args)['ok']
     combat.begin_combat(store['state'])
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     assert tool(store, 'rollback_combat', args)['receipt']['combat_id'] == 'combat:wiring'
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 def test_managed_hp_adjustment_uses_owned_injury_hook_and_status_query_is_provisional(store):
@@ -291,14 +363,14 @@ def test_managed_hp_adjustment_uses_owned_injury_hook_and_status_query_is_provis
     status = tool(store, 'get_combat_status')
     assert status['provisional'] and '暫定' in status['status']
     with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 90, 0, 0, 'fail', False)):
-        resolved = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check CON')
+        resolved = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check CON')
     assert resolved.should_finalize
     assert effective(store).injury['unconscious']
     assert store['state'].characters['player'].injury == {}
 
 
 def test_reviewed_weapon_lookup_reports_exact_mechanics_without_establishing_inventory(store):
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     lookup = tool(store, 'get_weapon_definition', {'reference': '.45 Automatic'})
     assert lookup['ok'], lookup
     definition = lookup['definition']
@@ -308,7 +380,7 @@ def test_reviewed_weapon_lookup_reports_exact_mechanics_without_establishing_inv
     assert definition['base_range_yards'] == 15
     unknown = tool(store, 'get_weapon_definition', {'reference': 'unreviewed fictional blaster'})
     assert not unknown['ok'] and unknown['status'] == 'needs_ruling'
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 def test_public_status_exposes_durable_control_ids_and_provisional_pc_differences(store):
@@ -354,20 +426,20 @@ def test_foreign_actor_and_changed_character_binding_reject_before_managed_rng(s
     args = {'action_id': 'shot:ownership', 'actor_id': actor.combatant_id,
             'target_id': enemy.combatant_id, 'weapon_reference': '.45 Automatic',
             'action_kind': 'single_shot', 'distance_yards': 5}
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     denied = tool(store, 'declare_combat_action', args, actor='other-player')
-    assert not denied['ok'] and store['state'].to_dict() == before
+    assert not denied['ok'] and normalized(store['state']) == before
     assert tool(store, 'declare_combat_action', args)['ok']
     original = store['state'].characters['player']
     original.active = False
     replacement = Character('New investigator', 'player', character_id='char:replacement', hp=10, hp_max=10)
     store['state'].characters['player'] = replacement
     store['state'].characters_by_id[replacement.character_id] = replacement
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     with patch.object(dice, 'skill_check', side_effect=AssertionError('foreign binding consumed RNG')):
-        result = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+        result = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert not result.should_finalize
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
     assert original.weapons['.45 Automatic']['ammo'] == 7
 
 
@@ -412,9 +484,9 @@ def test_stabilization_tool_uses_bound_recorded_success_and_exposes_eligible_rec
                                    'skill': '急救', 'success': True}]
     args = {'character_id': 'char:ada', 'source_check_id': 'historic:unbound',
             'event_id': 'stabilize:1', 'reason': 'Keeper reviewed first aid patient'}
-    before = deepcopy(state.to_dict())
+    before = normalized(state)
     assert not tool(store, 'stabilize_investigator', args)['ok']
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
     with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(60, 1, 0, 0, 'critical', True)):
         requested = tool(store, 'request_stabilization_check', {
             'character_id': 'char:ada', 'healer_character_id': 'char:ben',
@@ -427,9 +499,9 @@ def test_stabilization_tool_uses_bound_recorded_success_and_exposes_eligible_rec
     assert tool(store, 'stabilize_investigator', args)['ok']
     assert store['state'].characters['player'].injury == {'major_wound': True, 'unconscious': True, 'dying': False}
     assert store['state'].postcombat_obligations[0]['status'] == 'resolved'
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     assert tool(store, 'stabilize_investigator', args)['ok']
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 @pytest.mark.parametrize(('scenario_override', 'expected'), [(False, '1d6+2'), (True, '1d4+1')])
@@ -474,14 +546,14 @@ def test_unverified_persisted_weapon_definition_rejects_before_rng_or_ammo(store
     state.characters['player'].weapon_instances['.45 Automatic'] = metadata
     state.combat.baseline_resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
     state.combat.working_resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
-    before = deepcopy(state.to_dict())
+    before = normalized(state)
     with patch.object(dice, 'skill_check', side_effect=AssertionError('unverified definition consumed RNG')):
         result = tool(store, 'declare_combat_action', {
             'action_id': 'shot:invalid', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
             'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
         })
     assert not result['ok'] and result['phase'] == 'NEEDS_RULING'
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 def test_public_npc_plan_runner_bootstraps_first_actor_owned_defense(store):
@@ -538,7 +610,7 @@ def test_public_initializer_supplies_reviewed_npc_dodge_to_ranged_action(store):
             'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
         })
         assert declared['ok'], declared
-        result = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+        result = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert result.should_finalize
     assert rolls.call_count == 2
     action = store['state'].combat.actions['shot:public-npc']
@@ -574,10 +646,10 @@ def test_public_initializer_opens_fresh_battle_after_closed_roster_and_preserves
 
 def test_blocked_managed_advance_does_not_save_unchanged_state(store):
     actor = store['state'].combat.order[0].combatant_id
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     outcome = tool(store, 'advance_combat_turn', {'actor_id': actor, 'event_id': 'advance:blocked'})
     assert not outcome['ok']
-    assert store['state'].to_dict() == before and store['writes'] == 0
+    assert normalized(store['state']) == before and store['writes'] == 0
 
 
 def test_committed_combat_report_uses_native_damage_and_existing_enemy_privacy(store):
@@ -612,7 +684,7 @@ def test_consumed_check_and_luck_buttons_replay_same_battle_receipts_without_mut
             'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
         })['ok']
         check_id = store['state'].pending_checks['player']['check_id']
-        resolved = legacy_commands._resolve_check_deterministically('wiring', 'player', '/coc check')
+        resolved = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert resolved.decision_id
     notifications = []
     async def notify(message):
@@ -620,26 +692,26 @@ def test_consumed_check_and_luck_buttons_replay_same_battle_receipts_without_mut
     async def noop(*args):
         return None
     io = buttons.ButtonIO(notify, noop, noop, noop, noop, noop, noop)
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     writes = store['writes']
     with (patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())),
           patch.object(dice, 'skill_check', side_effect=AssertionError('replay RNG'))):
-        asyncio.run(buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
+        run_async(store, buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
     assert '55' in notifications[-1] and 'Luck' in notifications[-1]
-    assert store['state'].to_dict() == before and store['writes'] == writes
-    assert legacy_commands._resolve_luck_decision_deterministically('wiring', 'player', 'skip').should_finalize
-    before = deepcopy(store['state'].to_dict())
+    assert normalized(store['state']) == before and store['writes'] == writes
+    assert call(store, check_commands.resolve_luck, 'wiring', 'player', 'skip').should_finalize
+    before = normalized(store['state'])
     writes = store['writes']
     with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):
-        asyncio.run(buttons.handle_luck_button('wiring', 'player', 'player', 'skip', resolved.decision_id, io))
+        run_async(store, buttons.handle_luck_button('wiring', 'player', 'player', 'skip', resolved.decision_id, io))
         assert '55' in notifications[-1] and '已保存' in notifications[-1]
-        asyncio.run(buttons.handle_check_button('wiring', 'foreign', 'player', '', check_id, io))
+        run_async(store, buttons.handle_check_button('wiring', 'foreign', 'player', '', check_id, io))
         assert '不是你的' in notifications[-1]
-    assert store['state'].to_dict() == before and store['writes'] == writes
+    assert normalized(store['state']) == before and store['writes'] == writes
     assert tool(store, 'rollback_combat', {'combat_id': 'combat:wiring', 'event_id': 'rollback:replay',
                                          'reason': 'Keeper explicitly cancels source battle'})['ok']
     with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):
-        asyncio.run(buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
+        run_async(store, buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
     assert '失效' in notifications[-1]
 
 
@@ -673,11 +745,11 @@ def test_explicit_incident_runner_retry_keeps_native_roll_and_damage(store):
         'severity_id': 'minor', 'scope': 'incident', 'stop_condition': 'One reviewed incident',
         'reason': 'Keeper sourced minor incident',
     })['ok']
-    before = deepcopy(store['state'].to_dict())
+    before = normalized(store['state'])
     with patch.object(dice, 'roll_expression', side_effect=AssertionError('retry incident RNG')):
         replay = tool(store, 'run_combat_effect', {'combat_id': 'combat:wiring', 'effect_id': 'incident:retry'})
     assert replay['ok'], replay
-    assert store['state'].to_dict() == before
+    assert normalized(store['state']) == before
 
 
 def test_outside_battle_effect_stop_saves_a_detached_durable_projection(store):
@@ -688,19 +760,11 @@ def test_outside_battle_effect_stop_saves_a_detached_durable_projection(store):
         'kind': 'effect', 'status': 'future', 'next_trigger': {'round': 4},
         'effect': {'id': 'source:fire'}, 'processed_timings': [],
     }]
-    durable = {'snapshot': deepcopy(initial.to_dict()), 'writes': 0}
-    live = GroupState.from_dict(deepcopy(durable['snapshot']))
-    def load(_):
-        return GroupState.from_dict(deepcopy(durable['snapshot']))
-    def save(state, **kwargs):
-        durable['snapshot'] = deepcopy(state.to_dict())
-        durable['writes'] += 1
-    with patch.object(keeper, 'load_state', side_effect=load), patch.object(keeper, '_save_state_checked', side_effect=save):
-        result = keeper._execute_tool(live, 'stop_combat_effect', {
-            'combat_id': 'source:battle', 'effect_id': 'source:fire', 'event_id': 'stop:durable',
-            'reason': 'Keeper verified source fire extinguished',
-        }, [], [])
+    result = tool(store, 'stop_combat_effect', {
+        'combat_id': 'source:battle', 'effect_id': 'source:fire', 'event_id': 'stop:durable',
+        'reason': 'Keeper verified source fire extinguished',
+    })
     assert result['ok'], result
-    assert durable['writes'] == 1
-    reloaded = load('wiring')
+    assert store['writes'] == 1
+    reloaded = group_state.load_state('wiring')
     assert reloaded.postcombat_obligations[0]['status'] == 'resolved'

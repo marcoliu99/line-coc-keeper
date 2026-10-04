@@ -367,7 +367,7 @@ async def get_keeper_priority_gate(conversation_id: str, *, is_kp: bool) -> Asyn
 # genuinely separate, duplicate roll once its turn comes — not blocked, just
 # delayed. This is a non-blocking try-acquire (never awaits) checked *before*
 # that lock, specifically to reject a duplicate outright instead of queuing
-# it: see app/commands.py's handle_check_command/handle_luck_decision and
+# it: see app/commands/handlers/checks.py's handle_check_command/handle_luck_decision and
 # app/discord_bot.py's CheckButton/LuckSpendButton callbacks, which all
 # acquire this around themselves and release it in a finally block.
 _in_flight_checks: set[tuple[str, str]] = set()

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 
 from app.agents.context_builder import _resolved_events_for_character
-from app.legacy_commands import _persist_resolved_check_event
+from app.checks.events import persist_resolved_event as _persist_resolved_check_event
 from app.models import Character, GroupState
+from app.repositories import group_state, state_transaction
 from app.services.prompt_config import build_resolved_check_history_block
+from tests import state_store
 
 
 class ResolvedCheckEventTests(unittest.TestCase):
@@ -51,16 +52,16 @@ class ResolvedCheckEventTests(unittest.TestCase):
             "state_before": before,
         }
 
-        with patch("app.legacy_commands.load_state", return_value=state), patch(
-            "app.legacy_commands.save_state"
-        ) as save:
-            _persist_resolved_check_event("g", seed)
+        stored = state_store.replace_state(state)
+        _persist_resolved_check_event("g", seed)
+        _persist_resolved_check_event("g", seed)  # a narration retry records nothing again
 
-        event = state.resolved_check_events[0]
-        self.assertEqual(event["state_effects"], [{
+        events = group_state.load_state("g").resolved_check_events
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["state_effects"], [{
             "field": "HP", "before": 12, "after": 7, "delta": -5,
         }])
-        save.assert_called_once_with(state, reason="resolved_check_event")
+        self.assertIsNotNone(state_transaction.recorded_action("g", stored.timeline_id, "check-event:check-1"))
 
     def test_failure_without_committed_state_change_has_no_effect_claim(self):
         state = GroupState("g", timeline_id="timeline-a")
@@ -74,12 +75,10 @@ class ResolvedCheckEventTests(unittest.TestCase):
             "outcome": "failure", "state_before": {"hp": 12, "san": 50, "mp": 10, "luck": 35},
         }
 
-        with patch("app.legacy_commands.load_state", return_value=state), patch(
-            "app.legacy_commands.save_state"
-        ):
-            _persist_resolved_check_event("g", seed)
+        state_store.replace_state(state)
+        _persist_resolved_check_event("g", seed)
 
-        self.assertEqual(state.resolved_check_events[0]["state_effects"], [])
+        self.assertEqual(group_state.load_state("g").resolved_check_events[0]["state_effects"], [])
 
     def test_history_context_separates_past_roll_from_current_values(self):
         block = build_resolved_check_history_block(
@@ -130,14 +129,13 @@ class ResolvedCheckEventTests(unittest.TestCase):
             "skill": "DEX", "skill_value": 70, "roll": 50, "difficulty": "regular",
             "outcome": "success", "state_before": {"hp": 10, "san": 50, "mp": 10, "luck": 35},
         }
-        with patch("app.legacy_commands.load_state", return_value=state), patch(
-            "app.legacy_commands.save_state"
-        ):
-            _persist_resolved_check_event("g", seed)
+        state_store.replace_state(state)
+        _persist_resolved_check_event("g", seed)
 
-        self.assertEqual(len(state.resolved_check_events), 20)
-        self.assertEqual(state.resolved_check_events[-1]["event_id"], "new")
-        self.assertEqual(state.resolved_check_events[0]["event_id"], "old-1")
+        events = group_state.load_state("g").resolved_check_events
+        self.assertEqual(len(events), 20)
+        self.assertEqual(events[-1]["event_id"], "new")
+        self.assertEqual(events[0]["event_id"], "old-1")
 
 
 if __name__ == "__main__":

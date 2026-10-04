@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -26,27 +27,20 @@ from app import (
 )
 from app.agents import supervisor
 from app.commands import permissions
-from app.config import IMPORT_DIR
-from app.keeper_tools import resource_bridge
-from app.legacy_commands import (
+from app.commands.types import (
     FormatMention,
     PdfChoice,
     Reply,
     SendDM,
     SendDMImage,
     SendImage,
-    _build_readiness_roster,
-    _heal_character,
-    _resolve_pdf_upload_choice_locked,
-    _run_post_turn_maintenance_after_output,
-    _set_character_away_state,
-    handle_pdf_upload,
 )
+from app.config import IMPORT_DIR
+from app.keeper_tools import resource_bridge
 from app.models import GroupState
-from app.repositories import manual_pregens
+from app.repositories import manual_pregens, state_transaction
 from app.repositories.group_state import (
     load_state,
-    save_state,
     scenario_users,
 )
 from app.services import (
@@ -54,6 +48,13 @@ from app.services import (
     history_authority,
     mutation_admission,
 )
+from app.services.character_service import (
+    build_readiness_roster,
+    heal_character,
+    set_away_state,
+)
+from app.services.post_turn import run_post_turn_maintenance_after_output
+from app.services.scenario_ingestion import apply_pdf_upload_choice, handle_pdf_upload
 
 
 async def _handle_local_import(
@@ -125,7 +126,7 @@ async def _handle_staged_merge(
     async with locks.get_conversation_lock(conversation_id):
         latest = load_state(conversation_id)
         latest.staged_pdf_parts = [p for p in latest.staged_pdf_parts if p not in selected]
-        save_state(latest)
+        state_transaction.commit_snapshot(latest)
 def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) -> None:
     previous_locations = {
         owner_id: (state.current_map_page.get(owner_id, ""), state.current_room_id.get(owner_id, ""))
@@ -141,6 +142,57 @@ def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) 
             state.current_room_id[owner_id] = room_id
         else:
             state.party_facing.pop(owner_id, None)
+
+
+async def _handle_newgame(conversation_id: str, reply: Reply) -> None:
+    """Reset the conversation to a fresh game on a new timeline.
+
+    The reset is a state replacement, so it must not be refused for an
+    unrelated revision bump (a background maintenance write). It instead
+    re-checks the unsettled-combat guard on the latest state and only re-reads
+    the scenario hash when the active scenario changed meanwhile.
+    """
+    for _attempt in range(3):
+        previous = load_state(conversation_id)
+        replacement_block = resource_bridge.guard_replacement(previous)
+        if replacement_block:
+            await reply(replacement_block)
+            return
+        previous_id = previous.scenario_library_id or None
+        previous_hash = ""
+        if previous_id:
+            try:
+                previous_hash = scenario_library.load_context(previous_id)["manifest"].get("content_hash", "")
+            except (FileNotFoundError, ValueError):
+                pass
+        outcome = await state_transaction.amutate(
+            conversation_id, _newgame_mutation(conversation_id, previous_id, previous_hash),
+            reason="newgame",
+        )
+        if outcome.ok:
+            await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF，或上傳檔名以 scenario 開頭的 .md 劇本開始新的冒險。")
+            return
+        if outcome.reason != "scenario_changed":
+            break
+    latest_block = resource_bridge.guard_replacement(load_state(conversation_id))
+    await reply(latest_block or "遊戲狀態剛被其他操作更新，這次指令沒有套用，請再試一次。")
+
+
+def _newgame_mutation(
+    conversation_id: str, previous_id: str | None, previous_hash: str,
+) -> Callable[[state_transaction.TxContext], None]:
+    def reset(ctx: state_transaction.TxContext) -> None:
+        latest = ctx.state
+        if resource_bridge.guard_replacement(latest):
+            ctx.reject("combat_unsettled")
+        if (latest.scenario_library_id or None) != previous_id:
+            ctx.reject("scenario_changed")
+        manual_pregens.capture_legacy(
+            ctx.conn, conversation_id, previous_id, latest.pregens, previous_hash,
+        )
+        ctx.replace_state(GroupState(group_id=conversation_id))
+
+    return reset
 
 
 @mutation_admission.guard_async_entry
@@ -423,7 +475,7 @@ async def handle_system_command(
                         conn, conversation_id, scenario_id, context,
                         claimed=[p for p in state.pregens if p.get("claimed_by")],
                     )
-            save_state(state, mutate_tx=remove_card)
+            state_transaction.commit_snapshot(state, mutate_tx=remove_card)
             await reply(f"已刪除手動角色卡資產 {asset_id}。")
             return
         if action == "import":
@@ -474,11 +526,11 @@ async def handle_system_command(
                     pdf_bytes = scenario_library.read_staged_upload(pending["key"])
                 except FileNotFoundError:
                     state.pending_scenario_upload = None
-                    save_state(state)
+                    state_transaction.commit_snapshot(state)
                     await reply("暫存 PDF 已不存在，請重新上傳。")
                     return
                 state.pending_scenario_upload = None
-                save_state(state)
+                state_transaction.commit_snapshot(state)
                 commit_revision = state.state_revision
                 claimed_timeline = state.timeline_id
             candidate_matches = pending.get("matches") or []
@@ -502,7 +554,7 @@ async def handle_system_command(
                         if (recovery_state.timeline_id == claimed_timeline
                                 and recovery_state.pending_scenario_upload is None):
                             recovery_state.pending_scenario_upload = pending
-                            save_state(recovery_state)
+                            state_transaction.commit_snapshot(recovery_state)
             return
         if action == "cancel":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
@@ -514,7 +566,7 @@ async def handle_system_command(
                 return
             scenario_library.discard_staged_upload(pending.get("key", ""))
             state.pending_scenario_upload = None
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             await reply("已放棄本次上傳，既有劇本不受影響。")
             return
         if action == "use":
@@ -597,7 +649,7 @@ async def handle_system_command(
                     bind_unassigned=(old_scenario_id is None),
                 )
             _, image_refreshed = scenario_activation.commit_and_refresh(
-                lambda: save_state(state, mutate_tx=install_cards),
+                lambda: state_transaction.commit_snapshot(state, mutate_tx=install_cards),
                 conversation_id, parts[3], context,
             )
             if len(parts) > 4:
@@ -634,24 +686,7 @@ async def handle_system_command(
         await _handle_local_import(conversation_id, user_id, reply, parts)
         return
     if sub == "newgame":
-        previous = load_state(conversation_id)
-        replacement_block = resource_bridge.guard_replacement(previous)
-        if replacement_block:
-            await reply(replacement_block)
-            return
-        previous_id = previous.scenario_library_id or None
-        previous_hash = ""
-        if previous_id:
-            try:
-                previous_hash = scenario_library.load_context(previous_id)["manifest"].get("content_hash", "")
-            except (FileNotFoundError, ValueError):
-                pass
-        def retain_manual_cards(conn):
-            manual_pregens.capture_legacy(
-                conn, conversation_id, previous_id, previous.pregens, previous_hash,
-            )
-        save_state(GroupState(group_id=conversation_id), reason="newgame", mutate_tx=retain_manual_cards)
-        await reply("已重置這個群組的遊戲狀態。請上傳劇本 PDF，或上傳檔名以 scenario 開頭的 .md 劇本開始新的冒險。")
+        await _handle_newgame(conversation_id, reply)
         return
 
     if sub == "pdf":
@@ -666,7 +701,7 @@ async def handle_system_command(
         if choice is None:
             await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
             return
-        await reply(_resolve_pdf_upload_choice_locked(conversation_id, choice))
+        await reply(apply_pdf_upload_choice(conversation_id, choice))
         return
 
     if sub == "kp":
@@ -679,7 +714,7 @@ async def handle_system_command(
                 return
             state.kp_assistant_user_id = ""
             state.kp_ooc_log = []
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             await reply("已解除 KP 助手身分，你現在回到未綁定角色的狀態。")
             # With the seat empty, the Keeper rules on what the KP left open.
             correction_adjudication.schedule(conversation_id, state, reply)
@@ -709,7 +744,7 @@ async def handle_system_command(
 
         state.kp_ooc_log = []
         state.kp_assistant_user_id = user_id
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         await reply("已登記你為這局的 KP 助手。")
         return
 
@@ -727,7 +762,7 @@ async def handle_system_command(
             )
             return
         state.autoroll_checks = action in {"on", "開"}
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         await reply(
             "已開啟自動擲骰；之後新建立的技能、攻擊、SAN、重傷 CON 檢定可由 Keeper/system 立即處理。"
             if state.autoroll_checks
@@ -761,7 +796,7 @@ async def handle_system_command(
         state.active = False
         state.kp_assistant_user_id = ""
         state.kp_ooc_log = []
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         await reply("遊戲已結束，遊戲紀錄與角色仍會保留；KP 助手身分也已解除。要開新的一局請用 /coc newgame。")
         return
 
@@ -777,12 +812,12 @@ async def handle_system_command(
             return
         if parts[2].casefold() == "reset" and len(parts) == 3:
             state.keeper_persona = ""
-            save_state(state)
+            state_transaction.commit_snapshot(state)
             await reply("已重設回預設的冷酷旁觀者語氣風格。")
             return
         persona_text = " ".join(parts[2:])
         state.keeper_persona = persona_text
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         await reply(f"已設定這個群組的守密人語氣風格：\n{persona_text}\n\n（下一則訊息開始生效；重設回預設風格用 /coc setpersona reset）")
         return
 
@@ -802,7 +837,7 @@ async def handle_system_command(
             await reply("年代設定只接受「1920」或「modern」。")
             return
         state.era = era_map[era_choice]
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         await reply(f"已設定這個群組的年代為：{'1920 年代' if state.era == '1920s' else '現代／當代'}。")
         return
 
@@ -814,7 +849,7 @@ async def handle_system_command(
         index_data = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
         state.scenario_npc_index = index_data["npcs"]
         state.scenario_location_index = index_data["locations"]
-        save_state(state)
+        state_transaction.commit_snapshot(state)
         if not index_data["npcs"] and not index_data["locations"]:
             await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")
             return
@@ -840,7 +875,7 @@ async def handle_system_command(
         return
 
     if sub == "away":
-        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, True)
+        result = await asyncio.to_thread(set_away_state, conversation_id, user_id, True)
         if result.error_text:
             await reply(result.error_text)
             return
@@ -848,7 +883,7 @@ async def handle_system_command(
         return
 
     if sub == "back":
-        result = await asyncio.to_thread(_set_character_away_state, conversation_id, user_id, False)
+        result = await asyncio.to_thread(set_away_state, conversation_id, user_id, False)
         if result.error_text:
             await reply(result.error_text)
             return
@@ -879,12 +914,12 @@ async def handle_system_command(
             state = load_state(conversation_id)
             healed_notes: dict[str, list[str]] = {}
             for owner_id, char in state.characters.items():
-                notes = _heal_character(char)
+                notes = heal_character(char)
                 if notes:
                     healed_notes[owner_id] = notes
             if healed_notes:
-                save_state(state)
-        await reply(_build_readiness_roster(state, healed_notes, format_mention))
+                state_transaction.commit_snapshot(state)
+        await reply(build_readiness_roster(state, healed_notes, format_mention))
 
         opening_data: dict[str, Any] = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
 
@@ -941,7 +976,7 @@ async def handle_system_command(
                         turn_id=turn_id, timeline_id=state.timeline_id,
                     ))
                     state.game_started = True
-                    save_state(state)
+                    state_transaction.commit_snapshot(state)
             if opening_blocker:
                 await reply(opening_blocker)
                 return
@@ -974,7 +1009,7 @@ async def handle_system_command(
                 conversation_id=conversation_id,
                 turn_kind="opening_fallback",
             )
-        await _run_post_turn_maintenance_after_output(
+        await run_post_turn_maintenance_after_output(
             conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
         )
         return
@@ -1031,7 +1066,7 @@ async def _change_kp(
     previous = state.kp_assistant_user_id
     state.kp_assistant_user_id = new_kp
     state.kp_ooc_log = []
-    save_state(state)
+    state_transaction.commit_snapshot(state)
     observability.event(
         f"kp.{action}",
         actor_hash=observability.safe_identifier(user_id),

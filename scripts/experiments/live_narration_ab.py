@@ -39,7 +39,7 @@ load_dotenv(ROOT / ".env", override=False)
 
 from app import config, logging_config
 from app.agents import supervisor
-from app.legacy_commands import handle_check_command, handle_luck_decision
+from app.commands.handlers.checks import handle_check_command, handle_luck_decision
 from app.repositories.group_state import load_state
 
 # Structured logging is started by discord_bot.main(), which this never calls,

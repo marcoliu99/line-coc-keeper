@@ -9,8 +9,10 @@ from unittest.mock import patch
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
-from app import creation, db, legacy_commands, pregen_extractor
+from app import creation, db, pregen_extractor
+from app.commands.handlers import character as character_handler
 from app.models import BASE_SKILLS, CreationSession, GroupState
+from app.services import character_service
 
 
 class PregenLuckRollTests(unittest.TestCase):
@@ -56,7 +58,7 @@ class PregenLuckRollTests(unittest.TestCase):
         corrected = pregen_extractor._merge_pregens(merged, corrected_pdf)
         self.assertNotIn("luck", corrected)
         state = GroupState(group_id="g1", pregens=[corrected])
-        legacy_commands._claim_pregen(state, 0, "p1")
+        character_service.claim_pregen(state, 0, "p1")
         self.assertIn("p1", state.pending_pregen_luck)
 
     def test_manual_luck_survives_corrected_pdf(self):
@@ -95,7 +97,7 @@ class PregenPreviewTests(unittest.TestCase):
             "name": "A", "occupation": "醫生", "str_": 50, "luck": 65,
             "skills": {f"技能{i}": 100 - i for i in range(20)},
         }
-        text = legacy_commands._pregen_full_sheet_text(pregen, 1)
+        text = character_service.pregen_full_sheet_text(pregen, 1)
         self.assertIn("卡面 LUCK 65", text)
         self.assertIn("選用時沿用", text)
         self.assertNotIn("LUCK 65\n", text)
@@ -105,7 +107,7 @@ class PregenPreviewTests(unittest.TestCase):
         self.assertEqual(shown[0], "技能0 100%")
 
     def test_preview_labels_missing_luck(self):
-        text = legacy_commands._pregen_full_sheet_text(
+        text = character_service.pregen_full_sheet_text(
             {"name": "A", "occupation": "醫生", "str_": 50}, 1
         )
         self.assertIn("選用後由玩家擲骰", text)
@@ -120,7 +122,7 @@ class ManualRoleSheetTests(unittest.TestCase):
         )
         self.assertIsNotNone(pregen)
         self.assertEqual(pregen["skills"], {"射擊（手槍）": 55, "恐嚇": 60})
-        preview = legacy_commands._pregen_full_sheet_text(pregen, 1)
+        preview = character_service.pregen_full_sheet_text(pregen, 1)
         self.assertIn("射擊（手槍） 55%", preview)
         self.assertNotIn("手槍 40%", preview)
 
@@ -251,16 +253,16 @@ class MigrateSkillNamesTests(unittest.TestCase):
         state = GroupState(group_id="g-claim")
         state.active = True
         state.pregens = [{"name": "A", "skills": {}}]
-        first = legacy_commands._claim_pregen(state, 0, "u1")
+        first = character_service.claim_pregen(state, 0, "u1")
         with self.assertRaises(ValueError):
-            legacy_commands._claim_pregen(state, 0, "u1")
+            character_service.claim_pregen(state, 0, "u1")
         self.assertEqual(first.luck, 0)
         self.assertEqual(state.pending_pregen_luck, {"u1": first.character_id})
 
     def test_player_luck_roll_completes_pending_claim_and_cannot_repeat(self):
         state = GroupState(group_id="g-roll", active=True)
         state.pregens = [{"name": "A", "occupation": "偵探", "skills": {}}]
-        legacy_commands._claim_pregen(state, 0, "u1")
+        character_service.claim_pregen(state, 0, "u1")
         db.set_json("group_states", "g-roll", state.to_dict())
         replies = []
 
@@ -268,16 +270,37 @@ class MigrateSkillNamesTests(unittest.TestCase):
             replies.append(message)
 
         with patch("app.models.random.randint", return_value=4):
-            asyncio.run(legacy_commands.handle_pregen_luck_roll("g-roll", "u1", reply))
+            asyncio.run(character_handler.handle_pregen_luck_roll("g-roll", "u1", reply))
         saved = db.get_json("group_states", "g-roll")
         self.assertEqual(saved["pending_pregen_luck"], {})
         self.assertEqual(saved["characters"]["u1"]["luck"], 60)
         self.assertIn("60", replies[0])
 
-        asyncio.run(legacy_commands.handle_pregen_luck_roll("g-roll", "u1", reply))
+        asyncio.run(character_handler.handle_pregen_luck_roll("g-roll", "u1", reply))
         self.assertIn("沒有等待你擲 LUCK", replies[-1])
         self.assertEqual(db.get_json("group_states", "g-roll")["characters"]["u1"]["luck"], 60)
         self.assertEqual(len(state.characters_for_owner("u1")), 1)
+
+
+    def test_pregen_luck_roll_applies_to_the_latest_state_and_a_refusal_writes_nothing(self):
+        state = GroupState(group_id="g-latest", active=True)
+        state.pregens = [{"name": "A", "occupation": "偵探", "skills": {}}]
+        character_service.claim_pregen(state, 0, "u1")
+        db.set_json("group_states", "g-latest", state.to_dict())
+        replies = []
+
+        async def reply(message):
+            replies.append(message)
+
+        with patch.object(character_handler, "load_state", side_effect=AssertionError("snapshot read outside the transaction")), \
+                patch("app.models.random.randint", return_value=4):
+            asyncio.run(character_handler.handle_pregen_luck_roll("g-latest", "u1", reply))
+        self.assertIn("60", replies[-1])
+
+        revision = db.get_json("group_states", "g-latest")["state_revision"]
+        asyncio.run(character_handler.handle_pregen_luck_roll("g-latest", "u1", reply))
+        self.assertIn("沒有等待你擲 LUCK", replies[-1])
+        self.assertEqual(db.get_json("group_states", "g-latest")["state_revision"], revision)
 
 
 if __name__ == "__main__":

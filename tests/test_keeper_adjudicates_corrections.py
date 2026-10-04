@@ -201,7 +201,7 @@ class CorrectCommandTests(unittest.IsolatedAsyncioTestCase):
         self.state = _state()
         for target, value in (
             (patch.object(correct_handler, "load_state", side_effect=lambda _cid: self.state), None),
-            (patch("app.repositories.group_state.save_state", new_callable=Mock), "save"),
+            (patch("app.repositories.state_transaction.commit_snapshot", new_callable=Mock), "save"),
             (patch.object(correct_handler, "target_receipt", return_value={"excerpt": "敘事"}), None),
             (patch.object(correction_adjudication, "adjudicate_pending", new_callable=AsyncMock), "adjudicate"),
         ):
@@ -438,7 +438,7 @@ class AdjudicatePendingTests(unittest.IsolatedAsyncioTestCase):
 class KpQuitTests(unittest.TestCase):
     def _quit(self, state: GroupState) -> Mock:
         with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler, "save_state"), \
+                patch("app.repositories.state_transaction.commit_snapshot"), \
                 patch.object(correction_adjudication, "adjudicate_pending", new_callable=AsyncMock) as adjudicate:
             asyncio.run(system_handler.handle_system_command(
                 "g", "kp", AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), ["/coc", "kp", "quit"],

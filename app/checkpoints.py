@@ -11,8 +11,7 @@ from uuid import uuid4
 
 from app import db, locks, observability
 from app.models import GroupState
-from app.repositories.group_state import _save_state_unlocked
-from app.services import mutation_admission
+from app.repositories import state_transaction
 
 _logger = logging.getLogger(__name__)
 
@@ -58,53 +57,24 @@ def create_checkpoint(
         _log_group_id(state.group_id), reason, event_id,
     )
     try:
-        # The in-process lock protects callers sharing this Python process; the
-        # immediate SQLite transaction makes event-id deduplication and the
-        # authoritative snapshot selection atomic for a second process.
-        with locks.get_state_lock(state.group_id), db.transaction() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            if event_id:
-                rows = conn.execute(
-                    "SELECT data FROM state_checkpoints WHERE key LIKE ?",
-                    (f"{state.group_id}:%",),
-                ).fetchall()
-                existing = next(
-                    (json.loads(row[0]) for row in rows if json.loads(row[0]).get("event_id") == event_id),
-                    None,
+        ambient = state_transaction.ambient(state.group_id)
+        if ambient is not None:
+            # Called from inside a state mutation (the pre-combat checkpoint):
+            # the open transaction already holds the write lock and has not yet
+            # written this mutation, so the stored row is exactly the state
+            # "before". Join it instead of waiting on a second transaction.
+            entry = _create_checkpoint_tx(
+                ambient.conn, state, label=label, created_by=created_by, reason=reason, event_id=event_id,
+            )
+        else:
+            # The in-process lock protects callers sharing this Python process; the
+            # immediate SQLite transaction makes event-id deduplication and the
+            # authoritative snapshot selection atomic for a second process.
+            with locks.get_state_lock(state.group_id), db.transaction() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                entry = _create_checkpoint_tx(
+                    conn, state, label=label, created_by=created_by, reason=reason, event_id=event_id,
                 )
-                if existing is not None:
-                    _logger.info(
-                        "checkpoint_skipped_duplicate group_id=%s checkpoint_id=%s event_id=%s",
-                        _log_group_id(state.group_id), existing["checkpoint_id"], event_id,
-                    )
-                    return existing
-
-            current_row = conn.execute(
-                "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
-            ).fetchone()
-            if current_row is None:
-                payload = state.to_dict()
-            else:
-                payload = json.loads(current_row[0])
-                _validate_state_schema(payload)
-                if payload.get("group_id") != state.group_id:
-                    raise ValueError("stored state belongs to another group")
-
-            checkpoint_id = _checkpoint_id()
-            entry = {
-                "group_id": state.group_id,
-                "checkpoint_id": checkpoint_id,
-                "label": label or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "created_by": created_by,
-                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "reason": reason,
-                "event_id": event_id,
-                "timeline_id": payload["timeline_id"],
-                "state_revision": payload.get("state_revision", 0),
-                "schema_version": payload.get("schema_version", 1),
-                "state": payload,
-            }
-            db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(state.group_id, checkpoint_id), entry)
     except Exception:
         _logger.exception(
             "checkpoint_failure group_id=%s reason=%s event_id=%s duration_ms=%s transaction=rolled_back",
@@ -114,9 +84,57 @@ def create_checkpoint(
         raise
     _logger.info(
         "checkpoint_success group_id=%s checkpoint_id=%s reason=%s revision=%s timeline_id=%s duration_ms=%s",
-        _log_group_id(state.group_id), checkpoint_id, reason, entry["state_revision"], entry["timeline_id"],
+        _log_group_id(state.group_id), entry["checkpoint_id"], reason, entry["state_revision"], entry["timeline_id"],
         int((time.monotonic() - started) * 1000),
     )
+    return entry
+
+
+def _create_checkpoint_tx(
+    conn, state: GroupState, *, label: str, created_by: str, reason: str, event_id: str,
+) -> dict:
+    if event_id:
+        rows = conn.execute(
+            "SELECT data FROM state_checkpoints WHERE key LIKE ?",
+            (f"{state.group_id}:%",),
+        ).fetchall()
+        existing = next(
+            (json.loads(row[0]) for row in rows if json.loads(row[0]).get("event_id") == event_id),
+            None,
+        )
+        if existing is not None:
+            _logger.info(
+                "checkpoint_skipped_duplicate group_id=%s checkpoint_id=%s event_id=%s",
+                _log_group_id(state.group_id), existing["checkpoint_id"], event_id,
+            )
+            return existing
+
+    current_row = conn.execute(
+        "SELECT data FROM group_states WHERE key = ?", (state.group_id,)
+    ).fetchone()
+    if current_row is None:
+        payload = state.to_dict()
+    else:
+        payload = json.loads(current_row[0])
+        _validate_state_schema(payload)
+        if payload.get("group_id") != state.group_id:
+            raise ValueError("stored state belongs to another group")
+
+    checkpoint_id = _checkpoint_id()
+    entry = {
+        "group_id": state.group_id,
+        "checkpoint_id": checkpoint_id,
+        "label": label or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "created_by": created_by,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "reason": reason,
+        "event_id": event_id,
+        "timeline_id": payload["timeline_id"],
+        "state_revision": payload.get("state_revision", 0),
+        "schema_version": payload.get("schema_version", 1),
+        "state": payload,
+    }
+    db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(state.group_id, checkpoint_id), entry)
     return entry
 
 
@@ -185,61 +203,56 @@ def rollback(group_id: str, identifier: str, *, actor_id: str) -> tuple[GroupSta
         "rollback_started group_id=%s identifier=%s actor_id=%s",
         _log_group_id(group_id), identifier, actor_id,
     )
-    try:
-        # Conversation locks serialize Discord commands, while this synchronous
-        # lock also coordinates with background maintenance and Keeper worker
-        # threads that do not hold the asyncio conversation lock.
-        with locks.get_state_lock(group_id), db.transaction() as conn:
-            mutation_admission.assert_admitted(group_id)
-            checkpoint = _get_checkpoint_tx(conn, group_id, identifier)
-            if checkpoint.get("group_id") != group_id:
-                raise ValueError("checkpoint belongs to another group")
-            state_data = checkpoint.get("state") or {}
-            _validate_state_schema(state_data)
-            restored = GroupState.from_dict(state_data)
-            if restored.group_id != group_id:
-                raise ValueError("checkpoint belongs to another group")
-            # A provider-side response chain belongs to the timeline that
-            # created it.  Restoring a checkpoint must never reconnect the new
-            # timeline to the old server-side conversation.
-            old_timeline_id = restored.timeline_id or f"legacy-{group_id}"
-            restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
-            restored.resolved_check_events.clear()
-            restored.check_consequence_origins.clear()
-            restored.check_consequence_receipts.clear()
-            observability.event(
-                "provider.chain.reset",
-                reason="rollback",
-                old_timeline_id=old_timeline_id,
-                requested_timeline_id=restored.timeline_id,
-                provider="openai",
-            )
-            restored.openai_previous_response_id = ""
-            restored.openai_previous_response_timeline_id = ""
+    def restore(ctx: state_transaction.TxContext) -> tuple[GroupState, dict, dict]:
+        checkpoint = _get_checkpoint_tx(ctx.conn, group_id, identifier)
+        if checkpoint.get("group_id") != group_id:
+            raise ValueError("checkpoint belongs to another group")
+        state_data = checkpoint.get("state") or {}
+        _validate_state_schema(state_data)
+        restored = GroupState.from_dict(state_data)
+        if restored.group_id != group_id:
+            raise ValueError("checkpoint belongs to another group")
+        # A provider-side response chain belongs to the timeline that
+        # created it.  Restoring a checkpoint must never reconnect the new
+        # timeline to the old server-side conversation.
+        old_timeline_id = restored.timeline_id or f"legacy-{group_id}"
+        restored.timeline_id = f"timeline-{uuid4().hex[:8]}"
+        restored.resolved_check_events.clear()
+        restored.check_consequence_origins.clear()
+        restored.check_consequence_receipts.clear()
+        observability.event(
+            "provider.chain.reset",
+            reason="rollback",
+            old_timeline_id=old_timeline_id,
+            requested_timeline_id=restored.timeline_id,
+            provider="openai",
+        )
+        restored.openai_previous_response_id = ""
+        restored.openai_previous_response_timeline_id = ""
 
-            current_row = conn.execute(
-                "SELECT data FROM group_states WHERE key = ?", (group_id,)
-            ).fetchone()
-            current = json.loads(current_row[0]) if current_row is not None else None
-            _validate_state_schema(current or {"schema_version": 1})
-            current_state = GroupState.from_dict(current or {"group_id": group_id})
-            pre = {
-                "group_id": group_id,
-                "checkpoint_id": _checkpoint_id(),
-                "label": "pre-rollback",
-                "created_by": actor_id,
-                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "reason": "pre_rollback",
-                "event_id": "",
-                "timeline_id": current_state.timeline_id or f"legacy-{group_id}",
-                "state_revision": current_state.state_revision,
-                "schema_version": current_state.schema_version,
-                "state": current_state.to_dict(),
-            }
-            restored.state_revision = current_state.state_revision
-            db.set_json_tx(conn, "state_checkpoints", _checkpoint_key(group_id, str(pre["checkpoint_id"])), pre)
-            committed = _save_state_unlocked(restored, reason="rollback", conn=conn, previous=current)
-        committed.apply(restored)
+        current_state = ctx.state
+        pre = {
+            "group_id": group_id,
+            "checkpoint_id": _checkpoint_id(),
+            "label": "pre-rollback",
+            "created_by": actor_id,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "reason": "pre_rollback",
+            "event_id": "",
+            "timeline_id": current_state.timeline_id or f"legacy-{group_id}",
+            "state_revision": current_state.state_revision,
+            "schema_version": current_state.schema_version,
+            "state": current_state.to_dict(),
+        }
+        restored.state_revision = current_state.state_revision
+        db.set_json_tx(ctx.conn, "state_checkpoints", _checkpoint_key(group_id, str(pre["checkpoint_id"])), pre)
+        ctx.replace_state(restored)
+        return restored, checkpoint, pre
+
+    try:
+        # One transaction: the pre-rollback checkpoint, the restored state and
+        # its mirrors commit together or not at all.
+        restored, checkpoint, pre = state_transaction.mutate_value(group_id, restore, reason="rollback")
     except Exception:
         _logger.exception(
             "rollback_failure group_id=%s identifier=%s actor_id=%s duration_ms=%s transaction=rolled_back",

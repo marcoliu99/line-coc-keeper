@@ -6,6 +6,7 @@ import pytest
 
 from app import combat, combat_flow, combat_resources, dice
 from app.models import Character, GroupState
+from tests import combat_calls as calls
 
 SOURCE = {'url': 'https://example.test/reviewed-scenario', 'revision': 'v1', 'sha256': 'abc', 'accessed': '2026-10-01'}
 
@@ -105,9 +106,9 @@ def test_actual_bot_roll_is_cached_even_before_result_callback():
 
 def test_failed_attacker_can_be_hit_by_successful_fightback_normal_damage():
     state, pc, enemy = battle(npc_first=True)
-    plan = combat.plan_enemy_turn(state, enemy.display_name)
+    plan = calls.plan_enemy_turn(state, enemy.display_name)
     with patch('app.dice.skill_check', return_value=check('fail', roll=90)):
-        result = combat.resolve_enemy_action(state, plan['plan_id'])
+        result = calls.resolve_enemy_action(state, plan['plan_id'])
     assert result['phase'] == 'PLAYER_CHOICE'
     choice = state.combat.interaction['interaction_id']
     combat_flow.submit_choice(state, interaction_id=choice, owner_id='player', choice='counter')
@@ -129,14 +130,14 @@ def test_failed_attacker_can_be_hit_by_successful_fightback_normal_damage():
 def test_structured_single_hit_injury_includes_zero(damage, starting_hp, injury):
     state, pc, _ = battle()
     combat_resources.set_resource(state, pc, 'hp', starting_hp, event_id='setup')
-    result = combat.managed_single_hit(state, pc, damage, event_id='hit', reason='Authorized incident')
+    result = calls.managed_single_hit(state, pc, damage, event_id='hit', reason='Authorized incident')
     assert result['ok']
     effective = combat_resources.effective_character(state, pc)
     assert effective.hp == max(0, starting_hp - damage)
     for key, value in injury.items():
         assert effective.injury[key] == value
     assert pc.hp == 10
-    assert combat.managed_single_hit(state, pc, damage, event_id='hit', reason='retry') == result
+    assert calls.managed_single_hit(state, pc, damage, event_id='hit', reason='retry') == result
     if injury.get('dead'):
         assert not state.pending_checks
     elif injury.get('major_wound'):
@@ -147,13 +148,13 @@ def test_injury_ownership_block_is_all_or_nothing():
     state, pc, _ = battle()
     state.pending_checks['player'] = {'type': 'skill', 'skill': 'Other'}
     before = state.to_dict()
-    assert combat.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')['blocked_by'] == 'pending_check'
+    assert calls.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')['blocked_by'] == 'pending_check'
     assert state.to_dict() == before
 
 
 def test_major_wound_failed_con_sets_effective_unconscious_only():
     state, pc, _ = battle()
-    combat.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
+    calls.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
     result = finish(state, check('fail', roll=90))
     assert result['completed']
     assert combat_resources.effective_character(state, pc).injury['unconscious']
@@ -163,7 +164,7 @@ def test_major_wound_failed_con_sets_effective_unconscious_only():
 def test_dying_settlement_transfers_and_due_check_survives_restart():
     state, pc, _ = battle()
     combat_resources.set_resource(state, pc, 'hp', 4, event_id='setup')
-    combat.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
+    calls.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
     finish(state)
     obligations = combat_flow.postcombat_obligations(state)
     assert obligations[0]['next_trigger']['round'] == 2
@@ -205,8 +206,8 @@ def test_explicit_severity_effect_receipt_retry_and_transfer():
                                        scope='round', reason='Authorized acid exposure', stop_condition='Washed off')
     assert result['ok']
     with patch('app.dice.random.randint', return_value=2) as rng:
-        first = combat.process_timing(state, 'round_end')
-        assert combat.process_timing(state, 'round_end') == []
+        first = calls.process_timing(state, 'round_end')
+        assert calls.process_timing(state, 'round_end') == []
     assert rng.call_count == 1
     assert first[0]['hp_after'] == 8
     assert pc.hp == 10
@@ -219,9 +220,9 @@ def test_explicit_severity_effect_receipt_retry_and_transfer():
 
 def test_raw_outcome_is_rejected_for_managed_npc():
     state, pc, enemy = battle(npc_first=True)
-    plan = combat.plan_enemy_turn(state, enemy.display_name)
+    plan = calls.plan_enemy_turn(state, enemy.display_name)
     before = state.to_dict()
-    assert not combat.resolve_enemy_action(state, plan['plan_id'], {'hit': True, 'damage': 10})['ok']
+    assert not calls.resolve_enemy_action(state, plan['plan_id'], {'hit': True, 'damage': 10})['ok']
     assert state.to_dict() == before
     assert pc.hp == 10
 
@@ -230,7 +231,7 @@ def test_autoroll_major_wound_retains_unrelated_pending_control():
     state, pc, _ = battle(autoroll=True)
     state.pending_checks['player'] = {'type': 'sanity', 'skill_value': 40}
     with patch('app.dice.skill_check', return_value=check('fail')):
-        result = combat.managed_single_hit(state, pc, 6, event_id='incident', reason='Authorized')
+        result = calls.managed_single_hit(state, pc, 6, event_id='incident', reason='Authorized')
     assert result['ok']
     assert state.pending_checks['player'] == {'type': 'sanity', 'skill_value': 40}
     assert combat_resources.effective_character(state, pc).injury['unconscious']
@@ -243,8 +244,8 @@ def test_ranged_successful_dive_applies_penalty_instead_of_automatic_miss():
     card.source.update(attack_mode='single_shot', distance_yards=10, base_range_yards=20)
     card.attacks[0].range_band = 'near'
     card.attacks[0].ammo_or_uses = 3
-    plan = combat.plan_enemy_turn(state)
-    result = combat.resolve_enemy_action(state, plan['plan_id'])
+    plan = calls.plan_enemy_turn(state)
+    result = calls.resolve_enemy_action(state, plan['plan_id'])
     assert result['phase'] == 'PLAYER_CHOICE'
     assert not state.combat.roll_receipts  # Shot delayed until final dive/Luck.
     combat_flow.submit_choice(state, interaction_id=state.combat.interaction['interaction_id'], owner_id='player', choice='dive')
@@ -292,8 +293,8 @@ def test_unsupported_special_cancellation_preserves_evidence():
     card = state.combat.enemy_cards[enemy.enemy_card_id]
     from app.models import SpecialAbility
     card.abilities.append(SpecialAbility(id='spell', name='Spell'))
-    plan = combat.plan_enemy_turn(state)
-    result = combat.resolve_enemy_action(state, plan['plan_id'])
+    plan = calls.plan_enemy_turn(state)
+    result = calls.resolve_enemy_action(state, plan['plan_id'])
     assert result['phase'] == 'NEEDS_RULING'
     result = combat_flow.resolve_ruling(state, action_id='npc:' + plan['plan_id'], event_id='cancel',
                                        reason='Controller cancels unsupported special', decision='cancel')
@@ -313,7 +314,7 @@ def test_multi_target_effect_reserves_each_injury_check_then_one_wait_at_a_time(
     state.combat.order.append(Combatant(name=second.name, character_id='pc2', combatant_id='pc:pc2', is_pc=True, hp=10, hp_max=10))
     state.combat.effects.append(EffectState(id='ceiling', target_id='__all__', timing='round_end', damage='6', remaining_rounds=1,
         save_or_check={'severity_id': 'severe', 'rule_source': SOURCE, 'stop_condition': 'Incident complete'}))
-    results = combat.process_timing(state, 'round_end')
+    results = calls.process_timing(state, 'round_end')
     assert all(r['ok'] for r in results)
     assert set(state.pending_checks) == {'player', 'second-player'}
     assert state.combat.interaction['owner_id'] == 'player'
@@ -332,7 +333,7 @@ def test_multi_target_effect_reserves_each_injury_check_then_one_wait_at_a_time(
 def test_dying_settlement_after_current_round_end_retains_following_end_trigger():
     state, pc, _ = battle()
     combat_resources.set_resource(state, pc, 'hp', 4, event_id='setup')
-    combat.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
+    calls.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
     finish(state)
     assert combat_flow.process_postcombat(state, logical_round=1, event_id='current-end')['ok']
     assert not state.pending_checks
@@ -366,11 +367,11 @@ def test_effect_block_retains_original_damage_receipt_and_no_partial_targets():
     combat_flow.declare_effect(state, effect_id='acid', target_id='pc:pc1', severity_id='severe', scope='round',
                                reason='Reviewed acid', stop_condition='Removed')
     with patch('app.dice.random.randint', return_value=6) as rng:
-        blocked = combat.process_timing(state, 'round_end')
+        blocked = calls.process_timing(state, 'round_end')
         assert blocked[0]['blocked_by'] == 'pending_check'
         assert combat_resources.effective_character(state, pc).hp == 10
         state.pending_checks.clear()
-        applied = combat.process_timing(state, 'round_end')
+        applied = calls.process_timing(state, 'round_end')
     assert rng.call_count == 1
     assert applied[0]['hp_after'] == 4
     assert pc.hp == 10
@@ -385,7 +386,7 @@ def test_turn_rollback_restores_earlier_effect_working_hp_and_events_but_retains
                                    scope='round', reason='Reviewed hazard', stop_condition='Removed')
     before = deepcopy(state.to_dict())
     with patch('app.dice.random.randint', side_effect=[2, 6]) as rng:
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
     assert not result['ok']
     assert combat_resources.effective_character(state, pc).hp == 10
     assert state.combat.working_resources == before['combat']['working_resources']
@@ -396,7 +397,7 @@ def test_turn_rollback_restores_earlier_effect_working_hp_and_events_but_retains
     assert len(state.combat.roll_receipts) == 2
     assert rng.call_count == 2
     with patch('app.dice.random.randint') as retry_rng:
-        assert not combat.advance_turn(state)['ok']
+        assert not calls.advance_turn(state)['ok']
     retry_rng.assert_not_called()
 
 
@@ -426,7 +427,7 @@ def test_prior_committed_effect_rollback_restores_due_schedule_with_cached_draw(
 def test_prior_pending_dying_control_recovers_after_projected_resolution_and_rollback():
     state, pc, _ = battle()
     combat_resources.set_resource(state, pc, 'hp', 4, event_id='setup')
-    combat.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
+    calls.managed_single_hit(state, pc, 6, event_id='hit', reason='Incident')
     finish(state)
     preview = combat_resources.get_settlement(state, obligations=combat_flow.postcombat_obligations(state))
     combat_resources.commit_settlement(state, preview['settlement_id'])
@@ -549,7 +550,7 @@ def test_second_battle_same_enemy_never_reuses_closed_retained_order():
 
 def test_incident_damage_uses_own_identity_even_after_shared_timing_processed():
     state, pc, _ = battle()
-    assert combat.process_timing(state, 'round_end', 'pc:pc1') == []
+    assert calls.process_timing(state, 'round_end', 'pc:pc1') == []
     with patch('app.dice.random.randint', return_value=2) as rng:
         result = combat_flow.declare_effect(state, effect_id='incident', target_id='pc:pc1', severity_id='minor',
                                            scope='incident', reason='Reviewed incident', stop_condition='Incident complete')
@@ -580,7 +581,7 @@ def test_blocked_incident_retries_same_draw_and_cannot_settle_due_hazard():
 
 def test_correction_reconciliation_is_explicit_injury_review_without_reroll():
     state, pc, _ = battle()
-    combat.managed_single_hit(state, pc, 10, event_id='fatal', reason='Initial ruling')
+    calls.managed_single_hit(state, pc, 10, event_id='fatal', reason='Initial ruling')
     original_rolls = deepcopy(state.combat.roll_receipts)
     combat_resources.correct_event(state, 'fatal:hp', event_id='correction', changes={'after': 8}, reason='Verified smaller hit')
     assert state.combat.phase == 'NEEDS_RULING'
@@ -602,9 +603,9 @@ def test_npc_ranged_trusted_range_difficulty_or_refusal_before_draw(distance, ba
     card.source.update(attack_mode='single_shot', distance_yards=distance, base_range_yards=base)
     card.attacks[0].ammo_or_uses = 3
     card.attacks[0].range_band = 'near'
-    plan = combat.plan_enemy_turn(state)
+    plan = calls.plan_enemy_turn(state)
     with patch('app.dice.random.randint') as rng:
-        result = combat.resolve_enemy_action(state, plan['plan_id'])
+        result = calls.resolve_enemy_action(state, plan['plan_id'])
     assert result['ok'] == allowed
     if allowed:
         assert state.combat.actions['npc:' + plan['plan_id']]['difficulty'] == 'hard'

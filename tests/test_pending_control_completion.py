@@ -8,6 +8,7 @@ import pytest
 from app.models import GroupState
 from app.services import pending_buttons
 from app.services.pending_buttons import PendingButtonIntent
+from tests.state_store import MemoryTransactions
 
 
 def _intent(kind: str, entry: dict) -> PendingButtonIntent:
@@ -34,8 +35,7 @@ def test_failed_send_releases_only_matching_claim(monkeypatch: pytest.MonkeyPatc
     state = GroupState(group_id="group", timeline_id="timeline")
     state.pending_checks["owner"] = {"check_id": "old", "_buttons_posted": True}
     monkeypatch.setattr(pending_buttons, "load_state", lambda _: state)
-    from app.repositories import group_state
-    monkeypatch.setattr(group_state, "save_state", lambda *_: None)
+    monkeypatch.setattr(pending_buttons.state_transaction, "amutate", MemoryTransactions(state).amutate)
 
     asyncio.run(pending_buttons.publish_claimed_buttons(
         "group", [_intent("check", {"check_id": "old"})],
@@ -49,8 +49,7 @@ def test_cancelled_send_releases_remaining_claims(monkeypatch: pytest.MonkeyPatc
     state = GroupState(group_id="group", timeline_id="timeline")
     state.pending_checks["owner"] = {"check_id": "old", "_buttons_posted": True}
     monkeypatch.setattr(pending_buttons, "load_state", lambda _: state)
-    from app.repositories import group_state
-    monkeypatch.setattr(group_state, "save_state", lambda *_: None)
+    monkeypatch.setattr(pending_buttons.state_transaction, "amutate", MemoryTransactions(state).amutate)
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(pending_buttons.publish_claimed_buttons(

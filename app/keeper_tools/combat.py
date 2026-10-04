@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 from app import combat
 from app.keeper_tools import managed_combat, resource_bridge
 from app.models import ArmorRule, AttackRule, GroupState, SpecialAbility
+from app.services import combat_actions as act
+from app.services import combat_engine
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
@@ -28,10 +30,10 @@ def start_combat(call: ToolCall) -> dict[str, Any]:
     state = call.state
 
     def mutate(target_state: GroupState) -> None:
-        combat.begin_combat(target_state)
+        combat_engine.handle(target_state, act.Start())
 
     keeper.mutate_tool_state(state, mutate)
-    return {"ok": True, "status": combat.status_text(state)}
+    return {"ok": True, "status": combat_engine.handle(state, act.Status())}
 
 
 def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
@@ -56,17 +58,16 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
                     "之後同一隻不要再用別的數字。）"
                 )
                 hp = canonical_hp
-        added = combat.add_combatant(
-            target_state,
-            npc_name,
-            int(tool_input["dex"]),
-            hp,
+        added = combat_engine.handle(target_state, act.AddCombatant(
+            name=npc_name,
+            dex=int(tool_input["dex"]),
+            hp=hp,
             is_ally=bool(tool_input.get("is_ally", False)),
             armor=tool_input.get("armor"),
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
             source=tool_input.get("source"), skills=_reviewed_skills(tool_input.get("skills")),
-        )
+        ))
         if added.reused:
             return keeper.ToolStateMutation(
                 f"（系統偵測到「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
@@ -84,7 +85,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
         return keeper.ToolStateMutation(index_note, should_save=True)
 
     index_note = keeper.mutate_tool_state(state, mutate)
-    response = {"ok": True, "status": combat.status_text(state)}
+    response = {"ok": True, "status": combat_engine.handle(state, act.Status())}
     if index_note:
         response["note"] = index_note
     return response
@@ -127,15 +128,15 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                         index_note = f"HP {hp} 已依 /coc index 修正為 {canonical_hp}"
                         hp = canonical_hp
                 matching = combat.find_live_enemy_by_any_alias(target_state, requested_name)
-                added = combat.add_combatant(
-                    target_state, requested_name, dex, hp,
+                added = combat_engine.handle(target_state, act.AddCombatant(
+                    name=requested_name, dex=dex, hp=hp,
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
                     source=entry.get("source"), skills=_reviewed_skills(entry.get("skills")),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids
                     ),
-                )
+                ))
             except (AttributeError, KeyError, ValueError, TypeError) as exc:
                 name = entry.get("name") if isinstance(entry, dict) else None
                 results.append({"name": name, "ok": False, "error": str(exc)})
@@ -157,7 +158,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
     entry_results = keeper.mutate_tool_state(state, mutate)
     return {
         "ok": any(entry["ok"] for entry in entry_results),
-        "status": combat.status_text(state),
+        "status": combat_engine.handle(state, act.Status()),
         "enemies": entry_results,
     }
 
@@ -168,8 +169,8 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     keeper.refresh_tool_state(call.state)
     response = {
         "ok": True, "provisional": resource_bridge.managed(call.state),
-        "status": combat.status_text(
-            call.state, include_private=(call.speaker_role == "kp_assistant")
+        "status": combat_engine.handle(
+            call.state, act.Status(include_private=(call.speaker_role == "kp_assistant")),
         ),
     }
     if resource_bridge.managed(call.state):
@@ -209,9 +210,7 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     response['postcombat_controls'] = [{key: obligation.get(key) for key in (
         'obligation_id', 'combat_id', 'character_id', 'kind', 'status', 'next_trigger',
     )} for obligation in call.state.postcombat_obligations if obligation.get('status') != 'resolved']
-    from app import combat_flow
-    obligations = (combat_flow.postcombat_obligations(call.state) if resource_bridge.managed(call.state)
-                   else call.state.postcombat_obligations)
+    obligations = combat_engine.handle(call.state, act.Obligations())
     medical_events = list(call.state.resolved_check_events)
     medical_events.extend(action['medical_receipt'] for action in call.state.combat.actions.values()
                           if action.get('medical_receipt'))
@@ -247,12 +246,13 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
-            from app import combat_flow
             before = deepcopy(target_state.to_dict())
-            result = combat_flow.advance_combat(target_state, actor_id=call.input.get('actor_id', ''),
-                                               event_id=resource_bridge.mutation_id(call.name, call.input))
+            result = combat_engine.handle(target_state, act.Advance(
+                actor_id=call.input.get('actor_id', ''),
+                event_id=resource_bridge.mutation_id(call.name, call.input),
+            ))
             return keeper.ToolStateMutation(result, should_save=target_state.to_dict() != before)
-        return keeper.skip_save_if_blocked(combat.advance_turn(target_state))
+        return keeper.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
 
     return managed_combat.public_result(keeper.mutate_tool_state(call.state, mutate),
                                         include_private=call.speaker_role == 'kp_assistant')
@@ -266,9 +266,9 @@ def damage_combatant(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
             return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(
-            combat.damage_combatant(target_state, tool_input["name"], int(tool_input["delta"]))
-        )
+        return keeper.skip_save_if_blocked(combat_engine.handle(
+            target_state, act.DamageCombatant(tool_input["name"], int(tool_input["delta"])),
+        ))
 
     result = keeper.mutate_tool_state(call.state, mutate)
     return keeper.filter_public_combat_damage_result(result, call.speaker_role)
@@ -279,7 +279,7 @@ def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         return keeper.skip_save_if_blocked(
-            combat.plan_enemy_turn(target_state, call.input.get("enemy", ""))
+            combat_engine.handle(target_state, act.PlanEnemy(call.input.get("enemy", "")))
         )
 
     return keeper.mutate_tool_state(call.state, mutate)
@@ -293,10 +293,9 @@ def resolve_enemy_action(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
             return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat.resolve_enemy_action(
+        return keeper.skip_save_if_blocked(combat_engine.handle(
             target_state,
-            tool_input["plan_id"],
-            outcome=tool_input.get("outcome"),
+            act.ResolveEnemy(plan_id=tool_input["plan_id"], outcome=tool_input.get("outcome")),
         ))
 
     return keeper.mutate_tool_state(call.state, mutate)
@@ -310,14 +309,13 @@ def apply_combat_damage(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
             return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat.apply_combat_damage(
-            target_state,
-            tool_input["target"],
-            int(tool_input["raw_damage"]),
+        return keeper.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
+            target=tool_input["target"],
+            raw_damage=int(tool_input["raw_damage"]),
             damage_type=tool_input.get("damage_type", "physical"),
             tags=tool_input.get("tags") or [],
             source_id=tool_input.get("source_id", ""),
-        ))
+        )))
 
     result = keeper.mutate_tool_state(call.state, mutate)
     return keeper.filter_public_combat_damage_result(result, call.speaker_role)
@@ -331,14 +329,15 @@ def apply_final_combat_damage(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
             return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat.apply_final_combat_damage(
-            target_state,
-            tool_input["target"],
-            int(tool_input["final_damage"]),
+        return keeper.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
+            target=tool_input["target"],
+            raw_damage=int(tool_input["final_damage"]),
             damage_type=tool_input.get("damage_type", "physical"),
             tags=tool_input.get("tags") or [],
             source_id=tool_input.get("source_id", ""),
-        ))
+            bypass_armor=True,
+            entry_point="apply_final_combat_damage",
+        )))
 
     result = keeper.mutate_tool_state(call.state, mutate)
     return keeper.filter_public_combat_damage_result(result, call.speaker_role)
@@ -352,10 +351,9 @@ def add_combat_effect(call: ToolCall) -> dict[str, Any]:
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
             return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return combat.add_combat_effect(
-            target_state,
-            tool_input["target"],
-            tool_input["label"],
+        return combat_engine.handle(target_state, act.AddEffect(
+            target=tool_input["target"],
+            label=tool_input["label"],
             timing=tool_input.get("timing", "turn_start"),
             damage=tool_input.get("damage", ""),
             damage_type=tool_input.get("damage_type", "physical"),
@@ -363,7 +361,7 @@ def add_combat_effect(call: ToolCall) -> dict[str, Any]:
             tags=tool_input.get("tags") or [],
             source_id=tool_input.get("source_id", ""),
             public_description=tool_input.get("public_description", ""),
-        )
+        ))
 
     return keeper.mutate_tool_state(call.state, mutate)
 

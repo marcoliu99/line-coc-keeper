@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, patch
 from app import combat
 from app.commands.handlers import combat as combat_handler
 from app.models import Character, Combatant, GroupState
+from tests import combat_calls as calls
+from tests.state_store import MemoryTransactions
 
 
 def _state() -> GroupState:
@@ -93,8 +95,8 @@ class NameLookupTests(unittest.TestCase):
             combat.add_combatant(state, "深潛者", 50, 20)
         corpse, living = _enemies(state)
 
-        combat.damage_combatant(state, "深潛者", -3)
-        combat.damage_combatant(state, "深潛者 2", -3)
+        calls.damage_combatant(state, "深潛者", -3)
+        calls.damage_combatant(state, "深潛者 2", -3)
 
         self.assertEqual(living.hp, 14)
         self.assertEqual(corpse.hp, 0)
@@ -107,7 +109,7 @@ class NameLookupTests(unittest.TestCase):
         corpse, living = _enemies(state)
         corpse.hp, corpse.defeated = 0, True
 
-        combat.damage_combatant(state, "深潛者", -3)
+        calls.damage_combatant(state, "深潛者", -3)
 
         self.assertEqual((corpse.hp, living.hp), (0, 7))
 
@@ -117,7 +119,7 @@ class OperatorCommandTests(unittest.IsolatedAsyncioTestCase):
         state = _with_defeated("Walter Corbitt")
         reply = AsyncMock()
         with patch.object(combat_handler, "load_state", return_value=state), \
-                patch.object(combat_handler, "save_state"), \
+                MemoryTransactions(state).patched(), \
                 patch.object(combat.checkpoints, "create_checkpoint"):
             await combat_handler.handle_combat_command("g", reply, ["/coc", "combat", "addnpc", "柯比特", "50", "20"])
 

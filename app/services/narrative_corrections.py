@@ -106,7 +106,7 @@ def latest_receipt(state: Any) -> dict | None:
 def save(state: Any) -> None:
     """Persist corrections with their archive rows in one transaction."""
     from app import db
-    from app.repositories.group_state import save_state
+    from app.repositories import state_transaction
 
     for report in state.narrative_corrections:
         if (report.get("status") == "approved" and report.get("timeline_id") == state.timeline_id
@@ -119,7 +119,7 @@ def save(state: Any) -> None:
         for record in state.narrative_corrections:
             key = f"{state.group_id}:{record.get('timeline_id', '')}:{record['id']}"
             db.set_json_tx(conn, "narrative_correction_archive", key, record)
-    save_state(state, reason="narrative_correction", mutate_tx=archive)
+    state_transaction.commit_snapshot(state, reason="narrative_correction", mutate_tx=archive)
     from app import memory_rag
     for report in state.narrative_corrections:
         if (report.get("status") != "approved" or report.get("timeline_id") != state.timeline_id

@@ -4,8 +4,8 @@ A player may spend Luck points to buy their roll down onto a better success
 tier (regular/hard/extreme) after seeing it, provided the roll wasn't already
 that good and they can afford the cost. Pure and side-effect free — like
 app/dice.py, callers apply the result (deducting Luck, overriding the tier)
-themselves; see app/commands.py's _finalize_check_result and
-handle_luck_decision.
+themselves; see app/checks/service.py (resolve_luck_decision) for the
+state side and app/checks/luck.py for the policy of who may spend it.
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def buyable_options(
 def cheapest_cost(skill_value: int, roll: int, current_tier: str, required_tier: str = "regular") -> int | None:
     """Min cost among all better-ranked (and difficulty-sufficient) tiers,
     ignoring affordability. Not currently called from app/ — both call
-    sites (app/keeper.py, app/legacy_commands.py) used to gate the
+    sites (app/keeper.py and the old app/legacy_commands.py) used to gate the
     proactive Luck-spend prompt to near-misses (cost <= 7) with this, but
     that gate was removed (see docs/specs/enhancement-luck-buyup-always-
     offered.md); buyable_options alone (which already filters by

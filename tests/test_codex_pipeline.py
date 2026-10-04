@@ -4,10 +4,12 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from app import config, keeper, legacy_commands
+from app import config, keeper
 from app.agents import supervisor
+from app.commands.handlers import checks as check_commands
 from app.models import Character, GroupState
 from app.providers import codex_provider
+from app.repositories import group_state
 from app.services.turn_context import character_id
 
 
@@ -16,8 +18,8 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
         state = GroupState(group_id='codex-pipeline-' + uuid.uuid4().hex, active=True)
         state.characters['u'] = Character(name='Marco', owner_id='u', skills={'偵查': 70}, luck=0)
         state.scenario_text = '書桌的文件藏有日期 1925；偵查成功才能辨認。'
+        group_state.save_state(state)  # storage assigns the timeline on the first save
         keeper._ensure_turn_timeline(state)
-        keeper.save_state(state)
         tool_decisions = []
         stages = []
 
@@ -52,7 +54,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dice.call_count, 0)
             self.assertEqual(tool_decisions, ['skill_check'])
             self.assertIn('u', keeper.load_state(state.group_id).pending_checks)
-            resolved = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check')
+            resolved = check_commands.resolve_check(state.group_id, 'u', '/coc check')
             self.assertTrue(resolved.should_finalize)
             state = keeper.load_state(state.group_id)
             self.assertFalse(state.pending_checks)
@@ -72,10 +74,10 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
                 state = GroupState(group_id='codex-pickup-' + uuid.uuid4().hex, active=True)
                 state.characters['u'] = Character(name='Marco', owner_id='u', skills={'偵查': 70})
                 state.scenario_text = '桌上黃銅鑰匙可以直接拾取，文件需偵查檢定。'
+                group_state.save_state(state)
                 keeper._ensure_turn_timeline(state)
                 keeper._execute_tool(state, 'skill_check', {'investigator': 'Marco', 'skill': '偵查',
                     'action_context': '辨認文件'}, [], [], speaker_role='player')
-                keeper.save_state(state)
                 old_pending = dict(state.pending_checks['u'])
                 dispatched = []
                 rejected = []

@@ -77,6 +77,15 @@ def save_state(
     state: GroupState, *, reason: str = "command",
     mutate_tx: Callable[[Connection], None] | None = None,
 ) -> None:
+    """Storage primitive: persist one whole snapshot, rejecting a stale revision.
+
+    Production code does not call this. Every game-state write goes through
+    ``app.repositories.state_transaction.mutate``, which reloads the latest
+    state under the conversation lock, validates timeline/action/revision and
+    commits state, events and the action result together. This function stays
+    for storage-level tests and fixtures; ``tests/test_architecture_state_writes.py``
+    fails the build when an application module imports it.
+    """
     metrics: dict[str, int | bool] = {}
     with observability.span("state.save", operation=reason, metrics=metrics):
         committed = _save_state_impl(state, reason=reason, mutate_tx=mutate_tx)
@@ -120,7 +129,7 @@ def _save_state_impl(
                     )
                 if mutate_tx is not None:
                     mutate_tx(conn)
-                committed = _save_state_unlocked(state, reason=reason, conn=conn, previous=current)
+                committed = write_state_tx(state, reason=reason, conn=conn, previous=current)
             committed.apply(state)
     except StateRevisionConflict:
         current_revision = current.get("state_revision", 0) if current else None
@@ -156,6 +165,7 @@ class StateCommit:
     def apply(self, state: GroupState) -> None:
         state.state_revision = self.revision
         state.timeline_id = self.timeline_id
+        state.loaded_timeline_id = self.timeline_id
         _logger.info(
             "state_save_success group_id=%s revision=%s timeline_id=%s reason=%s "
             "mirror_reads=%s mirror_writes=%s mirror_deletes=%s",
@@ -197,11 +207,15 @@ def character_mirror_projection(payload: dict[str, Any]) -> dict[str, dict[str, 
     return entries
 
 
-def _save_state_unlocked(
+def write_state_tx(
     state: GroupState, *, reason: str = "command", conn: Connection,
     previous: dict[str, Any] | None = None,
 ) -> StateCommit:
-    """Write within caller's transaction, without updating the caller snapshot.
+    """Storage primitive: write within the caller's transaction, without updating the caller snapshot.
+
+    Only ``app/repositories/state_transaction.py`` (the single game-state write
+    boundary) and this module may call it; ``tests/test_architecture_state_writes.py``
+    enforces that. Everything else goes through ``state_transaction.mutate``.
 
     Candidate keys come from the old/new authoritative group payloads. Unknown
     historical orphans need a separate audited migration, never a hot-path scan.

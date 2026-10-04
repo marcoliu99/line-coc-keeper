@@ -1,7 +1,7 @@
 """Cross-lingual "is this the same investigator" matcher.
 
 See docs/specs/feature/character_and_dictionary_system_spec.md. Used by
-pregen reconciliation in app/legacy_commands.py to tell whether a newly-parsed pregen dict
+pregen reconciliation in app/services/scenario_ingestion.py to tell whether a newly-parsed pregen dict
 (from either app/pregen_extractor.py's parse_role_sheet_text or
 extract_pregens) describes the same character as one already sitting in
 state.pregens, even when one side is in English and the other in Chinese.
