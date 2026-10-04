@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
-from uuid import uuid4
 
 from app.models import GroupState
 from app.services import history_authority, narrative_corrections
@@ -84,14 +82,10 @@ def submit(state: GroupState, user_id: str, text: str, *, target_message_id: str
             return "這筆敘事更正太長或有效更正容量已滿；請縮短說明，現有遊戲仍可繼續。", True
     if kind == "review" and (len(pending) >= 10 or sum(row.get("reporter_id") == user_id for row in pending) >= 3):
         return "待核對更正已達上限；請先處理或撤回既有異議。", True
-    report = {
-        "id": uuid4().hex[:10], "target_message_id": str(receipt["message_id"]),
-        "target_receipt": receipt, "issue": text, "reporter_id": user_id,
-        "status": "pending", "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "timeline_id": state.timeline_id, "conversation_id": state.group_id,
-    }
-    state.narrative_corrections[:] = narrative_corrections.active(state)
-    state.narrative_corrections.append(report)
+    report = narrative_corrections.new_report(
+        state, reporter_id=user_id, issue=text, target_message_id=str(receipt["message_id"]), receipt=receipt,
+    )
+    narrative_corrections.file_report(state, report)
     state.log.append(history_authority.annotate_entry(
         {"role": "user", "content": text}, turn_id=str(report["id"]),
         timeline_id=state.timeline_id, record_kind="correction_request", authority="claim",
@@ -113,7 +107,6 @@ def submit(state: GroupState, user_id: str, text: str, *, target_message_id: str
                 state, report, resolution=f"{character.name} 隨身帶著「{item}」；這只補正持有，未賦予劇本線索或特殊能力。",
             )
         else:
-            report["status"] = "pending"
             response = f"已收到更正 #{report['id']}，物品狀態暫未更新；請核對原先行動。"
     elif kind == "presentation":
         resolution = ("先前把普通物件暗示為關鍵線索的敘事已收回；它是否有劇本效果仍以劇本來源為準。"

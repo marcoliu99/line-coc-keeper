@@ -28,7 +28,7 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     def test_old_effective_decisions_survive_pruning_and_reload(self):
         state = self.state()
-        correct._prune_adjudicated(state)
+        corrections.prune_closed(state)
         corrections.save(state)
         restored = load_state(state.group_id)
         context, overflow = corrections.projection(restored)

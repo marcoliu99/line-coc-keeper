@@ -35,6 +35,9 @@ _Why:_ the two combat modules imported each other and re-asked "managed?" in fif
 **A turn's hand-off between stages is declared in `TurnPayload` and `CheckStatus`.** Add a key to the TypedDict in `app/domain/models.py` first, and write a payload key only from the stage that owns it (`context_builder`, `supervisor`, `executor`, `narrator`, `turn_delivery`) and a `CheckStatus` key only from `tool_gateway`, `executor`, `turn_handoff` or `turn_delivery.public_mechanic`, as the table in the type says; a later stage reads it.
 _Why:_ both were `dict[str, Any]`, so a mistyped key read a default silently and nothing said which stage may add which evidence. `mypy app` and `tests/test_turn_payload_contract.py` now reject both. Spec: `docs/specs/refactor/turn_payload_contract_design_spec.md`.
 
+**A correction report changes status only in `narrative_corrections`.** Open one with `new_report`/`file_report`, rule with `record_ruling`/`record_unverified`/`record_presentation_repair`, close with `withdraw`, replace with `supersede`, pause with `hold`. A handler or service parses, checks permission and words the reply; it does not assign `report["status"]` or build a report dict.
+_Why:_ the status was changed in four places, so "when does a player's claim become authoritative" had to be reconstructed across modules; the allowed moves are now one table. `tests/test_architecture_corrections.py` fails if a module grows its own. Spec: `docs/specs/refactor/correction_lifecycle_design_spec.md`.
+
 **Every new pending check goes through the ownership gate.** Before registering a skill, SAN or CON check, inspect both `pending_checks` and `pending_luck_decisions` on the freshly reloaded state inside `_mutate_and_save_state` (see `_reject_if_check_already_pending`). When the gate blocks, report the block to the player or the model.
 _Why:_ a check that returns silently loses a rules consequence. Spec: `docs/specs/bug/bugfix_duplicate_pending_checks.md`.
 
