@@ -1617,8 +1617,8 @@
       "title": "Prevent margin decoration from interleaving with PDF body text",
       "zh": "防止 PDF 邊飾字形插入正文閱讀順序",
       "category": "bug",
-      "status": "design-ready",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py"],
+      "status": "implemented",
+      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_decorative_reading_order.py"],
       "path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec_zh.md"
     },
