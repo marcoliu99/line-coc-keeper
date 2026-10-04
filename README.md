@@ -117,6 +117,7 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 - **`app/markitdown_shim.py`** connects MarkItDown's OpenAI-style vision interface to the project's configured provider, including an Anthropic adapter.
 - **`app/db.py`** stores session state, character indexes, and scenario/memory retrieval caches in SQLite.
 - **`app/repositories/group_state.py`**, formerly `app/state.py`, handles session persistence and character-index mirrors. Page images remain separate PNG files.
+- **`app/repositories/state_transaction.py`** is the only door for game-state writes: it locks the conversation, reads the latest row inside a `BEGIN IMMEDIATE` transaction, validates timeline, action ledger and revision, runs the mutation and commits state, events and the action result together. `tests/test_architecture_state_writes.py` fails the build when anything else writes a game-state row ([spec](docs/specs/refactor/state_transaction_design_spec.md)).
 
 Only the Discord bot entry point needs to run. Discord receives image attachments directly; no webhook, ngrok tunnel, or public image URL is required.
 

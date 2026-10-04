@@ -45,6 +45,7 @@ from app.config import (
     DATA_DIR,
     DB_PATH,
 )
+from app.storage_errors import NestedTransactionError
 
 _logger = logging.getLogger(__name__)
 
@@ -69,11 +70,6 @@ CREATE TABLE IF NOT EXISTS {table} (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 )
 """
-
-class NestedTransactionError(RuntimeError):
-    """A write was attempted on a second connection while a game-state
-    transaction holds SQLite's write lock. Waiting would only time out."""
-
 
 # Set by app/repositories/state_transaction.py for the duration of one game-state
 # mutation. Any other write opened in that window would block on SQLite's own

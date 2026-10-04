@@ -86,6 +86,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/markitdown_shim.py`：將 MarkItDown 的 OpenAI 型式視覺介面接到專案設定的 provider，包含 Anthropic 轉接
 - `app/db.py`：SQLite 存取層，把每個聊天室的遊戲狀態、角色索引鏡像、Scenario/Memory RAG 的索引快取都存成資料庫裡的一列（取代原本各自的 `data/groups/*.json` 檔案）
 - `app/repositories/group_state.py`（原 `app/state.py`）：呼叫 `app/db.py` 保存每個聊天室的遊戲狀態與角色索引鏡像；劇本頁面圖片仍另外存成 PNG 檔案（不進資料庫）
+- `app/repositories/state_transaction.py`：遊戲狀態唯一的寫入入口。鎖住該聊天室、在 `BEGIN IMMEDIATE` 交易內讀取最新資料、驗證 timeline／action ledger／revision、執行 mutation，並把狀態、事件與 action 結果一起提交。`tests/test_architecture_state_writes.py` 會在其他程式碼直接寫遊戲狀態時讓建置失敗（[規格](docs/specs/refactor/state_transaction_design_spec_zh.md)）
 
 只需要啟動 `app/discord_bot.py`；Discord 直接附加圖片，不需要 webhook、ngrok 或公開圖片網址。
 

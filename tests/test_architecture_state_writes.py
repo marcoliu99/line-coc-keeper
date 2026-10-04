@@ -46,6 +46,7 @@ SCRIPT_ALLOWLIST = {
     "scripts/benchmark_state_mirrors.py": "benchmark that seeds mirror rows directly",
     "scripts/codex_pipeline_fixture.py": "operator smoke run that seeds an isolated conversation",
     "scripts/codex_smoke_check.py": "operator smoke run that seeds an isolated conversation",
+    "scripts/benchmark_state_transaction.py": "benchmark that compares against the storage primitive",
 }
 
 

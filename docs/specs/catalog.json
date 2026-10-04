@@ -1582,7 +1582,10 @@
       "zh": "關閉 PyMuPDF4LLM 內建 OCR",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_loader.py", "tests/test_pdf_loader.py"],
+      "evidence": [
+        "app/pdf_loader.py",
+        "tests/test_pdf_loader.py"
+      ],
       "path": "docs/specs/bug/pymupdf4llm_internal_ocr.md",
       "zh_path": "docs/specs/bug/pymupdf4llm_internal_ocr_zh.md"
     },
@@ -1598,6 +1601,40 @@
       "path": "docs/specs/bug/pdf_final_review_warnings.md",
       "zh_path": "docs/specs/bug/pdf_final_review_warnings_zh.md",
       "source_revision": "92b52e4da88063d14ae3c9585fda9d5060d19b37"
+    },
+    {
+      "title": "Architecture refactor, phases 1–4",
+      "zh": "架構重構（第 1–4 階段）",
+      "category": "refactor",
+      "status": "partial",
+      "evidence": [
+        "app/repositories/state_transaction.py",
+        "tests/test_state_transaction.py",
+        "tests/test_architecture_state_writes.py",
+        "docs/refactor/phase1-result.md"
+      ],
+      "path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec.md",
+      "zh_path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Game-state transaction",
+      "zh": "遊戲狀態交易",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/repositories/state_transaction.py",
+        "app/repositories/group_state.py",
+        "app/keeper.py",
+        "app/checkpoints.py",
+        "app/commands/handlers/transact.py",
+        "tests/test_state_transaction.py",
+        "tests/test_state_transaction_adapters.py",
+        "tests/test_architecture_state_writes.py"
+      ],
+      "path": "docs/specs/refactor/state_transaction_design_spec.md",
+      "zh_path": "docs/specs/refactor/state_transaction_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
     }
   ]
 }

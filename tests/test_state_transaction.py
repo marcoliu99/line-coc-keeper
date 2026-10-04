@@ -26,6 +26,7 @@ from app.models import Character, GroupState
 from app.repositories import group_state, state_transaction
 from app.repositories.state_transaction import Outcome, TxReject
 from app.services import mutation_admission
+from app.storage_errors import NestedTransactionError
 
 
 def _conversation() -> str:
@@ -667,3 +668,146 @@ class StateTransactionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SnapshotCommitTests(unittest.TestCase):
+    """commit_snapshot: the strict path for an action computed on a loaded snapshot."""
+
+    def test_a_snapshot_from_before_a_new_game_cannot_overwrite_it_even_at_the_same_revision(self):
+        conversation = _conversation()
+        _seed(conversation)
+        old = group_state.load_state(conversation)
+        state_transaction.mutate(
+            conversation, lambda ctx: ctx.replace_state(GroupState(group_id=conversation)), reason="newgame",
+        )
+        reset = group_state.load_state(conversation)
+        self.assertEqual(reset.state_revision, old.state_revision)  # the collision the timeline check exists for
+        old.mechanical_round = 99
+        with self.assertRaises(state_transaction.StaleTimelineError):
+            state_transaction.commit_snapshot(old, reason="test")
+        self.assertEqual(group_state.load_state(conversation).mechanical_round, 0)
+
+    def test_a_revision_conflict_raises_and_writes_nothing(self):
+        conversation = _conversation()
+        _seed(conversation)
+        stale = group_state.load_state(conversation)
+        state_transaction.mutate(conversation, _bump_round)
+        stale.mechanical_round = 50
+        with self.assertRaises(group_state.StateRevisionConflict):
+            state_transaction.commit_snapshot(stale, reason="test")
+        self.assertEqual(group_state.load_state(conversation).mechanical_round, 1)
+
+    def test_a_flow_that_starts_a_new_timeline_is_judged_against_the_timeline_it_loaded(self):
+        conversation = _conversation()
+        _seed(conversation)
+        snapshot = group_state.load_state(conversation)
+        loaded_timeline = snapshot.timeline_id
+        snapshot.timeline_id = "timeline-new-scenario"  # what a scenario upload does
+        snapshot.mechanical_round = 3
+        state_transaction.commit_snapshot(snapshot, reason="scenario_upload")
+        stored = group_state.load_state(conversation)
+        self.assertEqual(stored.timeline_id, "timeline-new-scenario")
+        self.assertNotEqual(stored.timeline_id, loaded_timeline)
+        self.assertEqual(stored.mechanical_round, 3)
+        self.assertEqual(snapshot.loaded_timeline_id, "timeline-new-scenario")
+
+    def test_a_legacy_snapshot_without_a_timeline_can_be_committed_and_gets_one(self):
+        conversation = _conversation()
+        db.set_json("group_states", conversation, GroupState(group_id=conversation).to_dict())
+        snapshot = group_state.load_state(conversation)
+        self.assertEqual(snapshot.timeline_id, "")
+        snapshot.mechanical_round = 2
+        state_transaction.commit_snapshot(snapshot, reason="test")
+        self.assertTrue(group_state.load_state(conversation).timeline_id.startswith("timeline-"))
+        self.assertEqual(snapshot.timeline_id, group_state.load_state(conversation).timeline_id)
+
+    def test_mutate_tx_writes_land_or_fail_with_the_state(self):
+        conversation = _conversation()
+        _seed(conversation)
+        marker = f"{conversation}:snapshot-marker"
+        snapshot = group_state.load_state(conversation)
+        snapshot.mechanical_round = 1
+
+        def write_marker(conn):
+            db.set_json_tx(conn, "state_checkpoints", marker, {"group_id": conversation})
+
+        state_transaction.commit_snapshot(snapshot, reason="test", mutate_tx=write_marker)
+        self.assertEqual(db.get_json("state_checkpoints", marker), {"group_id": conversation})
+        db.delete_json("state_checkpoints", marker)
+
+        failing = group_state.load_state(conversation)
+        failing.mechanical_round = 9
+
+        def write_then_fail(conn):
+            db.set_json_tx(conn, "state_checkpoints", marker, {"group_id": conversation})
+            raise ValueError("refused after writing")
+
+        with self.assertRaises(ValueError):
+            state_transaction.commit_snapshot(failing, reason="test", mutate_tx=write_then_fail)
+        self.assertEqual(group_state.load_state(conversation).mechanical_round, 1)
+        self.assertIsNone(db.get_json("state_checkpoints", marker))
+
+
+class JoinedTransactionTests(unittest.TestCase):
+    def test_a_second_database_write_inside_a_mutation_fails_fast_instead_of_waiting(self):
+        conversation = _conversation()
+        _seed(conversation)
+        started = time.monotonic()
+
+        def sloppy(ctx: state_transaction.TxContext) -> None:
+            ctx.state.mechanical_round = 4
+            db.set_json("memory_chunks", f"{conversation}-x", [])  # its own connection: would block on our lock
+
+        with self.assertRaises(NestedTransactionError):
+            state_transaction.mutate(conversation, sloppy)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(group_state.load_state(conversation).mechanical_round, 0)
+
+    def test_ambient_gives_helpers_the_open_transaction_and_refuses_other_conversations(self):
+        conversation = _conversation()
+        other = _conversation()
+        _seed(conversation)
+        self.assertIsNone(state_transaction.ambient(conversation))
+
+        def joins(ctx: state_transaction.TxContext) -> None:
+            self.assertIs(state_transaction.ambient(conversation), ctx)
+            with self.assertRaises(NestedTransactionError):
+                state_transaction.ambient(other)
+
+        state_transaction.mutate(conversation, joins)
+        self.assertIsNone(state_transaction.ambient(conversation))
+
+    def test_a_checkpoint_taken_inside_a_mutation_joins_it_and_records_the_state_before(self):
+        from app import checkpoints
+
+        conversation = _conversation()
+        _seed(conversation)
+        before_revision = group_state.load_state(conversation).state_revision
+        taken: list[dict] = []
+
+        def start_fight(ctx: state_transaction.TxContext) -> None:
+            ctx.state.mechanical_round = 7
+            taken.append(checkpoints.create_checkpoint(ctx.state, label="開戰前", reason="auto_combat_start"))
+
+        started = time.monotonic()
+        state_transaction.mutate(conversation, start_fight)
+        self.assertLess(time.monotonic() - started, 3)
+        entry = taken[0]
+        self.assertEqual(entry["state_revision"], before_revision)
+        self.assertEqual(entry["state"]["mechanical_round"], 0)
+        self.assertEqual(group_state.load_state(conversation).mechanical_round, 7)
+        self.assertIn(entry["checkpoint_id"], {c["checkpoint_id"] for c in checkpoints.list_checkpoints(conversation)})
+
+    def test_a_rolled_back_mutation_takes_its_checkpoint_with_it(self):
+        from app import checkpoints
+
+        conversation = _conversation()
+        _seed(conversation)
+
+        def start_then_refuse(ctx: state_transaction.TxContext) -> None:
+            checkpoints.create_checkpoint(ctx.state, label="開戰前", reason="auto_combat_start")
+            ctx.reject("not_now")
+
+        outcome = state_transaction.mutate(conversation, start_then_refuse)
+        self.assertEqual(outcome.outcome, Outcome.REJECTED)
+        self.assertEqual(checkpoints.list_checkpoints(conversation), [])

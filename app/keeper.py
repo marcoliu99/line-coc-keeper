@@ -629,16 +629,19 @@ def _commit_turn_result(
     timeline_id: str | None = None,
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
+    turn_id: str | None = None,
 ) -> bool:
     """Append a turn's log entries to the latest committed state.
 
     The action id is the turn id plus a digest of what is being committed, so a
     delivery or narration retry that reaches this call again with the same
     turn is answered from the action ledger instead of logging it twice, while
-    a separate turn (new turn id) or different content is a new action.
+    a separate turn (new turn id) or different content is a new action. The
+    turn id comes from the caller that owns the turn (``run_turn``), falling
+    back to the request context, and is only random when neither exists.
     """
     expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
-    turn_id = str(observability.current_context().get("turn_id") or uuid4().hex)
+    turn_id = str(turn_id or observability.current_context().get("turn_id") or uuid4().hex)
     fingerprint = state_transaction.request_fingerprint({
         "entries": log_entries, "openai_response_id": openai_response_id,
         "invalidate": invalidate_openai_response_chain, "start_game": start_game,

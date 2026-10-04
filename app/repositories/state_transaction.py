@@ -57,6 +57,7 @@ from app import db, locks, observability
 from app.models import Character, GroupState
 from app.repositories import group_state
 from app.services import mutation_admission
+from app.storage_errors import NestedTransactionError
 
 _logger = logging.getLogger(__name__)
 
@@ -90,7 +91,6 @@ class TxReject(Exception):
         self.message = message or reason
 
 
-NestedTransactionError = db.NestedTransactionError
 
 
 class CorruptStateError(ValueError):

@@ -23,6 +23,9 @@ _Why:_ `_execute_tool` is about 1,180 lines of `if name == ...` branches, so eac
 
 ## Game state
 
+**Every game-state write goes through `state_transaction`.** Change state with `state_transaction.mutate` (a delta applied to the latest row) or, when the change was computed on a loaded snapshot and cannot be a delta, `commit_snapshot`. Give an operation that can be re-sent an `action_id` from the code that owns it (turn id, check id, event id), never one derived from text. Write other tables that must land with the state through `ctx.conn`; never open a second transaction inside a mutation.
+_Why:_ writers that loaded outside the lock either lost updates or failed with a revision conflict, and nothing could tell a retry from a new action. `tests/test_architecture_state_writes.py` rejects direct use of `save_state`, `write_state_tx` or `db.set_json*` on the game-state tables.
+
 **Every new pending check goes through the ownership gate.** Before registering a skill, SAN or CON check, inspect both `pending_checks` and `pending_luck_decisions` on the freshly reloaded state inside `_mutate_and_save_state` (see `_reject_if_check_already_pending`). When the gate blocks, report the block to the player or the model.
 _Why:_ a check that returns silently loses a rules consequence. Spec: `docs/specs/bug/bugfix_duplicate_pending_checks.md`.
 
