@@ -185,7 +185,7 @@ def test_upload_choice_image_failure_preserves_activation(storage: Path, monkeyp
     monkeypatch.setattr(scenario_ingestion.scenario_library, "copy_context_images",
                         lambda *_: (_ for _ in ()).throw(OSError("image failed")))
 
-    result = scenario_ingestion.apply_pdf_upload_choice("group", "new")
+    result = asyncio.run(scenario_ingestion.apply_pdf_upload_choice("group", "new"))
 
     assert "圖片快取刷新失敗" in result
     assert group_state.load_state("group").scenario_library_id == "new"
@@ -202,7 +202,7 @@ def test_upload_choice_commit_failure_preserves_old_state(storage: Path, monkeyp
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
     with pytest.raises(OSError, match="db failed"):
-        scenario_ingestion.apply_pdf_upload_choice("group", "new")
+        asyncio.run(scenario_ingestion.apply_pdf_upload_choice("group", "new"))
 
     assert group_state.load_state("group").scenario_library_id == ""
     assert group_state.load_page_image("group", 1) == b"old"

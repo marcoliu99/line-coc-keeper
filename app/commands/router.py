@@ -795,9 +795,9 @@ async def _handle_text_message_impl(
             # their helpers lock only around the short read-modify-write
             # sections. asyncio.Lock is not re-entrant.
             scenario_action = parts[2].casefold() if sub == "scenario" and len(parts) > 2 else ""
-            is_long_scenario_operation = sub == "scenario" and scenario_action in {
-                "import", "merge", "reparse",
-            }
+            is_long_scenario_operation = sub == "pdf" or (
+                sub == "scenario" and scenario_action in {"import", "merge", "reparse", "cancel", "use"}
+            )
             if is_long_scenario_operation:
                 async with locks.get_conversation_lock(conversation_id):
                     if not await _help_revision_matches(conversation_id, expected_revision, reply):

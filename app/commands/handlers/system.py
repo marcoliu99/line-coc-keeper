@@ -13,7 +13,6 @@ from app import (
     keeper,
     locks,
     observability,
-    scenario_activation,
     scenario_authoring,
     scenario_index,
     scenario_intro,
@@ -22,7 +21,6 @@ from app import (
     scenario_source_authoring,
     scenario_templates,
     scene_digest,
-    scene_map,
     spoiler_policy,
 )
 from app.agents import supervisor
@@ -47,6 +45,7 @@ from app.services import (
     correction_adjudication,
     history_authority,
     mutation_admission,
+    scenario_lifecycle,
 )
 from app.services.character_service import (
     build_readiness_roster,
@@ -54,7 +53,11 @@ from app.services.character_service import (
     set_away_state,
 )
 from app.services.post_turn import run_post_turn_maintenance_after_output
-from app.services.scenario_ingestion import apply_pdf_upload_choice, handle_pdf_upload
+from app.services.scenario_ingestion import (
+    apply_pdf_upload_choice,
+    handle_pdf_upload,
+    prepare_merged_pdf,
+)
 
 
 async def _handle_local_import(
@@ -92,56 +95,14 @@ async def _handle_staged_merge(
     if not refs:
         await reply("用法：/coc scenario merge 暫存ID1 暫存ID2 ...")
         return
-    if refs == ["list"]:
-        if not state.staged_pdf_parts:
-            await reply("目前沒有暫存的 PDF part。")
-            return
-        await reply("暫存 PDF：\n" + "\n".join(f"・{p['key'][:12]} {p['file_name']}" for p in state.staged_pdf_parts))
+    source = await prepare_merged_pdf(conversation_id, refs)
+    if source.error:
+        await reply(source.error)
         return
-    selected: list[dict[str, str]] = []
-    for ref in refs:
-        matches = [p for p in state.staged_pdf_parts if p["key"].startswith(ref) or p["file_name"] == ref]
-        if len(matches) != 1:
-            await reply(f"暫存 ID／檔名無法唯一對應：{ref}。先用 /coc scenario merge list 查看。")
-            return
-        if matches[0] not in selected:
-            selected.append(matches[0])
-    if len(selected) < 2:
-        await reply("至少要指定兩個 PDF part 才能合併。")
-        return
-    try:
-        payloads = [scenario_library.read_staged_upload(item["key"]) for item in selected]
-    except FileNotFoundError:
-        await reply("其中一個暫存 PDF 已不存在，請重新上傳。")
-        return
-    from app.pdf_loader import combine_pdfs
-    merged = await asyncio.to_thread(combine_pdfs, payloads)
-    merged_name = f"{selected[0]['file_name'].rsplit('.', 1)[0]}_merged.pdf"
-    accepted = await handle_pdf_upload(conversation_id, reply, reply, merged, merged_name,
-                                       expected_revision=expected_revision)
-    if not accepted:
-        return
-    for item in selected:
-        scenario_library.discard_staged_upload(item["key"])
-    async with locks.get_conversation_lock(conversation_id):
-        latest = load_state(conversation_id)
-        latest.staged_pdf_parts = [p for p in latest.staged_pdf_parts if p not in selected]
-        state_transaction.commit_snapshot(latest)
-def _replace_scene_maps_preserving_locations(state: GroupState, new_maps: dict) -> None:
-    previous_locations = {
-        owner_id: (state.current_map_page.get(owner_id, ""), state.current_room_id.get(owner_id, ""))
-        for owner_id in set(state.current_map_page) | set(state.current_room_id)
-    }
-    state.scene_maps = dict(new_maps)
-    state.current_map_page = {}
-    state.current_room_id = {}
-    for owner_id, (map_key, room_id) in previous_locations.items():
-        new_map = state.scene_maps.get(map_key)
-        if new_map is not None and scene_map.get_room(new_map, room_id) is not None:
-            state.current_map_page[owner_id] = map_key
-            state.current_room_id[owner_id] = room_id
-        else:
-            state.party_facing.pop(owner_id, None)
+    await scenario_lifecycle.submit_merged_pdf(
+        conversation_id, source.payload, source.filename, source.staged_refs,
+        handle_pdf_upload, reply, reply, expected_revision=expected_revision,
+    )
 
 
 async def _handle_newgame(conversation_id: str, reply: Reply) -> None:
@@ -502,164 +463,70 @@ async def handle_system_command(
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
                 await reply(permissions.kp_only("重新解析劇本"))
                 return
-            if state.pending_pregen_luck:
-                await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
-                return
-            # Claim and clear the staged item under the conversation lock, then
-            # release it before the intentionally long PDF extraction begins.
-            async with locks.get_conversation_lock(conversation_id):
-                state = load_state(conversation_id)
-                if expected_revision is not None and state.state_revision != expected_revision:
-                    await reply("遊戲狀態已更新，請重新開啟 Help 操作。")
-                    return
-                if not permissions.may_manage_scenario_lifecycle(state, user_id):
-                    await reply(permissions.kp_only("重新解析劇本"))
-                    return
-                if state.pending_pregen_luck:
-                    await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。")
-                    return
-                pending = state.pending_scenario_upload
-                if pending is None:
-                    await reply("沒有等待重新解析的 PDF。")
-                    return
-                try:
-                    pdf_bytes = scenario_library.read_staged_upload(pending["key"])
-                except FileNotFoundError:
-                    state.pending_scenario_upload = None
-                    state_transaction.commit_snapshot(state)
-                    await reply("暫存 PDF 已不存在，請重新上傳。")
-                    return
-                state.pending_scenario_upload = None
-                state_transaction.commit_snapshot(state)
-                commit_revision = state.state_revision
-                claimed_timeline = state.timeline_id
-            candidate_matches = pending.get("matches") or []
-            reparse_candidate_id = candidate_matches[0]["id"] if candidate_matches else None
-            accepted = False
-            try:
-                accepted = await handle_pdf_upload(
-                    conversation_id, reply, reply, pdf_bytes, pending["file_name"],
-                    skip_similarity=True, reparse_candidate_id=reparse_candidate_id,
-                    expected_revision=commit_revision if expected_revision is not None else None,
-                )
-            finally:
-                if accepted:
-                    scenario_library.discard_staged_upload(pending["key"])
-                else:
-                    # Do not save the pre-extraction snapshot over concurrent play.
-                    # A newer upload or timeline owns its state; keep the source
-                    # bytes without resurrecting an old session's pending item.
-                    async with locks.get_conversation_lock(conversation_id):
-                        recovery_state = load_state(conversation_id)
-                        if (recovery_state.timeline_id == claimed_timeline
-                                and recovery_state.pending_scenario_upload is None):
-                            recovery_state.pending_scenario_upload = pending
-                            state_transaction.commit_snapshot(recovery_state)
+            scenario_result = await scenario_lifecycle.reparse_pending_scenario(
+                conversation_id, handle_pdf_upload, reply, reply,
+                authorized=lambda current: permissions.may_manage_scenario_lifecycle(current, user_id),
+                expected_revision=expected_revision,
+            )
+            messages = {
+                "revision_changed": "遊戲狀態已更新，請重新開啟 Help 操作。",
+                "unauthorized": permissions.kp_only("重新解析劇本"),
+                "pending_pregen_luck": "目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再重新解析劇本。",
+                "pending_absent": "沒有等待重新解析的 PDF。",
+                "staged_missing": "暫存 PDF 已不存在，請重新上傳。",
+            }
+            if scenario_result.reason == "combat_unsettled":
+                await reply(scenario_result.title)
+            elif scenario_result.reason in messages:
+                await reply(messages[scenario_result.reason])
             return
         if action == "cancel":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
                 await reply(permissions.kp_only("取消劇本處理"))
                 return
-            pending = state.pending_scenario_upload
-            if pending is None:
+            scenario_result = await scenario_lifecycle.cancel_pending_reparse(
+                conversation_id,
+                authorized=lambda current: permissions.may_manage_scenario_lifecycle(current, user_id),
+            )
+            if scenario_result.reason == "unauthorized":
+                await reply(permissions.kp_only("取消劇本處理"))
+            elif scenario_result.reason == "pending_absent":
                 await reply("沒有等待處理的 PDF。")
-                return
-            scenario_library.discard_staged_upload(pending.get("key", ""))
-            state.pending_scenario_upload = None
-            state_transaction.commit_snapshot(state)
-            await reply("已放棄本次上傳，既有劇本不受影響。")
+            else:
+                await reply("已放棄本次上傳，既有劇本不受影響。")
             return
         if action == "use":
             if not permissions.is_kp(state, user_id):
                 await reply(permissions.kp_only("選擇劇本"))
                 return
-            if state.pending_pregen_luck:
-                await reply("目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。")
-                return
-            if state.pending_pdf_upload is not None or state.pending_scenario_upload is not None:
-                await reply("目前仍有待處理的劇本上傳，請先完成或取消該流程後再切換劇本。")
-                return
-            if len(parts) < 4:
-                await reply("用法：/coc scenario use 劇本ID（先用 /coc scenario list 查看）")
-                return
-            try:
-                context = scenario_library.load_context(parts[3])
-            except (FileNotFoundError, ValueError):
-                await reply("找不到可使用的劇本 ID。請先用 /coc scenario list 查看。")
-                return
-            preference_notice = scenario_templates.preference_notice(conversation_id, parts[3])
-            variant_id = parts[4] if len(parts) > 4 else scenario_templates.preferred_variant(conversation_id, parts[3])
-            try:
-                if variant_id != "original":
-                    scenario_templates.require_approved(parts[3], variant_id)
-            except (FileNotFoundError, ValueError) as exc:
-                await reply(f"中文模板無法啟用：{exc}")
-                return
-            old_pool = list(state.pregens)
-            old_scenario_id = state.scenario_library_id or None
-            old_hash = ""
-            if old_scenario_id:
-                try:
-                    old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
-                except (FileNotFoundError, ValueError):
-                    pass
-            scenario_activation.install_context_fields(
-                state, parts[3], context, variant_id=variant_id, preserve_maps=True,
+            scenario_result = await scenario_lifecycle.activate_existing_scenario(
+                conversation_id, parts[3] if len(parts) > 3 else "",
+                authorized=lambda current: permissions.is_kp(current, user_id),
+                variant_id=parts[4] if len(parts) > 4 else None,
+                expected_revision=expected_revision,
             )
-            # Selecting a scenario is a new campaign context even when the
-            # live investigator sheets are retained.  Old maintenance,
-            # memory, and provider results must not bleed into this scenario.
-            old_timeline_id = state.timeline_id or f"legacy-{conversation_id}"
-            state.timeline_id = f"timeline-{uuid4().hex[:8]}"
-            # All player decisions and deterministic-result caches belong to
-            # the previous scenario timeline.  Clear them at the reset point
-            # so an old Discord button or typed command cannot be consumed by
-            # the newly selected scenario.
-            state.pending_checks.clear()
-            state.pending_luck_decisions.clear()
-            state.deterministic_check_results.clear()
-            state.resolved_check_events.clear()
-            observability.event(
-                "provider.chain.reset",
-                reason="scenario_use",
-                old_timeline_id=old_timeline_id,
-                requested_timeline_id=state.timeline_id,
-                provider="openai",
-            )
-            _replace_scene_maps_preserving_locations(state, context["scene_maps"])
-            # /coc scenario use assigns both itself, so the upload flow's report
-            # never ran here — selecting an already-stored affected variant was
-            # the one path that stayed silent.
-            artifact_notice = scenario_index.report_location_index(
-                state.scenario_location_index, source="scenario_use",
-                scenario_title=state.scenario_title, scene_maps=state.scene_maps)
-            # Pregens belong to the selected library item. Keep live
-            # investigators in state.characters, but never leak the previous
-            # scenario's pregen pool into this scenario's /coc pregens list.
-            state.openai_previous_response_id = ""
-            state.openai_previous_response_timeline_id = ""
-            state.active = True
-            install_result: dict[str, bool] = {}
-            def install_cards(conn):
-                manual_pregens.capture_legacy(
-                    conn, conversation_id, old_scenario_id, old_pool, old_hash,
-                )
-                state.pregens, install_result["stale"] = manual_pregens.install_pool(
-                    conn, conversation_id, parts[3], context,
-                    bind_unassigned=(old_scenario_id is None),
-                )
-            _, image_refreshed = scenario_activation.commit_and_refresh(
-                lambda: state_transaction.commit_snapshot(state, mutate_tx=install_cards),
-                conversation_id, parts[3], context,
-            )
-            if len(parts) > 4:
-                scenario_templates.select_variant(conversation_id, parts[3], variant_id)
-            scenario_templates.schedule_index_prewarm(state)
-            note = "\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if install_result.get("stale") else ""
-            image_notice = "\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not image_refreshed else ""
-            await reply(f"KP 已選擇《{state.scenario_title}》；目前 Context：{'、'.join(state.context_chapter_ids)}。{note}"
-                        + (f"\n{preference_notice}" if preference_notice and len(parts) == 4 else "")
-                        + (f"\n\n{artifact_notice}" if artifact_notice else "") + image_notice)
+            messages = {
+                "revision_changed": "遊戲狀態已更新，請重新開啟 Help 操作。",
+                "unauthorized": permissions.kp_only("選擇劇本"),
+                "pending_pregen_luck": "目前仍有預製角色等待玩家擲 LUCK，請先完成 `/coc luck roll` 後再切換劇本。",
+                "pending_submission": "目前仍有待處理的劇本上傳，請先完成或取消該流程後再切換劇本。",
+                "identifier_missing": "用法：/coc scenario use 劇本ID（先用 /coc scenario list 查看）",
+                "library_missing": "找不到可使用的劇本 ID。請先用 /coc scenario list 查看。",
+            }
+            if scenario_result.reason == "combat_unsettled":
+                await reply(scenario_result.detail)
+                return
+            if scenario_result.reason == "variant_invalid":
+                await reply(f"中文模板無法啟用：{scenario_result.detail}")
+                return
+            if scenario_result.reason in messages:
+                await reply(messages[scenario_result.reason])
+                return
+            note = "\n舊版合併角色卡的劇本來源已變更；請重新匯入原始 role_ 卡。" if scenario_result.stale_cards else ""
+            image_notice = "\n頁面圖片快取刷新失敗；劇本已啟用，請聯絡 KP 檢查圖片。" if not scenario_result.image_refreshed else ""
+            await reply(f"KP 已選擇《{scenario_result.title}》；目前 Context：{'、'.join(scenario_result.active_chapters)}。{note}"
+                        + (f"\n{scenario_result.variant_notice}" if scenario_result.variant_notice else "")
+                        + (f"\n\n{scenario_result.artifact_notice}" if scenario_result.artifact_notice else "") + image_notice)
             return
         if action == "clean":
             if not permissions.may_manage_scenario_lifecycle(state, user_id):
@@ -701,7 +568,11 @@ async def handle_system_command(
         if choice is None:
             await reply("用法：「/coc pdf new」開始全新劇本，或「/coc pdf fix」修正/補完目前這份劇本。")
             return
-        await reply(apply_pdf_upload_choice(conversation_id, choice))
+        await reply(await apply_pdf_upload_choice(
+            conversation_id, choice,
+            authorized=lambda current: permissions.may_manage_scenario_lifecycle(current, user_id),
+            unauthorized_message=permissions.kp_only("處理劇本 PDF"),
+        ))
         return
 
     if sub == "kp":

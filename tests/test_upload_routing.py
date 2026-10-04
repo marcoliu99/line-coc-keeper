@@ -7,10 +7,12 @@ admission hold.
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app import scenario_library
 from app.commands import router
 from app.commands.handlers import uploads
 from app.commands.handlers.uploads import Upload
 from app.models import GroupState
+from app.repositories import state_transaction
 from app.services import mutation_admission, scenario_ingestion
 from tests.state_store import MemoryTransactions
 
@@ -107,8 +109,8 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_held_group_stages_nothing(self):
         reply = AsyncMock()
         with patch.object(uploads.mutation_admission, "is_held", return_value=True), \
-                patch.object(uploads.scenario_library, "stage_upload") as stage, \
-                patch.object(uploads.state_transaction, "amutate", new_callable=AsyncMock) as save:
+                patch.object(scenario_library, "stage_upload") as stage, \
+                patch.object(state_transaction, "amutate", new_callable=AsyncMock) as save:
             await uploads._stage_pdf_parts("g", [_upload("a.pdf"), _upload("b.pdf")], reply)
         reply.assert_awaited_once_with(mutation_admission.NOTICE)
         stage.assert_not_called()
@@ -120,9 +122,9 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
         reply = AsyncMock()
         keys = iter(["old", "new"])
         with patch.object(uploads.mutation_admission, "is_held", return_value=False), \
-                patch.object(uploads.scenario_library, "stage_upload", side_effect=lambda _b: next(keys)), \
-                patch.object(uploads.scenario_library, "discard_staged_upload") as discard, \
-                patch.object(uploads.state_transaction, "amutate", side_effect=mutation_admission.MutationHeld("held")):
+                patch.object(scenario_library, "stage_upload", side_effect=lambda _b: next(keys)), \
+                patch.object(scenario_library, "discard_staged_upload") as discard, \
+                patch.object(state_transaction, "amutate", side_effect=mutation_admission.MutationHeld("held")):
             await uploads._stage_pdf_parts("g", [_upload("kept.pdf"), _upload("b.pdf")], reply)
         reply.assert_awaited_once_with(mutation_admission.NOTICE)
         discard.assert_not_called()
@@ -132,7 +134,7 @@ class StagingTests(unittest.IsolatedAsyncioTestCase):
         reply = AsyncMock()
         keys = iter(["a" * 64, "b" * 64])
         with patch.object(uploads.mutation_admission, "is_held", return_value=False), \
-                patch.object(uploads.scenario_library, "stage_upload", side_effect=lambda _b: next(keys)), \
+                patch.object(scenario_library, "stage_upload", side_effect=lambda _b: next(keys)), \
                 MemoryTransactions(state).patched() as memory:
             await uploads._stage_pdf_parts("g", [_upload("a.pdf"), _upload("b.pdf")], reply)
         self.assertEqual(memory.commits, 1)

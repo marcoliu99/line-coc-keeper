@@ -12,7 +12,6 @@ from unittest.mock import patch
 from app import checkpoints, db, keeper, scene_digest
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import system as system_handler
-from app.commands.handlers.system import _replace_scene_maps_preserving_locations
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
 from app.repositories import group_state
 
@@ -135,7 +134,8 @@ class StatePersistenceTests(unittest.TestCase):
         async def reply(text):
             replies.append(text)
 
-        with patch.object(system_handler, "load_state", return_value=state), patch.object(
+        group_state.save_state(state)
+        with patch.object(
             system_handler.scenario_library, "load_context"
         ) as load_context:
             asyncio.run(system_handler.handle_system_command(
@@ -159,7 +159,8 @@ class StatePersistenceTests(unittest.TestCase):
         async def reply(text):
             replies.append(text)
 
-        with patch.object(system_handler, "load_state", return_value=state), patch.object(
+        group_state.save_state(state)
+        with patch.object(
             system_handler.scenario_library, "load_context"
         ) as load_context:
             asyncio.run(system_handler.handle_system_command(
@@ -190,11 +191,13 @@ class StatePersistenceTests(unittest.TestCase):
         async def reply(text):
             replies.append(text)
 
-        with patch.object(system_handler, "load_state", return_value=state), \
-                patch.object(system_handler.scenario_library, "load_context", return_value=context), \
-                patch("app.repositories.state_transaction.commit_snapshot"), \
-                patch.object(system_handler.scenario_activation, "refresh_after_commit", return_value=True), \
-                patch.object(system_handler.scenario_rag, "schedule_index_prewarm"):
+        from app import scenario_activation
+        group_state.save_state(state)
+        with (
+            patch.object(system_handler.scenario_library, "load_context", return_value=context),
+            patch.object(scenario_activation, "refresh_after_commit", return_value=True),
+            patch.object(system_handler.scenario_rag, "schedule_index_prewarm"),
+        ):
             asyncio.run(system_handler.handle_system_command(
                 state.group_id,
                 "kp",
@@ -209,10 +212,11 @@ class StatePersistenceTests(unittest.TestCase):
         # now also reports that — see tests/test_empty_location_index_notice.py.
         self.assertEqual(len(replies), 1)
         self.assertTrue(replies[0].startswith("KP 已選擇《New scenario》；目前 Context：chapter-1。"))
-        self.assertNotEqual(state.timeline_id, "timeline-old")
-        self.assertEqual(state.pending_checks, {})
-        self.assertEqual(state.pending_luck_decisions, {})
-        self.assertEqual(state.deterministic_check_results, {})
+        latest = group_state.load_state(state.group_id)
+        self.assertNotEqual(latest.timeline_id, "timeline-old")
+        self.assertEqual(latest.pending_checks, {})
+        self.assertEqual(latest.pending_luck_decisions, {})
+        self.assertEqual(latest.deterministic_check_results, {})
 
     def test_pdf_choice_requires_kp(self):
         state = GroupState("discord-group-pdf-auth", kp_assistant_user_id="kp")
@@ -552,22 +556,6 @@ class StatePersistenceTests(unittest.TestCase):
 
         self.assertEqual(set(digest["private"]["npc_abilities"]), {"enemy:one", "enemy:two"})
 
-    def test_scenario_map_switch_replaces_maps_and_keeps_only_valid_locations(self):
-        state = GroupState("group-map")
-        state.scene_maps = {"old": {"rooms": [{"id": "room-a"}]}}
-        state.current_map_page = {"u1": "old", "u2": "old"}
-        state.current_room_id = {"u1": "room-a", "u2": "missing"}
-        state.party_facing = {"u1": "E", "u2": "W"}
-
-        _replace_scene_maps_preserving_locations(
-            state,
-            {"old": {"rooms": [{"id": "room-a"}]}, "new": {"rooms": [{"id": "room-b"}]}},
-        )
-
-        self.assertEqual(set(state.scene_maps), {"old", "new"})
-        self.assertEqual(state.current_room_id, {"u1": "room-a"})
-        self.assertEqual(state.current_map_page, {"u1": "old"})
-        self.assertNotIn("u2", state.party_facing)
 
     def test_checkpoint_rollback_is_full_snapshot_and_new_timeline(self):
         state = GroupState("discord-group-2", active=False)

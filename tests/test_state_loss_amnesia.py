@@ -245,21 +245,33 @@ class StateLossAmnesiaTests(unittest.TestCase):
         self.assertIsNone(db.get_json("memory_chunks", group_id))
 
     def test_new_scenario_invalidates_pending_decisions_and_check_cache(self) -> None:
-        from app.services.scenario_ingestion import _apply_new_scenario
+        from app import scenario_activation, scenario_library
+        from app.services import scenario_lifecycle
 
         state = GroupState("scenario-reset", timeline_id="timeline-old")
         state.pending_checks["p1"] = {"type": "skill", "timeline_id": "timeline-old"}
         state.pending_luck_decisions["p1"] = {"timeline_id": "timeline-old"}
         state.deterministic_check_results["old-result"] = {"timeline_id": "timeline-old"}
         state.resolved_check_events.append({"event_id": "old-event", "timeline_id": "timeline-old"})
+        group_state.save_state(state)
+        context = {
+            "manifest": {"title": "New"}, "text": "new text",
+            "indexes": {"npcs": [], "locations": []}, "scene_maps": {},
+            "pregens": [], "active_chapter_id": "chapter", "context_chapter_ids": ["chapter"],
+            "page_numbers": set(),
+        }
+        with patch.object(scenario_library, "load_context", return_value=context), \
+                patch.object(scenario_activation, "refresh_after_commit", return_value=True):
+            asyncio.run(scenario_lifecycle.submit_published_scenario(
+                state.group_id, "new-scenario", source_format="markdown",
+            ))
 
-        _apply_new_scenario(state, "new text", "New", {"npcs": [], "locations": []}, {}, [])
-
-        self.assertNotEqual(state.timeline_id, "timeline-old")
-        self.assertEqual(state.pending_checks, {})
-        self.assertEqual(state.pending_luck_decisions, {})
-        self.assertEqual(state.deterministic_check_results, {})
-        self.assertEqual(state.resolved_check_events, [])
+        latest = group_state.load_state(state.group_id)
+        self.assertNotEqual(latest.timeline_id, "timeline-old")
+        self.assertEqual(latest.pending_checks, {})
+        self.assertEqual(latest.pending_luck_decisions, {})
+        self.assertEqual(latest.deterministic_check_results, {})
+        self.assertEqual(latest.resolved_check_events, [])
 
     def test_stale_timeline_check_is_consumed_without_a_roll(self) -> None:
         state = GroupState("stale-check", timeline_id="timeline-current", active=True)
