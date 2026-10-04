@@ -426,7 +426,8 @@
         "app/services/character_service.py",
         "app/skill_aliases.py",
         "tests/test_pregen_and_creation.py",
-        "tests/test_pregen_extra_fields.py"
+        "tests/test_pregen_extra_fields.py",
+        "tests/test_pregen_luck_verification.py"
       ],
       "path": "docs/specs/feature/pregen_luck_roll_design_spec.md",
       "zh_path": "docs/specs/feature/pregen_luck_roll_design_spec_zh.md",
