@@ -44,9 +44,9 @@
 * handler 在鎖外 load，與背景寫入競爭時玩家看到 `StateRevisionConflict`（第 1 階段）。
 * 對沒有進行中戰鬥的對話呼叫只屬於 managed 的工具，會憑空建立一場空的 managed 戰鬥（第 3 階段；現在回 `{"ok": false}` 且不寫入）。
 
-## 5. 已知限制與需要你決定的事
+## 5. 已知限制與已做的決定
 
-1. **Luck 政策衝突（需要產品決定，沒有被改動）。** 需求規定 SAN／戰鬥檢定不可使用 Luck；現況 `combat_flow._request_check`（`app/combat_flow.py:173`）對戰鬥攻擊／防禦擲骰設 `allow_luck: not injury`，也就是提供 Luck 選項，並有測試釘住這個行為（例如 `tests/test_combat_wiring.py::test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_rng`）。SAN 檢定已符合規格。改成禁止會改變遊戲玩法，所以我保留現況，只把政策判斷集中到 `checks/luck.py` 並記錄衝突。最小選項：(a) 維持現況並修改規格；(b) 把該處 `'allow_luck': not injury` 改成 `False`，並更新被釘住的測試與對應的戰鬥 Luck 按鈕行為。
+1. **Luck 政策衝突（已決定：維持現況並修改規格，程式未更動）。** 原需求規定 SAN／戰鬥檢定不可使用 Luck；現況 `combat_flow._request_check`（`app/combat_flow.py:173`）對戰鬥攻擊／防禦擲骰設 `allow_luck: not injury`，也就是提供 Luck 選項，並有測試釘住這個行為（例如 `tests/test_combat_wiring.py::test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_rng`）。SAN 檢定已符合規格。產品決定採用選項 (a)：戰鬥攻擊／防禦擲骰維持可用 Luck，規格改為「SAN 檢定與傷勢檢定（重傷、瀕死、穩定傷勢）不可用 Luck」，政策判斷集中在 `checks/luck.py`。不採用的選項 (b) 是把該處 `'allow_luck': not injury` 改成 `False` 並更新被釘住的測試。
 2. 戰鬥傷害骰與反擊骰仍直接使用 `app.dice`，不是檢定引擎的 `DicePort`（測試以 patch 腳本化）。
 3. `combat_flow` 內仍有 18 處 `is_managed`：它們區分「進行中戰鬥的工作副本」與「已結束戰鬥的已提交義務」，不是 legacy／managed 分支；消除它們需要一個明確的「義務範圍」概念。
 4. `scenario_ingestion` 與 `map_service` 仍用嚴格快照路徑 `commit_snapshot` 而非 delta `mutate`；改變它會改變函式行為，不屬於搬移。`handlers/system.py` 仍然很大。

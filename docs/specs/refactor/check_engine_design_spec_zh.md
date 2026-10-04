@@ -40,7 +40,7 @@
 
 由 `checks.luck.luck_allowed` 一個函式說明。理智檢定與決定瘋狂的 INT 檢定不提供 Luck；強推（Pushed Roll）結果為最終；大失敗不能用 Luck 買掉（`app.luck`）；帶 `allow_luck: False` 的待處理項目（戰鬥引擎為重傷、瀕死與穩定傷勢檢定設定）不提供。Luck 的選擇由伺服器依儲存的選項決定，不讀取模型輸入的 `allow_luck`。
 
-**未解決的衝突，本階段未更動：** 需求文件把戰鬥檢定描述為不可用 Luck，但受管理的戰鬥流程一直對攻擊與防禦擲骰提供 Luck，而且 `tests/test_combat_wiring.py` 釘住了這個行為。改變它會改動遊戲玩法，因此記錄在[第 2 階段報告](../../refactor/phase2-result.md)，附上要讓它成立所需的一行修改，留待產品決定。
+**產品決定，沒有改程式：** 需求文件原本把戰鬥檢定描述為不可用 Luck，但受管理的戰鬥流程一直對攻擊與防禦擲骰提供 Luck（`combat_flow._request_check` 設 `allow_luck: not injury`），而且 `tests/test_combat_wiring.py` 釘住了這個行為。決定維持現況並修訂需求：攻擊與防禦擲骰可以用 Luck；理智檢定與傷勢檢定（重傷、瀕死、穩定傷勢，已經是 `allow_luck: False`）不可以。衝突紀錄在[第 2 階段報告](../../refactor/phase2-result.md)。
 
 ## 相容性
 

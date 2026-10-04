@@ -50,7 +50,7 @@ pytest                # 2154 passed, 1 skipped, 222 subtests passed（第 1 階�
 | C2 等級邊界與 bonus/penalty | `test_c2_tier_boundaries`（14 組：critical／extreme／hard／regular／fail／fumble，含技能值 40 的 96 與 50 的 96）；`test_c2_bonus_penalty_and_required_tier_reach_the_dice_unchanged`（困難門檻下 regular 擲出顯示為失敗） | 通過 |
 | C3 autoroll 關閉 | `test_c3_autoroll_off_registers_a_pending_check_without_rolling_or_applying_anything`（未消耗任何骰、HP 不變、無事件與後果來源） | 通過 |
 | C4 重送 | 連續重送、並行雙擊（2 執行緒＋Barrier）、Luck 按鈕並行重送：只擲一次、只扣一次 Luck | 通過 |
-| C5 SAN 要求 Luck | `test_c5_sanity_check_never_offers_luck_and_a_luck_request_is_refused`、`test_c5_luck_policy_table`（7 組） | 通過；**戰鬥部分見第 5 節的衝突** |
+| C5 SAN 要求 Luck | `test_c5_sanity_check_never_offers_luck_and_a_luck_request_is_refused`、`test_c5_luck_policy_table`（7 組） | 通過；戰鬥攻擊／防禦擲骰依產品決定仍可用 Luck，見第 5 節 |
 | C6 Luck 成功／餘額被消耗 | 合法花費（扣點一次、事件記錄 Luck 變化）、餘額被其他 action 改成 2 後拒絕（無部分扣值、decision 仍開啟、revision 不變）、無效等級 | 通過 |
 | C7 已結算後的新檢定與非戰鬥傷害 | `test_c7_settled_check_leads_to_a_new_check_and_non_combat_damage_with_the_original_event_kept`（新 check id、`caused_by_check_id` 連回原事件、原事件保留、傷害只扣一次不重擲） | 通過 |
 | C8 SAN → INT 瘋狂鏈 | 手動模式：SAN 只扣一次、建立單一 INT pending（連回原檢定）、INT 只擲一次、瘋狂表只擲一次、重送不再擲；自動模式：INT 在同一請求內只擲一次 | 通過 |
@@ -66,7 +66,7 @@ pytest                # 2154 passed, 1 skipped, 222 subtests passed（第 1 階�
 
 | 類別 | 項目 |
 | --- | --- |
-| **需要你決定的衝突**（未更動） | 需求文件規定「SAN／combat 要求 Luck 必須明確 rejected」。SAN 已符合。但受管理的戰鬥流程對**攻擊與防禦擲骰**一直提供 Luck（`combat_flow._request_check` 設 `allow_luck: not injury`），`tests/test_combat_wiring.py::test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_rng` 等測試釘住這個行為；重傷、瀕死、穩定傷勢檢定已是 `allow_luck: False`。改成「戰鬥一律不可用 Luck」會改變遊戲玩法，所以我保留現況、把政策集中到 `checks/luck.py` 並記錄。最小選項：把 `combat_flow._request_check` 的 `'allow_luck': not injury` 改成 `False`，並更新被釘住的測試（連同對應的戰鬥 Luck 按鈕行為） |
+| 已決定的衝突（產品決定：維持現況並修改規格，程式未更動） | 需求文件規定「SAN／combat 要求 Luck 必須明確 rejected」。SAN 已符合。但受管理的戰鬥流程對**攻擊與防禦擲骰**一直提供 Luck（`combat_flow._request_check` 設 `allow_luck: not injury`），`tests/test_combat_wiring.py::test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_rng` 等測試釘住這個行為；重傷、瀕死、穩定傷勢檢定已是 `allow_luck: False`。改成「戰鬥一律不可用 Luck」會改變遊戲玩法，所以我保留現況、把政策集中到 `checks/luck.py` 並記錄。**決定：**維持戰鬥攻擊／防禦擲骰可用 Luck，需求文件改為「SAN 與傷勢檢定不可用 Luck」（見[檢定引擎規格](../specs/refactor/check_engine_design_spec_zh.md)與[總規格](../specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md)）。原先列出的最小選項（把 `'allow_luck': not injury` 改成 `False`）不採用 |
 | 本 PR 引入後修復 | 測試發現先匯入 `app.legacy_commands` 時會與 `app.commands.__init__` 循環匯入失敗；已改成 `app.commands` 對仍在 legacy 的名稱延遲載入（PR4 刪除 legacy 後這段也會消失） |
 | 行為差異（有意） | ① 無效 Luck 選項與餘額不足的拒絕，舊程式會寫入一次沒有變化的 state（revision +1），現在不寫（與規格「拒絕什麼都不寫」一致）。② 檢定後處理改用 `load_state` 取得最新快照，取代傳入物件的 refresh，內容相同。③ 已結算事件保存合併後，Keeper 工具路徑也要求調查員名稱一致（原本只比對 character_id）。④ 被另一檢定引出的檢定，事件與 pending 新增選用欄位 `caused_by_check_id`（需求「新 check 連回原 event」） |
 | baseline 既有（未修，已記錄） | ① `combat_flow.roll_pending_check` 仍直接用 `app.dice`，戰鬥管轄的檢定尚無法注入腳本化骰子（第 3 階段）。② 重傷 CON 檢定（`keeper.py`、`combat.py` 建立的 pending）沒有 `caused_by_check_id`；它不是由已結算的檢定引出，而是由傷害引出，連結對象需要先定義 |

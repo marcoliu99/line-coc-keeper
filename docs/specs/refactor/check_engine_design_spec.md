@@ -40,7 +40,7 @@ Before this change a check could be settled through three codes that each carrie
 
 One function, `checks.luck.luck_allowed`, states it. Sanity checks and the INT check that decides madness never offer Luck; a Pushed Roll is final; a Fumble cannot be bought off (`app.luck`); a pending entry with `allow_luck: False` (set by the combat engine for injury, dying and stabilisation checks) offers none. The Luck decision is chosen by the server from the stored options; an `allow_luck` value coming from model input is not read.
 
-**Open conflict, not changed here:** the requirements describe combat checks as Luck-free, but the managed combat flow has always offered Luck on attack and defence rolls and `tests/test_combat_wiring.py` pins that behaviour. Changing it alters gameplay, so it is recorded in the [phase 2 report](../../refactor/phase2-result.md) with the one-line change that would make it so, and left for a product decision.
+**Decision (product owner), no code change:** the requirements had described combat checks as Luck-free, but the managed combat flow has always offered Luck on attack and defence rolls (`combat_flow._request_check` sets `allow_luck: not injury`) and `tests/test_combat_wiring.py` pins that behaviour. The decision is to keep it and amend the requirement: attack and defence rolls may use Luck; sanity checks and the injury checks (major wound, dying, stabilisation, which already pass `allow_luck: False`) may not. The conflict is recorded in the [phase 2 report](../../refactor/phase2-result.md).
 
 ## Compatibility
 

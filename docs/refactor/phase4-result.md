@@ -63,7 +63,7 @@ pytest                # 2219 passed, 1 skipped, 222 subtests passed（第 3 階�
 | 差異（有意） | log 來源的 logger 名稱由 `app.legacy_commands` 改為 `app.services.map_service`（`_find_room_via_rag` 的 INFO log）；其餘搬走的模組原本沒有使用該 logger。若有以 logger 名稱過濾的外部設定，需要更新 |
 | baseline 既有（未修，已記錄） | `scenario_ingestion` 與 `map_service` 仍用 `state_transaction.commit_snapshot`（嚴格快照路徑）提交，而不是 delta `mutate`；改成 delta 會改變函式的行為，不屬於「搬移」 |
 | baseline 既有（未修，已記錄） | `commands/handlers/system.py` 仍然很大，且保留自己的 `commit_snapshot` 呼叫；規格只要求搬走能讓 `legacy_commands` 被刪除的部分 |
-| 未解決（沿用） | 第 2 階段的 Luck 政策衝突（戰鬥攻擊／防禦擲骰是否可用 Luck）仍待產品決定；戰鬥骰仍直接用 `app.dice` 而非檢定引擎的 `DicePort` |
+| 未解決（沿用） | 第 2 階段的 Luck 政策衝突已由產品決定：維持戰鬥攻擊／防禦擲骰可用 Luck，並修改規格（程式未更動）；戰鬥骰仍直接用 `app.dice` 而非檢定引擎的 `DicePort` |
 | 限制 | typed extraction result 與 provider 抽象依規格留待後續階段；PDF／預製角色流程只做原樣搬移 |
 
 ## 6. 相容性與回退
