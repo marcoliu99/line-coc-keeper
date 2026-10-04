@@ -53,16 +53,19 @@
 | 後處理（delivery／maintenance） | `legacy_commands._deliver_side_effects`、`_spawn_post_turn_maintenance`、`_run_post_turn_maintenance_*` | `services/post_turn.py`（PR4 前先移出，供 check 與 router 共用） |
 | 型別別名（`Reply`、`SendDM`…） | `legacy_commands` | `commands/types.py` |
 
-## 3. 戰鬥（PR3 的盤點）
+## 3. 戰鬥（PR3 完成；「遷移前」是 `2affd06` 的實測，「PR3 之後」是目前狀態）
 
-| 模組 | 行數 | 備註 |
+| 模組 | 遷移前 | PR3 之後 |
 | --- | --- | --- |
-| `combat.py` | 1888 | 先於 `combat_flow` 載入；四處函式內 `from app import combat_flow`（102、1395、1617、1714 行）形成循環 |
-| `combat_flow.py` | 1387 | 頂層 `from app import combat`；managed pending／choice／settlement |
-| `combat_resources.py` | 677 | working resource ledger |
-| `combat_rules.py` | 304 | 純規則（維持純淨） |
-| `keeper_tools/combat.py`、`managed_combat.py`、`resource_bridge.py` | 374／352／124 | tool 與 transport 橋接 |
-| 開戰前 checkpoint | `combat._checkpoint_before_combat` | PR1 已改為加入同一個交易 |
+| `combat.py` | 1888 行；先於 `combat_flow` 載入；四處函式內 `from app import combat_flow`（102、1395、1617、1714 行）形成循環；15 處讀取 managed 旗標 | 1765 行；不匯入、也到達不了 `combat_flow` 或引擎；依模式不同的步驟由 `ModeOps` 注入；旗標讀取 2 處（守門與明確關閉） |
+| `combat_flow.py` | 1387 行；頂層 `from app import combat`；18 處讀取旗標 | 1598 行；多出從 `combat` 搬來的 `apply_managed_damage`／`managed_single_hit`／`process_managed_timing` 與 `MANAGED_OPS`；其餘 18 處旗標讀取是「進行中的戰鬥 vs. 已結束戰鬥的義務」的區分，不是模式分支 |
+| `combat_resources.py` | 677 行 | 716 行；唯一的 `is_managed` 定義與 `admit_continuing_state`（自 `combat_flow` 下移）；仍只依賴 models |
+| `combat_rules.py` | 304 行，純規則 | 不變 |
+| `services/combat_engine.py`、`combat_actions.py`（新） | — | `CombatEngine.handle`、`mode_of`、35 個 action；唯一匯入 `combat_flow` 的模組 |
+| `keeper_tools/combat.py`、`managed_combat.py`、`resource_bridge.py` | 374／352／124 行；工具內直接呼叫 `combat`／`combat_flow`；`resource_bridge.managed` 是第二份「managed」謂詞 | 372／288／124 行；全部經引擎；`managed` 改為委派 `combat_resources.is_managed` |
+| `services/managed_checks.py` | 直接呼叫 `combat_flow` | 經引擎（`ValidatePending`／`RollPending`／`CheckResult`／`Choose`） |
+| `models.CombatState.retire_character` | 函式內 `from app import combat`（模型層向上依賴） | 由呼叫端傳入 `finish_turn`（`combat_engine.finish_retired_turn`） |
+| 開戰前 checkpoint | `combat._checkpoint_before_combat` | PR1 已加入同一個交易；不變 |
 
 ## 4. legacy_commands（PR4 的盤點）
 
