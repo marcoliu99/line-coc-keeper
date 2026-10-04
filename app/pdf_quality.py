@@ -1,6 +1,7 @@
 """Conservative, local PDF evidence checks; these do not prove semantic fidelity."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import re
 import statistics
@@ -367,6 +368,394 @@ def bind_repeated_vertical_evidence(pages: list[dict]) -> None:
         evidence = row['evidence']
         evidence['repeated_vertical_signatures'] = [span['signature'] for span in evidence.get('vertical_spans', [])
                                                     if counts[span['signature']] >= 3]
+
+
+def _alnum_alignment(value: str) -> tuple[str, list[int]]:
+    """Use punctuation-free characters only to locate edits, never to validate mechanics."""
+    chars: list[str] = []
+    offsets: list[int] = []
+    for index, char in enumerate(value):
+        folded = char.casefold()
+        if char.isalnum():
+            chars.append(folded if len(folded) == 1 else char)
+            offsets.append(index)
+    return ''.join(chars), offsets
+
+
+def _qualified_decorative_span(evidence: dict) -> tuple[dict, list[str], list[dict]] | None:
+    """Bind a repeated margin trace to isolated glyph blocks and adjacent body blocks."""
+    width = evidence.get('width', 0)
+    repeated = set(evidence.get('repeated_vertical_signatures', []))
+    candidates = []
+    for span in evidence.get('vertical_spans', []):
+        if (span['signature'] not in repeated or not span['margin'] or not span['large']
+                or span['body_font_used'] or not width):
+            continue
+        x0, y0, x1, y1 = span['bbox']
+        glyph_words = sorted((word for word in evidence.get('words', [])
+                              if word.get('font') == span['font']
+                              and len(word['text'].strip()) == 1
+                              and x0 - 2 <= word['bbox'][0] and word['bbox'][2] <= x1 + 2
+                              and y0 - 2 <= word['bbox'][1] and word['bbox'][3] <= y1 + 2),
+                             key=lambda word: (word['bbox'][1], word['bbox'][0]))
+        glyphs = [word['text'].strip() for word in glyph_words]
+        if (len(glyphs) < 3 or ''.join(glyphs).casefold() != span['joined']
+                or any(abs(word.get('font_size', 0) - span['size']) > span['size'] * .1
+                       for word in glyph_words)
+                or any(glyph_words[i + 1]['bbox'][1] < glyph_words[i]['bbox'][1]
+                       or glyph_words[i + 1]['bbox'][1] - glyph_words[i]['bbox'][3] > span['size']
+                       for i in range(len(glyph_words) - 1))):
+            continue
+        glyph_blocks = {word['block'] for word in glyph_words}
+        containers = [block for block in evidence['blocks'] if block['id'] in glyph_blocks]
+        if (len(containers) != len(glyph_blocks)
+                or any(any((line['bbox'][0] >= x0 - 2 and line['bbox'][2] <= x1 + 2
+                            and len(_alnum_alignment(line['text'])[0]) != 1)
+                           or (line['bbox'][2] > x1 + 2 and line['bbox'][0] <= x1 + width * .08)
+                           for line in block['lines']) for block in containers)):
+            continue
+        body = sorted((block for block in evidence['blocks']
+                       if block['id'] not in glyph_blocks
+                       and x1 < block['bbox'][0] <= x1 + width * .08
+                       and min(y1, block['bbox'][3]) > max(y0, block['bbox'][1])
+                       and any(len(_alnum_alignment(line['text'])[0]) >= 20 for line in block['lines'])),
+                      key=lambda block: (block['bbox'][1], block['bbox'][0]))
+        if (not body or max(block['bbox'][0] for block in body) - min(block['bbox'][0] for block in body) > width * .03
+                or any(body[i + 1]['bbox'][1] - body[i]['bbox'][3] > span['size'] * 2
+                       for i in range(len(body) - 1))):
+            continue
+        candidates.append((span, glyphs, body))
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def repair_decorative_layout(layout: str, evidence: dict, *, warnings: list[str],
+                             method: str, pairs: list[dict]) -> tuple[str, dict]:
+    """Remove only uniquely aligned, source-bound margin glyph insertions."""
+    result = {'status': 'not_applicable', 'removed_glyphs': 0}
+    if method != 'layout' or 'ambiguous_columns' not in warnings:
+        return layout, result
+    qualified = _qualified_decorative_span(evidence)
+    if qualified is None:
+        return layout, result
+    span, glyphs, body = qualified
+    result['status'] = 'ambiguous_alignment'
+    reference = ' '.join(line['text'] for block in body for line in block['lines'])
+    source, _ = _alnum_alignment(reference)
+    candidate, offsets = _alnum_alignment(layout)
+    if len(source) < 24 or len(candidate) < len(source):
+        return layout, result
+    anchor_length = 8
+    start_anchor, end_anchor = source[:anchor_length], source[-anchor_length:]
+    if candidate.count(start_anchor) != 1 or candidate.count(end_anchor) != 1:
+        return layout, result
+    start_index = candidate.index(start_anchor)
+    end_index = candidate.index(end_anchor)
+    if end_index <= start_index:
+        return layout, result
+    first_raw = offsets[start_index]
+    previous_paragraph = layout.rfind('\n\n', 0, first_raw)
+    start_raw = previous_paragraph + 2 if previous_paragraph >= 0 else 0
+    end_raw = offsets[end_index + anchor_length - 1] + 1
+    if end_raw <= start_raw or end_raw - start_raw > len(reference) * 3 + 200:
+        return layout, result
+    window = layout[start_raw:end_raw]
+    sequence, mapping = _alnum_alignment(window)
+    edits: list[int] = []
+    residual_insertion = False
+    expected = [glyph.casefold() for glyph in glyphs]
+    for tag, source_start, source_end, target_start, target_end in difflib.SequenceMatcher(
+            None, source, sequence, autojunk=False).get_opcodes():
+        if tag == 'equal':
+            continue
+        if tag != 'insert' or len(edits) >= len(expected):
+            return layout, result
+        inserted = sequence[target_start:target_end]
+        if not inserted.startswith(expected[len(edits)]):
+            return layout, result
+        # An already-duplicated body prefix may share this inserted run. It
+        # remains untouched; only the first, independently bound glyph is cut.
+        remainder = inserted[1:]
+        if remainder and (len(remainder) < anchor_length
+                          or not source[source_start:].startswith(remainder)):
+            return layout, result
+        residual_insertion |= bool(remainder)
+        proposed = mapping[target_start] + start_raw
+        nearby = [position for position in range(max(start_raw, proposed - 3),
+                                                 min(end_raw, proposed + 4))
+                  if layout[position].casefold() == expected[len(edits)]]
+        standalone = [position for position in nearby
+                      if (position == 0 or not layout[position - 1].isalnum())
+                      and (position + 1 == len(layout) or not layout[position + 1].isalnum())]
+        if len(standalone) == 1:
+            edits.append(standalone[0])
+        elif len(nearby) == 1 and nearby[0] == proposed:
+            edits.append(proposed)
+        else:
+            return layout, result
+    if len(edits) != len(expected):
+        return layout, result
+    removed = set(edits)
+    for position in edits:
+        if (position + 1 < len(layout) and layout[position + 1] == ' '
+                and (position == start_raw or layout[position - 1].isspace())):
+            removed.add(position + 1)
+    repaired = ''.join(char for index, char in enumerate(layout) if index not in removed)
+    repaired_sequence, _ = _alnum_alignment(repaired[start_raw:end_raw - len(removed)])
+    # Every source character must still occur in order; generic alignment
+    # punctuation never authorizes a mechanics or numeric change.
+    iterator = iter(repaired_sequence)
+    if not all(any(char == item for item in iterator) for char in source):
+        return layout, result
+    if (_mechanic_tokens(layout) - _mechanic_tokens(repaired)
+            or _mechanic_tokens(reference) - _mechanic_tokens(repaired)
+            or rich_ocr_mechanics(layout) - rich_ocr_mechanics(repaired)
+            or rich_ocr_mechanics(reference) - rich_ocr_mechanics(repaired)
+            or Counter(x.casefold() for x in _NUMBER.findall(layout))
+            - Counter(x.casefold() for x in _NUMBER.findall(repaired))
+            or any(check['status'] == 'matched' for check in check_pairs(pairs, layout))
+            and any(check['status'] != 'matched' for check in check_pairs(pairs, repaired))):
+        result['status'] = 'source_loss'
+        return layout, result
+    result.update(status='repaired', removed_glyphs=len(edits),
+                  body_blocks=[block['id'] for block in body], span_signature=span['signature'],
+                  residual_source_duplicate=residual_insertion)
+    return repaired, result
+
+
+def _source_occurrences(text: str, source: str) -> list[tuple[int, int]]:
+    """Locate an exact source run while allowing only layout whitespace changes."""
+    parts = source.strip().split()
+    if not parts:
+        return []
+    pattern = r'\s+'.join(re.escape(part) for part in parts)
+    if parts[0][0].isalnum():
+        pattern = r'(?<!\w)' + pattern
+    if parts[-1][-1].isalnum():
+        pattern += r'(?!\w)'
+    return [match.span() for match in re.finditer(pattern, text)]
+
+
+def _trace_binding(page: Any, span: dict, source: str) -> tuple[int, int] | None:
+    """Require one painted glyph run with the same characters and origins."""
+    raw_chars = span['chars']
+    raw_text = ''.join(char['c'] for char in raw_chars)
+    begin = raw_text.find(source)
+    if begin < 0:
+        return None
+    glyphs = raw_chars[begin:begin + len(source)]
+    matches: list[tuple[int, int]] = []
+    for trace in page.get_texttrace():
+        if (trace.get('type') != 0 or trace.get('opacity', 0) <= 0
+                or trace.get('font') != span['font']
+                or abs(trace.get('size', 0) - span['size']) > .5):
+            continue
+        trace_text = ''.join(chr(char[0]) for char in trace['chars'])
+        for found in re.finditer(re.escape(source), trace_text):
+            traced = trace['chars'][found.start():found.end()]
+            if len(traced) != len(glyphs):
+                continue
+            if all(all(abs(raw['origin'][axis] - painted[2][axis]) <= .5
+                       for axis in (0, 1))
+                   and all(abs(raw['bbox'][edge] - painted[3][edge]) <= .5
+                           for edge in (0, 2))
+                   for raw, painted in zip(glyphs, traced, strict=True)):
+                matches.append((trace['seqno'], found.start()))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _source_fragment_sequences(raw_blocks: list[dict], source: str) -> set[tuple[tuple[int, ...], ...]] | None:
+    """Find distinct raw character paths for a layout run, ignoring formatting only to veto edits.
+
+    PDF extraction order can interleave unrelated blocks. Fragment paths therefore
+    retain each block/line/span and character interval instead of flattening
+    the page text. More than one path, or an excessive search, is ambiguous.
+    """
+    letters = ''.join(char.casefold() for char in source if char.isalnum())
+    if not letters or len(letters) > 512:
+        return None
+    fragments: list[tuple[tuple[int, int, int], str, list[int], list[str]]] = []
+    for block_index, block in enumerate(raw_blocks):
+        for line_index, line in enumerate(block.get('lines', [])):
+            for span_index, span in enumerate(line['spans']):
+                chars = [char['c'] for char in span['chars']]
+                if any(len(char) != 1 or len(char.casefold()) != 1 for char in chars):
+                    return None
+                normalized = ''.join(char.casefold() for char in chars if char.isalnum())
+                offsets = [index for index, char in enumerate(chars) if char.isalnum()]
+                if normalized:
+                    fragments.append(((block_index, line_index, span_index), normalized, offsets, chars))
+    by_initial: dict[str, list[int]] = {}
+    for index, (_, normalized, _, _) in enumerate(fragments):
+        by_initial.setdefault(normalized[0], []).append(index)
+    paths: set[tuple[tuple[int, ...], ...]] = set()
+    explored = 0
+
+    def interval(identity: tuple[int, int, int], offsets: list[int], chars: list[str],
+                 start: int, end: int) -> tuple[int, ...]:
+        first, last = offsets[start], offsets[end - 1] + 1
+        while first and not chars[first - 1].isalnum() and not chars[first - 1].isspace():
+            first -= 1
+        while last < len(chars) and not chars[last].isalnum() and not chars[last].isspace():
+            last += 1
+        return (*identity, first, last)
+
+    def add_path(path: tuple[tuple[int, ...], ...]) -> None:
+        paths.add(path)
+
+    def continue_path(position: int, used: frozenset[int], path: tuple[tuple[int, ...], ...]) -> None:
+        nonlocal explored
+        if position == len(letters) or len(paths) > 1 or explored > 10000:
+            if position == len(letters):
+                add_path(path)
+            return
+        for index in by_initial.get(letters[position], []):
+            if index in used:
+                continue
+            explored += 1
+            identity, normalized, offsets, chars = fragments[index]
+            remaining = letters[position:]
+            if remaining.startswith(normalized):
+                end = len(normalized)
+            elif normalized.startswith(remaining):
+                end = len(remaining)
+            else:
+                continue
+            fragment = interval(identity, offsets, chars, 0, end)
+            continue_path(position + end, used | {index}, (*path, fragment))
+            if len(paths) > 1 or explored > 10000:
+                return
+
+    for index, (identity, normalized, offsets, chars) in enumerate(fragments):
+        start = 0
+        while start < len(normalized):
+            found = normalized.find(letters[0], start)
+            if found < 0:
+                break
+            explored += 1
+            suffix = normalized[found:]
+            if letters.startswith(suffix):
+                fragment = interval(identity, offsets, chars, found, len(normalized))
+                continue_path(len(suffix), frozenset({index}), (fragment,))
+            elif suffix.startswith(letters):
+                fragment = interval(identity, offsets, chars, found, found + len(letters))
+                add_path((fragment,))
+            if len(paths) > 1 or explored > 10000:
+                break
+            start = found + 1
+        if len(paths) > 1 or explored > 10000:
+            break
+    return paths if explored <= 10000 else None
+
+
+def repair_duplicate_source_layout(page: Any, layout: str, native: str, *,
+                                   method: str, pairs: list[dict],
+                                   decorative_status: str) -> tuple[str, dict]:
+    """Remove one layout emission only when one PDF span has a unique paragraph flow."""
+    result: dict = {'status': 'not_applicable'}
+    if method != 'layout':
+        return layout, result
+    raw_blocks = page.get_text('rawdict')['blocks']
+    plain_blocks = page.get_text('dict')['blocks']
+    for block_index, block in enumerate(raw_blocks):
+        lines = block.get('lines', [])
+        for line_index in range(1, len(lines) - 1):
+            previous, current, following = lines[line_index - 1:line_index + 2]
+            if any(len(line['spans']) != 1 for line in (previous, current, following)):
+                continue
+            spans = [line['spans'][0] for line in (previous, current, following)]
+            before, source, after = (''.join(char['c'] for char in span['chars']).strip()
+                                     for span in spans)
+            if not before or not source or not after:
+                continue
+            layout_ranges = _source_occurrences(layout, source)
+            if len(layout_ranges) != 2:
+                continue
+            result = {'status': 'duplicate_source_emission_ambiguous',
+                      'output_ranges': [list(pair) for pair in layout_ranges]}
+            if decorative_status not in {'not_applicable', 'repaired'}:
+                return layout, result
+            if len(_source_occurrences(native, source)) != 1:
+                return layout, result
+            if sum(len(_source_occurrences(''.join(char['c'] for char in span['chars']), source))
+                   for raw_block in raw_blocks for line in raw_block.get('lines', [])
+                   for span in line['spans']) != 1:
+                return layout, result
+            raw_source = ''.join(char['c'] for char in spans[1]['chars'])
+            source_start = raw_source.find(source)
+            expected_fragments = ((block_index, line_index, 0, source_start,
+                                   source_start + len(source)),)
+            source_paths = _source_fragment_sequences(raw_blocks, source)
+            if source_start < 0 or source_paths != {expected_fragments}:
+                return layout, result
+            trace_binding = _trace_binding(page, spans[1], source)
+            if trace_binding is None:
+                return layout, result
+            # Raw and plain extraction must agree on this source geometry.
+            plain_lines = plain_blocks[block_index].get('lines', [])
+            if len(plain_lines) <= line_index + 1 or not plain_lines[line_index]['spans']:
+                return layout, result
+            if any(abs(spans[1]['bbox'][edge]
+                       - plain_lines[line_index]['spans'][0]['bbox'][edge]) > .5
+                   for edge in range(4)):
+                return layout, result
+            if (previous['dir'] != current['dir'] or current['dir'] != following['dir']
+                    or spans[1]['font'] != spans[2]['font']
+                    or abs(spans[1]['size'] - spans[2]['size']) > .5
+                    or abs(current['bbox'][0] - following['bbox'][0]) > spans[1]['size'] * 1.5
+                    or not previous['bbox'][1] < current['bbox'][1] < following['bbox'][1]
+                    or following['bbox'][1] - current['bbox'][3] > spans[1]['size'] * 2):
+                return layout, result
+            before_ranges = _source_occurrences(layout, before)
+            after_ranges = _source_occurrences(layout, after)
+            if any(sum(len(_source_occurrences(''.join(char['c'] for char in span['chars']), item))
+                       for raw_block in raw_blocks for line in raw_block.get('lines', [])
+                       for span in line['spans']) != 1 for item in (before, after)):
+                return layout, result
+            if (len(before_ranges) != 1 or len(after_ranges) != 1
+                    or not before_ranges[0][0] < layout_ranges[0][0]
+                    or not layout_ranges[0][1] < after_ranges[0][0]
+                    or max(layout_ranges[-1][1], after_ranges[0][1]) - before_ranges[0][1]
+                    > 3 * (len(before) + 2 * len(source) + len(after))):
+                return layout, result
+            flows = [index for index, (_, end) in enumerate(layout_ranges)
+                     if end < after_ranges[0][0]
+                     and layout[end:after_ranges[0][0]].isspace()
+                     and '\n\n' not in layout[end:after_ranges[0][0]]]
+            if len(flows) != 1:
+                return layout, result
+            kept = flows[0]
+            removed = layout_ranges[1 - kept]
+            left, right = layout[:removed[0]], layout[removed[1]:]
+            # Trim only the separator attached to the orphan emission.
+            if left.endswith(' ') and right.startswith(' '):
+                right = right[1:]
+            proposed = left + right
+            final_source = _source_occurrences(proposed, source)
+            final_before = _source_occurrences(proposed, before)
+            final_after = _source_occurrences(proposed, after)
+            if (len(final_source) != 1 or len(final_before) != 1 or len(final_after) != 1
+                    or not final_before[0][1] < final_source[0][0] < final_after[0][0]
+                    or not proposed[final_source[0][1]:final_after[0][0]].isspace()
+                    or '\n\n' in proposed[final_source[0][1]:final_after[0][0]]
+                    or _mechanic_tokens(native) - _mechanic_tokens(proposed)
+                    or rich_ocr_mechanics(native) - rich_ocr_mechanics(proposed)
+                    or Counter(_NUMBER.findall(native)) - Counter(_NUMBER.findall(proposed))
+                    or any(check['status'] == 'matched' for check in check_pairs(pairs, layout))
+                    and any(check['status'] != 'matched' for check in check_pairs(pairs, proposed))):
+                result['status'] = 'duplicate_source_emission_preservation_failed'
+                return layout, result
+            box = tuple(round(value * 4) / 4 for value in spans[1]['bbox'])
+            identity = (f'{page.number}:{expected_fragments}:{source}:'
+                        f'{box}:{current["dir"]}:{spans[1]["font"]}:'
+                        f'{spans[1]["size"]}:{trace_binding}')
+            result.update(status='duplicate_source_emission_repaired',
+                          source_run=hashlib.sha256(identity.encode()).hexdigest()[:20],
+                          source_fragment_count=len(expected_fragments),
+                          kept_range=list(layout_ranges[kept]), removed_range=list(removed),
+                          removed_chars=len(layout) - len(proposed), source_unique=True,
+                          trace_unique=True, flow_unique=True, preservation='passed')
+            return proposed, result
+    return layout, result
 
 
 def numeric_pairs(evidence: dict) -> list[dict]:
