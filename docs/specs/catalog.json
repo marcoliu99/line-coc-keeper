@@ -1542,6 +1542,15 @@
       "evidence": ["app/pdf_layout.py", "app/pdf_loader.py", "scripts/setup_paddle_layout.py", "tests/test_pdf_paddle_layout.py", "tests/test_setup_paddle_layout.py", "tests/fixtures/paddle_layout/provenance.json", "docs/specs/enhancement/paddle_two_column_reading_order_results.json"],
       "path": "docs/specs/enhancement/paddle_two_column_reading_order.md",
       "zh_path": "docs/specs/enhancement/paddle_two_column_reading_order_zh.md"
+    },
+    {
+      "title": "Python 3.13 prewarm lifecycle and prepared-model migration",
+      "zh": "Python 3.13 預熱程序生命週期與既有模型搬移",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": ["app/scenario_rag.py", "scripts/migrate_paddle_models.py", "tests/test_embedding_timeout.py", "tests/test_migrate_paddle_models.py"],
+      "path": "docs/specs/maintenance/python_313_prewarm_model_migration.md",
+      "zh_path": "docs/specs/maintenance/python_313_prewarm_model_migration_zh.md"
     }
   ]
 }

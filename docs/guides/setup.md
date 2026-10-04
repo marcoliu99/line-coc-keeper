@@ -24,20 +24,20 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt
 pip install -r requirements-pdf-ocr.txt
 python scripts/migrate_paddle_models.py --dry-run \
-  --ocr-dest /Users/marcoliu/data/paddle/paddleocr \
-  --layout-dest /Users/marcoliu/data/paddle/paddle-layout
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
 python scripts/migrate_paddle_models.py \
-  --ocr-dest /Users/marcoliu/data/paddle/paddleocr \
-  --layout-dest /Users/marcoliu/data/paddle/paddle-layout
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
 ```
 
-The script copies complete models from `~/.cache/line-coc-keeper/paddleocr` and `~/.cache/line-coc-keeper/paddle-layout` by default. Use `--ocr-source` or `--layout-source` if prepared models are elsewhere. It never downloads models and retains both sources unless `--remove-source` is specified. If a source is missing, prepare it explicitly with `python scripts/setup_paddle_ocr.py --model-dir /Users/marcoliu/data/paddle/paddleocr` or `python scripts/setup_paddle_layout.py --model-dir /Users/marcoliu/data/paddle/paddle-layout` instead of running migration. After preparation, set in `.env`:
+The script copies complete models from `~/.cache/line-coc-keeper/paddleocr` and `~/.cache/line-coc-keeper/paddle-layout` by default. Both destination arguments are required. Use `--ocr-source` or `--layout-source` if prepared models are elsewhere. It never downloads models and retains both sources unless `--remove-source` is specified. If a source is missing, prepare it explicitly with `python scripts/setup_paddle_ocr.py --model-dir "$HOME/data/paddle/paddleocr"` or `python scripts/setup_paddle_layout.py --model-dir "$HOME/data/paddle/paddle-layout"` instead of running migration. After preparation, copy the absolute paths printed by the script into `.env`:
 
 ```dotenv
 PDF_PADDLE_OCR_ENABLED=true
-PDF_PADDLE_MODEL_DIR=/Users/marcoliu/data/paddle/paddleocr
+PDF_PADDLE_MODEL_DIR=/absolute/path/to/paddle/paddleocr
 PDF_PADDLE_LAYOUT_ENABLED=true
-PDF_PADDLE_LAYOUT_MODEL_DIR=/Users/marcoliu/data/paddle/paddle-layout
+PDF_PADDLE_LAYOUT_MODEL_DIR=/absolute/path/to/paddle/paddle-layout
 ```
 
 ## Configure

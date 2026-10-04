@@ -44,6 +44,10 @@ def _publish(staging: Path, destination: Path) -> None:
             shutil.rmtree(backup)
 
 
+def _overlap(first: Path, second: Path) -> bool:
+    return first.is_relative_to(second) or second.is_relative_to(first)
+
+
 def migrate_models(
     ocr_source: Path, layout_source: Path, ocr_dest: Path, layout_dest: Path,
     *, dry_run: bool = False, remove_source: bool = False,
@@ -60,14 +64,21 @@ def migrate_models(
          (LAYOUT_MODEL,), model_ready,
          'PDF_PADDLE_LAYOUT_MODEL_DIR'),
     )
+    # Replacing a destination must not move/delete either model source or the
+    # other destination, even when --remove-source is absent.
+    for index, (_label, source, destination, _models, ready, _env) in enumerate(plans):
+        if _overlap(source, destination) and not (source == destination and ready(destination)):
+            raise ValueError(f'Source and destination overlap: {source} / {destination}')
+        for other_index, (_other_label, other_source, other_dest, *_rest) in enumerate(plans):
+            if index != other_index and (_overlap(destination, other_source)
+                                         or _overlap(destination, other_dest)):
+                raise ValueError(f'Migration paths overlap: {destination}')
     # Check every required source before creating either destination.
     for label, source, destination, models, ready, _env in plans:
         action = 'already ready' if ready(destination) else 'copy'
         print(f'{label}: {action}; source={source}; destination={destination}; models={",".join(models)}')
         if action == 'copy' and not ready(source):
             raise ValueError(f'{label} source missing or incomplete: {source}')
-        if remove_source and source != destination and destination.is_relative_to(source):
-            raise ValueError(f'{label} destination is inside source: {destination}')
     if dry_run:
         print('Dry run: no files changed')
         return
@@ -104,8 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     cache = Path.home() / '.cache' / 'line-coc-keeper'
     parser.add_argument('--ocr-source', type=Path, default=cache / 'paddleocr')
     parser.add_argument('--layout-source', type=Path, default=cache / 'paddle-layout')
-    parser.add_argument('--ocr-dest', type=Path, default=Path('/Users/marcoliu/data/paddle/paddleocr'))
-    parser.add_argument('--layout-dest', type=Path, default=Path('/Users/marcoliu/data/paddle/paddle-layout'))
+    parser.add_argument('--ocr-dest', type=Path, required=True)
+    parser.add_argument('--layout-dest', type=Path, required=True)
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--remove-source', action='store_true')
     args = parser.parse_args(argv)

@@ -7,7 +7,7 @@ import pytest
 from app.pdf_layout import MODEL as LAYOUT_MODEL
 from app.pdf_layout import model_ready
 from app.pdf_ocr import MODEL_FILES, MODELS, models_ready
-from scripts.migrate_paddle_models import migrate_models
+from scripts.migrate_paddle_models import main, migrate_models
 
 
 def _prepared(root: Path, models: tuple[str, ...]) -> None:
@@ -101,6 +101,31 @@ def test_failed_atomic_publish_restores_partial_destination(model_paths, monkeyp
         migrate_models(*model_paths)
     assert (ocr_dest / 'old-marker').read_text() == 'keep'
     assert not model_paths[3].exists()
+
+
+@pytest.mark.parametrize('ocr_destination,layout_destination', [
+    ('layout-source', 'normal'),
+    ('inside-ocr-source', 'normal'),
+    ('normal', 'inside-ocr-destination'),
+])
+def test_overlapping_paths_fail_before_any_copy(model_paths, ocr_destination, layout_destination):
+    ocr_source, layout_source, ocr_dest, layout_dest = model_paths
+    if ocr_destination == 'layout-source':
+        ocr_dest = layout_source
+    elif ocr_destination == 'inside-ocr-source':
+        ocr_dest = ocr_source / 'new'
+    if layout_destination == 'inside-ocr-destination':
+        layout_dest = ocr_dest / 'layout'
+    with pytest.raises(ValueError, match='overlap'):
+        migrate_models(ocr_source, layout_source, ocr_dest, layout_dest)
+    assert models_ready(ocr_source)
+    assert model_ready(layout_source)
+
+
+def test_cli_requires_both_destination_paths():
+    with pytest.raises(SystemExit) as error:
+        main([])
+    assert error.value.code == 2
 
 
 def test_remove_source_requires_explicit_option(model_paths):

@@ -121,6 +121,30 @@ class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(process.kill_calls, 1)
         self.assertEqual(process.exitcode, -9)
 
+    async def test_shutdown_stays_bounded_if_kill_cannot_finish(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+
+        class UnkillableProcess:
+            pid = 123
+            exitcode = None
+
+            def terminate(self):
+                return None
+
+            def join(self, timeout=None):
+                return None
+
+            def kill(self):
+                return None
+
+        worker.process = UnkillableProcess()
+        state = scenario_rag._prewarm_state(asyncio.get_running_loop())
+        state.workers.add(worker)
+        state.worker_tasks.add(asyncio.create_task(worker.wait()))
+        with patch.object(scenario_rag, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
+            await asyncio.wait_for(scenario_rag.shutdown_prewarm(), timeout=1)
+        self.assertFalse(scenario_rag._prewarm_states.get(asyncio.get_running_loop()))
+
     async def test_shutdown_waits_boundedly_for_previously_started_worker(self):
         context = multiprocessing.get_context("spawn")
         started = context.Event()

@@ -24,20 +24,20 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt
 pip install -r requirements-pdf-ocr.txt
 python scripts/migrate_paddle_models.py --dry-run \
-  --ocr-dest /Users/marcoliu/data/paddle/paddleocr \
-  --layout-dest /Users/marcoliu/data/paddle/paddle-layout
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
 python scripts/migrate_paddle_models.py \
-  --ocr-dest /Users/marcoliu/data/paddle/paddleocr \
-  --layout-dest /Users/marcoliu/data/paddle/paddle-layout
+  --ocr-dest "$HOME/data/paddle/paddleocr" \
+  --layout-dest "$HOME/data/paddle/paddle-layout"
 ```
 
-預設從 `~/.cache/line-coc-keeper/paddleocr` 與 `~/.cache/line-coc-keeper/paddle-layout` 複製完整模型。若模型在別處，使用 `--ocr-source`、`--layout-source` 指定。script 不下載模型，且只有明確加 `--remove-source` 才刪除舊來源。若來源缺失，應另外明確執行 `python scripts/setup_paddle_ocr.py --model-dir /Users/marcoliu/data/paddle/paddleocr` 或 `python scripts/setup_paddle_layout.py --model-dir /Users/marcoliu/data/paddle/paddle-layout`，不要用 migration 下載。準備完成後，在 `.env` 設定：
+預設從 `~/.cache/line-coc-keeper/paddleocr` 與 `~/.cache/line-coc-keeper/paddle-layout` 複製完整模型；兩個目的地參數都必須明確指定。若模型在別處，使用 `--ocr-source`、`--layout-source` 指定。script 不下載模型，且只有明確加 `--remove-source` 才刪除舊來源。若來源缺失，應另外明確執行 `python scripts/setup_paddle_ocr.py --model-dir "$HOME/data/paddle/paddleocr"` 或 `python scripts/setup_paddle_layout.py --model-dir "$HOME/data/paddle/paddle-layout"`，不要用 migration 下載。準備完成後，把 script 印出的絕對路徑填入 `.env`：
 
 ```dotenv
 PDF_PADDLE_OCR_ENABLED=true
-PDF_PADDLE_MODEL_DIR=/Users/marcoliu/data/paddle/paddleocr
+PDF_PADDLE_MODEL_DIR=/absolute/path/to/paddle/paddleocr
 PDF_PADDLE_LAYOUT_ENABLED=true
-PDF_PADDLE_LAYOUT_MODEL_DIR=/Users/marcoliu/data/paddle/paddle-layout
+PDF_PADDLE_LAYOUT_MODEL_DIR=/absolute/path/to/paddle/paddle-layout
 ```
 
 ## 設定

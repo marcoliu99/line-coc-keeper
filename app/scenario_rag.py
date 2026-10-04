@@ -87,10 +87,10 @@ class _PrewarmWorker:
         if self.process.exitcode != 0:
             raise RuntimeError("prewarm worker exited unsuccessfully")
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         with self._start_stop_lock:
             if self.process.pid is None:
-                return
+                return True
             if self.process.exitcode is None:
                 self.process.terminate()
                 self.process.join(timeout=0.1)
@@ -99,6 +99,7 @@ class _PrewarmWorker:
                     self.process.join(timeout=0.5)
             else:
                 self.process.join(timeout=0)
+            return self.process.exitcode is not None
 
 
 @dataclass
@@ -212,8 +213,15 @@ async def shutdown_prewarm() -> None:
     finally:
         try:
             for child in state.workers:
-                await asyncio.to_thread(child.stop)
+                if not await asyncio.to_thread(child.stop):
+                    observability.event(
+                        "rag.prewarm.shutdown_degraded", level=logging.ERROR,
+                        rag_kind="scenario", status="kill_timeout",
+                    )
             if state.worker_tasks:
+                for worker in tuple(state.worker_tasks):
+                    if not worker.done():
+                        worker.cancel()
                 await asyncio.gather(*state.worker_tasks, return_exceptions=True)
         finally:
             _prewarm_states.pop(loop, None)
