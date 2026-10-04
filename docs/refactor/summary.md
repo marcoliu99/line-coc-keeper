@@ -9,7 +9,7 @@
 | 1 State Transaction | `main_v2` → `refactor/phase1-state-transaction` | [#165](https://github.com/marcoliu99/line-coc-keeper/pull/165) | `651455a727ea5fa8e3152e48eda11a7eadb6475c` | `ae0a614496f579faa71f71161a74a44b552a405c` | [phase1-result](phase1-result.md) |
 | 2 Check Engine | phase1 → `refactor/phase2-check-engine` | [#166](https://github.com/marcoliu99/line-coc-keeper/pull/166) | `d2f3edb04c21634abc47af2bdbadcadc14300af7` | `c57122f58e0d43c6ff6c810d9a48383b695b23d5` | [phase2-result](phase2-result.md) |
 | 3 Combat Engine | phase2 → `refactor/phase3-combat-engine` | [#167](https://github.com/marcoliu99/line-coc-keeper/pull/167) | `0eab400246b6dfe46a74eed94ceeacf4a500f00f` | `a3bebe11f259796ef97fc120e19a0e645c4f68f4` | [phase3-result](phase3-result.md) |
-| 4 退役 `legacy_commands` | phase3 → `refactor/phase4-retire-legacy-commands` | 本 PR | `89ac20bec9d7154c579e572d367671afed9958f4` | 本 PR 的 head commit | [phase4-result](phase4-result.md) |
+| 4 退役 `legacy_commands` | phase3 → `refactor/phase4-retire-legacy-commands` | [#168](https://github.com/marcoliu99/line-coc-keeper/pull/168) | `89ac20bec9d7154c579e572d367671afed9958f4` | 本 PR 的 head commit | [phase4-result](phase4-result.md) |
 
 `main_v2` 基線為 `2affd06c9b90105d454d19c6eb4f7e7c1fb232f8`。因為是疊式分支，合併順序必須是 #165 → #166 → #167 → 本 PR；每個 PR 合併後，下一個 PR 的 base 需改為 `main_v2`（或由合併工具自動 retarget）。
 
