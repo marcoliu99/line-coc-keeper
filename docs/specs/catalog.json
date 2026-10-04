@@ -1551,6 +1551,15 @@
       "evidence": ["app/scenario_rag.py", "scripts/migrate_paddle_models.py", "tests/test_embedding_timeout.py", "tests/test_migrate_paddle_models.py"],
       "path": "docs/specs/maintenance/python_313_prewarm_model_migration.md",
       "zh_path": "docs/specs/maintenance/python_313_prewarm_model_migration_zh.md"
+    },
+    {
+      "title": "Paddle OCR selection logging",
+      "zh": "Paddle OCR 選用結果日誌",
+      "category": "maintenance",
+      "status": "backlog",
+      "evidence": ["app/pdf_loader.py", "tests/test_pdf_paddle_ocr.py"],
+      "path": "docs/specs/maintenance/paddle_ocr_selection_logging.md",
+      "zh_path": "docs/specs/maintenance/paddle_ocr_selection_logging_zh.md"
     }
   ]
 }
