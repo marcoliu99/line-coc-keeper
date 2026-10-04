@@ -6,8 +6,8 @@
 
 | 項目 | 值 |
 | --- | --- |
-| Base SHA | `ae0a6142`（第 1 階段 head；其下 `2affd06c9b90105d454d19c6eb4f7e7c1fb232f8` 為 `main_v2`） |
-| 程式碼 commit | `d2f3edb`（`Route every check through one check engine`） |
+| Base SHA | `ae0a614496f579faa71f71161a74a44b552a405c`（第 1 階段 head；其下 `2affd06c9b90105d454d19c6eb4f7e7c1fb232f8` 為 `main_v2`） |
+| 程式碼 commit | `d2f3edb04c21634abc47af2bdbadcadc14300af7`（`Route every check through one check engine`） |
 | Result SHA | 本 PR 的 head commit；文件 commit 在 `d2f3edb` 之後 |
 | 實際環境 | Python 3.13.14、pytest 9.1.1、ruff 0.16.8、mypy 2.3.1、SQLite 3.45.1、4 核 Linux |
 
