@@ -2,7 +2,7 @@
 
 **English** | [繁體中文](README_zh.md)
 
-Upload a *Call of Cthulhu, Seventh Edition* (COC7e) scenario PDF to a Discord channel and let an LLM act as the Keeper. Players describe their actions in chat; the Keeper reads the scenario, narrates events, and decides when checks are needed. Python code handles dice rolls, skill checks, sanity, character resources, and combat state.
+Upload a *Call of Cthulhu, Seventh Edition* (COC7e) scenario PDF, or a UTF-8 Markdown scenario whose filename starts with `scenario`, to a Discord channel and let an LLM act as the Keeper. Players describe their actions in chat; the Keeper reads the scenario, narrates events, and decides when checks are needed. Python code handles dice rolls, skill checks, sanity, character resources, and combat state.
 
 The bot supports Anthropic Claude, Google Gemini, OpenAI, and the authenticated Codex CLI. Conversation and document-analysis providers can be selected independently. Codex handles conversation and general text analysis; PDF/image/OCR and pre-generated character-card analysis require an API provider because Codex's measured extraction accuracy was insufficient. See the [setup guide](docs/guides/setup.md) and [Codex OAuth guide](docs/guides/codex_oauth_testing.md).
 
@@ -14,7 +14,7 @@ Follow [Installation and setup](docs/guides/setup.md) to create a Discord applic
 
 ### Playing with an existing bot
 
-1. **Upload a scenario.** Attach a COC7e scenario PDF to the channel. Image-heavy PDFs take longer to process; the bot acknowledges the upload before returning the extracted content. Complete any scenario-selection or replacement prompts it presents.
+1. **Upload a scenario.** Attach a COC7e scenario PDF, or a UTF-8 `.md` file whose filename starts with `scenario`, to the channel. Markdown is ingested directly without PDF/OCR processing; image-heavy PDFs take longer to process. The bot acknowledges the upload before returning the extracted content. Complete any scenario-selection or replacement prompts it presents.
 2. **Create a character.** Each player can use:
 
    ```text
@@ -33,7 +33,7 @@ Discord channel
   -> app/discord_bot.py
   -> app/commands/router.py
        |
-       +-- Commands / PDF uploads
+       +-- Commands / scenario uploads
        |     -> app/commands/handlers/*.py
        |     -> app/legacy_commands.py (shared command implementations)
        |
@@ -78,7 +78,11 @@ Persistence:
 - **`app/discord_bot.py`** maintains the Discord gateway connection and forwards events to the command router.
 - **`app/commands/router.py`** is the platform-independent routing entry point. It dispatches commands to domain handlers and ordinary messages to the Supervisor.
 - **`app/commands/handlers/`** separates character, combat, system/scenario, and map commands into `character.py`, `combat.py`, `system.py`, and `map_handler.py`. Handlers reuse existing command logic where appropriate.
+<<<<<<< HEAD
 - **`app/legacy_commands.py`**, formerly the single `app/commands.py` module, contains shared implementations such as PDF uploads, pregen merging, and away/back handling (check and Luck resolution moved to `app/checks`). Resolved-check narration now enters the unified Supervisor flow rather than a separate `keeper.run_turn` path.
+=======
+- **`app/legacy_commands.py`**, formerly the single `app/commands.py` module, contains shared implementations such as PDF/Markdown scenario uploads, player checks and Luck decisions, pregen merging, and away/back handling. Resolved-check narration now enters the unified Supervisor flow rather than a separate `keeper.run_turn` path.
+>>>>>>> refactor/phase1-state-transaction
 
 ### Agentic Keeper and the unified turn flow
 
@@ -110,7 +114,7 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 - **`app/scenario_rag.py`** retrieves relevant scenario passages with BM25 and optional embedding-based scoring. When `SCENARIO_RAG_ENABLED=true`, the Keeper can use `search_scenario` instead of receiving the entire scenario text in its prompt.
 - **`app/memory_rag.py`** retrieves older conversation chunks that have been trimmed from the live history, preserving details beyond the rolling `campaign_summary`.
 - **`app/scenario_index.py`** extracts NPC/monster and location indexes on upload or through `/coc index`, giving the Keeper a consistent reference for scenario statistics.
-- **`app/scenario_library.py`** stores reusable PDF extraction results under `data/scenarios/<scenario-id>/`. It supports chapters, a current-and-next-chapter context window, image lookup, and the `/coc scenario` commands. See the [scenario-library specification](docs/specs/feature/scenario_library_design_spec.md).
+- **`app/scenario_library.py`** stores reusable PDF or Markdown scenario sources and their derived results under `data/scenarios/<scenario-id>/`. It supports chapters, a current-and-next-chapter context window, image lookup, and the `/coc scenario` commands. See the [scenario-library specification](docs/specs/feature/scenario_library_design_spec.md).
 - **`app/dice.py`** implements COC7e dice and check calculations, including d100 rolls, bonus/penalty dice, success tiers, and sanity.
 - **`app/models.py`** defines character/session models and quick investigator generation.
 - **`app/pdf_loader.py`** extracts PDF text using MarkItDown and OCR preprocessing, with PyMuPDF for page rendering and text fallback. Vision/OCR handles image-heavy pages; extracted images remain available for display, and map pages can be converted into structured room graphs. `extract_preview()` supports inexpensive upload matching.

@@ -106,3 +106,20 @@ def test_reviewed_retry_rejects_tampered_page_image(source) -> None:
 
     with pytest.raises(ValueError, match="image changed"):
         trusted.publish_derived(*args)
+
+
+def test_markdown_source_rejects_pdf_only_source_review(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(library, "SCENARIO_LIBRARY_DIR", tmp_path / "library")
+    text = "--- 第 1 頁 ---\n# Markdown Scenario"
+    scenario_id = library.save_markdown_scenario(
+        b"# Markdown Scenario",
+        title="Markdown Scenario",
+        filename="scenario_markdown.md",
+        preview=text,
+        text=text,
+        indexes={"npcs": [], "locations": []},
+        pregens=[],
+    )
+
+    with pytest.raises(ValueError, match="Markdown"):
+        trusted.read_snapshot(scenario_id)
