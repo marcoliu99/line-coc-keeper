@@ -541,17 +541,17 @@ async def handle_pdf_upload(
     return True
 
 
-_MARKDOWN_PAGE_MARKER_RE = re.compile(r"(?m)^-*\\s*第\\s*\\d+\\s*頁\\s*-*\\s*$")
+_MARKDOWN_PAGE_MARKER_RE = re.compile(r"(?m)^-*\s*第\s*\d+\s*頁\s*-*\s*$")
 
 
 def _markdown_scenario_title(text: str, file_name: str) -> str:
     """Derive a useful title without retaining the routing-only scenario prefix."""
     stem = Path(file_name).stem
-    cleaned = re.sub(r"^scenario(?:[\\s_.-]+|$)", "", stem, flags=re.IGNORECASE).strip(" _.-")
+    cleaned = re.sub(r"^scenario", "", stem, flags=re.IGNORECASE).strip(" _.-")
     if cleaned:
         return re.sub(r"_+", " ", cleaned).strip()
     for raw_line in text.splitlines():
-        match = re.match(r"^\\s*#\\s+(.+?)\\s*$", raw_line)
+        match = re.match(r"^\s*#\s+(.+?)\s*$", raw_line)
         if match:
             return match.group(1).strip()
     return pdf_loader.guess_title(text)
