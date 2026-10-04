@@ -93,6 +93,7 @@
 | [檢定引擎](specs/refactor/check_engine_design_spec_zh.md) | 已實作 | [English](specs/refactor/check_engine_design_spec.md) |
 | [戰鬥引擎](specs/refactor/combat_engine_design_spec_zh.md) | 已實作 | [English](specs/refactor/combat_engine_design_spec.md) |
 | [移除 legacy_commands](specs/refactor/legacy_commands_retirement_design_spec_zh.md) | 已實作 | [English](specs/refactor/legacy_commands_retirement_design_spec.md) |
+| [回合交接契約](specs/refactor/turn_payload_contract_design_spec_zh.md) | 已實作 | [English](specs/refactor/turn_payload_contract_design_spec.md) |
 | [每個戰鬥工具只有一個分派分支](specs/refactor/dead_combat_tool_branches_design_spec_zh.md) | 已實作 | [English](specs/refactor/dead_combat_tool_branches_design_spec.md) |
 | [移除未使用的舊指令分派器](specs/refactor/bug-remove-dead-legacy-coc-command-handler_zh.md) | 已實作 | [English](specs/refactor/bug-remove-dead-legacy-coc-command-handler.md) |
 | [統一玩家回合流程與獨立 KP Assistant](specs/refactor/unified_keeper_turn_flow_design_spec_zh.md) | 已實作 | [English](specs/refactor/unified_keeper_turn_flow_design_spec.md) |

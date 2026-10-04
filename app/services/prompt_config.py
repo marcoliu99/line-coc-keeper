@@ -255,8 +255,8 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
             "玩家要購買時，必須交代取得過程及費用的裁定依據；沒有付款紀錄不能宣稱已扣款。"),
         ])
     status = result.check_status
-    if status.get("pending"):
-        pending = status["pending"]
+    pending = status.get("pending")
+    if pending:
         lines.extend([
             "【待處理檢定狀態：已建立】",
             f"調查員：{pending.get('investigator', '未知')}",
@@ -359,10 +359,11 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 warning += "已記錄的變更會保留，請勿重做已完成的部分。"
             if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
                 warning += "不要重擲已結算的骰。"
-            if status.get("pending_luck"):
-                return f"{warning}\n\n{_pending_luck_fallback(status['pending_luck'])}"
-            if status.get("pending"):
-                pending = status["pending"]
+            held_luck = status.get("pending_luck")
+            if held_luck:
+                return f"{warning}\n\n{_pending_luck_fallback(held_luck)}"
+            pending = status.get("pending")
+            if pending:
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"

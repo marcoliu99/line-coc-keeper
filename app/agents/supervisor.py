@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any
 
 from app import config, keeper, locks, observability
 from app.agents import (
@@ -15,14 +15,13 @@ from app.agents import (
     narrator,
     state_reducer,
 )
-from app.domain.models import AgentMessage, MechanicResult
+from app.domain.models import AgentMessage, MechanicResult, PlayerTurnKind
 from app.models import GroupState
 from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
 from app.services import mutation_admission, prompt_config, turn_delivery, turn_handoff
 
 _logger = logging.getLogger(__name__)
-PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 
 
 async def prefetch_retrieval(

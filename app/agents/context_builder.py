@@ -22,7 +22,7 @@ from app.config import (
     SCENARIO_RAG_ENABLED,
     SCENARIO_RAG_TOP_K,
 )
-from app.domain.models import AgentMessage
+from app.domain.models import AgentMessage, TurnPayload
 from app.keeper_tools import resource_bridge
 from app.models import GroupState
 from app.services import narrative_corrections
@@ -326,7 +326,7 @@ async def build_context(
         memory_context, memory_status = result_by_kind.get("memory", ("", "error"))
 
     # 3. Compile the payload
-    payload = {
+    payload: TurnPayload = {
         "conversation_id": conversation_id,
         "user_id": user_id,
         "display_name": display_name,

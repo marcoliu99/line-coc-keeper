@@ -1,0 +1,109 @@
+"""The facts a turn carries between its stages are a declared contract (``TurnPayload``).
+
+``context_builder`` supplies the input and the gathered evidence; each later stage adds only
+the keys it owns. mypy checks every literal key read and written; these checks add who may
+*write* a key, so a new piece of evidence cannot start being set from an unrelated module.
+"""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+from app.domain.models import CheckStatus, TurnPayload
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# Written once by context_builder, as the payload is built.
+BUILT_BY_CONTEXT_BUILDER = {
+    "conversation_id", "user_id", "display_name", "speaker_role", "text", "resolved_location",
+    "state", "character", "combat_provisional", "resolved_check_events", "rag_context",
+    "memory_context", "rag_status", "memory_status", "correction_context",
+}
+# Added later, by exactly these modules.
+WRITERS = {
+    "app/agents/supervisor.py": {"turn_kind", "intent", "resolved_check_context", "mechanic_result"},
+    "app/agents/executor.py": {"private_messages", "image_requests", "observed_outcomes"},
+    "app/agents/narrator.py": {"narration_requirements", "narration_failed", "observed_outcomes"},
+    "app/services/turn_delivery.py": {"delivery_envelope"},
+}
+MUTATORS = {"setdefault", "update", "pop", "popitem", "clear", "__setitem__"}
+
+
+def _is_payload(node: ast.expr, *, bare_name: bool) -> bool:
+    """``message.payload``, or a parameter called ``payload`` inside the turn pipeline."""
+    return (isinstance(node, ast.Attribute) and node.attr == "payload") or (
+        bare_name and isinstance(node, ast.Name) and node.id == "payload"
+    )
+
+
+def _in_turn_pipeline(path: str) -> bool:
+    return path.startswith("app/agents/") or Path(path).name.startswith("turn_")
+
+
+def _literal(node: ast.expr) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def payload_writes(source: str, *, bare_name: bool = True) -> set[str]:
+    """Keys assigned to or set on a payload; ``"*"`` for a write whose key is not a literal."""
+    written: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and _is_payload(node.value, bare_name=bare_name):
+            written.add(_literal(node.slice) or "*")
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and node.func.attr in MUTATORS and _is_payload(node.func.value, bare_name=bare_name)):
+            written.add((_literal(node.args[0]) if node.args else None) or "*")
+    return written
+
+
+def _production() -> dict[str, str]:
+    return {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "app").rglob("*.py"))
+    }
+
+
+def test_every_declared_key_has_exactly_one_stage_that_supplies_it() -> None:
+    declared = set(TurnPayload.__annotations__)
+    owned = BUILT_BY_CONTEXT_BUILDER | set().union(*WRITERS.values())
+    assert declared == owned
+    assert BUILT_BY_CONTEXT_BUILDER.isdisjoint(set().union(*WRITERS.values()))
+
+
+def test_the_payload_is_built_with_the_declared_input_keys() -> None:
+    tree = ast.parse(_production()["app/agents/context_builder.py"])
+    built = next(
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == "payload"
+    )
+    assert isinstance(built, ast.Dict)
+    assert {_literal(key) for key in built.keys if key is not None} == BUILT_BY_CONTEXT_BUILDER
+
+
+def test_a_payload_key_is_only_written_by_the_stage_that_owns_it() -> None:
+    offenders: dict[str, set[str]] = {}
+    for path, source in _production().items():
+        written = payload_writes(source, bare_name=_in_turn_pipeline(path))
+        if written - WRITERS.get(path, set()):
+            offenders[path] = written - WRITERS.get(path, set())
+    assert offenders == {}
+
+
+def test_the_stages_really_do_write_what_the_contract_says_they_own() -> None:
+    sources = _production()
+    for path, keys in WRITERS.items():
+        assert payload_writes(sources[path]) == keys, path
+
+
+def test_the_gate_catches_a_stray_write() -> None:
+    assert payload_writes('message.payload["delivery_envelope"] = 1') == {"delivery_envelope"}
+    assert payload_writes('message.payload.setdefault("observed_outcomes", [])') == {"observed_outcomes"}
+    assert payload_writes('message.payload.update({"x": 1})') == {"*"}
+    assert payload_writes('name = message.payload["state"]; other = message.payload.get("text")') == set()
+
+
+def test_check_status_keys_are_declared() -> None:
+    assert set(CheckStatus.__annotations__) >= {
+        "tool_called", "pending", "pending_luck", "resolved", "tool_event_count",
+        "state_changed", "dice_rolled", "waiting_for_name", "current_turn_state",
+    }

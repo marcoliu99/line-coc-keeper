@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.models import MechanicResult
+from app.domain.models import MechanicResult, TurnPayload
 from app.models import GroupState
 from app.services.turn_context import current_state
 
@@ -15,7 +15,7 @@ def owner_for_character(state: GroupState, character_id: str) -> str | None:
 
 
 def _unchanged_pending_reply(state: GroupState, user_id: str, result: MechanicResult,
-                             before_checks: dict, before_luck: dict, payload: dict) -> str:
+                             before_checks: dict, before_luck: dict, payload: TurnPayload) -> str:
     resolution = result.turn_resolution
     if (resolution is None or resolution.validation_code != 'validated'
             or result.check_status.get('tool_event_count') != 0
@@ -40,7 +40,7 @@ def _unchanged_pending_reply(state: GroupState, user_id: str, result: MechanicRe
 
 def prepare_narrator_handoff(
     state: GroupState, user_id: str, mechanic_result: MechanicResult,
-    pending_checks_before: dict, pending_luck_before: dict, payload: dict,
+    pending_checks_before: dict, pending_luck_before: dict, payload: TurnPayload,
 ) -> str:
     """Select live per-Investigator waiting facts; never replay or mutate tools."""
     # The post-tool in-memory snapshot is synchronized from persisted state
@@ -78,7 +78,7 @@ def prepare_narrator_handoff(
     if pending_check is None:
         mechanic_result.check_status["pending"] = None
     else:
-        pending_details = {
+        pending_details: dict[str, Any] = {
             key: pending_check[key]
             for key in (
                 "investigator", "skill", "skill_value", "difficulty", "options",

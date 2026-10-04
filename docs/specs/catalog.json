@@ -1609,7 +1609,11 @@
       "zh": "保留低文字 PDF 頁面中有證據支持的豐富 OCR 候選",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_rich_ocr.py"],
+      "evidence": [
+        "app/pdf_quality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_rich_ocr.py"
+      ],
       "path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec_zh.md"
     },
@@ -1618,7 +1622,11 @@
       "zh": "防止 PDF 邊飾字形插入正文閱讀順序",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_decorative_reading_order.py"],
+      "evidence": [
+        "app/pdf_quality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_decorative_reading_order.py"
+      ],
       "path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec_zh.md"
     },
@@ -1627,7 +1635,11 @@
       "zh": "依 PDF 來源證據去重，不依正文文字去重",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_duplicate_source.py"],
+      "evidence": [
+        "app/pdf_quality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_duplicate_source.py"
+      ],
       "path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec_zh.md"
     },
@@ -1776,6 +1788,26 @@
       ],
       "path": "docs/specs/refactor/scenario_lifecycle_module_design_spec.md",
       "zh_path": "docs/specs/refactor/scenario_lifecycle_module_design_spec_zh.md"
+    },
+    {
+      "title": "Turn payload contract",
+      "zh": "回合交接契約",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/domain/models.py",
+        "app/agents/context_builder.py",
+        "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "app/agents/supervisor.py",
+        "app/agents/tool_gateway.py",
+        "app/services/turn_handoff.py",
+        "app/services/turn_delivery.py",
+        "tests/test_turn_payload_contract.py"
+      ],
+      "path": "docs/specs/refactor/turn_payload_contract_design_spec.md",
+      "zh_path": "docs/specs/refactor/turn_payload_contract_design_spec_zh.md",
+      "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
     }
   ]
 }
