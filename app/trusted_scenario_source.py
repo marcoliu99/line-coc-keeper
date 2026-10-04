@@ -44,7 +44,11 @@ def read_snapshot(scenario_id: str) -> SourceSnapshot:
     text = (root / "scenario.txt").read_text(encoding="utf-8")
     if _sha(text.encode("utf-8")) != manifest.get("content_hash"):
         raise ValueError("Source text and manifest changed")
-    pdf = (root / "source.pdf").read_bytes()
+    source_format = str(manifest.get("source_format") or "pdf").lower()
+    source_file = str(manifest.get("source_file") or "source.pdf")
+    if source_format != "pdf" or source_file != "source.pdf":
+        raise ValueError("This scenario source is Markdown; PDF source review/export is unavailable")
+    pdf = (root / source_file).read_bytes()
     return SourceSnapshot(scenario_id, manifest, text, pdf, _sha(pdf))
 
 

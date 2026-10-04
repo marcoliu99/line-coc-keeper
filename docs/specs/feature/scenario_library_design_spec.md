@@ -4,13 +4,13 @@
 
 ## Status and scope
 
-Category: `feature`. Status: **implemented**. Audited against `main_v2` at `afe8ace` (2026-09-27).
+Category: `feature`. Status: **implemented**. Updated from `main_v2` at `2affd06` (2026-10-04).
 
 This edition describes the current contract. Proposed work is explicitly identified; historical source text is linked below.
 
 ## Current contract
 
-1. Persist reusable parsed source, chapters, indexes, pregens, page images and extraction-quality artifacts outside per-conversation state. Reusing a scenario does not require reparsing its PDF.
+1. Persist reusable parsed source, chapters, indexes, pregens, page images and extraction-quality artifacts outside per-conversation state. PDF remains the rich source format, and a UTF-8 Markdown file whose filename starts with `scenario` is also a first-class text-only scenario source. Reusing a scenario does not require reparsing its source.
 
 2. GroupState.scenario_text remains a compatibility snapshot of the permitted context window, not an unrestricted full-library authorization. Active chapter/context IDs govern installation and retrieval.
 
@@ -22,10 +22,13 @@ This edition describes the current contract. Proposed work is explicitly identif
 
 6. Source/chapter changes invalidate incompatible Chinese variants. Activation responses surface fallback notices; manual pregen assets are reconciled with source identity rather than silently reused across unrelated scenarios.
 
+7. `scenario*.md` is routed before the generic `.md` comparison-upload path. The original bytes are preserved as `source.md`; runtime text gets a synthetic page-1 marker only when the source has no page markers. Markdown import does not synthesize PDF pages, images, OCR evidence, or floor-plan maps. When another scenario is active, Markdown uses the same new-scenario-versus-correction choice as PDF. PDF-only source-review/export tooling rejects Markdown sources explicitly.
+
 ## Flow and interfaces
 
 ```text
-Upload/staged PDF -> parse once -> library manifest/assets -> select chapter window -> install group snapshot -> gameplay
+scenario*.md -> UTF-8 text ingest (no OCR) -> library manifest/assets -> select chapter window -> install group snapshot -> gameplay
+PDF/staged PDF -> PDF/OCR parse -> library manifest/assets -> select chapter window -> install group snapshot -> gameplay
 ```
 
 ## Implementation and verification
@@ -35,9 +38,13 @@ The linked implementation and existing regression tests are the audit evidence. 
 - [app/scenario_library.py](../../../app/scenario_library.py)
 - [app/pdf_loader.py](../../../app/pdf_loader.py)
 - [app/legacy_commands.py](../../../app/legacy_commands.py)
+- [app/commands/handlers/uploads.py](../../../app/commands/handlers/uploads.py)
+- [app/trusted_scenario_source.py](../../../app/trusted_scenario_source.py)
 - [app/commands/handlers/system.py](../../../app/commands/handlers/system.py)
 - [app/scene_map.py](../../../app/scene_map.py)
 - [tests/test_scenario_library.py](../../../tests/test_scenario_library.py)
+- [tests/test_upload_routing.py](../../../tests/test_upload_routing.py)
+- [tests/test_trusted_scenario_source.py](../../../tests/test_trusted_scenario_source.py)
 - [tests/test_spoiler_policy.py](../../../tests/test_spoiler_policy.py)
 
 ## Historical evidence
