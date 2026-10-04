@@ -607,37 +607,13 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                         and set(warnings) <= {'layout_text_loss', 'layout_numeric_loss'} and all(
                     check['status'] == 'matched' for check in checks
                 )):
-                    validation, new_mechanics = pdf_quality.rich_ocr_stage_one(
-                        texts[number - 1], extra, row['numeric_pairs'], _LOW_TEXT_THRESHOLD,
+                    validation = pdf_quality.select_rich_ocr_candidate(
+                        texts[number - 1], extra, row['numeric_pairs'], row['evidence'], _LOW_TEXT_THRESHOLD,
                     )
-                    row['rich_ocr_validation'] = validation
-                    if validation['status'] == 'accepted' and new_mechanics:
-                        validation['paddle_verification_attempted'] = True
-                        try:
-                            paddle = pdf_ocr.recognize_with_paddle(pending[number])
-                        except Exception:  # noqa: BLE001 - optional evidence must not fail import.
-                            paddle = pdf_ocr.OcrResult(status='error')
-                        validation['paddle_status'] = paddle.status
-                        if paddle.status == 'accepted':
-                            normalized = pdf_ocr.normalize_dice_ocr(
-                                paddle.text, '\n'.join(value for _, value in new_mechanics.elements()),
-                            )
-                            confirmed, unconfirmed, conflicting = pdf_quality.rich_ocr_corroboration(
-                                new_mechanics, normalized,
-                            )
-                            validation.update(confirmed_new_mechanics_count=confirmed,
-                                              unconfirmed_new_mechanics_count=unconfirmed,
-                                              conflicting_new_mechanics_count=conflicting)
-                            if conflicting:
-                                validation.update(status='mechanics_conflict', reason='mechanics_conflict')
-                            elif unconfirmed:
-                                validation.update(status='mechanics_unconfirmed', reason='mechanics_unconfirmed')
-                            validation['mechanics_check_status'] = validation['status']
-                        else:
-                            validation.update(status='paddle_' + paddle.status, reason='paddle_' + paddle.status)
-                            validation['mechanics_check_status'] = validation['status']
+                    row['rich_candidate_selection'] = validation
                     if validation['status'] == 'accepted':
                         chosen, method = extra, 'layout'
+                        row['warnings'].append('rich_candidate_unverified')
                 if method == "layout":
                     texts[number - 1] = chosen
                     report["pages"][number - 1]["method"] = "markitdown"

@@ -15,7 +15,6 @@ _RICH_STAT = re.compile(
     rf'\s*[:：|]?\s*({_RICH_VALUE})(?!\w)', re.IGNORECASE,
 )
 _RICH_FIELD = re.compile(rf'^\s*([A-Za-z][A-Za-z ]{{1,40}}?)\s*[:：|]?\s+({_RICH_VALUE})\s*$', re.IGNORECASE)
-_RICH_MECHANIC = re.compile(rf'(?<!\w)(?:{_RICH_VALUE})(?!\w)', re.IGNORECASE)
 
 
 def normalize(text: str) -> str:
@@ -59,7 +58,7 @@ def select_text(native: str, layout: str) -> tuple[str, str, list[str]]:
 
 
 def rich_ocr_mechanics(text: str) -> Counter[tuple[str, str]]:
-    """Only source-bound mechanics can authorize a low-text OCR rescue."""
+    """Extract source-bound mechanics for preserving observable baseline values."""
     result: Counter[tuple[str, str]] = Counter()
     for line in text.splitlines():
         clean = re.sub(r'[*_`]', '', line).strip().strip('|').strip()
@@ -84,86 +83,121 @@ def rich_ocr_mechanics(text: str) -> Counter[tuple[str, str]]:
     return result
 
 
-def rich_ocr_stage_one(baseline: str, candidate: str, pairs: list[dict], threshold: int) -> tuple[dict, Counter[tuple[str, str]]]:
-    """Keep short-source evidence while ignoring only obvious parser debris."""
-    evidence = {
-        'attempted': True, 'status': 'accepted', 'reason': 'low_text_source_rich_candidate_verified',
-        'selected_source_chars': len(baseline), 'candidate_chars': len(candidate),
-        'paddle_verification_attempted': False, 'paddle_status': 'not_required',
-        'confirmed_new_mechanics_count': 0, 'unconfirmed_new_mechanics_count': 0,
-        'conflicting_new_mechanics_count': 0, 'pair_check_status': 'matched',
-        'mechanics_check_status': 'pending',
-    }
-    old, new = rich_ocr_mechanics(baseline), rich_ocr_mechanics(candidate)
-    added = new - old
-    evidence.update(baseline_mechanics_count=old.total(), candidate_mechanics_count=new.total(),
-                    new_mechanics_count=added.total(), anchor_count=new.total())
+_PICTURE_MARKUP = re.compile(r'<!--\s*(?:start|end) of picture text\s*-->|<br\s*/?>', re.IGNORECASE)
 
-    def reject(reason: str) -> tuple[dict, Counter[tuple[str, str]]]:
-        evidence.update(status=reason, reason=reason)
-        evidence['mechanics_check_status'] = reason
-        if reason == 'pair_mismatch':
-            evidence['pair_check_status'] = reason
-        return evidence, added
+
+def _source_tokens(value: str) -> list[str]:
+    return _WORD.findall(value.casefold())
+
+
+def _token_occurrences(haystack: list[str], needle: list[str]) -> int:
+    return sum(haystack[index:index + len(needle)] == needle
+               for index in range(len(haystack) - len(needle) + 1))
+
+
+def _vertical_fragment(line: str, page_evidence: dict) -> bool:
+    letters = line.split()
+    if len(letters) < 3 or not all(len(letter) == 1 and letter.isalpha() for letter in letters):
+        return False
+    words = page_evidence.get('words', [])
+    for start in range(len(words) - len(letters) + 1):
+        part = words[start:start + len(letters)]
+        if [word['text'] for word in part] != letters:
+            continue
+        if (max(word['bbox'][0] for word in part) - min(word['bbox'][0] for word in part) < 4
+                and all(part[index + 1]['bbox'][1] > part[index]['bbox'][3]
+                        for index in range(len(part) - 1))):
+            return True
+    return False
+
+
+def _isolated_folio(line: str, page_evidence: dict) -> bool:
+    if not line.isdecimal():
+        return False
+    height = page_evidence.get('height', 0)
+    matches = [word for word in page_evidence.get('words', []) if word['text'] == line]
+    return bool(height and len(matches) == 1 and matches[0]['bbox'][1] >= height * .92)
+
+
+def select_rich_ocr_candidate(baseline: str, candidate: str, pairs: list[dict],
+                              page_evidence: dict, threshold: int) -> dict:
+    """Rescue a weak selected source without discarding any observable source."""
+    result: dict[str, Any] = {'attempted': True, 'status': 'accepted', 'reason': 'weak_baseline_source_preserved',
+              'baseline_strength': 'weak', 'baseline_chars': len(baseline), 'candidate_chars': len(candidate),
+              'excluded_fragments': [], 'required_source_items': 0, 'preserved_source_items': 0,
+              'numeric_conflicts': 0, 'mechanics_conflicts': 0, 'source_preserved': False,
+              'candidate_extra_content_verified': False}
+
+    def reject(reason: str) -> dict:
+        result.update(status=reason, reason=reason)
+        return result
 
     if len(baseline) >= threshold:
+        result['baseline_strength'] = 'strong'
         return reject('not_low_text_source')
     if len(candidate) < threshold:
         return reject('candidate_too_short')
-    if '\ufffd' in candidate or re.search(r'(?<!\w)[lI|][dD]\d', candidate):
+    if ('\ufffd' in candidate or re.search(r'(?<!\w)[lI|][dD]\d', candidate)
+            or re.search(r'\bSAN\s+(?:\d+[dD]\d+|\d+)\s*/\s*(?=$|\D)', candidate, re.IGNORECASE)):
         return reject('mechanic_loss')
-    if any(check['status'] != 'matched' for check in check_pairs(pairs, candidate)):
-        return reject('pair_mismatch')
-    if old - new:
-        return reject('mechanic_loss')
-    # A folio and markup are not source values. Numeric evidence in a phrase is.
-    meaningful_lines = []
-    for line in baseline.splitlines():
-        clean = re.sub(r'<!--.*?-->', '', line).strip().strip('#*_`| ').strip()
-        if not clean or clean.isdigit() or re.fullmatch(r'(?:[A-Za-z]\s+){2,}[A-Za-z]', clean):
+
+    required: list[str] = []
+    for original in baseline.splitlines():
+        line = _PICTURE_MARKUP.sub('', original).strip().strip('#*_`| ').strip()
+        if line != original.strip() and _PICTURE_MARKUP.search(original):
+            result['excluded_fragments'].append('picture_markup')
+        if not line:
             continue
-        if ((re.search(r'\d', clean) and not re.fullmatch(r'\d+\s+[A-Z][A-Za-z ]{0,35}', clean))
-                or len(_WORD.findall(clean)) >= 5 or re.search(r'[.!?。！？]', clean)):
-            meaningful_lines.append(clean)
-    candidate_words = Counter(_WORD.findall(candidate.casefold()))
-    for line in meaningful_lines:
-        required = Counter(_WORD.findall(line.casefold()))
-        if required - candidate_words:
+        if not _source_tokens(line):
+            result['excluded_fragments'].append('decoration')
+        elif _isolated_folio(line, page_evidence):
+            result['excluded_fragments'].append('folio')
+        elif _vertical_fragment(line, page_evidence):
+            # Geometry proves the spacing is an artifact, not that the joined
+            # word (which may be a name) is dispensable source.
+            result['excluded_fragments'].append('vertical_spacing')
+            required.append(''.join(line.split()))
+        else:
+            required.append(line)
+
+    # A short coherent sentence is source, not a weak parser remnant.
+    if any(len(_source_tokens(line)) >= 4 and re.search(r'[a-z][a-z]', line) for line in required):
+        result['baseline_strength'] = 'strong'
+        return reject('strong_baseline')
+
+    result['required_source_items'] = len(required)
+    if not required and not result['excluded_fragments']:
+        return reject('insufficient_source_evidence')
+    old = rich_ocr_mechanics('\n'.join(required))
+    if not result['excluded_fragments'] and not old:
+        result['baseline_strength'] = 'strong'
+        return reject('strong_baseline')
+    checks = check_pairs(pairs, candidate)
+    if any(check['status'] != 'matched' for check in checks):
+        result['numeric_conflicts'] = sum(check['status'] != 'matched' for check in checks)
+        return reject('pair_mismatch')
+    new = rich_ocr_mechanics(candidate)
+    if old - new:
+        result['mechanics_conflicts'] = (old - new).total()
+        return reject('mechanic_loss')
+    known_labels = {label for label, _ in old}
+    known_values = {label: {value for old_label, value in old if old_label == label}
+                    for label in known_labels}
+    conflicting = sum(count for (label, value), count in new.items()
+                      if label in known_labels and value not in known_values[label])
+    if conflicting:
+        result['mechanics_conflicts'] = conflicting
+        return reject('pair_mismatch')
+    candidate_tokens = _source_tokens(candidate)
+    seen_lines: Counter[tuple[str, ...]] = Counter()
+    for line in required:
+        tokens = _source_tokens(line)
+        seen_lines[tuple(tokens)] += 1
+        if _token_occurrences(candidate_tokens, tokens) < seen_lines[tuple(tokens)]:
             return reject('source_content_loss')
-        source_mechanics = Counter(re.sub(r'\s', '', match.group()).casefold()
-                                   for match in _RICH_MECHANIC.finditer(line))
-        candidate_mechanics = Counter(re.sub(r'\s', '', match.group()).casefold()
-                                      for match in _RICH_MECHANIC.finditer(candidate))
-        if source_mechanics - candidate_mechanics:
-            return reject('mechanic_loss')
-    if not new:
-        return reject('insufficient_anchor')
-    # Complete source-bound values are compared above; reject obvious unbound
-    # dice and percentages rather than trusting a rich-looking OCR paragraph.
-    bound_values = Counter(value for _, value in new.elements())
-    found_values = Counter(re.sub(r'\s', '', m.group()).casefold() for m in _RICH_MECHANIC.finditer(candidate))
-    critical = Counter(value for value in found_values.elements() if 'd' in value or '%' in value or '/' in value)
-    if critical - bound_values:
-        return reject('insufficient_anchor')
-    evidence['mechanics_check_status'] = 'stage_one_passed'
-    return evidence, added
-
-
-def rich_ocr_corroboration(added: Counter[tuple[str, str]], paddle_text: str) -> tuple[int, int, int]:
-    """Count exact label/value support, absence, and same-label conflicts."""
-    observed = rich_ocr_mechanics(paddle_text)
-    confirmed = (added & observed).total()
-    remaining = added - observed
-    labels = {label for label, _ in added}
-    extra = observed - added
-    mismatched_by_label = Counter({label: sum(count for (other, _), count in remaining.items()
-                                               if other == label)
-                                   for label in labels if any(other == label for other, _ in observed)})
-    mismatched = mismatched_by_label.total()
-    extra_by_label = Counter({label: sum(count for (other, _), count in extra.items() if other == label)
-                              for label in labels})
-    conflicts = sum(max(mismatched_by_label[label], extra_by_label[label]) for label in labels)
-    return confirmed, remaining.total() - mismatched, conflicts
+        result['preserved_source_items'] += 1
+    result['source_preserved'] = True
+    return result
 
 
 def continuation(previous: str, current: str) -> bool:
