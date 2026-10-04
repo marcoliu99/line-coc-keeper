@@ -26,6 +26,9 @@ _理由：_ `_execute_tool` 已經是約 1,180 行的 `if name == ...` 分支，
 **所有遊戲狀態寫入都走 `state_transaction`。** 用 `state_transaction.mutate`（對最新資料列套用 delta）改狀態；若變更是在已載入的快照上算出、無法寫成 delta，就用 `commit_snapshot`。可能被重送的操作，要由擁有它的程式碼給 `action_id`（turn id、check id、event id），不可由文字推導。必須與狀態同時落地的其他資料表，透過 `ctx.conn` 寫入；mutation 內不可再開第二個交易。
 _理由：_ 在鎖外載入的寫入者不是遺失更新，就是以 revision 衝突失敗，而且沒有任何東西能分辨重試與新操作。`tests/test_architecture_state_writes.py` 會拒絕直接使用 `save_state`、`write_state_tx` 或對遊戲狀態資料表的 `db.set_json*`。
 
+**檢定規則只在 `app/checks` 裡寫一次。** 指令、按鈕與 Keeper 工具都呼叫 `checks.service`；它們只負責解析輸入與格式化回覆。骰子經由 `DicePort` 進來，誰能花 Luck 由 `checks.luck` 決定，已結算的檢定以 `checks.events.persist_resolved_event`（一個 `check-event:<event_id>` action）記錄。不要把等級文字、Luck 處理或 SAN → INT 串接複製進 handler。
+_理由：_ 同一個檢定過去會經過三份各自維護的規則。`tests/test_architecture_checks.py` 讓引擎不匯入傳輸層、Keeper、provider 與戰鬥程式碼，已刪除的重複碼回來時也會失敗。規格：`docs/specs/refactor/check_engine_design_spec_zh.md`。
+
 **每個新的待處理檢定都要經過歸屬檢查。** 登記技能、SAN 或 CON 檢定前，在 `_mutate_and_save_state` 內、針對重新載入的狀態，同時檢查 `pending_checks` 和 `pending_luck_decisions`（參考 `_reject_if_check_already_pending`）。被擋下時要讓玩家或模型知道。
 _理由：_ 無聲返回的檢定會讓規則後果直接消失。規格：`docs/specs/bug/bugfix_duplicate_pending_checks.md`。
 

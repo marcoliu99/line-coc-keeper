@@ -4,8 +4,8 @@ A player may spend Luck points to buy their roll down onto a better success
 tier (regular/hard/extreme) after seeing it, provided the roll wasn't already
 that good and they can afford the cost. Pure and side-effect free — like
 app/dice.py, callers apply the result (deducting Luck, overriding the tier)
-themselves; see app/commands.py's _finalize_check_result and
-handle_luck_decision.
+themselves; see app/checks/service.py (resolve_luck_decision) for the
+state side and app/checks/luck.py for the policy of who may spend it.
 """
 from __future__ import annotations
 

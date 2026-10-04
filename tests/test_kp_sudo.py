@@ -378,10 +378,10 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
 
         original_run_turn = router.supervisor.run_turn
         original_resolve = router._resolve_map_action_transaction
-        original_maintenance = router._run_post_turn_maintenance_after_output
+        original_maintenance = router.run_post_turn_maintenance_after_output
         router.supervisor.run_turn = fake_run_turn
         router._resolve_map_action_transaction = lambda *args: None
-        router._run_post_turn_maintenance_after_output = fake_maintenance
+        router.run_post_turn_maintenance_after_output = fake_maintenance
         try:
             with StateStorePatch(router, commands) as store:
                 store.put(state)
@@ -394,7 +394,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         finally:
             router.supervisor.run_turn = original_run_turn
             router._resolve_map_action_transaction = original_resolve
-            router._run_post_turn_maintenance_after_output = original_maintenance
+            router.run_post_turn_maintenance_after_output = original_maintenance
 
         self.assertEqual(calls[0]["user_id"], "p1")
         self.assertEqual(calls[0]["speaker_role"], "player")

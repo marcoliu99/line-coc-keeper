@@ -61,7 +61,7 @@ def test_real_adapter_request_baseline(tmp_path, monkeypatch, route, expected_re
          patch.object(supervisor.context_builder, "build_context", AsyncMock(side_effect=context)), \
          patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION" if gameplay else "PURE_ROLEPLAY"), \
          patch.object(keeper.scene_digest, "latest_digest", return_value=None), \
-         patch.object(router, "_run_post_turn_maintenance_after_output", side_effect=deliver):
+         patch.object(router, "run_post_turn_maintenance_after_output", side_effect=deliver):
         if route in {"ordinary_route", "sudo_route"}:
             reply = AsyncMock()
             asyncio.run(router.handle_text_message(state.group_id, "kp" if route == "sudo_route" else "u",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app import scene_map as scene_map_engine
 from app.commands.handlers.transact import Outcome, done, refuse, transact
-from app.legacy_commands import Reply, SendImage
+from app.commands.types import Reply, SendImage
 from app.models import GroupState
 from app.repositories.group_state import load_page_image, load_state
 from app.services import mutation_admission

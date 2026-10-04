@@ -31,12 +31,12 @@ from app import (
     luck,
     memory_rag,
     observability,
-    resolved_check_consequences,
     scenario_index,
     scenario_library,
     scene_digest,
     spoiler_policy,
 )
+from app.checks.skills import resolve_skill_value
 from app.config import (
     MAX_LOG_TURNS,
     MAX_SCENARIO_CHARS,
@@ -47,12 +47,11 @@ from app.config import (
 from app.keeper_tools import registry as tool_registry
 from app.keeper_tools import resource_bridge
 from app.keeper_tools.registry import ToolCall
-from app.models import BASE_SKILLS, Character, GroupState
+from app.models import Character, GroupState
 from app.providers.registry import conversation_provider
 from app.repositories import state_transaction
 from app.repositories.group_state import load_state
 from app.services import history_authority, mutation_admission
-from app.skill_aliases import canonical_skill_name
 
 _logger = logging.getLogger(__name__)
 # Existing callers patch scenario_library through keeper. Retain the module
@@ -83,12 +82,6 @@ DEFAULT_PERSONA = """- 全程使用繁體中文。你是冷酷、嚴肅、精通
 - 面對調查員受傷、San 值狂掉或遭遇恐怖事物時，以冷酷、客觀、帶有感官細節（如鐵鏽味、腐敗氣息、異樣黏稠感、體溫變化、環境聲響）的事實直擊痛點，絕不給予安慰或溫情喊話。
 - 訊息長度要適合聊天軟體閱讀：每次回覆盡量 3 到 8 句，避免長篇大論、避免使用 Markdown 標題或表格。"""
 
-_ATTR_ALIASES = {
-    "STR": "str_", "力量": "str_", "CON": "con", "體質": "con", "SIZ": "siz", "體型": "siz",
-    "DEX": "dex", "敏捷": "dex", "APP": "app", "外貌": "app", "INT": "int_", "智力": "int_",
-    "POW": "pow_", "意志": "pow_", "精神力": "pow_", "EDU": "edu", "教育": "edu",
-    "LUCK": "luck", "幸運": "luck",
-}
 
 
 TOOLS = tool_registry.TOOLS
@@ -253,38 +246,6 @@ def _resolve_defense_options(
             resolved["kind"] = opt["kind"]
         options.append(resolved)
     return options
-
-
-def resolve_skill_value(char: Character, skill_name: str, *, register_unknown: bool = True) -> int:
-    key = skill_name.strip()
-    if key in char.skills:
-        return char.skills[key]
-    if key.upper() in _ATTR_ALIASES:
-        return getattr(char, _ATTR_ALIASES[key.upper()])
-
-    # Canonicalize both the query and every existing key (see app/skill_aliases.py)
-    # before comparing — catches e.g. "手槍" vs char.skills' own "射擊（手槍）",
-    # which used to silently miss each other and fall through to the substring
-    # fallback below (or worse, register a brand new duplicate skill).
-    canonical_query = canonical_skill_name(key)
-    if canonical_query in char.skills:
-        return char.skills[canonical_query]
-    for k, v in char.skills.items():
-        if canonical_skill_name(k) == canonical_query:
-            return v
-
-    norm = key.replace(" ", "").lower()
-    for k, v in char.skills.items():
-        kk = k.replace(" ", "").lower()
-        if norm == kk or norm in kk or kk in norm:
-            return v
-
-    # Unknown skill: calculate its canonical base rate first. Registration
-    # callers defer writing the character card until check admission succeeds.
-    default_value = BASE_SKILLS.get(canonical_query, 20)
-    if register_unknown:
-        char.skills[canonical_query] = default_value
-    return default_value
 
 
 _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
@@ -476,79 +437,6 @@ def apply_character_attribute_delta(
         return _StateMutation(result, should_save=result[3] is None)
 
     return _mutate_and_save_state(state, _apply_attribute_delta)
-
-
-_CHECK_EVENT_ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
-
-
-def _character_attribute_snapshot(char: Character) -> dict[str, int]:
-    return {name: int(getattr(char, name)) for name in _CHECK_EVENT_ATTRIBUTE_NAMES}
-
-
-def _persist_resolved_check_event(state: GroupState, event_seed: dict[str, Any]) -> None:
-    """Persist a resolved Keeper-tool check against the committed character state.
-
-    One action per resolved check (``check-event:<event_id>``): a continuation
-    or narration retry that reaches this point again finds the first commit in
-    the action ledger and records nothing a second time.
-    """
-    def record(ctx: state_transaction.TxContext) -> None:
-        latest = ctx.state
-        timeline_id = latest.timeline_id or f"legacy-{latest.group_id}"
-        if timeline_id != event_seed["timeline_id"]:
-            ctx.skip_save()
-            return
-        if any(
-            event.get("event_id") == event_seed["event_id"]
-            for event in latest.resolved_check_events
-            if isinstance(event, dict)
-        ):
-            ctx.skip_save()
-            return
-        char = latest.get_active_character(event_seed["owner_id"])
-        if char is None or char.character_id != event_seed["character_id"]:
-            ctx.skip_save()
-            return
-        resolved_check_consequences.persist_origin(latest, event_seed)
-        after = _character_attribute_snapshot(char)
-        event = {key: value for key, value in event_seed.items() if key != "state_before"}
-        event["state_effects"] = [
-            {
-                "field": _CHECK_EVENT_ATTRIBUTE_NAMES[field],
-                "before": before,
-                "after": after[field],
-                "delta": after[field] - before,
-            }
-            for field, before in event_seed["state_before"].items()
-            if before != after[field]
-        ]
-        if resource_bridge.participating(latest, char):
-            event['provisional'] = True
-            event['combat_id'] = latest.combat.combat_id
-            effective_after = _character_attribute_snapshot(resource_bridge.effective(latest, char))
-            event['provisional_state_effects'] = [
-                {'field': _CHECK_EVENT_ATTRIBUTE_NAMES[field], 'before': before,
-                 'after': effective_after[field], 'delta': effective_after[field] - before}
-                for field, before in event_seed['state_before'].items() if before != effective_after[field]
-            ]
-            event['state_effects'] = []
-        event["resolved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        latest.resolved_check_events.append(event)
-        del latest.resolved_check_events[:-20]
-        ctx.stage_event(
-            "check_resolved", event_id=str(event_seed["event_id"]),
-            causation_id=str(event_seed.get("check_id") or ""),
-        )
-
-    event_id = str(event_seed["event_id"])
-    state_transaction.commit_for_snapshot(
-        state, record, reason="resolved_check_event", expected_timeline=None,
-        action_id=f"check-event:{event_id}",
-        request_fingerprint=state_transaction.request_fingerprint(
-            {"event_id": event_id, "timeline_id": event_seed["timeline_id"],
-             "owner_id": event_seed["owner_id"], "character_id": event_seed["character_id"]}
-        ),
-    )
 
 
 def _record_tool_recovery_marker_sync(
@@ -1047,10 +935,8 @@ def _scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:
 check_tool_services = SimpleNamespace(
     StateMutation=_StateMutation,
     cached_check_result=_cached_check_result,
-    character_attribute_snapshot=_character_attribute_snapshot,
     deterministic_check_cache_key=_deterministic_check_cache_key,
     mutate_and_save_state=_mutate_and_save_state,
-    persist_resolved_check_event=_persist_resolved_check_event,
     remember_check_result=_remember_check_result,
     resolve_defense_options=_resolve_defense_options,
 )

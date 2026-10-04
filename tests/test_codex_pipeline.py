@@ -4,8 +4,9 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from app import config, keeper, legacy_commands
+from app import config, keeper
 from app.agents import supervisor
+from app.commands.handlers import checks as check_commands
 from app.models import Character, GroupState
 from app.providers import codex_provider
 from app.repositories import group_state
@@ -53,7 +54,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dice.call_count, 0)
             self.assertEqual(tool_decisions, ['skill_check'])
             self.assertIn('u', keeper.load_state(state.group_id).pending_checks)
-            resolved = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check')
+            resolved = check_commands.resolve_check(state.group_id, 'u', '/coc check')
             self.assertTrue(resolved.should_finalize)
             state = keeper.load_state(state.group_id)
             self.assertFalse(state.pending_checks)

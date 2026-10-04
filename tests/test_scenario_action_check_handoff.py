@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-from app import keeper, legacy_commands, scenario_authoring
+from app import keeper, scenario_authoring
 from app.agents.tool_gateway import _describe_tool_call
+from app.commands.handlers import checks as check_commands
 from app.domain.models import MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.repositories import group_state
@@ -63,7 +64,7 @@ def test_manual_check_persists_one_opponent_roll_and_its_final_outcome():
         assert 'opposed' not in duplicate and 'opposed' not in result
         assert group_state.load_state('scenario-check-test').pending_checks['u1']['opposed'] == first_receipt
         assert dice_roll.call_count == 1
-        resolved = legacy_commands._resolve_check_deterministically('scenario-check-test', 'u1', '/coc check')
+        resolved = check_commands.resolve_check('scenario-check-test', 'u1', '/coc check')
 
     assert dice_roll.call_count == 2
     assert resolved.should_finalize
@@ -99,10 +100,10 @@ def test_luck_resolution_reuses_opponent_receipt(choice, winner):
             'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
             'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀',
         }, [], [], speaker_role='player')
-        pending = legacy_commands._resolve_check_deterministically('scenario-check-test', 'u1', '/coc check')
+        pending = check_commands.resolve_check('scenario-check-test', 'u1', '/coc check')
         assert not pending.should_finalize
         assert group_state.load_state('scenario-check-test').pending_luck_decisions['u1']['opposed']['opponent_roll'] == 30
-        final = legacy_commands._resolve_luck_decision_deterministically('scenario-check-test', 'u1', choice)
+        final = check_commands.resolve_luck('scenario-check-test', 'u1', choice)
 
     assert dice_roll.call_count == 2
     assert final.should_finalize

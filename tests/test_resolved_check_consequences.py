@@ -5,7 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
-from app import db, keeper, legacy_commands, resolved_check_consequences
+from app import db, keeper, resolved_check_consequences
+from app.checks import events as check_events
+from app.commands.handlers import checks as check_commands
 from app.keeper_tools import registry
 from app.models import Character, GroupState
 from app.repositories import group_state
@@ -152,14 +154,14 @@ def test_manual_roll_carries_source_plan_through_luck_to_settled_origin(game):
     })
     assert registered["ok"] and registered["pending"]
     with patch("app.dice.roll_percentile_with_dice_pool", return_value=59):
-        waiting = legacy_commands._resolve_check_deterministically(game.group_id, "u1", "/coc check")
+        waiting = check_commands.resolve_check(game.group_id, "u1", "/coc check")
     assert not waiting.should_finalize
     assert group_state.load_state(game.group_id).pending_luck_decisions["u1"]["consequences"][0]["key"] == "bed:dodge"
-    settled = legacy_commands._resolve_luck_decision_deterministically(game.group_id, "u1", "skip")
+    settled = check_commands.resolve_luck(game.group_id, "u1", "skip")
     assert settled.should_finalize
     assert settled.resolved_event["success"] is True
     assert settled.resolved_event["consequences"][0]["key"] == "bed:dodge"
-    legacy_commands._persist_check_consequence_origin(game.group_id, settled.resolved_event)
+    check_events.persist_consequence_origin(game.group_id, settled.resolved_event)
     saved = group_state.load_state(game.group_id)
     assert saved.check_consequence_origins[settled.resolved_event["event_id"]]["owner_id"] == "u1"
 

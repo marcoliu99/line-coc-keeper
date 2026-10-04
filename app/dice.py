@@ -360,10 +360,21 @@ def skill_check(
     standard task), matching every existing caller that doesn't pass this.
     An unrecognized value falls back to "regular" rather than raising, same
     defensive style as the rest of this module."""
+    roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
+    return evaluate_roll(skill_value, roll, bonus_dice, penalty_dice, required_tier)
+
+
+def evaluate_roll(
+    skill_value: int, roll: int, bonus_dice: int = 0, penalty_dice: int = 0, required_tier: str = "regular"
+) -> SkillCheckResult:
+    """Classify an already-drawn d100 ``roll`` against ``skill_value``.
+
+    The pure half of ``skill_check``: no randomness, so a scripted dice port
+    can feed it chosen rolls and get exactly the tiers production would.
+    """
     skill_value = max(0, min(100, skill_value))
     if required_tier not in _VALID_REQUIRED_TIERS:
         required_tier = "regular"
-    roll = roll_percentile_with_dice_pool(bonus_dice, penalty_dice)
 
     extreme_bound = tier_upper_bound(skill_value, "extreme")
     hard_bound = tier_upper_bound(skill_value, "hard")
