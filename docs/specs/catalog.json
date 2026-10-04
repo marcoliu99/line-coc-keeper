@@ -1813,6 +1813,23 @@
       "path": "docs/specs/refactor/game_opening_module_design_spec.md",
       "zh_path": "docs/specs/refactor/game_opening_module_design_spec_zh.md",
       "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
+    },
+    {
+      "title": "Correction lifecycle",
+      "zh": "更正生命週期",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/narrative_corrections.py",
+        "app/commands/handlers/correct.py",
+        "app/services/natural_corrections.py",
+        "app/services/correction_adjudication.py",
+        "tests/test_correction_lifecycle.py",
+        "tests/test_architecture_corrections.py"
+      ],
+      "path": "docs/specs/refactor/correction_lifecycle_design_spec.md",
+      "zh_path": "docs/specs/refactor/correction_lifecycle_design_spec_zh.md",
+      "source_revision": "ee23aa98fb0359baa7cd8d2e8b41e6b2ddc460fc"
     }
   ]
 }

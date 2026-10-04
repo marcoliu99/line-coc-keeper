@@ -1,9 +1,10 @@
 # Game Opening Refactor
 
 Implementation baseline: `origin/main_v2` at
-`ee23aa98fb0359baa7cd8d2e8b41e6b2ddc460fc`. The approved design used
-`b0e875c`; intervening Turn Payload Contract changes were integrated before
-final validation and did not change the opening path's admission or lock scope.
+`7ab07965eeebfa8e7ed638c67cc8e471f4c4626e`. The approved design used
+`b0e875c`; intervening Turn Payload Contract and Correction Lifecycle changes
+were integrated before final validation and did not change the opening path's
+admission or lock scope.
 
 ## Before
 

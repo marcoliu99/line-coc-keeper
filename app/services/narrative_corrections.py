@@ -1,5 +1,19 @@
 """Durable correction policy shared by all live agent entry points.
 
+A player's correction is a claim (ADR 0001/0002). It becomes something the game acts on only
+through a ruling by the KP Assistant or the Keeper, and every change to a report's status
+happens in this module so that rule has one place to hold:
+
+    pending ──► approved ──► superseded
+       │  └───► rejected
+       ├──────► unverified ──► approved / rejected
+       └──────► withdrawn            (also from unverified)
+
+``new_report``/``file_report`` open a report, ``record_ruling``/``record_unverified``/
+``record_presentation_repair`` rule on it, ``withdraw`` closes it, ``supersede`` replaces an
+approved one, ``hold`` marks the scope to pause. Callers parse input and word replies; they
+do not write a report's ``status``.
+
 A bounded projection never silently drops an effective adjudication. If it
 cannot fit, gameplay pauses until the KP explicitly supersedes obsolete entries.
 Player allegations alone never create a mechanical hold.
@@ -11,6 +25,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
+from uuid import uuid4
 
 MAX_CONTEXT_CHARS = 6000
 _logger = logging.getLogger(__name__)
@@ -20,6 +35,24 @@ _logger = logging.getLogger(__name__)
 ReportStatus = Literal["pending", "unverified", "approved", "rejected", "withdrawn", "superseded"]
 OPEN_STATUSES: tuple[ReportStatus, ...] = ("pending", "unverified")
 Verdict = Literal["approve", "reject"]
+# Which status a report may move to from each status; the rest are terminal.
+TRANSITIONS: dict[ReportStatus, frozenset[ReportStatus]] = {
+    "pending": frozenset({"unverified", "approved", "rejected", "withdrawn"}),
+    "unverified": frozenset({"approved", "rejected", "withdrawn"}),
+    "approved": frozenset({"superseded"}),
+    "rejected": frozenset(),
+    "withdrawn": frozenset(),
+    "superseded": frozenset(),
+}
+# Closed reports kept in the state besides approved ones, which stay in the canonical log.
+MAX_CLOSED_IN_STATE = 12
+# A closed report is one with nowhere left to go; ``superseded`` is kept apart, as the record of what replaced it.
+CLOSED_STATUSES: frozenset[ReportStatus] = frozenset(
+    status for status, moves in TRANSITIONS.items() if not moves and status != "superseded"
+)
+# What a hold may name: a term shorter than this would match almost any tool argument.
+HOLD_TERM_LENGTH = (2, 80)
+MAX_HOLD_TERMS = 8
 
 
 @dataclass(frozen=True)
@@ -31,8 +64,92 @@ class KeeperBasis:
 
 
 def active(state: Any) -> list[dict]:
+    """The reports of the current campaign timeline; one can only affect the timeline that made it."""
     return [r for r in state.narrative_corrections
             if r.get("timeline_id", "") == state.timeline_id]
+
+
+def find_report(state: Any, report_id: str) -> dict | None:
+    return next((item for item in active(state) if item.get("id") == report_id), None)
+
+
+def _move(report: dict, to: ReportStatus) -> None:
+    """Change a report's status along ``TRANSITIONS``; anything else is a bug in the caller."""
+    current = report.get("status", "")
+    if to not in TRANSITIONS.get(current, frozenset()):
+        raise ValueError(f"correction #{report.get('id')} cannot move from {current!r} to {to!r}")
+    report["status"] = to
+
+
+def new_report(
+    state: Any, *, reporter_id: str, issue: str, target_message_id: str, receipt: dict,
+) -> dict:
+    """A pending report: the player's allegation about one earlier Keeper message."""
+    return {
+        "id": uuid4().hex[:10],
+        "target_message_id": target_message_id,
+        "target_receipt": receipt,
+        "issue": issue,
+        "reporter_id": reporter_id,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timeline_id": state.timeline_id,
+        "conversation_id": state.group_id,
+    }
+
+
+def file_report(state: Any, report: dict) -> None:
+    """Add ``report`` to the state. Every filing first discards the reports of inactive
+    timelines, so repeated scenario switches cannot accumulate stale reports."""
+    state.narrative_corrections[:] = active(state)
+    state.narrative_corrections.append(report)
+
+
+def prune_closed(state: Any) -> None:
+    """Bound state size; approved decisions also remain in the canonical log."""
+    approved = [item for item in state.narrative_corrections if item.get("status") == "approved"]
+    closed = [item for item in state.narrative_corrections if item.get("status") in CLOSED_STATUSES]
+    retained = {id(item) for item in approved + closed[-MAX_CLOSED_IN_STATE:]}
+    state.narrative_corrections[:] = [
+        item for item in state.narrative_corrections
+        if item.get("status") in {*OPEN_STATUSES, "superseded"} or id(item) in retained
+    ]
+
+
+def valid_hold_scope(scope: list[str]) -> bool:
+    low, high = HOLD_TERM_LENGTH
+    return bool(scope) and len(scope) <= MAX_HOLD_TERMS and all(low <= len(term) <= high for term in scope)
+
+
+def hold(report: dict, scope: list[str], held_by: str) -> None:
+    """Mark the names whose actions pause until the report is ruled on. An allegation alone never does."""
+    if report.get("status") not in OPEN_STATUSES:
+        raise ValueError(f"correction #{report.get('id')} is not open")
+    if not valid_hold_scope(scope):
+        low, high = HOLD_TERM_LENGTH
+        raise ValueError(f"a hold names 1 to {MAX_HOLD_TERMS} terms of {low} to {high} characters")
+    report["hold_scope"] = scope
+    report["held_by"] = held_by
+
+
+def withdraw(report: dict, by: str) -> str:
+    """Close an open report without a ruling; returns the public message."""
+    _move(report, "withdrawn")
+    mark_reviewed(report, by)
+    return f"敘事異議 #{report['id']} 已撤回。"
+
+
+def supersede(state: Any, old: dict, replacement: dict) -> None:
+    """Replace an approved correction by another approved one; the original record is kept."""
+    if old is replacement or replacement.get("status") != "approved":
+        raise ValueError("a correction is superseded by another approved correction")
+    _move(old, "superseded")
+    old["superseded_by"] = replacement["id"]
+    replacement.setdefault("supersedes", []).append(f"correction:{old['id']}")
+    replacement["summary_rebuild_status"] = "pending"
+    for entry in state.log:
+        if f"correction:{old['id']}" in entry.get("fact_refs", []):
+            entry.setdefault("superseded_by", []).append(replacement["id"])
 
 
 def projection(state: Any) -> tuple[str, bool]:
@@ -143,7 +260,7 @@ def mark_reviewed(report: dict, reviewer: str) -> None:
 
 def record_unverified(report: dict) -> None:
     """The Keeper couldn't verify `report`; it stays open for a KP or the reporter."""
-    report["status"] = "unverified"
+    _move(report, "unverified")
 
 
 def record_ruling(
@@ -158,7 +275,7 @@ def record_ruling(
     `keeper_basis`.
     """
     if decision == "approve":
-        report["status"] = "approved"
+        _move(report, "approved")
         report["resolution"] = resolution
         report["adjudicated_by"] = "keeper" if keeper_basis else "kp_assistant"
         report["supersedes"] = [f"message:{report['target_message_id']}"]
@@ -178,7 +295,7 @@ def record_ruling(
         state.openai_previous_response_id = ""
         state.openai_previous_response_timeline_id = ""
     else:
-        report["status"] = "rejected"
+        _move(report, "rejected")
         judged = "經守秘人依證據核對後不成立" if keeper_basis else "經 KP 核對後不成立"
         message = f"敘事異議 #{report['id']} {judged}。"
     mark_reviewed(report, reviewer)
@@ -193,7 +310,7 @@ def record_presentation_repair(state: Any, report: dict, *, resolution: str) -> 
     """Accept a harmless player correction without promoting it to world canon."""
     from app.services import history_authority
 
-    report["status"] = "approved"
+    _move(report, "approved")
     report["resolution"] = resolution
     report["adjudicated_by"] = "player_presentation"
     report["supersedes"] = [f"message:{report['target_message_id']}"]
