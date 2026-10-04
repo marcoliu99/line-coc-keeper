@@ -26,7 +26,10 @@ def test_upload_flows_reproduce_the_trace_recorded_before_the_module_was_retired
 
 def test_the_golden_trace_covers_each_upload_path():
     recorded = json.loads(GOLDEN.read_text(encoding="utf-8"))
-    assert set(recorded) == {"first_upload", "similar_reupload", "role_sheet", "markdown_upload", "map_upload"}
+    assert set(recorded) == {
+        "first_upload", "similar_reupload", "role_sheet", "markdown_upload",
+        "pending_choice_new", "pending_choice_fix", "scenario_use", "map_upload",
+    }
     first = recorded["first_upload"]
     assert [call[0] for call in first["calls"]][:2] == ["extract_text", "guess_title"]
     assert any("預製調查員" in message for message in first["messages"])

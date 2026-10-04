@@ -30,6 +30,8 @@ from app import (
 )
 from app.models import GroupState
 from app.repositories import group_state, state_transaction
+from app import scenario_templates
+from app.commands.handlers import system
 from app.services import map_service, scenario_ingestion
 
 
@@ -141,6 +143,87 @@ def _flow_markdown_upload(ingestion: Any, library_dir: Path) -> dict[str, Any]:
     return {"accepted": accepted, "calls": recorder.calls, "messages": recorder.messages, "state": _state_view("trace-markdown")}
 
 
+def _lifecycle_view(group: str, old_timeline: str) -> dict[str, Any]:
+    state = group_state.load_state(group)
+    return {
+        **_state_view(group),
+        "timeline_replaced": state.timeline_id != old_timeline,
+        "active": state.active,
+        "game_started": state.game_started,
+        "scenario_variant_id": state.scenario_variant_id,
+        "active_chapter_id": state.active_chapter_id,
+        "context_chapter_ids": state.context_chapter_ids,
+        "scene_maps": sorted(state.scene_maps),
+        "current_map_page": state.current_map_page,
+        "current_room_id": state.current_room_id,
+        "claimed": sorted(p.get("name", "") for p in state.pregens if p.get("claimed_by")),
+        "pending_luck": sorted(state.pending_luck_decisions),
+        "provider_chain": state.openai_previous_response_id,
+    }
+
+
+def _running_game(group: str, **fields: Any) -> str:
+    _seed(
+        group, scenario_title="Existing", scenario_text="舊劇本", active=True, game_started=True,
+        timeline_id="timeline-old", kp_assistant_user_id="kp",
+        pregens=[{"name": "林文", "occupation": "記者", "claimed_by": "u1", "source": "llm_extracted"}],
+        current_map_page={"u1": "1"}, current_room_id={"u1": "hall"},
+        pending_checks={"u1": {"type": "skill", "skill": "偵查", "skill_value": 60}},
+        openai_previous_response_id="resp-old", **fields,
+    )
+    return "timeline-old"
+
+
+def _flow_pending_choice(ingestion: Any, library_dir: Path, choice: str) -> dict[str, Any]:
+    recorder = Recorder()
+    group = f"trace-choice-{choice}"
+    old_timeline = _running_game(group)
+    with patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", library_dir), \
+            patch.object(pdf_loader, "extract_text", recorder.wrap("extract_text", ("第一章 書房。\n書房裡有一本日記。", [], False, {}, {}))), \
+            patch.object(pdf_loader, "guess_title", recorder.wrap("guess_title", "Trace Scenario")), \
+            patch.object(pdf_loader, "extract_preview", recorder.wrap("extract_preview", "preview")), \
+            patch.object(scenario_index, "extract_scenario_index", recorder.wrap("extract_scenario_index", {"npcs": [], "locations": []})), \
+            patch.object(pregen_extractor, "extract_pregens", recorder.wrap("extract_pregens", [{"name": "新人", "occupation": "醫生", "source": "llm_extracted"}])), \
+            patch.object(scenario_activation, "refresh_after_commit", recorder.wrap("refresh_after_commit", True)):
+        accepted = asyncio.run(ingestion.handle_pdf_upload(
+            group, recorder.message, recorder.message, b"%PDF", "scenario.pdf", skip_similarity=True,
+        ))
+        pending = _lifecycle_view(group, old_timeline)
+        text = ingestion.apply_pdf_upload_choice(group, choice)
+    return {
+        "accepted": accepted, "calls": recorder.calls, "messages": recorder.messages,
+        "pending": pending, "choice_reply": _stable(text), "state": _lifecycle_view(group, old_timeline),
+    }
+
+
+def _flow_scenario_use(ingestion: Any, library_dir: Path) -> dict[str, Any]:
+    recorder = Recorder()
+    _seed("trace-use-source")
+    with patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", library_dir), \
+            patch.object(pdf_loader, "extract_text", recorder.wrap("extract_text", ("第一章 書房。\n書房裡有一本日記。", [], False, {}, {}))), \
+            patch.object(pdf_loader, "guess_title", recorder.wrap("guess_title", "Trace Use Scenario")), \
+            patch.object(pdf_loader, "extract_preview", recorder.wrap("extract_preview", "preview use")), \
+            patch.object(scenario_index, "extract_scenario_index", recorder.wrap("extract_scenario_index", {"npcs": [], "locations": []})), \
+            patch.object(pregen_extractor, "extract_pregens", recorder.wrap("extract_pregens", [{"name": "新人", "occupation": "醫生", "source": "llm_extracted"}])), \
+            patch.object(scenario_activation, "refresh_after_commit", lambda *_a, **_k: True):
+        asyncio.run(ingestion.handle_pdf_upload(
+            "trace-use-source", recorder.message, recorder.message, b"%PDF-use", "scenario_use.pdf", skip_similarity=True,
+        ))
+    scenario_id = group_state.load_state("trace-use-source").scenario_library_id
+    recorder = Recorder()
+    old_timeline = _running_game("trace-use")
+    with patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", library_dir), \
+            patch.object(scenario_activation, "refresh_after_commit", recorder.wrap("refresh_after_commit", True)), \
+            patch.object(scenario_templates, "schedule_index_prewarm", lambda *_a, **_k: recorder.calls.append(["schedule_index_prewarm", "<state>", "[]"])):
+        asyncio.run(system.handle_system_command(
+            "trace-use", "kp", recorder.message, None, None, None, ["/coc", "scenario", "use", scenario_id],
+        ))
+    return {
+        "scenario_id": scenario_id, "calls": [c[:2] for c in recorder.calls],
+        "messages": recorder.messages, "state": _lifecycle_view("trace-use", old_timeline),
+    }
+
+
 def _flow_map_upload(mapping: Any) -> dict[str, Any]:
     recorder = Recorder()
     _seed("trace-map", active=True)
@@ -162,6 +245,9 @@ def record() -> dict[str, Any]:
             "similar_reupload": _flow_similar_reupload(ingestion, library_dir),
             "role_sheet": _flow_role_sheet(ingestion, library_dir),
             "markdown_upload": _flow_markdown_upload(ingestion, library_dir),
+            "pending_choice_new": _flow_pending_choice(ingestion, library_dir, "new"),
+            "pending_choice_fix": _flow_pending_choice(ingestion, library_dir, "fix"),
+            "scenario_use": _flow_scenario_use(ingestion, library_dir),
             "map_upload": _flow_map_upload(mapping),
         }
 

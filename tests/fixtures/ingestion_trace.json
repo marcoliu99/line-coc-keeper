@@ -92,6 +92,257 @@
       "scenario_title": "Trace Study"
     }
   },
+  "pending_choice_fix": {
+    "accepted": true,
+    "calls": [
+      [
+        "extract_text",
+        "(b'%PDF',)",
+        "[('quality_report', {})]"
+      ],
+      [
+        "guess_title",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[('file_name', 'scenario.pdf')]"
+      ],
+      [
+        "extract_scenario_index",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[]"
+      ],
+      [
+        "extract_pregens",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[]"
+      ],
+      [
+        "extract_preview",
+        "(b'%PDF',)",
+        "[]"
+      ],
+      [
+        "refresh_after_commit",
+        "('trace-choice-fix', 'trace-scenario-3fe63d06', {'manifest': {'id': 'trace-scenario-3fe63d06', 'title': 'Trace Scenario', 'source_filename': 'scenario.pdf', 'source_format': 'pdf', 'source_file': 'source.pdf', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '5975cf1bba432391c94667f5886225f69377c0aa8b9fa21fddfb21c89bcf9092', 'content_hash': '3fe63d0639f7bd131537e2081ebb784ae162e13cd332ce2b01ac5255caaaec02', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '第一章 書房。\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [{'name': '新人', 'occupation': '醫生', 'source': 'llm_extracted'}], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-scenario-3fe63d06/images'), 'page_numbers': {1}})",
+        "[]"
+      ]
+    ],
+    "choice_reply": "已載入劇本《Trace Scenario》（17 字）。\n這份劇本內建了 2 位預製調查員，輸入「/coc pregens」查看、「/coc pregen 編號」看某位的完整能力——有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n建好角色後，直接在群組打字描述行動即可開始冒險！\n\n⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。\n\n⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,可能重複推導同一個地點的細節。可用 /coc index 重建。",
+    "messages": [
+      "收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...",
+      "這個群組目前正在跑《Existing》。新上傳的《Trace Scenario》是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇——選錯的代價不小（位置可能對到新劇本裡不存在的房間），拿不準的話選「修正目前劇本」比較安全。"
+    ],
+    "pending": {
+      "active": true,
+      "active_chapter_id": "",
+      "autoroll_checks": false,
+      "claimed": [
+        "林文"
+      ],
+      "context_chapter_ids": [],
+      "current_map_page": {
+        "u1": "1"
+      },
+      "current_room_id": {
+        "u1": "hall"
+      },
+      "game_started": true,
+      "log": 0,
+      "pending_checks": [
+        "u1"
+      ],
+      "pending_luck": [],
+      "pending_pdf_upload": {
+        "active_chapter_id": "chapter-01",
+        "context_chapter_ids": [
+          "chapter-01"
+        ],
+        "locations": [],
+        "low_text_pages": [],
+        "npcs": [],
+        "page_maps": {},
+        "pregens": [
+          {
+            "name": "新人",
+            "occupation": "醫生",
+            "source": "llm_extracted"
+          }
+        ],
+        "previous_content_hash": "",
+        "scenario_id": "trace-scenario-3fe63d06",
+        "text": "第一章 書房。\n書房裡有一本日記。",
+        "title": "Trace Scenario",
+        "truncated": false
+      },
+      "pending_scenario_upload": null,
+      "pregens": [
+        "林文"
+      ],
+      "provider_chain": "resp-old",
+      "scenario_library_id": "",
+      "scenario_text": "舊劇本",
+      "scenario_title": "Existing",
+      "scenario_variant_id": "original",
+      "scene_maps": [],
+      "timeline_replaced": false
+    },
+    "state": {
+      "active": true,
+      "active_chapter_id": "chapter-01",
+      "autoroll_checks": false,
+      "claimed": [
+        "林文"
+      ],
+      "context_chapter_ids": [
+        "chapter-01"
+      ],
+      "current_map_page": {
+        "u1": "1"
+      },
+      "current_room_id": {
+        "u1": "hall"
+      },
+      "game_started": true,
+      "log": 0,
+      "pending_checks": [
+        "u1"
+      ],
+      "pending_luck": [],
+      "pending_pdf_upload": null,
+      "pending_scenario_upload": null,
+      "pregens": [
+        "林文",
+        "新人"
+      ],
+      "provider_chain": "resp-old",
+      "scenario_library_id": "trace-scenario-3fe63d06",
+      "scenario_text": "第一章 書房。\n書房裡有一本日記。",
+      "scenario_title": "Trace Scenario",
+      "scenario_variant_id": "original",
+      "scene_maps": [],
+      "timeline_replaced": false
+    }
+  },
+  "pending_choice_new": {
+    "accepted": true,
+    "calls": [
+      [
+        "extract_text",
+        "(b'%PDF',)",
+        "[('quality_report', {})]"
+      ],
+      [
+        "guess_title",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[('file_name', 'scenario.pdf')]"
+      ],
+      [
+        "extract_scenario_index",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[]"
+      ],
+      [
+        "extract_pregens",
+        "('第一章 書房。\\n書房裡有一本日記。',)",
+        "[]"
+      ],
+      [
+        "extract_preview",
+        "(b'%PDF',)",
+        "[]"
+      ],
+      [
+        "refresh_after_commit",
+        "('trace-choice-new', 'trace-scenario-3fe63d06', {'manifest': {'id': 'trace-scenario-3fe63d06', 'title': 'Trace Scenario', 'source_filename': 'scenario.pdf', 'source_format': 'pdf', 'source_file': 'source.pdf', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '5975cf1bba432391c94667f5886225f69377c0aa8b9fa21fddfb21c89bcf9092', 'content_hash': '3fe63d0639f7bd131537e2081ebb784ae162e13cd332ce2b01ac5255caaaec02', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '第一章 書房。\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [{'name': '新人', 'occupation': '醫生', 'source': 'llm_extracted'}], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-scenario-3fe63d06/images'), 'page_numbers': {1}})",
+        "[]"
+      ]
+    ],
+    "choice_reply": "已載入劇本《Trace Scenario》（17 字）。\n這份劇本內建了 1 位預製調查員，輸入「/coc pregens」查看、「/coc pregen 編號」看某位的完整能力——有內建角色的話，「/coc pc 角色名 職業」就只能從那些角色裡選一個。\n建好角色後，直接在群組打字描述行動即可開始冒險！\n\n⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。\n\n⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,可能重複推導同一個地點的細節。可用 /coc index 重建。",
+    "messages": [
+      "收到了，正在讀取劇本內容；圖片較多的劇本需要較長時間，請稍候...",
+      "這個群組目前正在跑《Existing》。新上傳的《Trace Scenario》是要開始一個全新的劇本，還是修正/補完目前這份劇本？請點下面的按鈕選擇——選錯的代價不小（位置可能對到新劇本裡不存在的房間），拿不準的話選「修正目前劇本」比較安全。"
+    ],
+    "pending": {
+      "active": true,
+      "active_chapter_id": "",
+      "autoroll_checks": false,
+      "claimed": [
+        "林文"
+      ],
+      "context_chapter_ids": [],
+      "current_map_page": {
+        "u1": "1"
+      },
+      "current_room_id": {
+        "u1": "hall"
+      },
+      "game_started": true,
+      "log": 0,
+      "pending_checks": [
+        "u1"
+      ],
+      "pending_luck": [],
+      "pending_pdf_upload": {
+        "active_chapter_id": "chapter-01",
+        "context_chapter_ids": [
+          "chapter-01"
+        ],
+        "locations": [],
+        "low_text_pages": [],
+        "npcs": [],
+        "page_maps": {},
+        "pregens": [
+          {
+            "name": "新人",
+            "occupation": "醫生",
+            "source": "llm_extracted"
+          }
+        ],
+        "previous_content_hash": "",
+        "scenario_id": "trace-scenario-3fe63d06",
+        "text": "第一章 書房。\n書房裡有一本日記。",
+        "title": "Trace Scenario",
+        "truncated": false
+      },
+      "pending_scenario_upload": null,
+      "pregens": [
+        "林文"
+      ],
+      "provider_chain": "resp-old",
+      "scenario_library_id": "",
+      "scenario_text": "舊劇本",
+      "scenario_title": "Existing",
+      "scenario_variant_id": "original",
+      "scene_maps": [],
+      "timeline_replaced": false
+    },
+    "state": {
+      "active": true,
+      "active_chapter_id": "chapter-01",
+      "autoroll_checks": false,
+      "claimed": [],
+      "context_chapter_ids": [
+        "chapter-01"
+      ],
+      "current_map_page": {},
+      "current_room_id": {},
+      "game_started": false,
+      "log": 0,
+      "pending_checks": [],
+      "pending_luck": [],
+      "pending_pdf_upload": null,
+      "pending_scenario_upload": null,
+      "pregens": [
+        "新人"
+      ],
+      "provider_chain": "",
+      "scenario_library_id": "trace-scenario-3fe63d06",
+      "scenario_text": "第一章 書房。\n書房裡有一本日記。",
+      "scenario_title": "Trace Scenario",
+      "scenario_variant_id": "original",
+      "scene_maps": [],
+      "timeline_replaced": true
+    }
+  },
   "role_sheet": {
     "calls": [
       [
@@ -115,6 +366,49 @@
         "manual"
       ]
     ]
+  },
+  "scenario_use": {
+    "calls": [
+      [
+        "refresh_after_commit",
+        "('trace-use', 'trace-use-scenario-3fe63d06', {'manifest': {'id': 'trace-use-scenario-3fe63d06', 'title': 'Trace Use Scenario', 'source_filename': 'scenario_use.pdf', 'source_format': 'pdf', 'source_file': 'source.pdf', 'created_at': '<ts>', 'updated_at': '<ts>', 'preview_hash': '507baffcabeb98360dfd25f5f66303345f625f26757e93e1b8c693f18775e9b4', 'content_hash': '3fe63d0639f7bd131537e2081ebb784ae162e13cd332ce2b01ac5255caaaec02', 'page_count': 1, 'chapters': [{'id': 'chapter-01', 'title': '主劇本', 'kind': 'playable', 'start_page': 1, 'end_page': 1}], 'image_assets': []}, 'active_chapter_id': 'chapter-01', 'context_chapter_ids': ['chapter-01'], 'text': '第一章 書房。\\n書房裡有一本日記。', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [{'name': '新人', 'occupation': '醫生', 'source': 'llm_extracted'}], 'scene_maps': {}, 'images_dir': PosixPath('<library>/trace-use-scenario-3fe63d06/images'), 'page_numbers': {1}})"
+      ],
+      [
+        "schedule_index_prewarm",
+        "<state>"
+      ]
+    ],
+    "messages": [
+      "KP 已選擇《Trace Use Scenario》；目前 Context：chapter-01。\n\n⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。\n\n⚠️ 這份劇本沒有地點索引,守密人的提示詞少了地點對照,可能重複推導同一個地點的細節。可用 /coc index 重建。"
+    ],
+    "scenario_id": "trace-use-scenario-3fe63d06",
+    "state": {
+      "active": true,
+      "active_chapter_id": "chapter-01",
+      "autoroll_checks": false,
+      "claimed": [],
+      "context_chapter_ids": [
+        "chapter-01"
+      ],
+      "current_map_page": {},
+      "current_room_id": {},
+      "game_started": true,
+      "log": 0,
+      "pending_checks": [],
+      "pending_luck": [],
+      "pending_pdf_upload": null,
+      "pending_scenario_upload": null,
+      "pregens": [
+        "新人"
+      ],
+      "provider_chain": "",
+      "scenario_library_id": "trace-use-scenario-3fe63d06",
+      "scenario_text": "第一章 書房。\n書房裡有一本日記。",
+      "scenario_title": "Trace Use Scenario",
+      "scenario_variant_id": "original",
+      "scene_maps": [],
+      "timeline_replaced": true
+    }
   },
   "similar_reupload": {
     "accepted": false,
