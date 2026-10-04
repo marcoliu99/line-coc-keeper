@@ -20,6 +20,6 @@ PyMuPDF4LLM 1.28.2 預設啟用自己的 Tesseract OCR。目前正式 `to_markdo
 
 確認正式 PyMuPDF4LLM 呼叫明確傳入 `use_ocr=False`。比較單欄、雙欄原生文字及版面選擇；確認 raster／低文字頁進 Paddle，Paddle 採用時跳過 Tesseract，被拒絕或不可用時維持後備。取得先前 log 對應的 PDF 後，用 Python 3.13 對同一檔案 smoke，僅記錄第 12、16、17 頁的 sanitized 長度、狀態及 warning。執行完整 pytest、ruff、mypy、compileall、diff check。
 
-## 待確認問題
+## 本機 smoke 證據
 
-目前只有待核對的第 12、16、17 頁，尚未有對應 PDF 路徑；確認路徑後才能將 smoke 結果歸因於該報告。
+已以 SHA256 找到與先前第 12、16、17 頁報告相符的私人來源。Python 3.13 本機重跑未出現 PyMuPDF4LLM 的 Tesseract／OCR 頁面訊息。第 12、16 頁保留原生文字且未做 OCR；第 17 頁進入 Paddle 並被採用。既有頁面 warning 仍在，不屬於這次修正。

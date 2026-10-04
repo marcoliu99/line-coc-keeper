@@ -80,6 +80,42 @@ class PdfLoaderImagePersistenceTests(unittest.TestCase):
         self.assertEqual(low_pages, [1])
         self.assertEqual(page_images, {1: b"png"})
 
+    def test_pymupdf4llm_disables_its_internal_ocr(self):
+        document = pymupdf.open()
+        document.new_page().insert_text((40, 60), "Native PDF source")
+        pdf_bytes = document.tobytes()
+        document.close()
+        options = []
+
+        def to_markdown(_doc, **kwargs):
+            options.append(kwargs)
+            return [{"metadata": {"page_number": 1}, "text": "Native PDF source"}]
+
+        with patch.dict(sys.modules, {"pymupdf4llm": types.SimpleNamespace(to_markdown=to_markdown)}):
+            pages = pdf_loader._pymupdf4llm_page_chunks(pdf_bytes)
+
+        self.assertEqual(pages[1]["text"], "Native PDF source")
+        self.assertEqual(options[0]["use_ocr"], False)
+
+    def test_native_single_and_two_column_text_is_unchanged_without_internal_ocr(self):
+        try:
+            import pymupdf4llm
+        except ImportError:
+            self.skipTest("optional PyMuPDF4LLM is unavailable")
+
+        for columns in (1, 2):
+            with self.subTest(columns=columns), pymupdf.open() as document:
+                page = document.new_page(width=600, height=800)
+                for index in range(10):
+                    y = 70 + index * 55
+                    page.insert_text((50, y), f"Left {index} damage 2d6.")
+                    if columns == 2:
+                        page.insert_text((340, y), f"Right {index} SAN 1/1d6.")
+                with_ocr = pymupdf4llm.to_markdown(document, page_chunks=True, use_ocr=True)[0]["text"]
+                without_ocr = pymupdf4llm.to_markdown(document, page_chunks=True, use_ocr=False)[0]["text"]
+                self.assertTrue(without_ocr)
+                self.assertEqual(without_ocr, with_ocr)
+
     def test_pymupdf4llm_zero_based_page_metadata_is_shifted(self):
         fake_pymupdf4llm = types.SimpleNamespace(
             to_markdown=lambda _doc, **_kwargs: [

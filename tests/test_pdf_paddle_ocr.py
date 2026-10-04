@@ -214,6 +214,53 @@ def test_image_only_pdf_uses_paddle_in_existing_local_ocr_path(paddle_backend, m
     assert backend.calls == 1
 
 
+@pytest.mark.parametrize('paddle_status', ['accepted', 'rejected', 'unavailable'])
+def test_internal_ocr_disabled_image_page_uses_local_ocr(monkeypatch, paddle_status):
+    import pymupdf
+
+    from app import pdf_loader, pdf_ocr
+
+    image = io.BytesIO()
+    Image.new('RGB', (100, 60), 'white').save(image, format='PNG')
+    with pymupdf.open() as document:
+        document.new_page().insert_image(pymupdf.Rect(0, 0, 595, 842), stream=image.getvalue())
+        payload = document.tobytes()
+
+    markdown_options = []
+
+    def to_markdown(_doc, **kwargs):
+        markdown_options.append(kwargs)
+        # This simulates the unwanted internal OCR filling a low-text page.
+        text = 'internal OCR source ' * 20 if kwargs.get('use_ocr', True) else ''
+        return [{'metadata': {'page_number': 1}, 'text': text}]
+
+    paddle_calls = []
+    tesseract_calls = []
+
+    def paddle(*args, **kwargs):
+        paddle_calls.append(1)
+        return pdf_ocr.OcrResult(text='Paddle source' if paddle_status == 'accepted' else '', status=paddle_status)
+
+    def tesseract(*args, **kwargs):
+        tesseract_calls.append(1)
+        return 'Tesseract source'
+
+    monkeypatch.setitem(sys.modules, 'pymupdf4llm', types.SimpleNamespace(to_markdown=to_markdown))
+    monkeypatch.setitem(sys.modules, 'pytesseract', types.SimpleNamespace(image_to_string=tesseract))
+    monkeypatch.setattr(pdf_ocr, 'recognize_with_paddle', paddle)
+    monkeypatch.setattr(pdf_loader, '_markitdown_page_texts', lambda *args: None)
+    monkeypatch.setattr(pdf_loader, 'analyze_page_image', lambda *args: ('', None))
+
+    text = pdf_loader.extract_text(payload, ai_repair_limit=0)[0]
+
+    assert markdown_options[0]['use_ocr'] is False
+    assert len(paddle_calls) == 1
+    if paddle_status == 'accepted':
+        assert 'Paddle source' in text and tesseract_calls == []
+    else:
+        assert 'Tesseract source' in text and len(tesseract_calls) == 1
+
+
 @pytest.mark.parametrize('failure', ['disabled', 'missing_model', 'missing_package', 'init', 'inference', 'empty', 'malformed'])
 def test_paddle_failure_preserves_existing_tesseract_import(paddle_backend, monkeypatch, failure):
     import pymupdf

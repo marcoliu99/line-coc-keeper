@@ -1565,7 +1565,7 @@
       "title": "Disable PyMuPDF4LLM internal OCR",
       "zh": "關閉 PyMuPDF4LLM 內建 OCR",
       "category": "bug",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": ["app/pdf_loader.py", "tests/test_pdf_loader.py"],
       "path": "docs/specs/bug/pymupdf4llm_internal_ocr.md",
       "zh_path": "docs/specs/bug/pymupdf4llm_internal_ocr_zh.md"

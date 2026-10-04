@@ -249,6 +249,7 @@ def _pymupdf4llm_page_chunks(pdf_bytes: bytes) -> dict[int, dict] | None:
             page_chunks=True,
             write_images=False,
             embed_images=False,
+            use_ocr=False,
         )
     except Exception:  # a parser failure must fall back to PyMuPDF text extraction.
         _logger.debug("pymupdf4llm page parsing failed", exc_info=True)
