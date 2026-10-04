@@ -75,6 +75,11 @@ def _normalize_dice_ocr(text: str, source: str) -> str:
     return _MISREAD_SAN_ONE.sub(san_one, corrected_text)
 
 
+def normalize_dice_ocr(text: str, source: str) -> str:
+    """Apply the existing narrow, source-aware die OCR correction to evidence."""
+    return _normalize_dice_ocr(text, source)
+
+
 def _candidate_safe(text: str, source: str, pairs: list[dict]) -> bool:
     if (not any(char.isalnum() for char in text) or len(text) > 100_000 or '\ufffd' in text
             or re.search(r'(?<!\w)[lI|][dD]\d', text)):

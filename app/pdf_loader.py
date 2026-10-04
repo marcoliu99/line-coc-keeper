@@ -587,6 +587,7 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                                                       "initialization_seconds": paddle_layout.initialization_seconds,
                                                       "inference_seconds": paddle_layout.inference_seconds},
                                     "candidates": {"native": native, "layout": layout_text}})
+        pdf_quality.bind_repeated_vertical_evidence(report["pages"])
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None
@@ -603,6 +604,17 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
                 if any(p["status"] == "pair_mismatch" for p in checks):
                     method = "native"
                     row["warnings"].append("ocr_pair_mismatch")
+                if (method != 'layout' and 'layout_text_loss' in warnings
+                        and set(warnings) <= {'layout_text_loss', 'layout_numeric_loss'} and all(
+                    check['status'] == 'matched' for check in checks
+                )):
+                    validation = pdf_quality.select_rich_ocr_candidate(
+                        texts[number - 1], extra, row['numeric_pairs'], row['evidence'], _LOW_TEXT_THRESHOLD,
+                    )
+                    row['rich_candidate_selection'] = validation
+                    if validation['status'] == 'accepted':
+                        chosen, method = extra, 'layout'
+                        row['warnings'].append('rich_candidate_unverified')
                 if method == "layout":
                     texts[number - 1] = chosen
                     report["pages"][number - 1]["method"] = "markitdown"
