@@ -11,7 +11,7 @@ from app.config import (
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
     TOOL_EXECUTION_TIMEOUT_SECONDS,
 )
-from app.domain.models import ObservedOutcome
+from app.domain.models import CheckStatus, ObservedOutcome
 from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
 from app.services import mutation_admission, turn_delivery
@@ -72,7 +72,7 @@ def make_tool_executor(
     image_requests: list[tuple[str | None, int]],
     speaker_role: str,
     facts: list[str],
-    check_status: dict[str, Any] | None = None,
+    check_status: CheckStatus | None = None,
     evidence_incomplete: bool = False,
     required_evidence_ids: set[str] | None = None,
     observed_outcomes: list[ObservedOutcome] | None = None,
@@ -230,7 +230,7 @@ def make_tool_executor(
 _CHECK_REGISTRATION_TOOLS = tool_registry.CHECK_REGISTRATION_TOOLS
 
 
-def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[str, Any]) -> None:
+def _record_check_status(status: CheckStatus, tool_name: str, result: dict[str, Any]) -> None:
     """Track player-check state from actual tool results for Narrator policy.
 
     Keep the pending/resolved distinction structured: a failed tool call does
@@ -241,12 +241,15 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
         status["tool_called"] = True
         interaction = result.get('interaction') or {}
         if result.get('ok') and result.get('phase') in {'PLAYER_CHOICE', 'PLAYER_ROLL', 'INJURY_CHECK', 'LUCK_DECISION'}:
-            key = 'pending_luck' if result['phase'] == 'LUCK_DECISION' else 'pending'
             status['pending'] = None
             status['pending_luck'] = None
             status['resolved'] = None
-            status[key] = {**interaction, 'combat_id': result.get('combat_id'),
-                           'action_id': result.get('action_id'), 'phase': result['phase']}
+            entry = {**interaction, 'combat_id': result.get('combat_id'),
+                     'action_id': result.get('action_id'), 'phase': result['phase']}
+            if result['phase'] == 'LUCK_DECISION':
+                status['pending_luck'] = entry
+            else:
+                status['pending'] = entry
             return
         if result.get('ok') and result.get('completed'):
             status['pending'] = None
@@ -287,7 +290,7 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
         elif result.get("ok") and result.get("resolved") is True:
             status["pending"] = None
             status["pending_luck"] = None
-            status["resolved"] = {
+            resolved: dict[str, Any] = {
                 key: result[key]
                 for key in (
                     "investigator", "skill", "skill_value", "difficulty", "roll", "tier",
@@ -297,7 +300,8 @@ def _record_check_status(status: dict[str, Any], tool_name: str, result: dict[st
             }
             opposed = result.get('opposed_outcome')
             if isinstance(opposed, dict) and opposed.get('winner') in {'player', 'opponent', 'neither'}:
-                status['resolved']['opposed_winner'] = opposed['winner']
+                resolved['opposed_winner'] = opposed['winner']
+            status["resolved"] = resolved
     elif tool_name == "clear_pending_check" and result.get("ok") and result.get("cleared"):
         status["tool_called"] = True
         status["pending"] = None

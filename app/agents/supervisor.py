@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any
 
 from app import config, keeper, locks, observability
 from app.agents import (
@@ -15,18 +15,17 @@ from app.agents import (
     narrator,
     state_reducer,
 )
-from app.domain.models import AgentMessage, MechanicResult
+from app.domain.models import AgentMessage, MechanicResult, PlayerTurnKind, SpeakerRole
 from app.models import GroupState
 from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
 from app.services import mutation_admission, prompt_config, turn_delivery, turn_handoff
 
 _logger = logging.getLogger(__name__)
-PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 
 
 async def prefetch_retrieval(
-    state: GroupState, user_id: str, text: str, speaker_role: str, conversation_id: str,
+    state: GroupState, user_id: str, text: str, speaker_role: SpeakerRole, conversation_id: str,
 ) -> context_builder.RetrievalPrefetch | None:
     """Run a turn's retrieval before its caller queues for the conversation lock.
 
@@ -66,7 +65,7 @@ async def run_turn(
     display_name: str,
     text: str,
     resolved_location: dict[str, Any] | None,
-    speaker_role: str,
+    speaker_role: SpeakerRole,
     conversation_id: str,
     *,
     turn_kind: PlayerTurnKind = "player_action",

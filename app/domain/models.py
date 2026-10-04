@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
+
+if TYPE_CHECKING:
+    from app.models import Character, GroupState
+    from app.services.turn_delivery import DeliveryEnvelope
+
+PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
+SpeakerRole = Literal["player", "kp_assistant"]
 
 
 @dataclass
@@ -48,6 +55,34 @@ class ObservedOutcome:
     fact_ref: str = ""
 
 
+class CheckStatus(TypedDict, total=False):
+    """What the Executor's tools and the handoff established about checks this turn.
+
+    Narration and delivery read it as the authority on whether a check is waiting, a Luck
+    decision is open, or a result is final. Who writes each key:
+
+    * Executor / tool gateway, while tools run: ``tool_called``, ``pending``, ``pending_luck``,
+      ``resolved``, ``scenario_evidence_blocked``, ``cleared`` (a wait was removed).
+    * Executor, once the tools are done: ``tool_event_count``, ``state_changed``, ``dice_rolled``.
+    * ``turn_handoff.prepare_narrator_handoff``, from the latest state: ``pending``,
+      ``pending_luck``, ``resolved`` (cleared while a Luck decision is open),
+      ``waiting_for_name``, ``current_turn_state``.
+    * ``turn_delivery.public_mechanic``, on a copy: clears a private ``pending`` / ``pending_luck``.
+    """
+
+    tool_called: bool
+    pending: dict[str, Any] | None
+    pending_luck: dict[str, Any] | None
+    resolved: dict[str, Any] | None
+    scenario_evidence_blocked: bool
+    cleared: bool
+    tool_event_count: int
+    state_changed: bool
+    dice_rolled: bool
+    waiting_for_name: str
+    current_turn_state: Any
+
+
 @dataclass
 class MechanicResult:
     success: bool
@@ -55,13 +90,53 @@ class MechanicResult:
     narrative_facts: list[str]
     state_delta: StateDelta
     events: list[GameEvent] = field(default_factory=list)
-    check_status: dict[str, Any] = field(default_factory=dict)
+    check_status: CheckStatus = field(default_factory=CheckStatus)
     turn_resolution: TurnResolution | None = None
     execution_health: str = "completed"
     observed_outcomes: list[ObservedOutcome] = field(default_factory=list)
 
 
+class TurnPayload(TypedDict, total=False):
+    """The facts one player turn carries between its stages.
+
+    ``context_builder`` fills the first group; each later stage adds only the keys it owns
+    (``tests/test_turn_payload_contract.py`` fails if another module writes them). The
+    envelope is read by Executor, Narrator and delivery, never handed to a provider.
+    """
+
+    # context_builder: the input and the evidence gathered before any model call
+    conversation_id: str
+    user_id: str
+    display_name: str
+    speaker_role: SpeakerRole
+    text: str
+    resolved_location: dict[str, Any] | None
+    state: GroupState
+    character: Character | None
+    combat_provisional: bool
+    resolved_check_events: list[dict[str, Any]]
+    rag_context: str
+    memory_context: str
+    rag_status: str
+    memory_status: str
+    correction_context: str
+    # supervisor: how this turn is routed and what it is answering
+    turn_kind: PlayerTurnKind
+    intent: str
+    resolved_check_context: dict[str, Any]
+    mechanic_result: MechanicResult
+    # executor: what its tools produced for the player
+    private_messages: list[tuple[str, str]]
+    image_requests: list[tuple[str | None, int]]
+    observed_outcomes: list[ObservedOutcome]
+    # narrator: what it was required to honour and whether it failed
+    narration_requirements: dict[str, Any]
+    narration_failed: bool
+    # turn_delivery.finalize: the verdict on what may be shown
+    delivery_envelope: DeliveryEnvelope
+
+
 @dataclass
 class AgentMessage:
     """Envelope for passing data between KeeperSupervisor and its Agents."""
-    payload: dict[str, Any]
+    payload: TurnPayload

@@ -11,6 +11,7 @@ from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import (
     AgentMessage,
+    CheckStatus,
     GameEvent,
     MechanicResult,
     ObservedOutcome,
@@ -65,7 +66,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     observed: list[ObservedOutcome] = []
     message.payload["observed_outcomes"] = observed
     inventory_events: list[GameEvent] = []
-    check_status: dict[str, Any] = {
+    check_status: CheckStatus = {
         "tool_called": False,
         "pending": None,
         "pending_luck": None,
@@ -166,7 +167,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     scenario_retrieval.BUDGET.reset(budget_token)
                 if result.get("ok") and name in {"add_carried_item", "remove_carried_item"}:
                     owner = result.get("investigator")
-                    before_items = inventory_before.get(owner, [])
+                    before_items = inventory_before.get(owner, []) if isinstance(owner, str) else []
                     after_items = result.get("carried_items", [])
                     inventory_events.append(GameEvent("inventory_change", {
                         "investigator": owner, "operation": name,

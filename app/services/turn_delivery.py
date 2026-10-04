@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import uuid4
 
 from app import observability, spoiler_policy
@@ -140,14 +141,20 @@ def public_mechanic(result: MechanicResult | None, state: GroupState) -> Mechani
     if result is None:
         return None
     projected = deepcopy(result)
-    for key, entries in (("pending", state.pending_checks), ("pending_luck", state.pending_luck_decisions)):
-        pending = projected.check_status.get(key)
-        if pending and (is_private(pending) or any(
-            is_private(entry) and entry.get("check_id") == pending.get("check_id")
-            for entry in entries.values()
-        )):
-            projected.check_status[key] = None
+    status = projected.check_status
+    if _is_private_wait(status.get("pending"), state.pending_checks):
+        status["pending"] = None
+    if _is_private_wait(status.get("pending_luck"), state.pending_luck_decisions):
+        status["pending_luck"] = None
     return projected
+
+
+def _is_private_wait(pending: dict[str, Any] | None, entries: dict[str, dict]) -> bool:
+    """Whether a pending check or Luck decision, or the live entry it mirrors, is private."""
+    return bool(pending and (is_private(pending) or any(
+        is_private(entry) and entry.get("check_id") == pending.get("check_id")
+        for entry in entries.values()
+    )))
 
 
 def _proven_hard_fact_conflict(narrative: str, facts: list[canonical_facts.CanonicalFactRef]) -> bool:

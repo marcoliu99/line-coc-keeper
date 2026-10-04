@@ -1776,6 +1776,26 @@
       ],
       "path": "docs/specs/refactor/scenario_lifecycle_module_design_spec.md",
       "zh_path": "docs/specs/refactor/scenario_lifecycle_module_design_spec_zh.md"
+    },
+    {
+      "title": "Turn payload contract",
+      "zh": "回合交接契約",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/domain/models.py",
+        "app/agents/context_builder.py",
+        "app/agents/executor.py",
+        "app/agents/narrator.py",
+        "app/agents/supervisor.py",
+        "app/agents/tool_gateway.py",
+        "app/services/turn_handoff.py",
+        "app/services/turn_delivery.py",
+        "tests/test_turn_payload_contract.py"
+      ],
+      "path": "docs/specs/refactor/turn_payload_contract_design_spec.md",
+      "zh_path": "docs/specs/refactor/turn_payload_contract_design_spec_zh.md",
+      "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
     }
   ]
 }
