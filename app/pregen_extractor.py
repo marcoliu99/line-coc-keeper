@@ -196,34 +196,68 @@ def _scenario_pages(text: str) -> dict[int, str]:
             for i, match in enumerate(markers)}
 
 
-def _verified_pdf_luck(pregen: dict[str, Any], pregens: list[dict[str, Any]], pages: dict[int, str]) -> int | None:
+def _squash(text: str) -> str:
+    """Case, spacing and colon-insensitive form used to find a quoted passage in a page."""
+    return " ".join(text.replace("：", ":").replace(":", " ").split()).casefold()
+
+
+def _check_pdf_luck(
+    pregen: dict[str, Any], pregens: list[dict[str, Any]], pages: dict[int, str],
+) -> tuple[int | None, str]:
+    """The Luck printed on this pregen's own sheet, or why it cannot be trusted.
+
+    The model must cite the page and quote the label with its value. The quote must
+    carry the same number, appear on the cited page, and be attributable to this
+    investigator: the nearest investigator name before it (on that page, or at the end
+    of the page before when a sheet runs over) must be this pregen's. A quote that
+    repeats on the page (two sheets both printing ``LUCK 55``) counts when exactly one
+    of its occurrences belongs to this pregen.
+    """
     value = pregen_luck_value(pregen.get("luck"))
     if value is None:
-        return None
+        return None, "value_not_a_filled_number"
     page = pregen.get("luck_source_page")
     excerpt = pregen.get("luck_source_excerpt")
     if isinstance(page, bool) or not isinstance(page, int) or not isinstance(excerpt, str):
-        return None
-    source = " ".join(pages.get(page, "").split()).casefold()
-    quote = " ".join(excerpt.split()).casefold()
-    if not source or not quote or len(quote) > 1200 or source.count(quote) != 1:
-        return None
+        return None, "missing_page_or_excerpt"
+    source = _squash(pages.get(page, ""))
+    quote = _squash(excerpt)
+    if not source or not quote or len(quote) > 1200:
+        return None, "excerpt_empty_or_page_unknown"
     matched = _LUCK_ON_SHEET.search(quote)
     if matched is None or int(matched.group(1)) != value:
-        return None
-    luck_at = source.index(quote) + matched.start()
-    names: list[tuple[int, int, str]] = []
-    for candidate in pregens:
-        name = str(candidate.get("name") or "").strip().casefold()
-        if not name:
-            continue
-        for found in re.finditer(re.escape(name), source):
-            if found.start() <= luck_at:
-                names.append((found.start(), len(name), name))
-    if not names:
-        return None
-    nearest = max(names)
-    return value if nearest[2] == str(pregen.get("name") or "").strip().casefold() else None
+        return None, "excerpt_does_not_state_the_value"
+    occurrences = [found.start() for found in re.finditer(re.escape(quote), source)]
+    if not occurrences:
+        return None, "excerpt_not_on_cited_page"
+    # A sheet that runs over a page break still has its name at the end of the page before.
+    before = _squash(pages.get(page - 1, ""))
+    combined = f"{before} {source}" if before else source
+    offset = len(combined) - len(source)
+    own = _squash(str(pregen.get("name") or ""))
+    attributed = 0
+    for at in occurrences:
+        luck_at = offset + at + matched.start()
+        names: list[tuple[int, int, str]] = []
+        for candidate in pregens:
+            name = _squash(str(candidate.get("name") or ""))
+            if not name:
+                continue
+            names.extend(
+                (found.start(), len(name), name)
+                for found in re.finditer(re.escape(name), combined) if found.start() <= luck_at
+            )
+        if names and max(names)[2] == own:
+            attributed += 1
+    if attributed == 0:
+        return None, "no_occurrence_belongs_to_this_investigator"
+    if attributed > 1:
+        return None, "several_occurrences_belong_to_this_investigator"
+    return value, ""
+
+
+def _verified_pdf_luck(pregen: dict[str, Any], pregens: list[dict[str, Any]], pages: dict[int, str]) -> int | None:
+    return _check_pdf_luck(pregen, pregens, pages)[0]
 
 
 def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
@@ -255,9 +289,9 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     for pregen in pregens:
         _clean_pregen_keys(pregen)
         if "luck" in pregen:
-            verified = _verified_pdf_luck(pregen, pregens, pages)
+            verified, reason = _check_pdf_luck(pregen, pregens, pages)
             if verified is None:
-                _logger.warning("dropping unverified PDF pregen Luck for %s", pregen.get("name"))
+                _logger.warning("dropping unverified PDF pregen Luck for %s: %s", pregen.get("name"), reason)
                 pregen.pop("luck", None)
             else:
                 pregen["luck"] = verified
