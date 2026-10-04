@@ -38,44 +38,116 @@ mechanics comparison, or final review policy. Do not rerender or reparse a
 modified PDF to replace the whole page. No scenario, page, phrase, font, or
 fixed coordinate may appear in a production rule.
 
-## Source-bound design
+## Source-run provenance model
 
-1. Build a page-local source ledger from PyMuPDF block, line, span, texttrace,
-   bbox, direction, and extraction order. Give each observable source run a
-   stable **page-local identity** derived from structural provenance, not its
-   words alone. When an individual PDF object identifier is unavailable, the
-   ledger records that limit; it must not invent an object ID. Keep distinct
-   source runs distinct even when their text is identical.
-2. Align each suspect Markdown occurrence to that ledger using exact source
-   characters (allowing only documented whitespace/line-wrap formatting),
-   neighboring unique source lines, column/region membership, and monotonic
-   source order. String equality is only a candidate match. A duplicate is
-   eligible only if two output ranges uniquely map to **one** source identity,
-   no second source run supports the wording, and the surrounding source
-   geometry identifies which output range continues the actual paragraph.
-   Heading, body, caption, sidebar, footnote, and column boundaries constrain
-   the alignment. A repeated heading and body line remain separate when the
-   PDF has two source runs.
-3. Make a bounded local edit that removes only the extra emitted range. Never
-   delete a repeated paragraph globally or choose a survivor by length or
-   semantic plausibility. Whitespace or punctuation differences cannot
-   trigger fuzzy dedup without independent, unique provenance. If the two
-   candidates cannot be assigned uniquely, or a range crosses a structural
-   boundary, keep the original layout text and review state.
-4. Verify the proposed result against the source ledger and the unmodified
-   selected text: every distinct source run must still be represented in its
-   proper region; nonduplicate names, substantive phrases, heading/body
-   order, stat/value bindings, dice operators, SAN expressions, and meaningful
-   numeric tokens must survive. A duplicate mechanics block fails closed
-   unless a single source identity is proved. Preserve existing warning
-   history and `ambiguous_columns`; successful dedup alone does not clear
-   review. Store compact diagnostic metadata (status, source-run identity or
-   hash, output ranges, removed character count, failure reason), never a
-   second full text copy.
+A source run is the smallest PyMuPDF line/span character interval that can be
+uniquely tied to texttrace glyph geometry. The identity is **page-local within
+one extraction**, not a durable ID across library versions. Required fields
+are page index, block/line/span indices, the exact source character sequence
+and its offsets within the span, writing direction, bbox, and extraction
+order. A unique texttrace binding must additionally identify sequence number,
+character interval, and glyph boxes; if texttrace is absent or one source
+interval matches multiple trace intervals, automatic dedup is unavailable.
+In p13, a single trace run contains several source lines, so the whole trace
+bbox or sequence number alone is insufficient: use the matched glyph interval.
 
-There is no persistent schema or gameplay-state migration. Older quality
-reports without this optional metadata remain readable. The design is
-deterministic and local; no LLM or provider call decides identity.
+Font and font size corroborate the block/span-to-trace binding and region
+continuity; they cannot independently identify a source run. A PDF object/xref
+may be recorded if the API truly exposes it for the text object, but is not
+required and must never be fabricated from a page content-stream xref. Two
+different block/span identities remain different even if their text, font,
+and bbox overlap.
+
+Normalize page coordinates before comparing independent geometry records.
+Quantize coordinates to 0.25 PDF point for a diagnostic fingerprint, while
+checking the unrounded boxes with an inclusive maximum 0.5-point difference
+per edge and compatible glyph direction. This tolerance can corroborate one
+block/span-to-trace match, not merge two different source identities. Missing
+boxes, geometry beyond tolerance, or multiple plausible trace bindings fail
+closed. Record the page dimensions and the normalization rule with the
+fingerprint. Exact source characters remain in the transient ledger; quality
+metadata contains only an identity hash, not the prose.
+
+## Layout-to-source alignment and duplicate qualification
+
+1. Segment the selected PyMuPDF4LLM output into bounded paragraph/line
+   ranges. Match a suspected repeated range to source-run characters exactly,
+   permitting only deterministic whitespace and line-wrap normalization.
+   Preserve punctuation and all mechanics operators. Search locally around
+   source-order anchors rather than throughout the page. Build candidate
+   mappings to the ledger; text equality merely proposes a mapping.
+2. Use neighboring *uniquely mapped* source runs to establish each output
+   range's column/region, preceding and following source order, and paragraph
+   continuity. The source run's PDF geometry determines its region; output
+   strings have no PDF bbox of their own. Reject an alignment that would cross
+   a column, heading/body, caption/body, sidebar, footnote, or unrelated
+   paragraph boundary. No semantic similarity or LLM call is used.
+3. Qualify a duplicate only when two distinct output ranges both map uniquely
+   to **the same source-run identity**, raw spans and texttrace contain that
+   run once, native extraction has one corresponding occurrence, rendered
+   evidence has no second semantic region, and no distinct source run could
+   explain either output range. The alignment and region assignments must be
+   unique. Two identical PDF blocks, intentional repeated columns, or
+   overlapping PDF text objects are **not** a single emitted source run.
+   The runtime must rule out a second text-painted region through texttrace;
+   rendered crops are checked in real-PDF validation. If image-only content
+   could contain a second semantic copy and that cannot be ruled out, retain
+   review and decline automatic dedup. Rendering is corroboration, never a
+   substitute for the source ledger.
+
+## Deterministic survivor and fail-closed rule
+
+For each possible survivor, virtually remove the other range and test the
+source-run sequence on both sides. Keep the occurrence whose surrounding
+uniquely mapped runs continue the same source paragraph in geometric reading
+order, including the next source line and its region. An isolated emission
+that interrupts this continuity is the removal candidate. On p13 the later
+range continues into the next PDF body line, whereas the earlier range is an
+orphan prefix after the heading; this is evidence for that page, **not** a
+general keep-later rule. If both possible survivors pass, neither passes, or
+neighbors cannot be uniquely mapped, do not edit. Never default to first or
+last occurrence.
+
+The edit removes only the proved extra output character range and its locally
+attached separator, without changing neighboring content. It is not a global
+paragraph/line cleanup, `text.replace`, identical-string hash filter,
+semantic dedup, fuzzy match, or whole-page reparse. Minor formatting
+differences never justify dedup without the same unique provenance proof.
+An ambiguous source match, multiple layout matches with no unique survivor,
+or an unresolved decorative insertion in the alignment window leaves the
+selected text and review unchanged.
+
+## Processing order and preservation
+
+Choose **decorative repair → source-duplicate dedup → final preservation**.
+Decorative repair first removes only independently bound margin glyphs; they
+otherwise corrupt exact output-to-source alignment. It emits its own evidence
+record and validates its local edit. Duplicate alignment then uses the
+*post-decoration* text and offsets; it never reuses pre-repair offsets. If
+decorative repair fails or leaves uncertain glyphs in the duplicate window,
+dedup fails closed there. Both transformations retain separate records.
+
+After the proposed dedup, run one final source-bound preservation pass over
+the composed result and retain each transformation's local validation. Every
+**distinct** source-run identity must remain represented in its proper region
+and reading order. Compare mechanics multiplicity to the source ledger, not
+the duplicated layout: a legitimate repeated stat block from two source runs
+must retain two occurrences, whereas two emissions of one proved run may
+become one. Check stat/value and skill/value bindings, dice count/faces and
+`+`/`-` modifiers, SAN slash order, percentages, damage, names, and other
+meaningful numeric tokens before committing the edit. If any check fails,
+restore the pre-dedup selected text, keep warning history, and retain review.
+
+The optional quality record has `status` (`duplicate_source_emission_repaired`,
+`duplicate_source_emission_ambiguous`, or a specific failed-preservation
+reason), source-run identity hash, post-decoration output ranges, kept range,
+removed range and character count, unique source/trace/neighbor match flags,
+and preservation result. These booleans are evidence, not a probabilistic
+confidence score. Preserve `ambiguous_columns` and final review policy;
+successful dedup does not certify the rest of the page. No complete source
+prose is duplicated in metadata. There is no persistent schema or gameplay
+state migration; old quality reports without this optional record remain
+readable.
 
 ## Safety cases and tests
 
@@ -86,19 +158,28 @@ the local edit, not only a matching helper:
 |---|---|
 | One source span emitted twice into one layout region | Remove only the extra emission after unique source/neighbor alignment. |
 | Two different source blocks with identical text | Keep both. |
-| Two visually overlapping PDF text objects | Dedup only when structural equivalence and one semantic source can be proved; otherwise retain/review. |
+| Two visually overlapping PDF text objects | Keep/review: two raw objects are not one emitted source run; any future source-object dedup needs a separate proof and design. |
 | Same sentence intentionally repeated in two columns | Keep both. |
 | Running header and body use the same heading text | Keep both; region identity differs. |
-| Duplicate stat/mechanics block | Fail closed unless source identity, complete operators, and bindings are proved. |
+| Same mechanics block from two source regions | Keep both, including two `SAN 1/1D6` occurrences. |
+| One mechanics source run emitted twice | Remove one only after unique source and survivor proof, then source-ledger mechanics preservation. |
 | Minor whitespace/punctuation differences | Never fuzzy-dedup on text similarity alone; provenance remains mandatory. |
-| Ambiguous occurrence-to-source or survivor alignment | Make no edit; keep review. |
+| Ambiguous occurrence-to-source or survivor alignment | Make no edit; record `duplicate_source_emission_ambiguous`; keep review. |
 | Real sidebar, caption, footnote, vertical semantic text | Preserve even if wording matches nearby prose. |
+
+Include a p13-shaped fixture with one raw span emitted twice, an orphan prefix
+and a paragraph-continuing copy; prove the survivor is chosen by source order,
+not output position. Test the inverse ordering too. Include a synthetic
+decorative insertion followed by duplication, and an ambiguous decorative
+repair that blocks dedup in its window. Tests must assert the warning and
+review state remain conservative.
 
 Replay the hash-pinned page 13 and then the 43-page saved-candidate corpus
 without external calls. Require one continuous rendered/source-bound opening,
 no unrelated canonical-text change, no mechanics loss, and unchanged warning
-and review policy. The residual decorative repair remains independently
-tested. Run targeted tests, full pytest, ruff, mypy, compileall, and
+and review policy. The eight PR170 rich-candidate pages must retain their
+selection behavior; pages 3, 18 and 29 must not change. The decorative repair
+remains independently tested. Run targeted tests, full pytest, ruff, mypy, compileall, and
 `git diff --check` at implementation time. If provenance is insufficient,
 leave the duplicate and report **HOLD**, rather than deduplicating by content.
 
