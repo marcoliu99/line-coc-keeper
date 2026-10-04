@@ -27,7 +27,7 @@ Principle: **the AI understands intent, chooses legal operations and narrates; t
 6. Existing games, saves, commands, buttons and tool schemas keep working; new fields are optional on read.
 7. Not touched: OCR, layout, numeric validation, fallback order, scenario import thresholds, map extraction, provider selection, the supervisor / turn pipeline, Discord cleanup beyond wiring.
 
-Policies kept as-is: Traditional Chinese and the Keeper voice, spoiler boundaries, autoroll default off, the player roll / defend / Luck choices, and no Luck on SAN checks or on injury checks (major wound, dying, stabilisation). Decision (product owner): combat attack and defence rolls keep offering Luck exactly as before; the requirement is amended to match the shipped behaviour.
+Policies kept as-is: Traditional Chinese and the Keeper voice, spoiler boundaries, autoroll default off, the player roll / defend / Luck choices, and no Luck on SAN checks, on the INT check that decides madness, or on the injury checks the combat engine registers (major wound, dying, stabilisation). Decision (product owner): combat attack and defence rolls, and the CON check chained onto a major wound outside combat, keep offering Luck exactly as before; the requirement is amended to match the shipped behaviour.
 
 ## Verification approach
 

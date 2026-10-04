@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import db
+from app import db, dictionary
 from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories import group_state, manual_pregens
@@ -184,6 +184,31 @@ class ManualPregenPersistenceTests(unittest.TestCase):
             ))
         self.assertEqual(manual_pregens.list_assets("g", "s"), [])
         self.assertEqual(group_state.load_state("g").pregens, [])
+
+    def test_upload_without_a_scenario_learns_the_alias_after_the_pool_is_committed(self):
+        """Matching a card to an unclaimed pregen under another name memoizes the pair.
+
+        The memo is a write to the dictionary table, so it cannot happen inside the
+        state transaction that stores the card.
+        """
+        skills = {"圖書館使用": 70, "聆聽": 60, "說服": 55, "心理學": 50}
+        state = GroupState("g", kp_assistant_user_id="kp")
+        state.pregens = [{"name": "Alice", "occupation": "記者", "skills": dict(skills), "source": "llm_extracted"}]
+        group_state.save_state(state)
+        card = {"name": "艾莉絲", "occupation": "記者", "skills": dict(skills), "source": "manual"}
+        replies: list[str] = []
+
+        async def reply(message):
+            replies.append(message)
+
+        with patch.object(scenario_ingestion.pregen_extractor, "parse_role_sheet_text", return_value=card):
+            asyncio.run(scenario_ingestion.handle_role_sheet_upload("g", reply, "sheet", "role_alice.md"))
+
+        self.assertIn("已新增", replies[-1])
+        pool = group_state.load_state("g").pregens
+        self.assertEqual(len(pool), 1)
+        self.assertEqual(pool[0]["source"], "merged")
+        self.assertEqual(dictionary.lookup_character_alias("Alice"), "艾莉絲")
 
     def test_claimed_card_cannot_be_deleted(self):
         state = GroupState("g", kp_assistant_user_id="kp", scenario_library_id="s")

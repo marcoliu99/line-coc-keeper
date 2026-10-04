@@ -35,7 +35,7 @@
 ```text
 ruff check .          # All checks passed
 mypy app              # Success: no issues found in 149 source files
-pytest                # 2219 passed, 1 skipped, 222 subtests passed（第 3 階段 2202 項 → +17）
+pytest                # 2221 passed, 1 skipped, 222 subtests passed（第 3 階段 2202 項 → +19；其中 2 項是 code review 後新增）
 ```
 
 唯一的 skip 同前（`tests/test_codex_analysis_smoke.py`，需已登入的 Codex CLI），**未執行**。
@@ -64,6 +64,8 @@ pytest                # 2219 passed, 1 skipped, 222 subtests passed（第 3 階�
 | baseline 既有（未修，已記錄） | `scenario_ingestion` 與 `map_service` 仍用 `state_transaction.commit_snapshot`（嚴格快照路徑）提交，而不是 delta `mutate`；改成 delta 會改變函式的行為，不屬於「搬移」 |
 | baseline 既有（未修，已記錄） | `commands/handlers/system.py` 仍然很大，且保留自己的 `commit_snapshot` 呼叫；規格只要求搬走能讓 `legacy_commands` 被刪除的部分 |
 | 未解決（沿用） | 第 2 階段的 Luck 政策衝突已由產品決定：維持戰鬥攻擊／防禦擲骰可用 Luck，並修改規格（程式未更動）；戰鬥骰仍直接用 `app.dice` 而非檢定引擎的 `DicePort` |
+| baseline／#165 引入後修復（code review） | 沒有進行中劇本時上傳角色卡，若與未被認領的預製角色以不同名字判定為同一人（指紋或職業＋技能），比對會把別名寫進 dictionary 表，而 #165 的「交易內不准另開寫入」防護會丟出 `NestedTransactionError`，上傳失敗。現在比對（含別名學習）在開啟交易之前完成（`test_upload_without_a_scenario_learns_the_alias_after_the_pool_is_committed`） |
+| 文件修正（code review） | 傷勢檢定不可用 Luck 的範圍限於戰鬥引擎登記的傷勢檢定；戰鬥以外由 `adjust_character` 串在重傷後的 CON 檢定從基線起就提供 Luck，現況不變，新增 `test_c5_a_major_wound_con_check_outside_combat_keeps_offering_luck` 釘住。另清掉 `pyproject.toml` 裡已刪除檔案的 SLF001 例外、`catalog.json` 中 18 筆指向 `app/legacy_commands.py` 的證據連結，以及兩處舊函式名稱的註解 |
 | 限制 | typed extraction result 與 provider 抽象依規格留待後續階段；PDF／預製角色流程只做原樣搬移 |
 
 ## 6. 相容性與回退

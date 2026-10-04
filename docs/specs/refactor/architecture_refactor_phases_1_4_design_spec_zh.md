@@ -43,8 +43,8 @@
 
 - 保留繁體中文與既有 Keeper 風格、劇透邊界。
 - 保留 autoroll 預設 off 及既有玩家擲骰／防禦／Luck 選擇流程。
-- 依本專案既定政策，SAN 檢定與傷勢檢定（重傷、瀕死、穩定傷勢）不可使用 Luck；這是本專案需求，不在此宣稱為所有 CoC 桌規的唯一版本。
-- 產品決定：戰鬥的攻擊與防禦擲骰維持原本提供 Luck 的行為，規格據此修訂為與現況一致（原本寫「戰鬥檢定不可使用 Luck」）。
+- 依本專案既定政策，SAN 檢定、決定瘋狂的 INT 檢定，以及戰鬥引擎登記的傷勢檢定（重傷、瀕死、穩定傷勢）不可使用 Luck；這是本專案需求，不在此宣稱為所有 CoC 桌規的唯一版本。
+- 產品決定：戰鬥的攻擊與防禦擲骰，以及戰鬥以外串在重傷後的 CON 檢定，維持原本提供 Luck 的行為，規格據此修訂為與現況一致（原本寫「戰鬥檢定不可使用 Luck」）。
 - 不把合法的 resolved-check consequence、非戰鬥傷害、新觸發檢定或 Dodge 一律封鎖。以 actor、原因、來源事件與目前狀態驗證，不再只靠工具名稱白名單。
 - 保留既有 correction 能力；已結算結果需要更正時走明確 correction action，保留原事件及更正來源，不靜默覆寫。
 - 不修改 OCR、layout、數值驗證、fallback 順序、劇本匯入門檻、地圖抽取演算法或 provider 選擇。
@@ -244,7 +244,7 @@ Luck 未定案前，哪些 consequences 可先套用須沿用已確認規則；�
 | C2 | normal/hard/extreme/critical/fumble 邊界與 bonus/penalty | 與現有已確認規則一致 |
 | C3 | autoroll off | 建立 pending，尚未消耗骰子或提前套用後果 |
 | C4 | pending 重複提交或 Luck 按鈕重送 | 原骰與扣值只發生一次 |
-| C5 | SAN／傷勢檢定要求 Luck | 明確 rejected，不扣 Luck、不改 outcome；戰鬥攻擊／防禦擲骰依產品決定仍可用 Luck |
+| C5 | SAN／瘋狂 INT／戰鬥傷勢檢定要求 Luck | 明確 rejected，不扣 Luck、不改 outcome；戰鬥攻擊／防禦擲骰，以及戰鬥以外串在重傷後的 CON 檢定，依產品決定仍可用 Luck |
 | C6 | 合法 Luck 成功／餘額被其他 action 消耗 | 原子結算或明確拒絕，不部分扣值 |
 | C7 | 已結算 check 觸發下一次 check／非戰鬥傷害 | 合法套用，原 event 保留且可追溯 |
 | C8 | SAN loss → 既有 madness INT 鏈 | 不重複擲 INT、不漏 SAN 後果 |

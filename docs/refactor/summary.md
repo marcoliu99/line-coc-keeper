@@ -23,7 +23,7 @@
 | 第 1 階段 | 通過 | 130 | 2107 項（+59） |
 | 第 2 階段 | 通過 | 144 | 2154 項（+47），1 skipped |
 | 第 3 階段 | 通過 | 146 | 2202 項（+48），1 skipped |
-| 第 4 階段 | 通過 | 149 | 2219 項（+17），1 skipped，222 subtests |
+| 第 4 階段 | 通過 | 149 | 2221 項（+19），1 skipped，222 subtests |
 
 唯一的 skip 是 `tests/test_codex_analysis_smoke.py`，它需要已登入的 Codex CLI，**這個環境沒有，未執行**。
 
@@ -46,7 +46,7 @@
 
 ## 5. 已知限制與已做的決定
 
-1. **Luck 政策衝突（已決定：維持現況並修改規格，程式未更動）。** 原需求規定 SAN／戰鬥檢定不可使用 Luck；現況 `combat_flow._request_check`（`app/combat_flow.py:173`）對戰鬥攻擊／防禦擲骰設 `allow_luck: not injury`，也就是提供 Luck 選項，並有測試釘住這個行為（例如 `tests/test_combat_wiring.py::test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_rng`）。SAN 檢定已符合規格。產品決定採用選項 (a)：戰鬥攻擊／防禦擲骰維持可用 Luck，規格改為「SAN 檢定與傷勢檢定（重傷、瀕死、穩定傷勢）不可用 Luck」，政策判斷集中在 `checks/luck.py`。不採用的選項 (b) 是把該處 `'allow_luck': not injury` 改成 `False` 並更新被釘住的測試。
+1. **Luck 政策衝突（已決定：維持現況並修改規格，程式未更動）。** 原需求規定 SAN／戰鬥檢定不可使用 Luck；現況 `combat_flow._request_check`（`app/combat_flow.py:173`）對戰鬥攻擊／防禦擲骰設 `allow_luck: not injury`，也就是提供 Luck 選項，並有測試釘住這個行為（例如 `tests/test_combat_wiring.py::test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_rng`）。SAN 檢定已符合規格。產品決定採用選項 (a)：戰鬥攻擊／防禦擲骰維持可用 Luck，規格改為「SAN、瘋狂 INT 與戰鬥引擎登記的傷勢檢定（重傷、瀕死、穩定傷勢）不可用 Luck」；戰鬥以外串在重傷後的 CON 檢定從基線起就提供 Luck，維持不變。政策判斷集中在 `checks/luck.py`。不採用的選項 (b) 是把該處 `'allow_luck': not injury` 改成 `False` 並更新被釘住的測試。
 2. 戰鬥傷害骰與反擊骰仍直接使用 `app.dice`，不是檢定引擎的 `DicePort`（測試以 patch 腳本化）。
 3. `combat_flow` 內仍有 18 處 `is_managed`：它們區分「進行中戰鬥的工作副本」與「已結束戰鬥的已提交義務」，不是 legacy／managed 分支；消除它們需要一個明確的「義務範圍」概念。
 4. `scenario_ingestion` 與 `map_service` 仍用嚴格快照路徑 `commit_snapshot` 而非 delta `mutate`；改變它會改變函式行為，不屬於搬移。`handlers/system.py` 仍然很大。

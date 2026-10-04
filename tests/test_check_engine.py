@@ -305,6 +305,24 @@ def test_c5_luck_policy_table(kind, pushed, allow_luck, allowed):
     assert luck_policy.luck_allowed(kind, pushed=pushed, allow_luck=allow_luck) is allowed
 
 
+def test_c5_a_major_wound_con_check_outside_combat_keeps_offering_luck():
+    """The CON check chained onto a non-combat major wound has always offered Luck.
+
+    Only the injury checks the combat engine registers (``allow_luck: False``) are Luck-free;
+    this pins the behaviour the policy documents, so a change to it has to be deliberate.
+    """
+    state = _game("c5-wound", "u1", luck=50, CON=50)
+    state.pending_checks["u1"] = _skill_pending("CON", 50, major_wound_trigger=True)
+    _store(state)
+
+    outcome = check_commands.resolve_check("c5-wound", "u1", "/coc check", dice_port=ScriptedDice([55]))
+
+    assert not outcome.should_finalize
+    decision = _load("c5-wound").pending_luck_decisions["u1"]
+    assert decision["major_wound_trigger"] is True
+    assert decision["options"]
+
+
 # ---------------------------------------------------------------- C6
 
 

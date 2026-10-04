@@ -33,7 +33,7 @@ from app.services import opposed_checks
 # 所以這裡只有 executor／narrator／guard 三個階段的提示詞。intent_router／
 # rule_validator 維持規則判斷，這裡沒有對應的提示詞；記憶壓縮已經有
 # app/keeper.py 的 summarize_log_chunk／_persist_memory_maintenance_state 在跑
-# （app/commands/router.py 每輪透過 _run_post_turn_maintenance_after_output
+# （app/commands/router.py 每輪透過 app/services/post_turn.py 的 run_post_turn_maintenance_after_output
 # 呼叫），不重複做一份。這個專案目前也沒有「AI 生成插圖」功能（show_scenario_image
 # 秀的是劇本 PDF 既有的頁面圖片，不是生成的），所以沒有圖片提示詞優化的部分——
 # 等真的有生成圖片的功能再回來補。

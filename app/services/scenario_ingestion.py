@@ -580,6 +580,9 @@ async def handle_role_sheet_upload(
             context = None
             scenario_id = None
         old_pool = list(state.pregens)
+        # Matching a card to a pregen under another name memoizes the pair in the
+        # dictionary table, a write that cannot happen inside the state transaction.
+        reconciled_pool = None if context and scenario_id else pregen_extractor.reconcile_pregen_into_pool(old_pool, pregen)[0]
         result: dict[str, str] = {}
         def save_manual(conn):
             manual_pregens.capture_legacy(
@@ -595,7 +598,7 @@ async def handle_role_sheet_upload(
                     conn, conversation_id, scenario_id, context, claimed=claimed,
                 )
             else:
-                state.pregens, _ = pregen_extractor.reconcile_pregen_into_pool(old_pool, pregen)
+                state.pregens = reconciled_pool
         try:
             state_transaction.commit_snapshot(state, mutate_tx=save_manual)
         except ValueError as exc:

@@ -835,8 +835,8 @@ def run_scene_digest_maintenance(group_id: str) -> None:
 
 
 def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
-    """Called after every turn (see app/commands.py's
-    _spawn_post_turn_maintenance, which now fires this as an independent
+    """Called after every turn (see app/services/post_turn.py's
+    spawn_post_turn_maintenance, which now fires this as an independent
     background task rather than awaiting it inline). Only does real work
     once the log actually crosses the trim threshold — every other call is a
     cheap no-op. `_maintenance_in_flight` skips a call outright if a pass is
@@ -851,7 +851,7 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
 
     The check-then-add on `_maintenance_in_flight` below is itself wrapped in
     `locks.get_state_lock(group_id)` — this function runs via
-    `asyncio.to_thread` (see _spawn_post_turn_maintenance), i.e. on real OS
+    `asyncio.to_thread` (see post_turn.spawn_post_turn_maintenance), i.e. on real OS
     worker threads, not just concurrent asyncio tasks, so the GIL making each
     individual `in`/`.add()` call atomic does NOT make the pair atomic: two
     threads could otherwise both observe `group_id not in
