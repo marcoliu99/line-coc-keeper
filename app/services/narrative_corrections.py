@@ -36,7 +36,7 @@ ReportStatus = Literal["pending", "unverified", "approved", "rejected", "withdra
 OPEN_STATUSES: tuple[ReportStatus, ...] = ("pending", "unverified")
 Verdict = Literal["approve", "reject"]
 # Which status a report may move to from each status; the rest are terminal.
-TRANSITIONS: dict[str, frozenset[str]] = {
+TRANSITIONS: dict[ReportStatus, frozenset[ReportStatus]] = {
     "pending": frozenset({"unverified", "approved", "rejected", "withdrawn"}),
     "unverified": frozenset({"approved", "rejected", "withdrawn"}),
     "approved": frozenset({"superseded"}),
@@ -46,6 +46,13 @@ TRANSITIONS: dict[str, frozenset[str]] = {
 }
 # Closed reports kept in the state besides approved ones, which stay in the canonical log.
 MAX_CLOSED_IN_STATE = 12
+# A closed report is one with nowhere left to go; ``superseded`` is kept apart, as the record of what replaced it.
+CLOSED_STATUSES: frozenset[ReportStatus] = frozenset(
+    status for status, moves in TRANSITIONS.items() if not moves and status != "superseded"
+)
+# What a hold may name: a term shorter than this would match almost any tool argument.
+HOLD_TERM_LENGTH = (2, 80)
+MAX_HOLD_TERMS = 8
 
 
 @dataclass(frozen=True)
@@ -92,8 +99,8 @@ def new_report(
 
 
 def file_report(state: Any, report: dict) -> None:
-    """Add ``report`` to the state. The first report of a timeline discards the inactive ones,
-    so repeated scenario switches cannot accumulate stale reports."""
+    """Add ``report`` to the state. Every filing first discards the reports of inactive
+    timelines, so repeated scenario switches cannot accumulate stale reports."""
     state.narrative_corrections[:] = active(state)
     state.narrative_corrections.append(report)
 
@@ -101,7 +108,7 @@ def file_report(state: Any, report: dict) -> None:
 def prune_closed(state: Any) -> None:
     """Bound state size; approved decisions also remain in the canonical log."""
     approved = [item for item in state.narrative_corrections if item.get("status") == "approved"]
-    closed = [item for item in state.narrative_corrections if item.get("status") in {"rejected", "withdrawn"}]
+    closed = [item for item in state.narrative_corrections if item.get("status") in CLOSED_STATUSES]
     retained = {id(item) for item in approved + closed[-MAX_CLOSED_IN_STATE:]}
     state.narrative_corrections[:] = [
         item for item in state.narrative_corrections
@@ -109,10 +116,18 @@ def prune_closed(state: Any) -> None:
     ]
 
 
+def valid_hold_scope(scope: list[str]) -> bool:
+    low, high = HOLD_TERM_LENGTH
+    return bool(scope) and len(scope) <= MAX_HOLD_TERMS and all(low <= len(term) <= high for term in scope)
+
+
 def hold(report: dict, scope: list[str], held_by: str) -> None:
     """Mark the names whose actions pause until the report is ruled on. An allegation alone never does."""
     if report.get("status") not in OPEN_STATUSES:
         raise ValueError(f"correction #{report.get('id')} is not open")
+    if not valid_hold_scope(scope):
+        low, high = HOLD_TERM_LENGTH
+        raise ValueError(f"a hold names 1 to {MAX_HOLD_TERMS} terms of {low} to {high} characters")
     report["hold_scope"] = scope
     report["held_by"] = held_by
 

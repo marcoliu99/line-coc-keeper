@@ -25,13 +25,26 @@ def _production(*, about_corrections: bool = False) -> dict[str, ast.Module]:
     return modules
 
 
+def _is_status_key(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value == "status"
+
+
 def status_writes(tree: ast.Module) -> list[int]:
-    """Lines assigning ``x["status"] = ...``."""
-    return [
-        node.lineno for node in ast.walk(tree)
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store)
-        and isinstance(node.slice, ast.Constant) and node.slice.value == "status"
-    ]
+    """Lines that set a ``status``: ``x["status"] = ...``, ``x.update(status=...)``,
+    ``x.update({"status": ...})``, ``x.setdefault("status", ...)`` and ``dict(x, status=...)``."""
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) and _is_status_key(node.slice):
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            keyword = any(kw.arg == "status" for kw in node.keywords)
+            literal = any(isinstance(arg, ast.Dict) and any(key and _is_status_key(key) for key in arg.keys)
+                          for arg in node.args)
+            first = bool(node.args) and _is_status_key(node.args[0])
+            if (name in {"update", "dict"} and (keyword or literal)) or (name == "setdefault" and first):
+                lines.append(node.lineno)
+    return lines
 
 
 def report_literals(tree: ast.Module) -> list[int]:
@@ -70,3 +83,9 @@ def test_the_gate_catches_a_stray_write() -> None:
     assert status_writes(ast.parse('report["status"] = "withdrawn"')) == [1]
     assert status_writes(ast.parse('value = report["status"]')) == []
     assert report_literals(ast.parse('x = {"status": "pending", "target_receipt": {}, "id": 1}')) == [1]
+    for stray in (
+        'report.update(status="approved")', 'report.update({"status": "approved"})',
+        'report.setdefault("status", "pending")', 'dict(report, status="approved")',
+    ):
+        assert status_writes(ast.parse(stray)) == [1], stray
+    assert status_writes(ast.parse('report.update(note="x")\nrows.setdefault("id", 1)')) == []

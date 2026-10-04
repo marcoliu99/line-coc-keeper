@@ -66,7 +66,7 @@ async def handle_correct_command(
     if action == "hold":
         report = narrative_corrections.find_report(state, parts[3]) if len(parts) >= 5 else None
         scope = [x.strip() for x in " ".join(parts[4:]).split("|") if x.strip()]
-        if not is_kp or report is None or report.get("status") not in OPEN_STATUSES or not scope or len(scope) > 8 or any(len(x) < 2 or len(x) > 80 for x in scope):
+        if not is_kp or report is None or report.get("status") not in OPEN_STATUSES or not narrative_corrections.valid_hold_scope(scope):
             await reply("只有 KP 可標記待核對範圍：/coc correct hold <編號> <地點或實體名稱|別名>（每項 2–80 字，最多 8 項）")
             return
         narrative_corrections.hold(report, scope, user_id)

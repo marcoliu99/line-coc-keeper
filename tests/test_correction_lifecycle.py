@@ -6,13 +6,15 @@ not allow is refused rather than silently applied.
 from __future__ import annotations
 
 import itertools
+from typing import get_args
 
 import pytest
 
 from app.models import GroupState
 from app.services import narrative_corrections as corrections
+from app.services.narrative_corrections import ReportStatus
 
-ALL = tuple(corrections.TRANSITIONS)
+ALL = get_args(ReportStatus)
 
 
 def _state(**fields) -> GroupState:
@@ -39,6 +41,12 @@ def test_a_report_moves_only_along_the_transition_table(start: str, end: str) ->
         with pytest.raises(ValueError, match="cannot move"):
             corrections._move(report, end)  # type: ignore[arg-type]
         assert report["status"] == start
+
+
+def test_the_table_covers_every_status_exactly_once() -> None:
+    assert set(corrections.TRANSITIONS) == set(ALL)
+    assert set().union(*corrections.TRANSITIONS.values()) <= set(ALL)
+    assert corrections.CLOSED_STATUSES == {"rejected", "withdrawn"}
 
 
 def test_closed_reports_are_terminal_and_only_approved_can_be_replaced() -> None:
@@ -133,6 +141,14 @@ def test_a_hold_needs_an_open_report_and_never_changes_its_status() -> None:
     closed = _report(state, "rejected")
     with pytest.raises(ValueError):
         corrections.hold(closed, ["x"], "kp")
+
+
+@pytest.mark.parametrize("scope", [[], ["x"], ["地" * 81], ["地下室"] * 9])
+def test_a_hold_with_a_bad_scope_is_refused_and_changes_nothing(scope: list[str]) -> None:
+    report = _report(_state())
+    with pytest.raises(ValueError, match="a hold names"):
+        corrections.hold(report, scope, "kp")
+    assert "hold_scope" not in report and not corrections.valid_hold_scope(scope)
 
 
 def test_pruning_keeps_open_approved_and_superseded_reports_and_the_latest_closed_ones() -> None:
