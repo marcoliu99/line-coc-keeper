@@ -553,6 +553,41 @@ def test_low_text_page_skips_second_verification_inference():
 
 
 class PdfFinalReviewTests(unittest.TestCase):
+    def test_rejected_weaker_ocr_does_not_discredit_healthy_canonical_text(self):
+        row = {'warnings': ['ocr_evidence_loss'], 'method': 'native',
+               'candidates': {'native': 'x' * 300, 'markitdown': 'x' * 180},
+               'ocr_pair_checks': []}
+        self.assertFalse(pdf_loader._page_requires_review(row, 'x' * 300))
+        self.assertEqual(row['warnings'], ['ocr_evidence_loss'])
+
+    def test_ocr_loss_still_reviews_when_candidate_or_source_is_unsafe(self):
+        base = {'warnings': ['ocr_evidence_loss'], 'method': 'native',
+                'candidates': {'native': 'x' * 300, 'markitdown': 'x' * 180},
+                'ocr_pair_checks': []}
+        cases = [
+            ({'method': 'markitdown'}, 300),
+            ({'warnings': ['ocr_evidence_loss', 'ocr_pair_mismatch']}, 300),
+            ({'warnings': ['ocr_evidence_loss', 'ocr_pair_review']}, 300),
+            ({'ocr_pair_checks': [{'status': 'pair_mismatch'}]}, 300),
+            ({'warnings': ['ocr_evidence_loss', 'numeric_pair_review']}, 300),
+            ({'warnings': ['ocr_evidence_loss', 'low_text'],
+              'candidates': {'native': 'x' * 100, 'markitdown': 'x' * 80}}, 300),
+            ({'warnings': ['ocr_evidence_loss', 'empty_page']}, 300),
+            ({'warnings': ['ocr_evidence_loss', 'future_unknown_warning']}, 300),
+        ]
+        for updates, length in cases:
+            with self.subTest(updates=updates):
+                row = {**base, **updates}
+                self.assertTrue(pdf_loader._page_requires_review(row, 'x' * length))
+
+    def test_confirmed_numeric_pair_does_not_keep_rejected_ocr_in_review(self):
+        row = {'warnings': ['ocr_evidence_loss', 'numeric_pair_review'], 'method': 'native',
+               'candidates': {'native': 'x' * 300, 'markitdown': 'x' * 180},
+               'ocr_pair_checks': [],
+               'paddle_numeric_verification': {'status': 'confirmed',
+                                               'warnings_resolved': ['numeric_pair_review']}}
+        self.assertFalse(pdf_loader._page_requires_review(row, 'x' * 300))
+
     def test_successful_vision_is_not_itself_a_review_problem(self):
         row = {'warnings': ['vision_review_required'],
                'candidates': {'vision': 'Verified visual description. ' * 10},
