@@ -613,6 +613,11 @@ def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_
             if duplicate_decision['status'] == 'duplicate_source_emission_repaired':
                 texts[index] = deduplicated
                 row['candidates']['layout'] = deduplicated
+                if len(deduplicated) < _LOW_TEXT_THRESHOLD:
+                    if 'low_text' not in row['warnings']:
+                        row['warnings'].append('low_text')
+                    if row['page'] in images:
+                        pending[row['page']] = images[row['page']]
         # Only pages lacking usable text go through the potentially paid OCR
         # adapter. Already readable layout pages never trigger whole-book OCR.
         alternate = _markitdown_page_texts(pdf_bytes, sorted(pending)) if pending else None

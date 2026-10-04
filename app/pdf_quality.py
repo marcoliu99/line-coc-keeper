@@ -728,7 +728,6 @@ def repair_duplicate_source_layout(page: Any, layout: str, native: str, *,
             left, right = layout[:removed[0]], layout[removed[1]:]
             # Trim only the separator attached to the orphan emission.
             if left.endswith(' ') and right.startswith(' '):
-                left = left[:-1]
                 right = right[1:]
             proposed = left + right
             final_source = _source_occurrences(proposed, source)

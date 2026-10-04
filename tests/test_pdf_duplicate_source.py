@@ -48,6 +48,17 @@ def test_survivor_can_be_first_when_second_emission_is_orphaned() -> None:
     assert new.count('The lantern sheds 1d6+2 light.') == 1
 
 
+def test_inline_orphan_removal_preserves_a_word_separator() -> None:
+    doc, page = _page()
+    with doc:
+        old = ('South Dock extra The lantern sheds 1d6+2 light. tail\n\n'
+               'The lantern sheds 1d6+2 light. The pier remains ahead.')
+        new, decision = _repair(page, old)
+    assert decision['status'] == 'duplicate_source_emission_repaired'
+    assert 'extra tail' in new
+    assert 'extratail' not in new
+
+
 def test_two_source_blocks_with_identical_text_remain_distinct() -> None:
     doc, page = _page()
     with doc:
@@ -214,3 +225,58 @@ def test_loader_keeps_review_when_duplicate_alignment_is_ambiguous() -> None:
     assert report['pages'][0]['source_duplicate']['status'] == 'duplicate_source_emission_ambiguous'
     assert 'duplicate_source_emission_ambiguous' in report['pages'][0]['warnings']
     assert reviews == [1]
+
+
+def test_loader_keeps_distinct_split_source_with_interleaved_sidebar() -> None:
+    doc, page = _page(body='The lantern sheds light.')
+    with doc:
+        page.insert_text((350, 300), 'The lantern sh', fontsize=9)
+        page.insert_text((70, 500), 'Unrelated sidebar text.', fontsize=9)
+        page.insert_text((350, 312), 'eds light.', fontsize=9)
+        payload = doc.tobytes()
+        native = page.get_text('text')
+    layout = ('South Dock The lantern sheds light.\n\n'
+              'The lantern sheds light. The pier remains ahead.\n\n'
+              'Unrelated sidebar text.')
+    report: dict = {}
+    with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': layout}}), \
+         patch.object(pdf_loader.pdf_quality, 'native_text',
+                      return_value=(native, ['ambiguous_columns'])), \
+         patch.object(pdf_loader.pdf_layout, 'reorder_with_paddle',
+                      return_value=pdf_loader.pdf_layout.LayoutResult(reason='model_unavailable')), \
+         patch.object(pdf_loader, '_page_has_graphic_content', return_value=False):
+        text, reviews, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+    assert text.count('The lantern sheds light.') == 2
+    assert report['pages'][0]['source_duplicate']['status'] == 'duplicate_source_emission_ambiguous'
+    assert reviews == [1]
+
+
+def test_loader_requeues_graphic_page_made_low_text_by_deduplication() -> None:
+    body = ('The lantern illuminates the pier while the keeper waits beyond '
+            'the narrow wooden bridge at midnight.')
+    doc, page = _page(body=body)
+    with doc:
+        payload = doc.tobytes()
+        native = page.get_text('text')
+    layout = f'South Dock {body}\n\n{body} The pier remains ahead.'
+    assert len(layout) >= pdf_loader._LOW_TEXT_THRESHOLD
+    report: dict = {}
+    with patch.object(pdf_loader, '_pymupdf4llm_page_chunks', return_value={1: {'text': layout}}), \
+         patch.object(pdf_loader.pdf_quality, 'native_text',
+                      return_value=(native, ['ambiguous_columns'])), \
+         patch.object(pdf_loader.pdf_layout, 'reorder_with_paddle',
+                      return_value=pdf_loader.pdf_layout.LayoutResult(reason='model_unavailable')), \
+         patch.object(pdf_loader, '_page_has_graphic_content', return_value=True), \
+         patch.object(pdf_loader, '_render_page_png', return_value=b'png'), \
+         patch.object(pdf_loader, '_markitdown_page_texts', return_value={}) as markitdown, \
+         patch.object(pdf_loader.pdf_ai_repair, 'repair_page',
+                      side_effect=lambda _page, _row, text, _budget:
+                      (text, {'regions': [], 'unresolved_labels': []})), \
+         patch.object(pdf_loader, '_analyze_graphic_page', return_value=('', None)) as vision:
+        _text, reviews, _, _, _ = pdf_loader.extract_text(payload, quality_report=report)
+    assert report['pages'][0]['source_duplicate']['status'] == 'duplicate_source_emission_repaired'
+    assert report['pages'][0]['extracted_chars'] < pdf_loader._LOW_TEXT_THRESHOLD
+    assert 'low_text' in report['pages'][0]['warnings']
+    assert reviews == [1]
+    markitdown.assert_called_once()
+    vision.assert_called_once()

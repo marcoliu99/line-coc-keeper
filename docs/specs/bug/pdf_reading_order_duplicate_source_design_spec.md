@@ -217,3 +217,9 @@ ranges qualify only when that ledger has exactly the one trace-bound source
 sequence; any competing path or search ambiguity leaves the selected text
 unchanged. The matching form ignores formatting only to discover competing
 paths, never to authorize a replacement on text similarity alone.
+
+PR review follow-up: removing an inline orphan retains one separator between
+its neighbors. If successful deduplication leaves a page below the existing
+low-text threshold, its low-text warning is recorded and a graphic page is
+requeued for the existing fallback. Neither change alters duplicate
+qualification or the final review policy.
