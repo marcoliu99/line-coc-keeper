@@ -1539,7 +1539,15 @@
       "zh": "Paddle 雙欄原生文字閱讀順序",
       "category": "enhancement",
       "status": "implemented",
-      "evidence": ["app/pdf_layout.py", "app/pdf_loader.py", "scripts/setup_paddle_layout.py", "tests/test_pdf_paddle_layout.py", "tests/test_setup_paddle_layout.py", "tests/fixtures/paddle_layout/provenance.json", "docs/specs/enhancement/paddle_two_column_reading_order_results.json"],
+      "evidence": [
+        "app/pdf_layout.py",
+        "app/pdf_loader.py",
+        "scripts/setup_paddle_layout.py",
+        "tests/test_pdf_paddle_layout.py",
+        "tests/test_setup_paddle_layout.py",
+        "tests/fixtures/paddle_layout/provenance.json",
+        "docs/specs/enhancement/paddle_two_column_reading_order_results.json"
+      ],
       "path": "docs/specs/enhancement/paddle_two_column_reading_order.md",
       "zh_path": "docs/specs/enhancement/paddle_two_column_reading_order_zh.md"
     },
@@ -1548,7 +1556,12 @@
       "zh": "Python 3.13 預熱程序生命週期與既有模型搬移",
       "category": "maintenance",
       "status": "implemented",
-      "evidence": ["app/scenario_rag.py", "scripts/migrate_paddle_models.py", "tests/test_embedding_timeout.py", "tests/test_migrate_paddle_models.py"],
+      "evidence": [
+        "app/scenario_rag.py",
+        "scripts/migrate_paddle_models.py",
+        "tests/test_embedding_timeout.py",
+        "tests/test_migrate_paddle_models.py"
+      ],
       "path": "docs/specs/maintenance/python_313_prewarm_model_migration.md",
       "zh_path": "docs/specs/maintenance/python_313_prewarm_model_migration_zh.md"
     },
@@ -1557,9 +1570,25 @@
       "zh": "Paddle OCR 選用結果日誌",
       "category": "maintenance",
       "status": "implemented",
-      "evidence": ["app/pdf_loader.py", "tests/test_pdf_paddle_ocr.py"],
+      "evidence": [
+        "app/pdf_loader.py",
+        "tests/test_pdf_paddle_ocr.py"
+      ],
       "path": "docs/specs/maintenance/paddle_ocr_selection_logging.md",
       "zh_path": "docs/specs/maintenance/paddle_ocr_selection_logging_zh.md"
+    },
+    {
+      "title": "PDF final review warnings",
+      "zh": "PDF 最終人工核對警告修正",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/pdf_loader.py",
+        "tests/test_pdf_loader.py"
+      ],
+      "path": "docs/specs/bug/pdf_final_review_warnings.md",
+      "zh_path": "docs/specs/bug/pdf_final_review_warnings_zh.md",
+      "source_revision": "92b52e4da88063d14ae3c9585fda9d5060d19b37"
     }
   ]
 }
