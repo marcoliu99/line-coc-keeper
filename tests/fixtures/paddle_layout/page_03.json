@@ -1,0 +1,1118 @@
+{
+  "page": 3,
+  "width": 594.0,
+  "height": 774.0,
+  "lines": [
+    {
+      "id": 0,
+      "bbox": [
+        233.54879760742188,
+        32.086029052734375,
+        366.4486999511719,
+        47.026031494140625
+      ],
+      "text": "WELCOME TO CALL OF CTHULHU"
+    },
+    {
+      "id": 1,
+      "bbox": [
+        294.49200439453125,
+        720.1002807617188,
+        305.510009765625,
+        737.5302734375
+      ],
+      "text": "31"
+    },
+    {
+      "id": 2,
+      "bbox": [
+        72.0,
+        80.98200225830078,
+        289.2862854003906,
+        96.30000305175781
+      ],
+      "text": "Weapon: Floating magical dagger. See The Floating Knife (see "
+    },
+    {
+      "id": 3,
+      "bbox": [
+        72.0,
+        92.98200225830078,
+        289.3204040527344,
+        108.30000305175781
+      ],
+      "text": "page 23). Spending a Magic point to cause the dagger to attack "
+    },
+    {
+      "id": 4,
+      "bbox": [
+        72.0,
+        104.98200225830078,
+        272.1681823730469,
+        120.30000305175781
+      ],
+      "text": "for 1 round counts as Corbitt’s combat action for the round."
+    },
+    {
+      "id": 5,
+      "bbox": [
+        72.0,
+        128.98199462890625,
+        271.70855712890625,
+        144.3000030517578
+      ],
+      "text": "Fighting \t 50% (Hard 25%/Extreme10%), damage 1D3 + \t"
+    },
+    {
+      "id": 6,
+      "bbox": [
+        117.0,
+        140.98199462890625,
+        284.60699462890625,
+        156.3000030517578
+      ],
+      "text": "damage bonus(1D4) + possible infection (see above)."
+    },
+    {
+      "id": 7,
+      "bbox": [
+        72.0,
+        152.98199462890625,
+        99.95380401611328,
+        168.3000030517578
+      ],
+      "text": "Dodge\t"
+    },
+    {
+      "id": 8,
+      "bbox": [
+        116.99980163574219,
+        152.98199462890625,
+        223.5948944091797,
+        168.3000030517578
+      ],
+      "text": "17% (Hard 8%/Extreme 3%)."
+    },
+    {
+      "id": 9,
+      "bbox": [
+        72.0,
+        176.98199462890625,
+        91.27799987792969,
+        192.3000030517578
+      ],
+      "text": "Skills"
+    },
+    {
+      "id": 10,
+      "bbox": [
+        72.0,
+        188.98199462890625,
+        289.2861328125,
+        204.3000030517578
+      ],
+      "text": "Cthulhu Mythos 17%, Intimidate 64%, Listen 60%, Sleight "
+    },
+    {
+      "id": 11,
+      "bbox": [
+        72.0,
+        200.98199462890625,
+        167.6691131591797,
+        216.3000030517578
+      ],
+      "text": "of hand 30%, Stealth 72%."
+    },
+    {
+      "id": 12,
+      "bbox": [
+        81.0,
+        224.98199462890625,
+        281.06866455078125,
+        240.3000030517578
+      ],
+      "text": "KEEPER’S NOTE: Only a few skills are listed for "
+    },
+    {
+      "id": 13,
+      "bbox": [
+        81.0,
+        236.98199462890625,
+        281.0692138671875,
+        252.3000030517578
+      ],
+      "text": "Corbitt—those that might come into play. You may "
+    },
+    {
+      "id": 14,
+      "bbox": [
+        81.0,
+        248.98199462890625,
+        175.58731079101562,
+        264.29998779296875
+      ],
+      "text": "improvise others if required."
+    },
+    {
+      "id": 15,
+      "bbox": [
+        72.0,
+        272.98199462890625,
+        289.30474853515625,
+        288.29998779296875
+      ],
+      "text": "Armor: Each point of armor reduces the damage received by "
+    },
+    {
+      "id": 16,
+      "bbox": [
+        72.0,
+        284.98199462890625,
+        289.2977600097656,
+        300.29998779296875
+      ],
+      "text": "1 point. Corbitt has cast Flesh Ward already. Roll 2D6 for "
+    },
+    {
+      "id": 17,
+      "bbox": [
+        72.0,
+        296.98199462890625,
+        289.26806640625,
+        312.29998779296875
+      ],
+      "text": "his armor. Reduce his armor by one point for each point of "
+    },
+    {
+      "id": 18,
+      "bbox": [
+        72.0,
+        308.98199462890625,
+        138.527099609375,
+        324.29998779296875
+      ],
+      "text": "damage he suffers."
+    },
+    {
+      "id": 19,
+      "bbox": [
+        72.0,
+        320.98199462890625,
+        289.2682189941406,
+        336.29998779296875
+      ],
+      "text": "Spells: Dominate (variant, see below), Flesh Ward, "
+    },
+    {
+      "id": 20,
+      "bbox": [
+        72.0,
+        332.98199462890625,
+        213.9731903076172,
+        348.29998779296875
+      ],
+      "text": "Summon/Bind Dimensional Shambler."
+    },
+    {
+      "id": 21,
+      "bbox": [
+        72.0,
+        344.98199462890625,
+        198.31280517578125,
+        360.29998779296875
+      ],
+      "text": "Magical Artifact: Floating dagger."
+    },
+    {
+      "id": 22,
+      "bbox": [
+        72.0,
+        356.98199462890625,
+        257.59503173828125,
+        372.29998779296875
+      ],
+      "text": "Sanity Loss: 1/1D8 Sanity points to see him move."
+    },
+    {
+      "id": 23,
+      "bbox": [
+        72.0,
+        386.3500061035156,
+        277.0750427246094,
+        417.4750061035156
+      ],
+      "text": "ABOUT W. CORBITT, ESQ"
+    },
+    {
+      "id": 24,
+      "bbox": [
+        72.0,
+        416.98199462890625,
+        289.287841796875,
+        432.29998779296875
+      ],
+      "text": "He might be silent at first, but at some point during the "
+    },
+    {
+      "id": 25,
+      "bbox": [
+        72.0,
+        428.98199462890625,
+        289.2663269042969,
+        444.29998779296875
+      ],
+      "text": "confrontation with the investigators it will be more "
+    },
+    {
+      "id": 26,
+      "bbox": [
+        72.0,
+        440.98199462890625,
+        289.2950744628906,
+        456.29998779296875
+      ],
+      "text": "convincing to have him growl, screech, cackle, or mock. He "
+    },
+    {
+      "id": 27,
+      "bbox": [
+        72.0,
+        452.98199462890625,
+        153.73622131347656,
+        468.29998779296875
+      ],
+      "text": "does not breathe at all."
+    },
+    {
+      "id": 28,
+      "bbox": [
+        81.0,
+        464.98199462890625,
+        286.9830322265625,
+        480.29998779296875
+      ],
+      "text": "Corbitt is not truly a vampire, nor any recognizable monster—"
+    },
+    {
+      "id": 29,
+      "bbox": [
+        72.0,
+        476.98199462890625,
+        280.32305908203125,
+        492.29998779296875
+      ],
+      "text": "he is a sorcerer in the process of transforming himself into "
+    },
+    {
+      "id": 30,
+      "bbox": [
+        72.0,
+        488.98199462890625,
+        169.37100219726562,
+        504.29998779296875
+      ],
+      "text": "something entirely inhuman."
+    },
+    {
+      "id": 31,
+      "bbox": [
+        81.0,
+        500.98199462890625,
+        279.3051452636719,
+        516.2999877929688
+      ],
+      "text": "Sunlight causes him pain and is too bright for him to see "
+    },
+    {
+      "id": 32,
+      "bbox": [
+        72.0,
+        512.9819946289062,
+        279.3060607910156,
+        528.2999877929688
+      ],
+      "text": "comfortably. It might kill him, but whether it does so is for "
+    },
+    {
+      "id": 33,
+      "bbox": [
+        72.0,
+        524.9819946289062,
+        279.2781677246094,
+        540.2999877929688
+      ],
+      "text": "the Keeper to determine. Although he drinks blood for food, "
+    },
+    {
+      "id": 34,
+      "bbox": [
+        72.0,
+        536.9819946289062,
+        271.3140563964844,
+        552.2999877929688
+      ],
+      "text": "he could also eat carrots—drinking blood is just more fun."
+    },
+    {
+      "id": 35,
+      "bbox": [
+        81.0,
+        548.9819946289062,
+        278.2962646484375,
+        564.2999877929688
+      ],
+      "text": "His Flesh Ward spell operates as described below, but "
+    },
+    {
+      "id": 36,
+      "bbox": [
+        72.0,
+        560.9819946289062,
+        278.2872619628906,
+        576.2999877929688
+      ],
+      "text": "characterise its effect like this: bullets and blows only "
+    },
+    {
+      "id": 37,
+      "bbox": [
+        72.0,
+        572.9819946289062,
+        278.3151550292969,
+        588.2999877929688
+      ],
+      "text": "chip off pieces of his body, making him look even more "
+    },
+    {
+      "id": 38,
+      "bbox": [
+        72.0,
+        584.9819946289062,
+        278.30523681640625,
+        600.2999877929688
+      ],
+      "text": "horrific than he already does. His dried, iron-hard flesh is "
+    },
+    {
+      "id": 39,
+      "bbox": [
+        72.0,
+        596.9819946289062,
+        277.3052978515625,
+        612.2999877929688
+      ],
+      "text": "invulnerable so long as the spell holds. If damage exceeds "
+    },
+    {
+      "id": 40,
+      "bbox": [
+        72.0,
+        608.9819946289062,
+        277.31610107421875,
+        624.2999877929688
+      ],
+      "text": "the armor, his hit points reduce normally. He never heals "
+    },
+    {
+      "id": 41,
+      "bbox": [
+        72.0,
+        620.9819946289062,
+        277.2692565917969,
+        636.2999877929688
+      ],
+      "text": "and cannot be knocked unconscious. Reaching zero hit "
+    },
+    {
+      "id": 42,
+      "bbox": [
+        72.0,
+        632.9819946289062,
+        257.2272644042969,
+        648.2999877929688
+      ],
+      "text": "points, Corbitt crumbles into dust and never returns."
+    },
+    {
+      "id": 43,
+      "bbox": [
+        81.0,
+        644.9819946289062,
+        277.26214599609375,
+        660.2999877929688
+      ],
+      "text": "Corbitt controls the floating dagger, but if the "
+    },
+    {
+      "id": 44,
+      "bbox": [
+        72.0,
+        656.9819946289062,
+        276.27117919921875,
+        672.2999877929688
+      ],
+      "text": "investigators manage to wrest control of it and successfully "
+    },
+    {
+      "id": 45,
+      "bbox": [
+        72.0,
+        668.9819946289062,
+        276.2640380859375,
+        684.2999877929688
+      ],
+      "text": "stab Corbitt with it, he will quickly turn to ashes and dust, "
+    },
+    {
+      "id": 46,
+      "bbox": [
+        72.0,
+        680.9819946289062,
+        151.54202270507812,
+        696.2999877929688
+      ],
+      "text": "regardless of any spells."
+    },
+    {
+      "id": 47,
+      "bbox": [
+        311.9988098144531,
+        77.97799682617188,
+        384.32269287109375,
+        96.69999694824219
+      ],
+      "text": "Corbitt’s Spells"
+    },
+    {
+      "id": 48,
+      "bbox": [
+        311.9988098144531,
+        92.98200225830078,
+        529.2794189453125,
+        108.30000305175781
+      ],
+      "text": "DOMINATE (Corbitt’s variant): Costs Corbitt 1 Magic "
+    },
+    {
+      "id": 49,
+      "bbox": [
+        311.9988098144531,
+        104.98200225830078,
+        435.97119140625,
+        120.30000305175781
+      ],
+      "text": "point and takes one round to cast. "
+    },
+    {
+      "id": 50,
+      "bbox": [
+        320.9988098144531,
+        116.98200225830078,
+        529.2756958007812,
+        132.3000030517578
+      ],
+      "text": "With his version of the Dominate spell, Corbitt can "
+    },
+    {
+      "id": 51,
+      "bbox": [
+        311.9988098144531,
+        128.98199462890625,
+        529.2586059570312,
+        144.3000030517578
+      ],
+      "text": "mentally cloud the mind of one investigator at a time, as long as "
+    },
+    {
+      "id": 52,
+      "bbox": [
+        311.9988098144531,
+        140.98199462890625,
+        529.2935791015625,
+        156.3000030517578
+      ],
+      "text": "the target is physically in the Corbitt house. The player should "
+    },
+    {
+      "id": 53,
+      "bbox": [
+        311.9988098144531,
+        152.98199462890625,
+        512.83056640625,
+        168.3000030517578
+      ],
+      "text": "make an opposed POW roll versus Corbitt’s POW of 90. "
+    },
+    {
+      "id": 54,
+      "bbox": [
+        320.9988098144531,
+        164.98199462890625,
+        529.2672119140625,
+        180.3000030517578
+      ],
+      "text": "If Corbitt succeeds, the target is in a daze for 1D6+1 "
+    },
+    {
+      "id": 55,
+      "bbox": [
+        311.9988098144531,
+        176.98199462890625,
+        529.293212890625,
+        192.3000030517578
+      ],
+      "text": "combat rounds. While in this dazed state, the victim is "
+    },
+    {
+      "id": 56,
+      "bbox": [
+        311.9988098144531,
+        188.98199462890625,
+        529.2843627929688,
+        204.3000030517578
+      ],
+      "text": "subject to telepathic commands from Corbitt. These may "
+    },
+    {
+      "id": 57,
+      "bbox": [
+        311.9988098144531,
+        200.98199462890625,
+        529.2849731445312,
+        216.3000030517578
+      ],
+      "text": "take the form of subtle and creepy hallucinations or direct "
+    },
+    {
+      "id": 58,
+      "bbox": [
+        311.9988098144531,
+        212.98199462890625,
+        529.2670288085938,
+        228.3000030517578
+      ],
+      "text": "commands at the Keeper’s discretion. He or she will not "
+    },
+    {
+      "id": 59,
+      "bbox": [
+        311.9988098144531,
+        224.98199462890625,
+        529.2939453125,
+        240.3000030517578
+      ],
+      "text": "commit suicidal acts, though homicidal, idiotic, or reckless "
+    },
+    {
+      "id": 60,
+      "bbox": [
+        311.9988098144531,
+        236.98199462890625,
+        529.3013305664062,
+        252.3000030517578
+      ],
+      "text": "acts (such as trying to swallow a butcher’s knife) might be "
+    },
+    {
+      "id": 61,
+      "bbox": [
+        311.9988098144531,
+        248.98199462890625,
+        527.6292114257812,
+        264.29998779296875
+      ],
+      "text": "attempted. Waking, the victim will not recall what happened."
+    },
+    {
+      "id": 62,
+      "bbox": [
+        311.9988098144531,
+        272.98199462890625,
+        529.2608032226562,
+        288.29998779296875
+      ],
+      "text": "FLESH WARD: Corbitt will already have cast this spell "
+    },
+    {
+      "id": 63,
+      "bbox": [
+        311.9988098144531,
+        284.98199462890625,
+        529.2996826171875,
+        300.29998779296875
+      ],
+      "text": "before the investigators get to him, to provide himself with "
+    },
+    {
+      "id": 64,
+      "bbox": [
+        311.9988098144531,
+        296.98199462890625,
+        402.56414794921875,
+        312.29998779296875
+      ],
+      "text": "armor (see Armor above)."
+    },
+    {
+      "id": 65,
+      "bbox": [
+        315.9988098144531,
+        320.98199462890625,
+        420.0914001464844,
+        336.29998779296875
+      ],
+      "text": "•\t Cost: variable magic points"
+    },
+    {
+      "id": 66,
+      "bbox": [
+        315.9988098144531,
+        332.98199462890625,
+        410.37982177734375,
+        348.29998779296875
+      ],
+      "text": "•\t Casting Time: 5 rounds"
+    },
+    {
+      "id": 67,
+      "bbox": [
+        311.9988098144531,
+        356.98199462890625,
+        529.2865600585938,
+        372.29998779296875
+      ],
+      "text": "Grants protection against physical attack. Each magic point "
+    },
+    {
+      "id": 68,
+      "bbox": [
+        311.9988098144531,
+        368.98199462890625,
+        529.302734375,
+        384.29998779296875
+      ],
+      "text": "spent gives the caster or the chosen target 1D6 points of "
+    },
+    {
+      "id": 69,
+      "bbox": [
+        311.9988098144531,
+        380.98199462890625,
+        527.7115478515625,
+        396.29998779296875
+      ],
+      "text": "armor against non-magical attacks. This protection wears off "
+    },
+    {
+      "id": 70,
+      "bbox": [
+        311.9988098144531,
+        392.98199462890625,
+        529.2673950195312,
+        408.29998779296875
+      ],
+      "text": "as it blocks damage. For example, if a character has 12 points "
+    },
+    {
+      "id": 71,
+      "bbox": [
+        311.9988098144531,
+        404.98199462890625,
+        529.302734375,
+        420.29998779296875
+      ],
+      "text": "of Flesh Ward as armor and suffers 8 points of damage, the "
+    },
+    {
+      "id": 72,
+      "bbox": [
+        311.9988098144531,
+        416.98199462890625,
+        529.28466796875,
+        432.29998779296875
+      ],
+      "text": "character suffers no damage but the Flesh Ward is reduced to 4 "
+    },
+    {
+      "id": 73,
+      "bbox": [
+        311.9988098144531,
+        428.98199462890625,
+        529.3106689453125,
+        444.29998779296875
+      ],
+      "text": "points. The spell lasts 24 hours or until the protection is used up. "
+    },
+    {
+      "id": 74,
+      "bbox": [
+        320.9988098144531,
+        440.98199462890625,
+        529.2659912109375,
+        456.29998779296875
+      ],
+      "text": "Once cast, the spell may not be reinforced with further magic "
+    },
+    {
+      "id": 75,
+      "bbox": [
+        311.9988098144531,
+        452.98199462890625,
+        527.6656494140625,
+        468.29998779296875
+      ],
+      "text": "points, nor recast until the old spell’s protection has been used up."
+    }
+  ],
+  "regions": [
+    {
+      "label": "header",
+      "order": null,
+      "bbox": [
+        230.78675282714053,
+        30.71047737135772,
+        367.5315024232633,
+        47.50526968381897
+      ]
+    },
+    {
+      "label": "text",
+      "order": 1,
+      "bbox": [
+        69.5718901453958,
+        80.61500309981402,
+        288.843295638126,
+        118.04339739615624
+      ]
+    },
+    {
+      "label": "text",
+      "order": 2,
+      "bbox": [
+        70.05169628432955,
+        128.12027278363297,
+        285.48465266558964,
+        153.5523868567886
+      ]
+    },
+    {
+      "label": "text",
+      "order": 3,
+      "bbox": [
+        70.05169628432955,
+        153.07253564786112,
+        224.5492730210016,
+        165.5486670799752
+      ]
+    },
+    {
+      "label": "text",
+      "order": 4,
+      "bbox": [
+        69.5718901453958,
+        188.58152510849348,
+        288.843295638126,
+        213.53378797272163
+      ]
+    },
+    {
+      "label": "text",
+      "order": 5,
+      "bbox": [
+        78.20840064620354,
+        224.57036577805331,
+        282.1260096930533,
+        262.478611283323
+      ]
+    },
+    {
+      "label": "text",
+      "order": 6,
+      "bbox": [
+        69.5718901453958,
+        272.5554866707997,
+        289.3231017770598,
+        320.5406075635462
+      ]
+    },
+    {
+      "label": "text",
+      "order": 7,
+      "bbox": [
+        69.5718901453958,
+        320.5406075635462,
+        288.843295638126,
+        345.01301921884686
+      ]
+    },
+    {
+      "label": "text",
+      "order": 8,
+      "bbox": [
+        70.05169628432955,
+        345.01301921884686,
+        200.5589660743134,
+        357.48915065096094
+      ]
+    },
+    {
+      "label": "text",
+      "order": 9,
+      "bbox": [
+        70.05169628432955,
+        357.00929944203347,
+        259.0953150242326,
+        369.48543087414754
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 10,
+      "bbox": [
+        69.5718901453958,
+        387.7197768133912,
+        277.32794830371563,
+        414.1115933044017
+      ]
+    },
+    {
+      "label": "text",
+      "order": 11,
+      "bbox": [
+        69.09208400646203,
+        416.99070055796653,
+        288.843295638126,
+        464.97582145071294
+      ]
+    },
+    {
+      "label": "text",
+      "order": 12,
+      "bbox": [
+        69.5718901453958,
+        465.4556726596404,
+        285.9644588045234,
+        500.48481091134533
+      ]
+    },
+    {
+      "label": "text",
+      "order": 13,
+      "bbox": [
+        69.5718901453958,
+        500.9646621202728,
+        279.2471728594507,
+        548.4699318040917
+      ]
+    },
+    {
+      "label": "text",
+      "order": 14,
+      "bbox": [
+        69.5718901453958,
+        549.4296342219467,
+        278.2875605815832,
+        644.9200247985121
+      ]
+    },
+    {
+      "label": "text",
+      "order": 15,
+      "bbox": [
+        69.5718901453958,
+        644.9200247985121,
+        276.8481421647819,
+        693.8648481091135
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 16,
+      "bbox": [
+        309.9547657512116,
+        78.69559826410415,
+        386.72374798061384,
+        92.13143211407315
+      ]
+    },
+    {
+      "label": "text",
+      "order": 17,
+      "bbox": [
+        309.4749596122778,
+        93.09113453192809,
+        528.2665589660743,
+        117.0836949783013
+      ]
+    },
+    {
+      "label": "text",
+      "order": 18,
+      "bbox": [
+        308.9951534733441,
+        117.56354618722877,
+        528.7463651050081,
+        164.58896466212028
+      ]
+    },
+    {
+      "label": "text",
+      "order": 19,
+      "bbox": [
+        309.4749596122778,
+        165.06881587104775,
+        529.2261712439418,
+        261.99876007439553
+      ]
+    },
+    {
+      "label": "text",
+      "order": 20,
+      "bbox": [
+        308.9951534733441,
+        272.5554866707997,
+        528.7463651050081,
+        309.50402975821453
+      ]
+    },
+    {
+      "label": "text",
+      "order": 21,
+      "bbox": [
+        312.8336025848142,
+        321.50030998140113,
+        422.2294022617124,
+        332.5368877867328
+      ]
+    },
+    {
+      "label": "text",
+      "order": 22,
+      "bbox": [
+        313.79321486268174,
+        333.49659020458773,
+        413.11308562197087,
+        345.49287042777433
+      ]
+    },
+    {
+      "label": "text",
+      "order": 23,
+      "bbox": [
+        308.9951534733441,
+        357.00929944203347,
+        529.2261712439418,
+        440.98326100433974
+      ]
+    },
+    {
+      "label": "text",
+      "order": 24,
+      "bbox": [
+        308.9951534733441,
+        441.4631122132672,
+        529.2261712439418,
+        465.9355238685679
+      ]
+    },
+    {
+      "label": "image",
+      "order": null,
+      "bbox": [
+        293.16155088852986,
+        496.16615003099815,
+        580.5654281098546,
+        695.3044017358958
+      ]
+    },
+    {
+      "label": "number",
+      "order": 25,
+      "bbox": [
+        293.16155088852986,
+        720.2566646001239,
+        306.59612277867524,
+        736.0917544947304
+      ]
+    }
+  ],
+  "expected_ids": [
+    0,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    1
+  ],
+  "expected_text": "WELCOME TO CALL OF CTHULHU\nWeapon: Floating magical dagger. See The Floating Knife (see \npage 23). Spending a Magic point to cause the dagger to attack \nfor 1 round counts as Corbitt’s combat action for the round.\nFighting \t 50% (Hard 25%/Extreme10%), damage 1D3 + \t\ndamage bonus(1D4) + possible infection (see above).\nDodge\t\n17% (Hard 8%/Extreme 3%).\nSkills\nCthulhu Mythos 17%, Intimidate 64%, Listen 60%, Sleight \nof hand 30%, Stealth 72%.\nKEEPER’S NOTE: Only a few skills are listed for \nCorbitt—those that might come into play. You may \nimprovise others if required.\nArmor: Each point of armor reduces the damage received by \n1 point. Corbitt has cast Flesh Ward already. Roll 2D6 for \nhis armor. Reduce his armor by one point for each point of \ndamage he suffers.\nSpells: Dominate (variant, see below), Flesh Ward, \nSummon/Bind Dimensional Shambler.\nMagical Artifact: Floating dagger.\nSanity Loss: 1/1D8 Sanity points to see him move.\nABOUT W. CORBITT, ESQ\nHe might be silent at first, but at some point during the \nconfrontation with the investigators it will be more \nconvincing to have him growl, screech, cackle, or mock. He \ndoes not breathe at all.\nCorbitt is not truly a vampire, nor any recognizable monster—\nhe is a sorcerer in the process of transforming himself into \nsomething entirely inhuman.\nSunlight causes him pain and is too bright for him to see \ncomfortably. It might kill him, but whether it does so is for \nthe Keeper to determine. Although he drinks blood for food, \nhe could also eat carrots—drinking blood is just more fun.\nHis Flesh Ward spell operates as described below, but \ncharacterise its effect like this: bullets and blows only \nchip off pieces of his body, making him look even more \nhorrific than he already does. His dried, iron-hard flesh is \ninvulnerable so long as the spell holds. If damage exceeds \nthe armor, his hit points reduce normally. He never heals \nand cannot be knocked unconscious. Reaching zero hit \npoints, Corbitt crumbles into dust and never returns.\nCorbitt controls the floating dagger, but if the \ninvestigators manage to wrest control of it and successfully \nstab Corbitt with it, he will quickly turn to ashes and dust, \nregardless of any spells.\nCorbitt’s Spells\nDOMINATE (Corbitt’s variant): Costs Corbitt 1 Magic \npoint and takes one round to cast. \nWith his version of the Dominate spell, Corbitt can \nmentally cloud the mind of one investigator at a time, as long as \nthe target is physically in the Corbitt house. The player should \nmake an opposed POW roll versus Corbitt’s POW of 90. \nIf Corbitt succeeds, the target is in a daze for 1D6+1 \ncombat rounds. While in this dazed state, the victim is \nsubject to telepathic commands from Corbitt. These may \ntake the form of subtle and creepy hallucinations or direct \ncommands at the Keeper’s discretion. He or she will not \ncommit suicidal acts, though homicidal, idiotic, or reckless \nacts (such as trying to swallow a butcher’s knife) might be \nattempted. Waking, the victim will not recall what happened.\nFLESH WARD: Corbitt will already have cast this spell \nbefore the investigators get to him, to provide himself with \narmor (see Armor above).\n•\t Cost: variable magic points\n•\t Casting Time: 5 rounds\nGrants protection against physical attack. Each magic point \nspent gives the caster or the chosen target 1D6 points of \narmor against non-magical attacks. This protection wears off \nas it blocks damage. For example, if a character has 12 points \nof Flesh Ward as armor and suffers 8 points of damage, the \ncharacter suffers no damage but the Flesh Ward is reduced to 4 \npoints. The spell lasts 24 hours or until the protection is used up. \nOnce cast, the spell may not be reinforced with further magic \npoints, nor recast until the old spell’s protection has been used up.\n31"
+}

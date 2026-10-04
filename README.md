@@ -120,6 +120,12 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 
 Only the Discord bot entry point needs to run. Discord receives image attachments directly; no webhook, ngrok tunnel, or public image URL is required.
 
+### Optional two-column PDF reading order
+
+With the existing optional Paddle dependencies on a supported Python interpreter (3.9–3.13), run `python scripts/setup_paddle_layout.py` once to download PP-DocLayoutV3. Set `PDF_PADDLE_LAYOUT_MODEL_DIR` for a different cache root; `PDF_PADDLE_LAYOUT_ENABLED=false` disables it. Normal extraction only loads local model files and never downloads them. Missing models/packages or uncertain layouts use the original flow, including on Python 3.14 where the official Paddle wheel is unavailable.
+
+Paddle predicts regions and reading order only: text remains native PyMuPDF text. Only completely mapped, clearly separated two-column pages are accepted. Single-column, three-column and uncertain pages retain the original flow. See the [implementation specification](docs/specs/enhancement/paddle_two_column_reading_order.md).
+
 ### Token budgets and API admission
 
 The OpenAI path measures input composition, applies a configurable history budget, and uses response headers to estimate request/token admission budgets with a shared process-level cooldown. A turn deadline covers LLM admission, calls, retries, and narration. Output limits can be configured per stage; they are omitted by default.

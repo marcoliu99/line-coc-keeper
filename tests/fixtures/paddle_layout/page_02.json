@@ -1,0 +1,1140 @@
+{
+  "page": 2,
+  "width": 594.0,
+  "height": 774.0,
+  "lines": [
+    {
+      "id": 0,
+      "bbox": [
+        233.54879760742188,
+        32.086029052734375,
+        366.4486999511719,
+        47.026031494140625
+      ],
+      "text": "WELCOME TO CALL OF CTHULHU"
+    },
+    {
+      "id": 1,
+      "bbox": [
+        294.2185974121094,
+        720.1002807617188,
+        305.7825927734375,
+        737.5302734375
+      ],
+      "text": "19"
+    },
+    {
+      "id": 2,
+      "bbox": [
+        72.0,
+        77.97799682617188,
+        158.4808807373047,
+        96.69999694824219
+      ],
+      "text": "Pushing The Roll?"
+    },
+    {
+      "id": 3,
+      "bbox": [
+        72.0,
+        92.98200225830078,
+        290.26708984375,
+        108.30000305175781
+      ],
+      "text": "If the players fail the roll, ask if they want to persist in their "
+    },
+    {
+      "id": 4,
+      "bbox": [
+        72.0,
+        104.98200225830078,
+        290.2581787109375,
+        120.30000305175781
+      ],
+      "text": "efforts to gain access to the clippings files. If they choose "
+    },
+    {
+      "id": 5,
+      "bbox": [
+        72.0,
+        116.98200225830078,
+        290.24822998046875,
+        132.3000030517578
+      ],
+      "text": "to do so, they may attempt a Pushed roll by continuing to "
+    },
+    {
+      "id": 6,
+      "bbox": [
+        72.0,
+        128.98199462890625,
+        290.2850646972656,
+        144.3000030517578
+      ],
+      "text": "pressure Arty in some way (they may change their approach "
+    },
+    {
+      "id": 7,
+      "bbox": [
+        72.0,
+        140.98199462890625,
+        226.9502716064453,
+        156.3000030517578
+      ],
+      "text": "and use an alternate method at this point). "
+    },
+    {
+      "id": 8,
+      "bbox": [
+        81.0,
+        152.98199462890625,
+        290.3129577636719,
+        168.3000030517578
+      ],
+      "text": "Depending on their course of action you should decide on "
+    },
+    {
+      "id": 9,
+      "bbox": [
+        72.0,
+        164.98199462890625,
+        281.5172424316406,
+        180.3000030517578
+      ],
+      "text": "what will happen if they fail (a consequence); for example:"
+    },
+    {
+      "id": 10,
+      "bbox": [
+        76.0,
+        188.98199462890625,
+        290.24981689453125,
+        204.3000030517578
+      ],
+      "text": "•\t If the investigators are using Intimidate, the consequence "
+    },
+    {
+      "id": 11,
+      "bbox": [
+        84.0,
+        200.98199462890625,
+        290.27911376953125,
+        216.3000030517578
+      ],
+      "text": "might be that Arty calls their bluff, leading to an exchange "
+    },
+    {
+      "id": 12,
+      "bbox": [
+        84.0,
+        212.98199462890625,
+        115.77809143066406,
+        228.3000030517578
+      ],
+      "text": "of blows."
+    },
+    {
+      "id": 13,
+      "bbox": [
+        76.0,
+        224.98199462890625,
+        290.2501220703125,
+        240.3000030517578
+      ],
+      "text": "•\t If the investigators are using Charm or Persuade, the "
+    },
+    {
+      "id": 14,
+      "bbox": [
+        84.0,
+        236.98199462890625,
+        290.3030090332031,
+        252.3000030517578
+      ],
+      "text": "consequence might be that Arty takes offence and screams "
+    },
+    {
+      "id": 15,
+      "bbox": [
+        84.0,
+        248.98199462890625,
+        142.1669921875,
+        264.29998779296875
+      ],
+      "text": "at them to leave."
+    },
+    {
+      "id": 16,
+      "bbox": [
+        81.0,
+        272.98199462890625,
+        290.3085632324219,
+        288.29998779296875
+      ],
+      "text": "Whatever the consequence, ensure that it escalates beyond "
+    },
+    {
+      "id": 17,
+      "bbox": [
+        72.0,
+        284.98199462890625,
+        290.293212890625,
+        300.29998779296875
+      ],
+      "text": "Arty just asking them to leave—for example, have Arty call "
+    },
+    {
+      "id": 18,
+      "bbox": [
+        72.0,
+        296.98199462890625,
+        262.6712951660156,
+        312.29998779296875
+      ],
+      "text": "on some strong-armed maintenance men for backup."
+    },
+    {
+      "id": 19,
+      "bbox": [
+        72.0,
+        317.9779968261719,
+        164.92803955078125,
+        336.70001220703125
+      ],
+      "text": "The Clippings Files"
+    },
+    {
+      "id": 20,
+      "bbox": [
+        72.0,
+        332.98199462890625,
+        290.29412841796875,
+        348.29998779296875
+      ],
+      "text": "If the investigators gain access, describe the dusty shelves of "
+    },
+    {
+      "id": 21,
+      "bbox": [
+        72.0,
+        344.98199462890625,
+        167.04718017578125,
+        360.29998779296875
+      ],
+      "text": "the clippings files morgue."
+    },
+    {
+      "id": 22,
+      "bbox": [
+        81.0,
+        368.98199462890625,
+        281.0854797363281,
+        384.29998779296875
+      ],
+      "text": "You are taken down some steps by Ruth Blake, the records "
+    },
+    {
+      "id": 23,
+      "bbox": [
+        81.0,
+        380.98199462890625,
+        281.0601501464844,
+        396.29998779296875
+      ],
+      "text": "keeper, into a dusty basement filled with filing cabinets and "
+    },
+    {
+      "id": 24,
+      "bbox": [
+        81.0,
+        392.98199462890625,
+        281.04937744140625,
+        408.29998779296875
+      ],
+      "text": "stacked high with old newspapers and other assorted junk. "
+    },
+    {
+      "id": 25,
+      "bbox": [
+        81.0,
+        404.98199462890625,
+        281.0772705078125,
+        420.29998779296875
+      ],
+      "text": "The whole room smells musty and the boiler system in the "
+    },
+    {
+      "id": 26,
+      "bbox": [
+        81.0,
+        416.98199462890625,
+        177.1272430419922,
+        432.29998779296875
+      ],
+      "text": "corner gives out a lot of heat."
+    },
+    {
+      "id": 27,
+      "bbox": [
+        81.0,
+        440.98199462890625,
+        290.27532958984375,
+        456.29998779296875
+      ],
+      "text": "The pertinent clippings are filed by street address. Since "
+    },
+    {
+      "id": 28,
+      "bbox": [
+        72.0,
+        452.98199462890625,
+        290.3031311035156,
+        468.29998779296875
+      ],
+      "text": "the players have already had to succeed in dice rolls to get "
+    },
+    {
+      "id": 29,
+      "bbox": [
+        72.0,
+        464.98199462890625,
+        290.31744384765625,
+        480.29998779296875
+      ],
+      "text": "in to the morgue it would be churlish stop them getting "
+    },
+    {
+      "id": 30,
+      "bbox": [
+        72.0,
+        476.98199462890625,
+        289.7991027832031,
+        492.29998779296875
+      ],
+      "text": "the one clue that is here, so it should be made obvious. Pass "
+    },
+    {
+      "id": 31,
+      "bbox": [
+        72.0,
+        488.98199462890625,
+        190.24949645996094,
+        504.29998779296875
+      ],
+      "text": "Handout 2 (page 30) to a player."
+    },
+    {
+      "id": 32,
+      "bbox": [
+        72.0,
+        509.9779968261719,
+        123.05098724365234,
+        528.7000122070312
+      ],
+      "text": "Handout 2"
+    },
+    {
+      "id": 33,
+      "bbox": [
+        72.0,
+        524.9819946289062,
+        290.28192138671875,
+        540.2999877929688
+      ],
+      "text": "Unpublished Story, Boston Globe 1918: A feature story, "
+    },
+    {
+      "id": 34,
+      "bbox": [
+        72.0,
+        536.9819946289062,
+        290.30303955078125,
+        552.2999877929688
+      ],
+      "text": "which was never published. It states that in 1880, a family "
+    },
+    {
+      "id": 35,
+      "bbox": [
+        72.0,
+        548.9819946289062,
+        290.2940979003906,
+        564.2999877929688
+      ],
+      "text": "of French immigrants moved into the house but fled after "
+    },
+    {
+      "id": 36,
+      "bbox": [
+        72.0,
+        560.9819946289062,
+        290.30853271484375,
+        576.2999877929688
+      ],
+      "text": "a series of violent accidents left the parents dead and three "
+    },
+    {
+      "id": 37,
+      "bbox": [
+        72.0,
+        572.9819946289062,
+        241.29623413085938,
+        588.2999877929688
+      ],
+      "text": "children crippled. The house long stood vacant."
+    },
+    {
+      "id": 38,
+      "bbox": [
+        81.0,
+        584.9819946289062,
+        290.2841796875,
+        600.2999877929688
+      ],
+      "text": "In 1909, another family moved in and immediately fell "
+    },
+    {
+      "id": 39,
+      "bbox": [
+        72.0,
+        596.9819946289062,
+        290.2859191894531,
+        612.2999877929688
+      ],
+      "text": "prey to illnesses. In 1914, the oldest brother went mad and "
+    },
+    {
+      "id": 40,
+      "bbox": [
+        72.0,
+        608.9819946289062,
+        290.3120422363281,
+        624.2999877929688
+      ],
+      "text": "killed himself with a kitchen knife, and the heartbroken "
+    },
+    {
+      "id": 41,
+      "bbox": [
+        72.0,
+        620.9819946289062,
+        290.3066101074219,
+        636.2999877929688
+      ],
+      "text": "family moved out. In 1918, a third family, the Macarios, "
+    },
+    {
+      "id": 42,
+      "bbox": [
+        72.0,
+        632.9819946289062,
+        290.3030700683594,
+        648.2999877929688
+      ],
+      "text": "rented the house, but they left almost immediately under "
+    },
+    {
+      "id": 43,
+      "bbox": [
+        72.0,
+        644.9819946289062,
+        165.5811004638672,
+        660.2999877929688
+      ],
+      "text": "mysterious circumstances."
+    },
+    {
+      "id": 44,
+      "bbox": [
+        320.9988098144531,
+        80.98200225830078,
+        530.2571411132812,
+        96.30000305175781
+      ],
+      "text": "If an investigator flirts with or befriends Ruth Blake, the "
+    },
+    {
+      "id": 45,
+      "bbox": [
+        311.9988098144531,
+        92.98200225830078,
+        530.2579345703125,
+        108.30000305175781
+      ],
+      "text": "record keeper in the clippings file (don’t bother with dice "
+    },
+    {
+      "id": 46,
+      "bbox": [
+        311.9988098144531,
+        104.98200225830078,
+        530.3101806640625,
+        120.30000305175781
+      ],
+      "text": "here, the information isn’t crucial), she remarks that the "
+    },
+    {
+      "id": 47,
+      "bbox": [
+        311.9988098144531,
+        116.98200225830078,
+        530.2479858398438,
+        132.3000030517578
+      ],
+      "text": "Globe files go back no further than a fire in 1878. If the "
+    },
+    {
+      "id": 48,
+      "bbox": [
+        311.9988098144531,
+        128.98199462890625,
+        530.2832641601562,
+        144.3000030517578
+      ],
+      "text": "Corbitt House is mentioned earlier than that, there is no "
+    },
+    {
+      "id": 49,
+      "bbox": [
+        311.9988098144531,
+        140.98199462890625,
+        371.7760314941406,
+        156.3000030517578
+      ],
+      "text": "record of it here."
+    },
+    {
+      "id": 50,
+      "bbox": [
+        311.9988098144531,
+        170.35000610351562,
+        426.04248046875,
+        201.47500610351562
+      ],
+      "text": "LOCATION 3: "
+    },
+    {
+      "id": 51,
+      "bbox": [
+        311.9988098144531,
+        194.35000610351562,
+        502.2488708496094,
+        225.47500610351562
+      ],
+      "text": "THE CENTRAL LIBRARY"
+    },
+    {
+      "id": 52,
+      "bbox": [
+        311.9988098144531,
+        224.98199462890625,
+        530.310302734375,
+        240.3000030517578
+      ],
+      "text": "This worthy institution has several interesting items tucked "
+    },
+    {
+      "id": 53,
+      "bbox": [
+        311.9988098144531,
+        236.98199462890625,
+        530.31005859375,
+        252.3000030517578
+      ],
+      "text": "away. For each half-day spent in research at the library, ask "
+    },
+    {
+      "id": 54,
+      "bbox": [
+        311.9988098144531,
+        248.98199462890625,
+        530.2761840820312,
+        264.29998779296875
+      ],
+      "text": "each player to make a Library Use roll (rolling equal to or "
+    },
+    {
+      "id": 55,
+      "bbox": [
+        311.9988098144531,
+        260.98199462890625,
+        530.31201171875,
+        276.29998779296875
+      ],
+      "text": "less than their skill on 1D100). If failed, there is no need to "
+    },
+    {
+      "id": 56,
+      "bbox": [
+        311.9988098144531,
+        272.98199462890625,
+        530.3198852539062,
+        288.29998779296875
+      ],
+      "text": "push the roll; the players can simply keep trying again and "
+    },
+    {
+      "id": 57,
+      "bbox": [
+        311.9988098144531,
+        284.98199462890625,
+        530.3109130859375,
+        300.29998779296875
+      ],
+      "text": "again, but each roll means they have spent half a day more "
+    },
+    {
+      "id": 58,
+      "bbox": [
+        311.9988098144531,
+        296.98199462890625,
+        530.3111572265625,
+        312.29998779296875
+      ],
+      "text": "in research. If they spend more than a day researching, have "
+    },
+    {
+      "id": 59,
+      "bbox": [
+        311.9988098144531,
+        308.98199462890625,
+        530.266845703125,
+        324.29998779296875
+      ],
+      "text": "their employer, Mr. Knott, contact them to ask how things are "
+    },
+    {
+      "id": 60,
+      "bbox": [
+        311.9988098144531,
+        320.98199462890625,
+        530.26513671875,
+        336.29998779296875
+      ],
+      "text": "progressing, urging them to resolve their investigations—time "
+    },
+    {
+      "id": 61,
+      "bbox": [
+        311.9988098144531,
+        332.98199462890625,
+        374.4939270019531,
+        348.29998779296875
+      ],
+      "text": "is money after all."
+    },
+    {
+      "id": 62,
+      "bbox": [
+        320.9988098144531,
+        344.98199462890625,
+        530.2836303710938,
+        360.29998779296875
+      ],
+      "text": "For each success, give out one of the following Handouts "
+    },
+    {
+      "id": 63,
+      "bbox": [
+        311.9988098144531,
+        356.98199462890625,
+        348.7548522949219,
+        372.29998779296875
+      ],
+      "text": "(in order)."
+    },
+    {
+      "id": 64,
+      "bbox": [
+        311.9988098144531,
+        377.9779968261719,
+        363.0498046875,
+        396.70001220703125
+      ],
+      "text": "Handout 3"
+    },
+    {
+      "id": 65,
+      "bbox": [
+        311.9988098144531,
+        392.98199462890625,
+        530.28564453125,
+        408.29998779296875
+      ],
+      "text": "In 1835, a prosperous merchant builds the house, but "
+    },
+    {
+      "id": 66,
+      "bbox": [
+        311.9988098144531,
+        404.98199462890625,
+        528.6599731445312,
+        420.29998779296875
+      ],
+      "text": "immediately falls ill and sells it to a Mr. Walter Corbitt, esquire."
+    },
+    {
+      "id": 67,
+      "bbox": [
+        311.9988098144531,
+        425.9779968261719,
+        363.0498046875,
+        444.70001220703125
+      ],
+      "text": "Handout 4"
+    },
+    {
+      "id": 68,
+      "bbox": [
+        311.9988098144531,
+        440.98199462890625,
+        530.308349609375,
+        456.29998779296875
+      ],
+      "text": "In 1852, Walter Corbitt is sued by neighbours, who petition "
+    },
+    {
+      "id": 69,
+      "bbox": [
+        311.9988098144531,
+        452.98199462890625,
+        530.0804443359375,
+        468.29998779296875
+      ],
+      "text": "to force him to leave the area “in consequence of his surious [sic] "
+    },
+    {
+      "id": 70,
+      "bbox": [
+        311.9988098144531,
+        464.98199462890625,
+        431.57098388671875,
+        480.29998779296875
+      ],
+      "text": "habits and unauspicious demeanor.”"
+    },
+    {
+      "id": 71,
+      "bbox": [
+        311.9988098144531,
+        485.9779968261719,
+        363.0498046875,
+        504.70001220703125
+      ],
+      "text": "Handout 5"
+    },
+    {
+      "id": 72,
+      "bbox": [
+        311.9988098144531,
+        500.98199462890625,
+        530.2660522460938,
+        516.2999877929688
+      ],
+      "text": "Evidently Corbitt wins the lawsuit. His obituary in 1866 "
+    },
+    {
+      "id": 73,
+      "bbox": [
+        311.9988098144531,
+        512.9819946289062,
+        530.3155517578125,
+        528.2999877929688
+      ],
+      "text": "states that he still lived in the same place. It also states that "
+    },
+    {
+      "id": 74,
+      "bbox": [
+        311.9988098144531,
+        524.9819946289062,
+        530.3103637695312,
+        540.2999877929688
+      ],
+      "text": "a second lawsuit was being waged to prevent Corbitt from "
+    },
+    {
+      "id": 75,
+      "bbox": [
+        311.9988098144531,
+        536.9819946289062,
+        502.1574401855469,
+        552.2999877929688
+      ],
+      "text": "being buried in his basement, as provided by his will."
+    },
+    {
+      "id": 76,
+      "bbox": [
+        311.9988098144531,
+        557.97802734375,
+        363.0498046875,
+        576.7000122070312
+      ],
+      "text": "Handout 6"
+    },
+    {
+      "id": 77,
+      "bbox": [
+        311.9988098144531,
+        572.9819946289062,
+        478.667236328125,
+        588.2999877929688
+      ],
+      "text": "No outcome to the second lawsuit is recorded."
+    }
+  ],
+  "regions": [
+    {
+      "label": "header",
+      "order": null,
+      "bbox": [
+        230.30694668820678,
+        30.230626162430255,
+        367.5315024232633,
+        47.50526968381897
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 1,
+      "bbox": [
+        70.05169628432955,
+        78.69559826410415,
+        160.73505654281098,
+        91.65158090514569
+      ]
+    },
+    {
+      "label": "text",
+      "order": 2,
+      "bbox": [
+        69.09208400646203,
+        93.57098574085555,
+        289.8029079159935,
+        153.07253564786112
+      ]
+    },
+    {
+      "label": "text",
+      "order": 3,
+      "bbox": [
+        69.5718901453958,
+        153.5523868567886,
+        289.3231017770598,
+        178.02479851208926
+      ]
+    },
+    {
+      "label": "text",
+      "order": 4,
+      "bbox": [
+        73.89014539579968,
+        189.06137631742095,
+        289.3231017770598,
+        224.09051456912584
+      ]
+    },
+    {
+      "label": "text",
+      "order": 5,
+      "bbox": [
+        73.41033925686591,
+        225.53006819590826,
+        289.8029079159935,
+        261.51890886546806
+      ]
+    },
+    {
+      "label": "text",
+      "order": 6,
+      "bbox": [
+        69.5718901453958,
+        273.0353378797272,
+        289.8029079159935,
+        309.983880967142
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 7,
+      "bbox": [
+        69.5718901453958,
+        318.6212027278363,
+        166.97253634894992,
+        332.0570365778053
+      ]
+    },
+    {
+      "label": "text",
+      "order": 8,
+      "bbox": [
+        69.09208400646203,
+        333.01673899566026,
+        290.2827140549273,
+        358.4488530688159
+      ]
+    },
+    {
+      "label": "text",
+      "order": 9,
+      "bbox": [
+        78.20840064620354,
+        369.00557966522007,
+        282.60581583198706,
+        430.42653440793555
+      ]
+    },
+    {
+      "label": "text",
+      "order": 10,
+      "bbox": [
+        68.61227786752826,
+        440.98326100433974,
+        290.2827140549273,
+        501.9243645381277
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 11,
+      "bbox": [
+        70.05169628432955,
+        511.0415375077495,
+        125.70920840064619,
+        523.0378177309361
+      ]
+    },
+    {
+      "label": "text",
+      "order": 12,
+      "bbox": [
+        69.09208400646203,
+        524.957222566646,
+        290.2827140549273,
+        584.9386236825791
+      ]
+    },
+    {
+      "label": "text",
+      "order": 13,
+      "bbox": [
+        69.09208400646203,
+        584.9386236825791,
+        290.76252019386106,
+        657.8760074395536
+      ]
+    },
+    {
+      "label": "text",
+      "order": 14,
+      "bbox": [
+        308.5153473344103,
+        81.09485430874147,
+        529.7059773828755,
+        154.03223806571606
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 15,
+      "bbox": [
+        309.4749596122778,
+        171.78673279603223,
+        503.7964458804523,
+        221.69125852448852
+      ]
+    },
+    {
+      "label": "text",
+      "order": 16,
+      "bbox": [
+        308.9951534733441,
+        225.53006819590826,
+        529.7059773828755,
+        345.01301921884686
+      ]
+    },
+    {
+      "label": "text",
+      "order": 17,
+      "bbox": [
+        309.4749596122778,
+        345.49287042777433,
+        529.7059773828755,
+        369.00557966522007
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 18,
+      "bbox": [
+        309.9547657512116,
+        379.08245505269684,
+        365.13247172859445,
+        391.07873527588345
+      ]
+    },
+    {
+      "label": "text",
+      "order": 19,
+      "bbox": [
+        308.5153473344103,
+        392.99814011159333,
+        529.7059773828755,
+        417.9504029758215
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 20,
+      "bbox": [
+        309.9547657512116,
+        427.06757594544325,
+        365.61227786752823,
+        439.06385616862985
+      ]
+    },
+    {
+      "label": "text",
+      "order": 21,
+      "bbox": [
+        308.5153473344103,
+        440.98326100433974,
+        530.1857835218093,
+        477.9318040917545
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 22,
+      "bbox": [
+        309.9547657512116,
+        486.56912585244885,
+        364.6526655896607,
+        499.5251084934904
+      ]
+    },
+    {
+      "label": "text",
+      "order": 23,
+      "bbox": [
+        308.9951534733441,
+        500.48481091134533,
+        529.7059773828755,
+        550.3893366398016
+      ]
+    },
+    {
+      "label": "paragraph_title",
+      "order": 24,
+      "bbox": [
+        309.4749596122778,
+        559.026658400496,
+        365.13247172859445,
+        571.0229386236825
+      ]
+    },
+    {
+      "label": "text",
+      "order": 25,
+      "bbox": [
+        309.4749596122778,
+        572.462492250465,
+        479.3263327948303,
+        585.4184748915065
+      ]
+    },
+    {
+      "label": "number",
+      "order": 26,
+      "bbox": [
+        293.16155088852986,
+        719.7768133911966,
+        306.59612277867524,
+        736.0917544947304
+      ]
+    }
+  ],
+  "expected_ids": [
+    0,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    1
+  ],
+  "expected_text": "WELCOME TO CALL OF CTHULHU\nPushing The Roll?\nIf the players fail the roll, ask if they want to persist in their \nefforts to gain access to the clippings files. If they choose \nto do so, they may attempt a Pushed roll by continuing to \npressure Arty in some way (they may change their approach \nand use an alternate method at this point). \nDepending on their course of action you should decide on \nwhat will happen if they fail (a consequence); for example:\n•\t If the investigators are using Intimidate, the consequence \nmight be that Arty calls their bluff, leading to an exchange \nof blows.\n•\t If the investigators are using Charm or Persuade, the \nconsequence might be that Arty takes offence and screams \nat them to leave.\nWhatever the consequence, ensure that it escalates beyond \nArty just asking them to leave—for example, have Arty call \non some strong-armed maintenance men for backup.\nThe Clippings Files\nIf the investigators gain access, describe the dusty shelves of \nthe clippings files morgue.\nYou are taken down some steps by Ruth Blake, the records \nkeeper, into a dusty basement filled with filing cabinets and \nstacked high with old newspapers and other assorted junk. \nThe whole room smells musty and the boiler system in the \ncorner gives out a lot of heat.\nThe pertinent clippings are filed by street address. Since \nthe players have already had to succeed in dice rolls to get \nin to the morgue it would be churlish stop them getting \nthe one clue that is here, so it should be made obvious. Pass \nHandout 2 (page 30) to a player.\nHandout 2\nUnpublished Story, Boston Globe 1918: A feature story, \nwhich was never published. It states that in 1880, a family \nof French immigrants moved into the house but fled after \na series of violent accidents left the parents dead and three \nchildren crippled. The house long stood vacant.\nIn 1909, another family moved in and immediately fell \nprey to illnesses. In 1914, the oldest brother went mad and \nkilled himself with a kitchen knife, and the heartbroken \nfamily moved out. In 1918, a third family, the Macarios, \nrented the house, but they left almost immediately under \nmysterious circumstances.\nIf an investigator flirts with or befriends Ruth Blake, the \nrecord keeper in the clippings file (don’t bother with dice \nhere, the information isn’t crucial), she remarks that the \nGlobe files go back no further than a fire in 1878. If the \nCorbitt House is mentioned earlier than that, there is no \nrecord of it here.\nLOCATION 3: \nTHE CENTRAL LIBRARY\nThis worthy institution has several interesting items tucked \naway. For each half-day spent in research at the library, ask \neach player to make a Library Use roll (rolling equal to or \nless than their skill on 1D100). If failed, there is no need to \npush the roll; the players can simply keep trying again and \nagain, but each roll means they have spent half a day more \nin research. If they spend more than a day researching, have \ntheir employer, Mr. Knott, contact them to ask how things are \nprogressing, urging them to resolve their investigations—time \nis money after all.\nFor each success, give out one of the following Handouts \n(in order).\nHandout 3\nIn 1835, a prosperous merchant builds the house, but \nimmediately falls ill and sells it to a Mr. Walter Corbitt, esquire.\nHandout 4\nIn 1852, Walter Corbitt is sued by neighbours, who petition \nto force him to leave the area “in consequence of his surious [sic] \nhabits and unauspicious demeanor.”\nHandout 5\nEvidently Corbitt wins the lawsuit. His obituary in 1866 \nstates that he still lived in the same place. It also states that \na second lawsuit was being waged to prevent Corbitt from \nbeing buried in his basement, as provided by his will.\nHandout 6\nNo outcome to the second lawsuit is recorded.\n19"
+}

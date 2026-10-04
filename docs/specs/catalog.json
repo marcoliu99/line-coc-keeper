@@ -1533,6 +1533,15 @@
         "docs/specs/enhancement/minimal_paddle_ocr_validation_zh.md",
         "docs/specs/enhancement/minimal_paddle_ocr_results.json"
       ]
+    },
+    {
+      "title": "Paddle two-column native-text reading order",
+      "zh": "Paddle 雙欄原生文字閱讀順序",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": ["app/pdf_layout.py", "app/pdf_loader.py", "scripts/setup_paddle_layout.py", "tests/test_pdf_paddle_layout.py", "tests/test_setup_paddle_layout.py", "tests/fixtures/paddle_layout/provenance.json", "docs/specs/enhancement/paddle_two_column_reading_order_results.json"],
+      "path": "docs/specs/enhancement/paddle_two_column_reading_order.md",
+      "zh_path": "docs/specs/enhancement/paddle_two_column_reading_order_zh.md"
     }
   ]
 }
