@@ -19,6 +19,16 @@ def _card(name: str, luck: int, page: int, excerpt: str) -> dict[str, Any]:
     return {"name": name, "luck": luck, "luck_source_page": page, "luck_source_excerpt": excerpt}
 
 
+def _sheet(name: str, luck: int, page: int, excerpt: str, **stats: int) -> dict[str, Any]:
+    return {**_card(name, luck, page, excerpt), **stats}
+
+
+ALICE = {"str_": 50, "con": 60, "siz": 55, "dex": 70}
+BOB = {"str_": 80, "con": 45, "siz": 60, "dex": 50}
+ALICE_STATS = "STR 50 CON 60 SIZ 55 DEX 70"
+BOB_STATS = "STR 80 CON 45 SIZ 60 DEX 50"
+
+
 def _extract(text: str, pregens: list[dict[str, Any]]) -> dict[str, int | None]:
     provider = Mock(analyze_text=Mock(return_value={"pregens": pregens}))
     with patch.object(pregen_extractor, "analysis_provider", return_value=provider):
@@ -47,6 +57,28 @@ def _extract(text: str, pregens: list[dict[str, Any]]) -> dict[str, int | None]:
     ("Luck of the second sheet right after the first sheet's page",
      "--- 第 1 頁 ---\nName: Alice\nLUCK 40\n--- 第 2 頁 ---\nName: Bob\nLUCK 70\n",
      [_card("Alice", 40, 1, "LUCK 40"), _card("Bob", 70, 2, "LUCK 70")], {"Alice": 40, "Bob": 70}),
+    ("the only investigator, Luck printed before the name",
+     "--- 第 1 頁 ---\nLUCK 55\nName: Alice\n",
+     [_card("Alice", 55, 1, "LUCK 55")], {"Alice": 55}),
+    ("the only investigator, name spelt differently by the model",
+     "--- 第 1 頁 ---\nName: Alice\nLUCK 55\n",
+     [_card("艾莉絲", 55, 1, "LUCK 55")], {"艾莉絲": 55}),
+    ("two sheets, each Luck printed before its name, told apart by their characteristics",
+     f"--- 第 1 頁 ---\nLUCK 55\n{ALICE_STATS}\nName: Alice\n--- 第 2 頁 ---\nLUCK 40\n{BOB_STATS}\nName: Bob\n",
+     [_sheet("Alice", 55, 1, "LUCK 55", **ALICE), _sheet("Bob", 40, 2, "LUCK 40", **BOB)],
+     {"Alice": 55, "Bob": 40}),
+    ("two sheets, names spelt differently by the model, told apart by their characteristics",
+     f"--- 第 1 頁 ---\nName: Alice\n{ALICE_STATS}\nLUCK 55\n--- 第 2 頁 ---\nName: Bob\n{BOB_STATS}\nLUCK 40\n",
+     [_sheet("艾莉絲", 55, 1, "LUCK 55", **ALICE), _sheet("鮑伯", 40, 2, "LUCK 40", **BOB)],
+     {"艾莉絲": 55, "鮑伯": 40}),
+    ("Chinese characteristic labels",
+     ("--- 第 1 頁 ---\n幸運 55\n力量 50 體質 60 體型 55 敏捷 70\n姓名 艾莉絲\n"
+      "--- 第 2 頁 ---\n幸運 40\n力量 80 體質 45 體型 60 敏捷 50\n姓名 鮑伯\n"),
+     [_sheet("艾莉絲", 55, 1, "幸運 55", **ALICE), _sheet("鮑伯", 40, 2, "幸運 40", **BOB)],
+     {"艾莉絲": 55, "鮑伯": 40}),
+    ("another investigator's name sits between the name and the Luck, characteristics decide",
+     f"--- 第 1 頁 ---\nName: Alice (sister of Bob)\n{ALICE_STATS}\nLUCK 55\n",
+     [_sheet("Alice", 55, 1, "LUCK 55", **ALICE), _sheet("Bob", 40, 1, "x", **BOB)], {"Alice": 55, "Bob": None}),
 ])
 def test_a_printed_luck_that_belongs_to_the_sheet_is_kept(label, text, pregens, expected):
     assert _extract(text, pregens) == expected, label
@@ -62,15 +94,24 @@ def test_a_printed_luck_that_belongs_to_the_sheet_is_kept(label, text, pregens, 
     ("no page or quote reported",
      "--- 第 1 頁 ---\nName: Alice\nLUCK 55\n",
      [{"name": "Alice", "luck": 55}], "missing_page_or_excerpt"),
-    ("Luck printed before any name",
-     "--- 第 1 頁 ---\nLUCK 55\nName: Alice\n",
-     [_card("Alice", 55, 1, "LUCK 55")], "no_occurrence_belongs_to_this_investigator"),
-    ("the model's name is not the one on the page",
-     "--- 第 1 頁 ---\nName: Alice\nLUCK 55\n",
-     [_card("艾莉絲", 55, 1, "LUCK 55")], "no_occurrence_belongs_to_this_investigator"),
-    ("another investigator's name sits between the name and the Luck",
-     "--- 第 1 頁 ---\nName: Alice (sister of Bob)\nLUCK 55\n",
-     [_card("Alice", 55, 1, "LUCK 55"), _card("Bob", 40, 1, "x")], "no_occurrence_belongs_to_this_investigator"),
+    ("two sheets, Luck printed before any name and no characteristics to tell them apart",
+     "--- 第 1 頁 ---\nLUCK 55\nName: Alice\nLUCK 40\nName: Bob\n",
+     [_card("Alice", 55, 1, "LUCK 55"), _card("Bob", 40, 1, "LUCK 40")], "no_occurrence_belongs_to_this_investigator"),
+    ("two sheets, the model's name is not on the page and nothing else tells them apart",
+     "--- 第 1 頁 ---\nName: Alice\nLUCK 55\nName: Bob\nLUCK 40\n",
+     [_card("艾莉絲", 55, 1, "LUCK 55"), _card("Bob", 40, 1, "LUCK 40")], "no_occurrence_belongs_to_this_investigator"),
+    ("two sheets close enough that both are in reach of the Luck are ambiguous, not guessed",
+     f"--- 第 1 頁 ---\nName: Alice\n{ALICE_STATS}\nLUCK 55\nName: Bob\n{BOB_STATS}\nLUCK 40\n",
+     [_sheet("艾莉絲", 55, 1, "LUCK 55", **ALICE), _sheet("鮑伯", 40, 1, "LUCK 40", **BOB)],
+     "no_occurrence_belongs_to_this_investigator"),
+    ("two sheets with identical characteristics cannot be told apart by them",
+     f"--- 第 1 頁 ---\nLUCK 55\n{ALICE_STATS}\nName: Alice\nLUCK 40\n{ALICE_STATS}\nName: Bob\n",
+     [_sheet("Alice", 55, 1, "LUCK 55", **ALICE), _sheet("Bob", 40, 1, "LUCK 40", **ALICE)],
+     "no_occurrence_belongs_to_this_investigator"),
+    ("the characteristics next to the Luck are another sheet's, whatever the name before it says",
+     f"--- 第 1 頁 ---\nName: Alice\n{BOB_STATS}\nLUCK 55\nName: Bob\n",
+     [_sheet("Alice", 55, 1, "LUCK 55", **ALICE), _sheet("Bob", 40, 1, "x", **BOB)],
+     "no_occurrence_belongs_to_this_investigator"),
     ("the same quote follows the same name twice",
      "--- 第 1 頁 ---\nName: Alice\nLUCK 55\nbackstory\nLUCK 55\n",
      [_card("Alice", 55, 1, "LUCK 55")], "several_occurrences_belong_to_this_investigator"),

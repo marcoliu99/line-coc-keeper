@@ -201,17 +201,68 @@ def _squash(text: str) -> str:
     return " ".join(text.replace("：", ":").replace(":", " ").split()).casefold()
 
 
+_STAT_LABELS = {
+    "str_": "str|力量", "con": "con|體質", "siz": "siz|體型", "dex": "dex|敏捷",
+    "app": "app|外貌", "int_": "int|智力", "pow_": "pow|意志", "edu": "edu|教育",
+}
+# How far from the quoted Luck a sheet's own characteristics may sit, in characters of
+# whitespace-squashed text, and how many of them must be found to identify the sheet.
+_STAT_WINDOW = 500
+_STAT_MIN_MATCHES = 4
+
+
+def _printed_stat(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else (
+        int(value) if isinstance(value, str) and value.strip().isdigit() else None
+    )
+
+
+def _stat_scores(pregens: list[dict[str, Any]], text: str, at: int) -> list[int]:
+    """For each pregen, how many of its reported characteristics are printed within reach of ``at``.
+
+    A sheet's own numbers (``STR 50``, ``智力 65`` ...) tie a Luck line to it whatever the
+    order of the name and the Luck in the extracted text, or the spelling of the name.
+    """
+    window = text[max(0, at - _STAT_WINDOW): at + _STAT_WINDOW]
+    scores: list[int] = []
+    for pregen in pregens:
+        score = 0
+        for key, labels in _STAT_LABELS.items():
+            wanted = _printed_stat(pregen.get(key))
+            if wanted is None:
+                continue
+            pattern = rf"(?<![a-z])(?:{labels})\s*(\d{{1,3}})(?!\d)"
+            if any(int(found.group(1)) == wanted for found in re.finditer(pattern, window)):
+                score += 1
+        scores.append(score)
+    return scores
+
+
+def _stat_owner(scores: list[int]) -> int | None:
+    """The one pregen whose characteristics clearly match, if there is exactly one."""
+    best = max(scores)
+    return scores.index(best) if best >= _STAT_MIN_MATCHES and scores.count(best) == 1 else None
+
+
 def _check_pdf_luck(
     pregen: dict[str, Any], pregens: list[dict[str, Any]], pages: dict[int, str],
 ) -> tuple[int | None, str]:
     """The Luck printed on this pregen's own sheet, or why it cannot be trusted.
 
     The model must cite the page and quote the label with its value. The quote must
-    carry the same number, appear on the cited page, and be attributable to this
-    investigator: the nearest investigator name before it (on that page, or at the end
-    of the page before when a sheet runs over) must be this pregen's. A quote that
-    repeats on the page (two sheets both printing ``LUCK 55``) counts when exactly one
-    of its occurrences belongs to this pregen.
+    state that value, appear on the cited page, and belong to this investigator. Each
+    occurrence of the quote is attributed on its own, by the first rule that decides:
+
+    1. the sheet's own characteristics printed near it on the cited page (or, when that
+       page identifies nobody, on the page before): the pregen whose reported
+       characteristics match the most, at least ``_STAT_MIN_MATCHES`` and strictly more
+       than any other, owns it (independent of name order and of how the name is spelt).
+       Two sheets close enough that both are in reach are ambiguous, not guessed;
+    2. the nearest investigator name before it (on that page, or at the end of the page
+       before when a sheet runs over) is this pregen's;
+    3. this is the only investigator and the only occurrence.
+
+    The Luck is kept when exactly one occurrence belongs to this pregen.
     """
     value = pregen_luck_value(pregen.get("luck"))
     if value is None:
@@ -235,9 +286,18 @@ def _check_pdf_luck(
     combined = f"{before} {source}" if before else source
     offset = len(combined) - len(source)
     own = _squash(str(pregen.get("name") or ""))
+    mine = next(i for i, candidate in enumerate(pregens) if candidate is pregen)
     attributed = 0
     for at in occurrences:
         luck_at = offset + at + matched.start()
+        page_scores = _stat_scores(pregens, source, at + matched.start())
+        owner = _stat_owner(page_scores)
+        if owner is None and max(page_scores) < _STAT_MIN_MATCHES:
+            # Nothing identifying on the cited page: the sheet may have begun on the page before.
+            owner = _stat_owner(_stat_scores(pregens, combined, luck_at))
+        if owner is not None:
+            attributed += owner == mine
+            continue
         names: list[tuple[int, int, str]] = []
         for candidate in pregens:
             name = _squash(str(candidate.get("name") or ""))
@@ -247,7 +307,9 @@ def _check_pdf_luck(
                 (found.start(), len(name), name)
                 for found in re.finditer(re.escape(name), combined) if found.start() <= luck_at
             )
-        if names and max(names)[2] == own:
+        if names:
+            attributed += max(names)[2] == own
+        elif len(pregens) == 1 and len(occurrences) == 1:
             attributed += 1
     if attributed == 0:
         return None, "no_occurrence_belongs_to_this_investigator"
