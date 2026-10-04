@@ -1,10 +1,9 @@
 import asyncio
+import multiprocessing
 import sys
-import threading
 import time
 import types
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +12,11 @@ from app import memory_rag, scenario_rag
 
 def _sleep_in_worker(seconds: float) -> None:
     time.sleep(seconds)
+
+
+def _wait_in_worker(started) -> None:
+    started.set()
+    time.sleep(10)
 
 
 class EmbeddingClientTimeoutTests(unittest.TestCase):
@@ -56,43 +60,107 @@ class EmbeddingClientTimeoutTests(unittest.TestCase):
 
 
 class PrewarmLifecycleTests(unittest.IsolatedAsyncioTestCase):
-    async def test_default_prewarm_executor_can_terminate_a_stuck_worker(self):
-        executor = scenario_rag._create_prewarm_executor()
+    async def test_prewarm_worker_can_terminate_a_stuck_child(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = multiprocessing.get_context("spawn").Process(
+            target=_sleep_in_worker, args=(10.0,)
+        )
         try:
-            loop = asyncio.get_running_loop()
-            worker = loop.run_in_executor(executor, _sleep_in_worker, 10.0)
-            _, pending = await asyncio.wait({worker}, timeout=0.05)
-            self.assertIn(worker, pending)
-            scenario_rag._stop_prewarm_executor(executor, terminate=True)
-            await asyncio.wait({worker}, timeout=0.5)
-            self.assertTrue(worker.done())
-            self.assertTrue(worker.cancelled() or worker.exception() is not None)
+            worker.start()
+            wait_task = asyncio.create_task(worker.wait())
+            _, pending = await asyncio.wait({wait_task}, timeout=0.05)
+            self.assertIn(wait_task, pending)
+            worker.stop()
+            with self.assertRaises(RuntimeError):
+                await asyncio.wait_for(wait_task, timeout=0.5)
+            self.assertIsNotNone(worker.process.exitcode)
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            if worker.process.pid is not None:
+                worker.stop()
+
+    async def test_completed_prewarm_worker_is_not_terminated(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = multiprocessing.get_context("spawn").Process(
+            target=_sleep_in_worker, args=(0.01,)
+        )
+        worker.start()
+        await asyncio.wait_for(worker.wait(), timeout=2)
+        with patch.object(worker.process, "terminate") as terminate, \
+                patch.object(worker.process, "kill") as kill:
+            worker.stop()
+        terminate.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(worker.process.exitcode, 0)
+
+    def test_prewarm_worker_kills_child_if_terminate_does_not_finish(self):
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+
+        class StubbornProcess:
+            exitcode = None
+
+            def __init__(self):
+                self.terminate_calls = 0
+                self.kill_calls = 0
+
+            def terminate(self):
+                self.terminate_calls += 1
+
+            def join(self, timeout=None):
+                return None
+
+            def kill(self):
+                self.kill_calls += 1
+                self.exitcode = -9
+
+        process = StubbornProcess()
+        worker.process = process
+        worker.stop()
+        self.assertEqual(process.terminate_calls, 1)
+        self.assertEqual(process.kill_calls, 1)
+        self.assertEqual(process.exitcode, -9)
 
     async def test_shutdown_waits_boundedly_for_previously_started_worker(self):
-        started = threading.Event()
-        release = threading.Event()
-
-        def blocking_index(*_args):
-            started.set()
-            release.wait(timeout=2)
-
-        with ThreadPoolExecutor(max_workers=1) as executor, \
-                patch.object(scenario_rag, "_create_prewarm_executor", return_value=executor), \
+        context = multiprocessing.get_context("spawn")
+        started = context.Event()
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = context.Process(target=_wait_in_worker, args=(started,))
+        with patch.object(scenario_rag, "_PrewarmWorker", return_value=worker), \
                 patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
                 patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", True), \
                 patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_MAX_CONCURRENT", 1), \
-                patch.object(scenario_rag, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001), \
-                patch.object(scenario_rag, "get_index", side_effect=blocking_index):
+                patch.object(scenario_rag, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
             scenario_rag.schedule_index_prewarm("g", "scenario")
-            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+            self.assertTrue(await asyncio.to_thread(started.wait, 2))
             started_at = time.perf_counter()
             await scenario_rag.shutdown_prewarm()
             elapsed = time.perf_counter() - started_at
             self.assertLess(elapsed, 0.5)
-            release.set()
-            await asyncio.sleep(0.02)
+            self.assertIsNotNone(worker.process.exitcode)
+
+    async def test_cancelled_wrapper_leaves_child_for_shutdown_cleanup(self):
+        context = multiprocessing.get_context("spawn")
+        started = context.Event()
+        worker = scenario_rag._PrewarmWorker("g", "scenario")
+        worker.process = context.Process(target=_wait_in_worker, args=(started,))
+        with patch.object(scenario_rag, "_PrewarmWorker", return_value=worker), \
+                patch.object(scenario_rag, "SCENARIO_RAG_ENABLED", True), \
+                patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", True), \
+                patch.object(scenario_rag, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
+            wrapper = scenario_rag.schedule_index_prewarm("g", "scenario")
+            self.assertIsNotNone(wrapper)
+            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+            wrapper.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await wrapper
+            self.assertIsNone(worker.process.exitcode)
+            await scenario_rag.shutdown_prewarm()
+            self.assertIsNotNone(worker.process.exitcode)
+
+    async def test_disabled_prewarm_starts_no_child(self):
+        with patch.object(scenario_rag, "SCENARIO_RAG_PREWARM_ENABLED", False), \
+                patch.object(scenario_rag, "_PrewarmWorker") as create_worker:
+            self.assertIsNone(scenario_rag.schedule_index_prewarm("g", "scenario"))
+            create_worker.assert_not_called()
 
 
 if __name__ == "__main__":
