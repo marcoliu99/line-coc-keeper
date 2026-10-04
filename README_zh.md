@@ -26,7 +26,7 @@
 ```text
 Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
   |
-  +-- 指令／PDF -> commands/handlers/*.py -> legacy_commands.py
+  +-- 指令／PDF -> commands/handlers/*.py -> services/{scenario_ingestion,map_service,character_service}.py
   |
   +-- 玩家文字 -> agents/supervisor.py
   |     -> context_builder.py（state／劇本與記憶檢索）
@@ -48,9 +48,9 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 
 **指令與訊息路由**
 - `app/discord_bot.py`：Discord 專用的常駐連線入口，把 Discord 的事件轉譯成呼叫 `app/commands/router.py`
-- `app/commands/router.py`：**平台無關**的指令路由入口（取代舊版單一檔案 `app/commands.py`，已重新命名為 `app/legacy_commands.py`）——依關鍵字分派到下面的 handler 模組，自由文字（不是 `/coc` 指令）交給 `app/agents/supervisor.py`
-- `app/commands/handlers/`：依領域拆開的指令處理模組——`character.py`（建角／角色卡等 9 個子指令）、`combat.py`、`system.py`（`newgame`／`pdf`／`kp`／`scenario`／`status`／`era`… 等 12 個子指令，含劇本庫的 `/coc scenario` 系列）、`map_handler.py`（`showpage`／`where`／`enter`／`leavemap`）——這些模組委派回 `app/legacy_commands.py` 裡既有、已驗證過的邏輯，不是重新實作
-- `app/legacy_commands.py`（原 `app/commands.py`）：PDF 上傳流程、`/coc check`／`/coc luck`（玩家自己在程式碼裡擲骰，結果交給同一個 Supervisor 的 `resolved_check_followup` 入口敘事，不得重擲已結算的骰）、預製角色合併、角色離開/回歸等仍集中在這裡的邏輯
+- `app/commands/router.py`：**平台無關**的指令路由入口（取代舊版單一檔案 `app/commands.py`）——依關鍵字分派到下面的 handler 模組，自由文字（不是 `/coc` 指令）交給 `app/agents/supervisor.py`
+- `app/commands/handlers/`：依領域拆開的指令處理模組——`character.py`（建角／角色卡等 9 個子指令）、`combat.py`、`system.py`（`newgame`／`pdf`／`kp`／`scenario`／`status`／`era`… 等 12 個子指令，含劇本庫的 `/coc scenario` 系列）、`map_handler.py`（`showpage`／`where`／`enter`／`leavemap`）——這些模組委派給 `app/services/` 下既有、已驗證過的邏輯，不是重新實作
+- `app/services/scenario_ingestion.py`、`map_service.py`、`character_service.py`：原本集中在單一檔案 `app/legacy_commands.py`（第 4 階段已刪除，見[架構重構](docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md)）的邏輯——PDF 上傳流程與預製角色合併、地圖上傳與移動解析、角色認領／離開回歸／治療／就緒名冊。`/coc check`／`/coc luck` 在 `app/checks`（玩家自己在程式碼裡擲骰，結果交給同一個 Supervisor 的 `resolved_check_followup` 入口敘事，不得重擲已結算的骰），戰鬥動作在 `app/services/combat_engine.py`
 
 **Agentic Keeper：自由文字（角色扮演／遊戲行動）走的多代理流水線**
 - `app/agents/supervisor.py`：純 Python 調度器，統一玩家一般回合、檢定結果後續與開場後備；依入口與訊息意圖決定機制及敘事流程

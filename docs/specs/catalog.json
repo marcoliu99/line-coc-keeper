@@ -1606,7 +1606,7 @@
       "title": "Architecture refactor, phases 1–4",
       "zh": "架構重構（第 1–4 階段）",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/repositories/state_transaction.py",
         "tests/test_state_transaction.py",
@@ -1617,7 +1617,9 @@
         "docs/refactor/phase2-result.md",
         "app/services/combat_engine.py",
         "tests/test_combat_engine.py",
-        "docs/refactor/phase3-result.md"
+        "docs/refactor/phase3-result.md",
+        "tests/test_architecture_legacy.py",
+        "docs/refactor/phase4-result.md"
       ],
       "path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec.md",
       "zh_path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md",
@@ -1680,6 +1682,23 @@
       ],
       "path": "docs/specs/refactor/combat_engine_design_spec.md",
       "zh_path": "docs/specs/refactor/combat_engine_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Retiring legacy_commands",
+      "zh": "移除 legacy_commands",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/scenario_ingestion.py",
+        "app/services/map_service.py",
+        "app/services/character_service.py",
+        "app/commands/handlers/messages.py",
+        "tests/test_architecture_legacy.py",
+        "tests/test_ingestion_trace.py"
+      ],
+      "path": "docs/specs/refactor/legacy_commands_retirement_design_spec.md",
+      "zh_path": "docs/specs/refactor/legacy_commands_retirement_design_spec_zh.md",
       "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
     }
   ]
