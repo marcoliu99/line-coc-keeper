@@ -24,7 +24,7 @@ _RICH_ATOM = r'(?:\d+[dD]\d+(?:\s*[+-]\s*(?:\d+|[dD][bB]))?|\d+)'
 _RICH_VALUE = rf'[+-]?{_RICH_ATOM}(?:\s*/\s*{_RICH_ATOM})?%?'
 _RICH_STAT = re.compile(
     rf'(?<!\w)(STR|CON|SIZ|DEX|APP|INT|POW|EDU|HP|MP|SAN|LUCK|MOV|BUILD|ARMOR|DB|DAMAGE)'
-    rf'\s*[:：|]?\s*({_RICH_VALUE})(?!\w)', re.IGNORECASE,
+    rf'\s*[:：|]?\s*({_RICH_VALUE})(?![\w%+/\-]|[ \t]*[+/\-][ \t]*(?:\d|[dD]))', re.IGNORECASE,
 )
 _RICH_FIELD = re.compile(rf'^\s*([A-Za-z][A-Za-z ]{{1,40}}?)\s*[:：|]?\s+({_RICH_VALUE})\s*$', re.IGNORECASE)
 

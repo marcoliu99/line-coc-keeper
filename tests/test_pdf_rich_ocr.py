@@ -184,6 +184,13 @@ def test_signed_modifier_change_is_mechanics_loss(baseline: str, changed: str):
     assert result['status'] == 'mechanic_loss'
 
 
+@pytest.mark.parametrize('changed', ['HP 10-2', 'HP 10+2', 'HP 10 - 2', 'HP 10/', 'HP 10-1d4', 'SAN 5+'])
+def test_arithmetic_suffix_on_a_preserved_stat_is_not_the_same_stat(changed: str):
+    baseline = changed.split()[0] + ' ' + ''.join(ch for ch in changed.split()[1] if ch.isdigit())
+    result = _select('31\n' + baseline, changed + '\n' + FILLER, evidence=_evidence(folio=True))
+    assert result['status'] != 'accepted'
+
+
 def test_signed_modifier_spacing_is_equivalent_without_losing_sign():
     result = _select('31\nAdd + 2 now', 'Add +2 now\n' + FILLER,
                      evidence=_evidence(folio=True))
