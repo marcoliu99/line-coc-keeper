@@ -1,6 +1,6 @@
 {
   "baseline": "afe8aced2614e6d1ba845727e42277436838cf0f",
-  "reviewed_date": "2026-09-27",
+  "reviewed_date": "2026-10-04",
   "specs": [
     {
       "title": "Pending-check ownership and duplicate protection",
@@ -900,9 +900,13 @@
         "app/scenario_library.py",
         "app/pdf_loader.py",
         "app/legacy_commands.py",
+        "app/commands/handlers/uploads.py",
         "app/commands/handlers/system.py",
         "app/scene_map.py",
+        "app/trusted_scenario_source.py",
         "tests/test_scenario_library.py",
+        "tests/test_upload_routing.py",
+        "tests/test_trusted_scenario_source.py",
         "tests/test_spoiler_policy.py"
       ],
       "path": "docs/specs/feature/scenario_library_design_spec.md",
