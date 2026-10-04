@@ -1614,6 +1614,24 @@
       "zh_path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec_zh.md"
     },
     {
+      "title": "Prevent margin decoration from interleaving with PDF body text",
+      "zh": "防止 PDF 邊飾字形插入正文閱讀順序",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_decorative_reading_order.py"],
+      "path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec.md",
+      "zh_path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec_zh.md"
+    },
+    {
+      "title": "Deduplicate repeated PDF source emission, not repeated prose",
+      "zh": "依 PDF 來源證據去重，不依正文文字去重",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_duplicate_source.py"],
+      "path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec.md",
+      "zh_path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec_zh.md"
+    },
+    {
       "title": "PDF final review warnings",
       "zh": "PDF 最終人工核對警告修正",
       "category": "bug",
