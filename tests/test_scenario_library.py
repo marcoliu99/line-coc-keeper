@@ -161,7 +161,6 @@ class ScenarioLibraryMarkdownSourceTests(unittest.TestCase):
             self.assertEqual(scenario_library.load_context(scenario_id)["text"], text)
 
 
-
 class ScenarioLibraryReparseTests(unittest.TestCase):
     """Regression tests for the review finding that /coc scenario reparse
     discarded the KP-confirmed matched candidate and always let save_scenario
