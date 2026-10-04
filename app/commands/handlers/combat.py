@@ -1,6 +1,6 @@
 from app import combat
 from app.commands.handlers.transact import Outcome, done, refuse, transact
-from app.legacy_commands import Reply
+from app.commands.types import Reply
 from app.models import GroupState
 from app.repositories.group_state import load_state
 from app.services import mutation_admission

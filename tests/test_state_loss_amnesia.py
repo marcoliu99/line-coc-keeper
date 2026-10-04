@@ -271,9 +271,9 @@ class StateLossAmnesiaTests(unittest.TestCase):
         group_state.save_state(state)
 
         with patch.object(dice, "skill_check") as roll:
-            from app.legacy_commands import _resolve_check_deterministically
+            from app.commands.handlers.checks import resolve_check
 
-            result = _resolve_check_deterministically("stale-check", "p1", "/coc check 偵查")
+            result = resolve_check("stale-check", "p1", "/coc check 偵查")
 
         self.assertIn("時間線已經失效", result.reply_text)
         roll.assert_not_called()
@@ -291,9 +291,9 @@ class StateLossAmnesiaTests(unittest.TestCase):
         group_state.save_state(state)
 
         with patch.object(dice, "skill_check") as roll:
-            from app.legacy_commands import _resolve_check_deterministically
+            from app.commands.handlers.checks import resolve_check
 
-            result = _resolve_check_deterministically("mismatched-check", "p1", "/coc check 聆聽")
+            result = resolve_check("mismatched-check", "p1", "/coc check 聆聽")
 
         self.assertIn("正確的選項名稱", result.reply_text)
         roll.assert_not_called()

@@ -42,6 +42,7 @@ from app.commands import router as command_router
 from app.commands import sudo as sudo_policy
 from app.commands.handlers.buttons import ButtonIO
 from app.commands.handlers.uploads import Upload
+from app.commands.types import PdfChoice, Reply, SendImage
 from app.config import (
     BACKUP_INTERVAL_MINUTES,
     DISCORD_BOT_TOKEN,
@@ -49,11 +50,6 @@ from app.config import (
     LOG_SLOW_REQUEST_MS,
 )
 from app.help_registry import HelpAction, HelpPage
-from app.legacy_commands import (
-    PdfChoice,
-    Reply,
-    SendImage,
-)
 from app.models import GroupState
 from app.providers import anthropic_provider, gemini_provider, openai_provider
 from app.repositories.group_state import StateRevisionConflict
@@ -549,7 +545,7 @@ def _make_interaction_reply(interaction: discord.Interaction) -> Reply:
 
 
 # Code review: this used to be its own independently-maintained copy of
-# dice.TIER_ZH, and had silently drifted from app/legacy_commands.py's copy
+# dice.TIER_ZH, and had silently drifted from app/checks/narration.py's copy
 # on "regular" ("一般成功" vs "成功"). Now a plain alias to the single source.
 _TIER_ZH_FULL = dice.TIER_ZH
 _TIER_ORDER = sorted(dice.TIER_RANK, key=lambda t: dice.TIER_RANK[t])
@@ -811,7 +807,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
     """A "花 N 點 Luck → 一般成功" (or "維持目前結果") button posted whenever
     there's at least one tier-improving option the player can afford — not
     just a near-miss, see docs/specs/enhancement/enhancement-luck-buyup-always-offered.md
-    — via app/legacy_commands.py's handle_check_command (which decides
+    — via app/commands/handlers/checks.py's handle_check_command (which decides
     whether to prompt at all) and handle_luck_decision (what clicking one of
     these actually resolves to). Same discord.ui.DynamicItem + timeout=None
     pattern as CheckButton above, for the same reason: survives bot restarts.

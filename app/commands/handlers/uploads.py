@@ -16,9 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app import locks, scenario_library
+from app.commands.types import PdfChoice, Reply
 from app.legacy_commands import (
-    PdfChoice,
-    Reply,
     handle_map_upload,
     handle_pdf_upload,
     handle_role_sheet_upload,

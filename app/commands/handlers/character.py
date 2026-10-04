@@ -5,10 +5,9 @@ import logging
 
 from app import creation, pregen_extractor, spoiler_policy
 from app.commands.handlers.transact import Outcome, done, refuse, transact
+from app.commands.types import Reply, SendDM
 from app.keeper_tools import resource_bridge
 from app.legacy_commands import (
-    Reply,
-    SendDM,
     _blocked_by_existing_character,
     _blocked_by_kp_assistant,
     _claim_pregen,

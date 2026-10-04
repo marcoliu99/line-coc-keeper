@@ -342,7 +342,7 @@ class StateReloadTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(router, "load_state", load_state), \
                 patch.object(router.supervisor, "run_turn", run_turn), \
-                patch.object(router, "_run_post_turn_maintenance_after_output", maintenance):
+                patch.object(router, "run_post_turn_maintenance_after_output", maintenance):
             await router._handle_ordinary_text_message_locked(
                 "conv-reload", "u1", display_name, lambda _t: _coro(None),
                 lambda *a, **k: _coro(None), lambda *a, **k: _coro(None),
@@ -388,7 +388,7 @@ class StateReloadTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch.object(router, "load_state", load_state), \
                     patch.object(router.supervisor, "run_turn", run_turn), \
-                    patch.object(router, "_run_post_turn_maintenance_after_output", maintenance):
+                    patch.object(router, "run_post_turn_maintenance_after_output", maintenance):
                 await router._handle_ordinary_text_message_locked(
                     conversation_id, "u1", display_name, lambda _t: _coro(None),
                     lambda *a, **k: _coro(None), lambda *a, **k: _coro(None),

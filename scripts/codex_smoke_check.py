@@ -7,8 +7,9 @@ from unittest.mock import patch
 
 
 async def run_check(provider):
-    from app import keeper, legacy_commands
+    from app import keeper
     from app.agents.tool_gateway import make_tool_executor
+    from app.commands.handlers import checks as check_commands
     from app.models import Character, GroupState
     from app.repositories import group_state
     from app.services import turn_context
@@ -44,7 +45,7 @@ async def run_check(provider):
     assert '1925' not in pending_text, 'Premature clue disclosure'
     # Only the RNG is fixed for reproducibility. Resolution/persistence are real.
     with patch('app.dice.roll_percentile_with_dice_pool', return_value=20) as dice:
-        resolved = await asyncio.to_thread(legacy_commands._resolve_check_deterministically,
+        resolved = await asyncio.to_thread(check_commands.resolve_check,
                                           state.group_id, 'player', '/coc check')
     assert dice.call_count == 1, 'Player dice were rerolled'
     assert resolved.should_finalize and resolved.resolved_event, 'Resolution did not complete'

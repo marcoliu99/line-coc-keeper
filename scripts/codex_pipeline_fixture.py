@@ -7,8 +7,9 @@ from unittest.mock import patch
 
 
 async def run_pipeline(kind='check_success'):
-    from app import keeper, legacy_commands
+    from app import keeper
     from app.agents import supervisor
+    from app.commands.handlers import checks as check_commands
     from app.models import Character, GroupState
     from app.repositories import group_state
 
@@ -57,7 +58,7 @@ async def run_pipeline(kind='check_success'):
             elif '1925' in reply:
                 failures.append('premature_clue_disclosure')
             if not failures:
-                resolved = await asyncio.to_thread(legacy_commands._resolve_check_deterministically,
+                resolved = await asyncio.to_thread(check_commands.resolve_check,
                     state.group_id, 'player', '/coc check')
                 state = keeper.load_state(state.group_id)
                 if not resolved.should_finalize or not resolved.resolved_event:

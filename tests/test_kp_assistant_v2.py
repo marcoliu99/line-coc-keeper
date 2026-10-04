@@ -24,6 +24,7 @@ from app.commands.handlers import system as system_handler
 from app.domain.models import AgentMessage
 from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
+from app.services import post_turn
 from tests.provider_fakes import use_fake_provider
 from tests.state_store import StateStorePatch, clone_state
 
@@ -1081,7 +1082,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         original_gate = commands.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
         original_resolve = router._resolve_map_action_transaction
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
@@ -1089,7 +1090,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             commands.locks.get_keeper_priority_gate = forbidden_gate
             router.supervisor.run_turn = fake_run_turn
             router._resolve_map_action_transaction = lambda *args: None
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -1099,7 +1100,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
                 router._resolve_map_action_transaction = original_resolve
-                commands._spawn_post_turn_maintenance = original_spawn
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(reply.messages, ["keeper reply"])
@@ -1125,14 +1126,14 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
         original_gate = commands.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
             router.load_state = commands.load_state
             commands.locks.get_keeper_priority_gate = gate
             router.supervisor.run_turn = fake_run_turn
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -1141,7 +1142,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             finally:
                 commands.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
-                commands._spawn_post_turn_maintenance = original_spawn
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", True)])
@@ -1167,7 +1168,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         original_gate = commands.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
         original_resolve = router._resolve_map_action_transaction
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
@@ -1175,7 +1176,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             commands.locks.get_keeper_priority_gate = gate
             router.supervisor.run_turn = fake_run_turn
             router._resolve_map_action_transaction = lambda *args: None
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -1185,7 +1186,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
                 router._resolve_map_action_transaction = original_resolve
-                commands._spawn_post_turn_maintenance = original_spawn
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", False)])
@@ -1230,7 +1231,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         original_gate = commands.locks.get_keeper_priority_gate
         original_run_turn = router.supervisor.run_turn
         original_resolve = router._resolve_map_action_transaction
-        original_spawn = commands._spawn_post_turn_maintenance
+        original_spawn = post_turn.spawn_post_turn_maintenance
         original_router_load_state = router.load_state
         with StateStorePatch(commands) as store:
             store.put(state)
@@ -1239,7 +1240,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             commands.locks.get_keeper_priority_gate = gate
             router.supervisor.run_turn = fake_run_turn
             router._resolve_map_action_transaction = lambda *args: None
-            commands._spawn_post_turn_maintenance = lambda conversation_id: None
+            post_turn.spawn_post_turn_maintenance = lambda conversation_id: None
             try:
                 reply = ReplyCollector()
                 await router.handle_text_message(
@@ -1249,7 +1250,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 commands.locks.get_keeper_priority_gate = original_gate
                 router.supervisor.run_turn = original_run_turn
                 router._resolve_map_action_transaction = original_resolve
-                commands._spawn_post_turn_maintenance = original_spawn
+                post_turn.spawn_post_turn_maintenance = original_spawn
                 router.load_state = original_router_load_state
 
         self.assertEqual(gate.calls, [("g", True)])

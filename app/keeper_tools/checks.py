@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from app import check_lifecycle, dice, luck, resolved_check_consequences
-from app.check_identity import new_decision_id
+from app import check_lifecycle, dice, resolved_check_consequences
+from app.checks import events as check_events
+from app.checks import service as check_service
+from app.checks.dice_port import DEFAULT_DICE
 from app.keeper_tools import resource_bridge
 from app.models import Character, GroupState
 from app.services import opposed_checks
@@ -141,113 +143,19 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
         if difficulty not in ("regular", "hard", "extreme"):
             difficulty = "regular"
         pushed = bool(tool_input.get("pushed", False))
-        state_before = services.character_attribute_snapshot(target_char)
-        opposed_receipt = opposed_checks.roll_opponent(opposed_request)
-        roll = dice.skill_check(value, bonus_dice=bonus, penalty_dice=penalty, required_tier=difficulty)
-        opposed_outcome = opposed_checks.resolve(opposed_receipt, roll.tier)
-        metadata = check_lifecycle.metadata(target_state, target_char.owner_id, tool_input)
-        result: dict[str, Any] = {
-            "ok": True,
-            "resolved": True,
-            "investigator": target_char.name,
-            "skill": tool_input["skill"],
-            "skill_value": value,
-            "bonus_dice": bonus,
-            "penalty_dice": penalty,
-            "difficulty": difficulty,
-            "roll": roll.roll,
-            "tier": roll.tier,
-            "required_tier": roll.required_tier,
-            "success": (opposed_outcome['winner'] == 'player') if opposed_outcome else roll.success,
-            "player_check_success": roll.success,
-            "check_id": metadata["check_id"],
-            "timeline_id": metadata["timeline_id"],
-            "action_context": metadata["action_context"],
-            "player_declaration": metadata['player_declaration'],
-            "action_basis": metadata['action_basis'],
-            "opposed_outcome": opposed_checks.public_outcome(opposed_outcome),
-            "consequences": consequences,
-            "note": (
-                "Keeper 已由 deterministic dice engine 擲完這次檢定；請直接依照結果敘事，不要再要求玩家擲攻擊骰或技能骰。"
-                if target_state.autoroll_checks
-                else "已建立待處理檢定；請讓玩家用 /coc check 或按鈕擲骰，收到結果後再敘事，不要自行判定。"
-            ),
-        }
-
-        # Always offered whenever there's at least one tier-improving
-        # option the player can afford (buyable_options already
-        # filters to cost <= luck available) -- no cost cap on top
-        # of that; see docs/specs/enhancement-luck-buyup-always-
-        # offered.md for why the previous "<=7" near-miss-only gate
-        # was removed.
-        luck_options = [] if pushed else luck.buyable_options(
-            value, roll.roll, roll.tier, target_char.luck, difficulty
+        autoroll = check_service.autoroll_skill(
+            target_state, target_char, tool_input=tool_input, value=value, bonus=bonus, penalty=penalty,
+            difficulty=difficulty, pushed=pushed, consequences=consequences,
+            opposed_request=opposed_request,
         )
-        if luck_options:
-            decision = {
-                "decision_id": new_decision_id(),
-                "check_id": metadata["check_id"],
-                "timeline_id": metadata["timeline_id"],
-                "origin_revision": target_state.state_revision + 1,
-                "origin_turn_id": metadata["origin_turn_id"],
-                "origin_request_id": metadata["origin_request_id"],
-                "created_at": metadata["created_at"],
-                "action_context": metadata["action_context"],
-                "skill_name": tool_input["skill"],
-                "display_label": None,
-                "value": value,
-                "roll": roll.roll,
-                "bonus_dice": bonus,
-                "penalty_dice": penalty,
-                "original_tier": roll.tier,
-                "attacker_tier": None,
-                "difficulty": difficulty,
-                "options": [{"tier": item.tier, "cost": item.cost} for item in luck_options],
-                "major_wound_trigger": False,
-                "opposed": opposed_receipt,
-                "player_declaration": metadata['player_declaration'],
-                "action_basis": metadata['action_basis'],
-                "consequences": consequences,
-            }
-            target_state.pending_luck_decisions[target_char.owner_id] = decision
-            result.update({
-                "pending_luck": True,
-                "opposed_outcome": None,
-                "success": None if opposed_receipt else result['success'],
-                "decision_id": decision["decision_id"],
-                "luck_options": decision["options"],
-                "note": (
-                    "Keeper 已擲完檢定，有花 Luck 買到更好結果的選項可用。玩家現在只可選擇是否"
-                    "花 Luck 修正；玩家不需要、也不可以自行重骰。先不要把最終成敗敘事成不可逆的結果。"
-                ),
-            })
-        elif target_state.autoroll_checks:
-            resolved_event_seed = {
-                "event_id": metadata["check_id"],
-                "check_id": metadata["check_id"],
-                "timeline_id": metadata["timeline_id"],
-                "owner_id": target_char.owner_id,
-                "character_id": target_char.character_id,
-                "investigator": target_char.name,
-                "skill": tool_input["skill"],
-                "skill_value": value,
-                "roll": roll.roll,
-                "difficulty": difficulty,
-                "outcome": f"{roll.tier} {'成功' if roll.success else '失敗'}" +
-                (f"；對抗勝方={opposed_outcome['winner']}" if opposed_outcome else ''),
-                "opposed_outcome": opposed_outcome,
-                "player_declaration": metadata['player_declaration'],
-                "action_basis": metadata['action_basis'],
-                "success": result["success"],
-                "consequences": consequences,
-                "state_before": state_before,
-            }
+        result = autoroll.result
+        resolved_event_seed = autoroll.event_seed
         result["provisional"] = resource_bridge.participating(target_state, target_char)
         services.remember_check_result(target_state, cache_key, result)
         return services.StateMutation(result, should_save=True)
     result = services.mutate_and_save_state(state, _roll_skill_check)
     if resolved_event_seed is not None and result.get("resolved") and not result.get("pending_luck"):
-        services.persist_resolved_check_event(state, resolved_event_seed)
+        check_events.persist_resolved_event(state.group_id, resolved_event_seed, with_origin=True, snapshot=state)
     return result
 
 
@@ -313,7 +221,7 @@ def npc_skill_check(call: ToolCall) -> dict[str, Any]:
     skill_value = max(0, min(100, int(tool_input["skill_value"])))
     bonus = int(tool_input.get("bonus_dice") or 0)
     penalty = int(tool_input.get("penalty_dice") or 0)
-    npc_roll = dice.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
+    npc_roll = DEFAULT_DICE.skill_check(skill_value, bonus_dice=bonus, penalty_dice=penalty)
     return {"ok": True, "roll": npc_roll.roll, "tier": npc_roll.tier, "skill_value": skill_value}
 
 
@@ -410,8 +318,8 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
             # COC7e：遠程攻擊不是對抗檢定，攻擊方的命中判定完全獨立於防守方，
             # 而且要等防守方決定「撲向掩體」有沒有成功，才知道攻擊方這次要不要
             # 多帶一個懲罰骰——所以這裡不能像近戰一樣預先擲攻擊方，必須延後到
-            # 玩家觸發防守擲骰的當下才擲（見 app/legacy_commands.py 的
-            # _build_check_narration ranged_attacker 分支）。這裡只登記選項跟
+            # 玩家觸發防守擲骰的當下才擲（見 app/checks/narration.py 的
+            # narration.build_check_narration ranged_attacker 分支）。這裡只登記選項跟
             # 攻擊方的技能值/骰數修正，不寫 attacker_tier/attacker_roll。
             check_lifecycle.register(target_state, target_char.owner_id, new_choice, source=tool_input)
             services.resolve_defense_options(target_char, raw_options)
@@ -422,7 +330,7 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
                         "再擲攻擊方的命中判定；不要自行判定命中與否，也不要自己先講攻擊方擲出什麼。",
             }, should_save=True)
 
-        npc_roll = dice.skill_check(
+        npc_roll = DEFAULT_DICE.skill_check(
             attacker_skill_value, bonus_dice=attacker_bonus, penalty_dice=attacker_penalty
         )
         # COC7e：攻擊方擲出大成功時，沒有任何等級能贏過它，「反擊」選項在規則上
@@ -540,68 +448,16 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
             return services.StateMutation(
                 _check_registration_error(target_char, admission.blocker), should_save=False
             )
-        metadata = check_lifecycle.metadata(target_state, target_char.owner_id, tool_input)
-        state_before = services.character_attribute_snapshot(target_char)
-        sanity_result = dice.sanity_check(target_char.san, loss_success, loss_failure)
-        target_char.san = sanity_result.san_after
-        result: dict[str, Any] = {
-            "ok": True,
-            "resolved": True,
-            "investigator": target_char.name,
-            "current_san": sanity_result.san_before,
-            "san_after": sanity_result.san_after,
-            "loss": sanity_result.loss,
-            "loss_expression": sanity_result.loss_expression,
-            "roll": sanity_result.check.roll,
-            "tier": sanity_result.check.tier,
-            "success": sanity_result.check.success,
-            "check_id": metadata["check_id"],
-            "timeline_id": metadata["timeline_id"],
-            "action_context": metadata["action_context"],
-            "note": (
-                "Keeper 已由 deterministic dice engine 擲完 SAN 檢定並更新 SAN；不要要求玩家再輸入 /coc check。"
-                if target_state.autoroll_checks
-                else "已建立待處理 SAN 檢定；請讓玩家用 /coc check 或按鈕擲骰，結果回來前不要扣 SAN。"
-            ),
-        }
-        if sanity_result.risk_of_madness:
-            int_value = keeper.resolve_skill_value(target_char, "INT")
-            int_result = dice.skill_check(int_value)
-            result["madness_int_check"] = {
-                "skill_value": int_value,
-                "roll": int_result.roll,
-                "tier": int_result.tier,
-                "success": int_result.success,
-            }
-            if int_result.success:
-                result["madness"] = dice.roll_madness(realtime=True)
-                result["note"] = (
-                    "Keeper 已完成 SAN 與後續 INT 檢定；損失達 5 點並觸發短暫瘋狂，"
-                    "請照 madness 結果敘事，不要再要求玩家擲 INT。"
-                )
-            else:
-                result["note"] = (
-                    "Keeper 已完成 SAN 與後續 INT 檢定；INT 未觸發短暫瘋狂，請照結果敘事。"
-                )
-        resource_bridge.reconcile(target_state, target_char, event_id=f"{metadata['check_id']}:san", reason="Authoritative SAN check")
-        sanity_event_seed = {
-            "event_id": metadata["check_id"],
-            "check_id": metadata["check_id"],
-            "timeline_id": metadata["timeline_id"],
-            "owner_id": target_char.owner_id,
-            "character_id": target_char.character_id,
-            "investigator": target_char.name,
-            "skill": "SAN",
-            "skill_value": sanity_result.san_before,
-            "roll": sanity_result.check.roll,
-            "difficulty": "regular",
-            "outcome": f"{sanity_result.check.tier} {'成功' if sanity_result.check.success else '失敗'}",
-            "state_before": state_before,
-        }
+        autoroll = check_service.autoroll_sanity(
+            target_state, target_char, tool_input=tool_input,
+            loss_success=loss_success, loss_failure=loss_failure,
+        )
+        result = autoroll.result
+        sanity_event_seed = autoroll.event_seed
         result["provisional"] = resource_bridge.participating(target_state, target_char)
         services.remember_check_result(target_state, cache_key, result)
         return services.StateMutation(result, should_save=True)
     result = services.mutate_and_save_state(state, _roll_sanity_check)
     if sanity_event_seed is not None and result.get("resolved"):
-        services.persist_resolved_check_event(state, sanity_event_seed)
+        check_events.persist_resolved_event(state.group_id, sanity_event_seed, with_origin=True, snapshot=state)
     return result

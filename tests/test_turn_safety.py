@@ -17,6 +17,7 @@ from app.commands.handlers import (
     map_handler,
     system,
 )
+from app.commands.handlers import checks as check_commands
 from app.domain.models import (
     AgentMessage,
     MechanicResult,
@@ -28,7 +29,7 @@ from app.models import Character, GroupState
 from app.providers import registry
 from app.repositories.group_state import load_state, save_state
 from app.services import mutation_admission as admission
-from app.services import turn_delivery
+from app.services import post_turn, turn_delivery
 from app.services.canonical_facts import CanonicalFactRef
 
 
@@ -255,8 +256,8 @@ def test_direct_command_entry_matrix(state, held, handler, kwargs):
 
 @pytest.mark.parametrize("call", [
     lambda s: keeper._execute_tool(s, "roll_dice", {"expression": "1d100"}, [], []),
-    lambda s: legacy_commands._resolve_check_deterministically(s.group_id, "u", "/coc check"),
-    lambda s: legacy_commands._resolve_luck_decision_deterministically(s.group_id, "u", "skip"),
+    lambda s: check_commands.resolve_check(s.group_id, "u", "/coc check"),
+    lambda s: check_commands.resolve_luck(s.group_id, "u", "skip"),
     lambda s: legacy_commands._resolve_map_action_transaction(s.group_id, "u", "go hallway"),
     lambda s: keeper._mutate_and_save_state(s, lambda latest: setattr(latest, "scenario_title", "bad")),
     lambda s: save_state(GroupState(s.group_id), reason="newgame"),
@@ -515,9 +516,9 @@ def test_check_resolution_keeps_audience_through_delivery_and_event(state, kind,
     with patch.object(dice, 'skill_check', return_value=roll), \
          patch.object(dice, 'sanity_check', return_value=san), \
          patch.object(supervisor, 'run_turn', followup), \
-         patch.object(legacy_commands, 'load_page_image', return_value=b'png'), \
-         patch.object(legacy_commands, '_spawn_post_turn_maintenance'):
-        assert asyncio.run(legacy_commands.handle_check_command(
+         patch.object(post_turn, 'load_page_image', return_value=b'png'), \
+         patch.object(post_turn, 'spawn_post_turn_maintenance'):
+        assert asyncio.run(check_commands.handle_check_command(
             state.group_id, 'u', reply, dm, image, dm_image,
             '/coc check 偵查' if kind == 'choice' else '/coc check', split_roll_feedback=split))
     context = followup.call_args.kwargs['resolved_check_context']
@@ -553,14 +554,14 @@ def test_private_luck_offer_and_resolution_keep_audience(state, choice):
     reply, dm, image, dm_image = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
     roll = dice.SkillCheckResult(50, 55, 0, 0, 'fail', False)
     with patch.object(dice, 'skill_check', return_value=roll):
-        assert not asyncio.run(legacy_commands.handle_check_command(
+        assert not asyncio.run(check_commands.handle_check_command(
             state.group_id, 'u', reply, dm, image, dm_image, '/coc check'))
     pending = load_state(state.group_id).pending_luck_decisions['u']
     assert pending['visibility'] == 'player_private' and pending['recipient_id'] == 'u'
     assert '55' in dm.await_args.args[1]
     followup = AsyncMock(return_value=('結果敘事', [], []))
-    with patch.object(supervisor, 'run_turn', followup), patch.object(legacy_commands, '_spawn_post_turn_maintenance'):
-        assert asyncio.run(legacy_commands.handle_luck_decision(
+    with patch.object(supervisor, 'run_turn', followup), patch.object(post_turn, 'spawn_post_turn_maintenance'):
+        assert asyncio.run(check_commands.handle_luck_decision(
             state.group_id, 'u', choice, reply, dm, image, dm_image, split_roll_feedback=True))
     reply.assert_not_awaited()
     assert followup.call_args.kwargs['resolved_check_context']['visibility'] == 'player_private'
@@ -578,17 +579,17 @@ def test_private_sanity_chained_int_and_errors_remain_private(state):
     save_state(state)
     roll = dice.SkillCheckResult(50, 55, 0, 0, 'fail', False)
     with patch.object(dice, 'sanity_check', return_value=dice.SanityCheckResult(roll, 50, 45, 5, '5', True)):
-        resolved = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check')
+        resolved = check_commands.resolve_check(state.group_id, 'u', '/coc check')
     assert resolved.resolved_event['visibility'] == 'player_private'
     pending = load_state(state.group_id).pending_checks['u']
     assert pending['skill'] == 'INT' and pending['visibility'] == 'player_private'
     reply, dm = AsyncMock(), AsyncMock()
-    asyncio.run(legacy_commands.handle_check_command(state.group_id, 'u', reply, dm,
+    asyncio.run(check_commands.handle_check_command(state.group_id, 'u', reply, dm,
         AsyncMock(), AsyncMock(), '/coc check WRONG'))
     reply.assert_not_awaited()
     assert dm.await_args.args[0] == 'u'
     with patch.object(dice, 'skill_check', return_value=roll):
-        chained = legacy_commands._resolve_check_deterministically(state.group_id, 'u', '/coc check INT')
+        chained = check_commands.resolve_check(state.group_id, 'u', '/coc check INT')
     assert chained.resolved_event['visibility'] == 'player_private'
 
 
@@ -602,7 +603,7 @@ def test_private_dm_failure_never_falls_back_to_public_result(state):
     reply, dm = AsyncMock(), AsyncMock(side_effect=RuntimeError('DM unavailable'))
     with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 42, 0, 0, 'regular', True)), \
          pytest.raises(RuntimeError, match='DM unavailable'):
-        asyncio.run(legacy_commands.handle_check_command(state.group_id, 'u', reply, dm,
+        asyncio.run(check_commands.handle_check_command(state.group_id, 'u', reply, dm,
             AsyncMock(), AsyncMock(), '/coc check', split_roll_feedback=True))
     reply.assert_not_awaited()
     assert 'u' not in load_state(state.group_id).pending_checks

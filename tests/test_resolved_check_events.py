@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.agents.context_builder import _resolved_events_for_character
-from app.legacy_commands import _persist_resolved_check_event
+from app.checks.events import persist_resolved_event as _persist_resolved_check_event
 from app.models import Character, GroupState
 from app.repositories import group_state, state_transaction
 from app.services.prompt_config import build_resolved_check_history_block

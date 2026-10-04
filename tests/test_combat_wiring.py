@@ -6,8 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat_resources, db, dice, keeper, legacy_commands
+from app import combat_resources, db, dice, keeper
+from app.checks import rules as check_rules
 from app.commands.handlers import character as character_handler
+from app.commands.handlers import checks as check_commands
 from app.commands.handlers import combat as combat_handler
 from app.keeper_tools import registry
 from app.models import Character, Combatant, GroupState
@@ -170,7 +172,7 @@ def test_manual_sanity_and_noncombat_luck_during_battle_reconcile_working_only(s
     assert outcome['pending']
     with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(
         skill_value=50, roll=1, bonus_dice=0, penalty_dice=0, tier='critical', success=True, required_tier='regular')):
-        resolved = call(store, legacy_commands._resolve_check_deterministically, 'wiring', 'player', '/coc check')
+        resolved = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert resolved.should_finalize
     assert effective(store).san == 49 and store['state'].characters['player'].san == 50
     state = store['state']
@@ -180,7 +182,7 @@ def test_manual_sanity_and_noncombat_luck_during_battle_reconcile_working_only(s
         'bonus_dice': 0, 'penalty_dice': 0, 'original_tier': 'fail', 'difficulty': 'regular',
         'options': [{'tier': 'regular', 'cost': 5}],
     }
-    result = call(store, legacy_commands._resolve_luck_decision_deterministically, 'wiring', 'player', 'regular')
+    result = call(store, check_commands.resolve_luck, 'wiring', 'player', 'regular')
     assert result.should_finalize
     assert effective(store).luck == 45 and store['state'].characters['player'].luck == 50
 
@@ -280,16 +282,16 @@ def test_managed_manual_roll_luck_retains_context_and_never_uses_legacy_ranged_r
         assert declared['ok'], declared
         pending_before = deepcopy(store['state'].pending_checks['player'])
         assert pending_before['combat_context']['check_role'] == 'attack'
-        result = call(store, legacy_commands._resolve_check_deterministically, 'wiring', 'player', '/coc check')
+        result = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
         assert result.decision_id
         decision = store['state'].pending_luck_decisions['player']
         assert decision['combat_context'] == pending_before['combat_context']
         assert decision['check_id'] == pending_before['check_id']
         assert store['state'].combat.phase == 'LUCK_DECISION'
         assert len(store['state'].combat.roll_receipts) == 2  # NPC dive and investigator attack.
-        with (patch.object(legacy_commands, '_resolve_ranged_defense_outcome', side_effect=AssertionError('extra RNG')),
+        with (patch.object(check_rules, 'resolve_ranged_defense_outcome', side_effect=AssertionError('extra RNG')),
               patch.object(dice.random, 'randint', return_value=2)):
-            finalized = call(store, legacy_commands._resolve_luck_decision_deterministically, 'wiring', 'player', 'regular')
+            finalized = call(store, check_commands.resolve_luck, 'wiring', 'player', 'regular')
         assert finalized.should_finalize
         assert rolls.call_count == 2
     assert effective(store).luck == 45
@@ -318,7 +320,7 @@ def test_managed_autoroll_has_same_luck_bridge_and_stale_control_consumes_nothin
     decision['combat_context']['interaction_id'] = 'stale'
     before = normalized(store['state'])
     with patch.object(dice, 'skill_check', side_effect=AssertionError('stale roll')):
-        rejected = call(store, legacy_commands._resolve_luck_decision_deterministically, 'wiring', 'player', 'regular')
+        rejected = call(store, check_commands.resolve_luck, 'wiring', 'player', 'regular')
     assert not rejected.should_finalize
     assert normalized(store['state']) == before
 
@@ -361,7 +363,7 @@ def test_managed_hp_adjustment_uses_owned_injury_hook_and_status_query_is_provis
     status = tool(store, 'get_combat_status')
     assert status['provisional'] and '暫定' in status['status']
     with patch.object(dice, 'skill_check', return_value=dice.SkillCheckResult(50, 90, 0, 0, 'fail', False)):
-        resolved = call(store, legacy_commands._resolve_check_deterministically, 'wiring', 'player', '/coc check CON')
+        resolved = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check CON')
     assert resolved.should_finalize
     assert effective(store).injury['unconscious']
     assert store['state'].characters['player'].injury == {}
@@ -435,7 +437,7 @@ def test_foreign_actor_and_changed_character_binding_reject_before_managed_rng(s
     store['state'].characters_by_id[replacement.character_id] = replacement
     before = normalized(store['state'])
     with patch.object(dice, 'skill_check', side_effect=AssertionError('foreign binding consumed RNG')):
-        result = call(store, legacy_commands._resolve_check_deterministically, 'wiring', 'player', '/coc check')
+        result = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert not result.should_finalize
     assert normalized(store['state']) == before
     assert original.weapons['.45 Automatic']['ammo'] == 7
@@ -608,7 +610,7 @@ def test_public_initializer_supplies_reviewed_npc_dodge_to_ranged_action(store):
             'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
         })
         assert declared['ok'], declared
-        result = call(store, legacy_commands._resolve_check_deterministically, 'wiring', 'player', '/coc check')
+        result = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert result.should_finalize
     assert rolls.call_count == 2
     action = store['state'].combat.actions['shot:public-npc']
@@ -682,7 +684,7 @@ def test_consumed_check_and_luck_buttons_replay_same_battle_receipts_without_mut
             'weapon_reference': '.45 Automatic', 'action_kind': 'single_shot', 'distance_yards': 5,
         })['ok']
         check_id = store['state'].pending_checks['player']['check_id']
-        resolved = call(store, legacy_commands._resolve_check_deterministically, 'wiring', 'player', '/coc check')
+        resolved = call(store, check_commands.resolve_check, 'wiring', 'player', '/coc check')
     assert resolved.decision_id
     notifications = []
     async def notify(message):
@@ -697,7 +699,7 @@ def test_consumed_check_and_luck_buttons_replay_same_battle_receipts_without_mut
         run_async(store, buttons.handle_check_button('wiring', 'player', 'player', '', check_id, io))
     assert '55' in notifications[-1] and 'Luck' in notifications[-1]
     assert normalized(store['state']) == before and store['writes'] == writes
-    assert call(store, legacy_commands._resolve_luck_decision_deterministically, 'wiring', 'player', 'skip').should_finalize
+    assert call(store, check_commands.resolve_luck, 'wiring', 'player', 'skip').should_finalize
     before = normalized(store['state'])
     writes = store['writes']
     with patch.object(buttons, 'load_state', side_effect=lambda _: GroupState.from_dict(store['state'].to_dict())):

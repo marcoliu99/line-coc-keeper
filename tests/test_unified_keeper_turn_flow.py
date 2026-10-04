@@ -5,13 +5,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from app import config, db, keeper, legacy_commands
+from app import config, db, keeper
 from app.agents import assistant, narrator, supervisor
+from app.checks.models import CheckOutcome
+from app.commands.handlers import checks as check_commands
 from app.commands.handlers import system
 from app.domain.models import AgentMessage
 from app.models import Character, GroupState
 from app.providers import registry
 from app.repositories.group_state import load_state, save_state
+from tests.state_store import StateStorePatch
 
 
 def _context(state: GroupState, text: str) -> AgentMessage:
@@ -183,24 +186,26 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         followup = AsyncMock(return_value=("後續敘事", [], []))
         maintenance = AsyncMock()
         reply = AsyncMock()
+        outcome = CheckOutcome(
+            roll_line="🎲 調查員 STR 擲出 32 → 成功", keeper_message="（已結算 STR 成功）",
+            should_finalize=True, timeline_id="timeline-current", action_context="推開木門",
+            resolved_event={
+                "investigator": "調查員", "skill": "STR", "skill_value": 45,
+                "roll": 32, "difficulty": "regular", "outcome": "成功",
+                "action_context": "推開木門", "check_id": "check-1",
+                "timeline_id": "timeline-current", "state_before": {},
+            },
+        )
         with (
-            patch.object(legacy_commands.keeper, "_refresh_state_snapshot", return_value=state),
-            patch.object(legacy_commands, "supervisor") as pipeline,
-            patch.object(legacy_commands, "_run_post_turn_maintenance_after_output", maintenance),
-            patch.object(legacy_commands, "_persist_resolved_check_event"),
+            StateStorePatch() as store,
+            patch.object(check_commands, "supervisor") as pipeline,
+            patch.object(check_commands, "run_post_turn_maintenance_after_output", maintenance),
+            patch.object(check_commands.events, "persist_resolved_event"),
         ):
+            store.put(state)
             pipeline.run_turn = followup
-            await legacy_commands._finalize_check_result(
-                "check-entry", "player", state, character,
-                "🎲 調查員 STR 擲出 32 → 成功", "（已結算 STR 成功）",
-                reply, AsyncMock(), AsyncMock(), AsyncMock(),
-                timeline_id="timeline-current", action_context="推開木門",
-                resolved_event={
-                    "investigator": "調查員", "skill": "STR", "skill_value": 45,
-                    "roll": 32, "difficulty": "regular", "outcome": "成功",
-                    "action_context": "推開木門", "check_id": "check-1",
-                    "timeline_id": "timeline-current", "state_before": {},
-                },
+            await check_commands.finalize_check_result(
+                "check-entry", "player", outcome, reply, AsyncMock(), AsyncMock(), AsyncMock(),
             )
         self.assertEqual(followup.await_args.kwargs["turn_kind"], "resolved_check_followup")
         self.assertEqual(followup.await_args.kwargs["resolved_check_context"]["roll"], 32)
@@ -224,7 +229,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             patch.object(system.scenario_intro, "extract_opening_narration", return_value={"found": False}),
             patch.object(system.keeper, "_refresh_state_snapshot", return_value=state),
             patch.object(system.supervisor, "run_turn", pipeline),
-            patch.object(system, "_run_post_turn_maintenance_after_output", new_callable=AsyncMock),
+            patch.object(system, "run_post_turn_maintenance_after_output", new_callable=AsyncMock),
         ):
             await system.handle_system_command(
                 "start-entry", "player", reply, AsyncMock(), AsyncMock(), AsyncMock(),

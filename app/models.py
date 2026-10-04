@@ -1093,7 +1093,7 @@ class GroupState:
     deterministic_check_results: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # A rolled check awaiting the player's Luck-spend decision (see app/luck.py
-    # and app/commands.py's _finalize_check_result/handle_luck_decision) —
+    # and app/commands/handlers/checks.py's finalize_check_result/handle_luck_decision) —
     # keyed by owner_id, cleared once they pick an option (or "skip"). Shape:
     # {"skill_name": str, "display_label": str | None, "value": int, "roll":
     # int, "bonus_dice": int, "penalty_dice": int, "original_tier": str,

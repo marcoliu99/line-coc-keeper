@@ -27,19 +27,20 @@ from app import (
 )
 from app.agents import supervisor
 from app.commands import permissions
-from app.config import IMPORT_DIR
-from app.keeper_tools import resource_bridge
-from app.legacy_commands import (
+from app.commands.types import (
     FormatMention,
     PdfChoice,
     Reply,
     SendDM,
     SendDMImage,
     SendImage,
+)
+from app.config import IMPORT_DIR
+from app.keeper_tools import resource_bridge
+from app.legacy_commands import (
     _build_readiness_roster,
     _heal_character,
     _resolve_pdf_upload_choice_locked,
-    _run_post_turn_maintenance_after_output,
     _set_character_away_state,
     handle_pdf_upload,
 )
@@ -54,6 +55,7 @@ from app.services import (
     history_authority,
     mutation_admission,
 )
+from app.services.post_turn import run_post_turn_maintenance_after_output
 
 
 async def _handle_local_import(
@@ -1008,7 +1010,7 @@ async def handle_system_command(
                 conversation_id=conversation_id,
                 turn_kind="opening_fallback",
             )
-        await _run_post_turn_maintenance_after_output(
+        await run_post_turn_maintenance_after_output(
             conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
         )
         return

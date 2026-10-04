@@ -162,7 +162,7 @@ class TxContext:
 
     def __init__(
         self, *, conn: sqlite3.Connection, state: GroupState, conversation_id: str,
-        action_id: str, revision_before: int, timeline_id: str,
+        action_id: str, revision_before: int, timeline_id: str, reason: str = "",
     ) -> None:
         self.conn = conn
         self.state = state
@@ -170,6 +170,10 @@ class TxContext:
         self.action_id = action_id
         self.revision_before = revision_before
         self.timeline_id = timeline_id
+        # Why the state is being written (commit log). A mutation that only
+        # learns the real reason while it runs (a check settling into a
+        # combat step) may replace it before it returns.
+        self.reason = reason
         self._events: list[StagedEvent] = []
         self.stored_result: dict[str, Any] = {}
         self.save_skipped = False
@@ -493,7 +497,7 @@ def _mutate(
                 ctx = TxContext(
                     conn=conn, state=latest, conversation_id=conversation_id,
                     action_id=action_id or "", revision_before=latest.state_revision,
-                    timeline_id=timeline_id,
+                    timeline_id=timeline_id, reason=reason,
                 )
                 phase = "mutation"
                 token = _active.set(ctx)
@@ -527,7 +531,7 @@ def _mutate(
                             action_id=action_id or "", reason=f"invariant:{violation}",
                         ), None
                     commit = group_state.write_state_tx(
-                        changed_state, reason=reason, conn=conn, previous=current,
+                        changed_state, reason=ctx.reason or reason, conn=conn, previous=current,
                     )
                     revision = commit.revision
                     stored_timeline = commit.timeline_id
