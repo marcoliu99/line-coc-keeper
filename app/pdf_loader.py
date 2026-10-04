@@ -494,11 +494,35 @@ def _page_requires_review(row: dict, final_text: str) -> bool:
     """Keep warning history, but review only problems unresolved in final text."""
     verification = row.get('paddle_numeric_verification', {})
     resolved = set(verification.get('warnings_resolved', [])) if verification.get('status') in {'confirmed', 'partial'} else set()
-    return any(
-        warning not in _INFORMATIONAL_WARNINGS and warning not in resolved
-        and (warning != "low_text" or len(final_text) < _LOW_TEXT_THRESHOLD)
-        for warning in row["warnings"]
-    )
+    vision_checks = row.get('vision_pair_checks')
+    # A long derived description cannot, by itself, establish that a short
+    # selected source/OCR candidate has become usable scenario text.
+    selected_source = row.get('candidates', {}).get(row.get('method'), '')
+    vision_complete = (bool(row.get('candidates', {}).get('vision'))
+                       and isinstance(vision_checks, list)
+                       and all(check.get('status') == 'matched' for check in vision_checks)
+                       and not {'vision_failed', 'vision_pair_review', 'vision_pair_mismatch'}
+                       .intersection(row['warnings'])
+                       and len(final_text) >= _LOW_TEXT_THRESHOLD
+                       and ('low_text' not in row['warnings'] or len(selected_source) >= _LOW_TEXT_THRESHOLD))
+
+    def unresolved(warning: str) -> bool:
+        return (warning not in _INFORMATIONAL_WARNINGS and warning not in resolved
+                and (warning != 'low_text' or len(final_text) < _LOW_TEXT_THRESHOLD)
+                and (warning != 'vision_review_required' or not vision_complete))
+
+    other_unresolved = any(unresolved(warning) for warning in row['warnings']
+                           if warning != 'ocr_evidence_loss')
+    ocr_checks = row.get('ocr_pair_checks')
+    rejected_ocr_is_historical = ('ocr_evidence_loss' in row['warnings']
+                                  and row.get('method') in {'native', 'layout'}
+                                  and bool(row.get('candidates', {}).get('markitdown'))
+                                  and len(selected_source) >= _LOW_TEXT_THRESHOLD
+                                  and len(final_text) >= _LOW_TEXT_THRESHOLD
+                                  and isinstance(ocr_checks, list)
+                                  and all(check.get('status') == 'matched' for check in ocr_checks)
+                                  and not other_unresolved)
+    return other_unresolved or ('ocr_evidence_loss' in row['warnings'] and not rejected_ocr_is_historical)
 
 
 def extract_text(pdf_bytes: bytes, *, quality_report: dict | None = None, local_ocr_limit: int = 8, ai_repair_limit: int = 8) -> tuple[str, list[int], bool, dict[int, bytes], dict[int, dict]]:
