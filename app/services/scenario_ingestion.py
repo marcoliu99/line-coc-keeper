@@ -211,9 +211,8 @@ async def handle_pdf_upload(
         await reply("目前只支援上傳 PDF 劇本檔案喔。")
         return False
 
-    # Checked before any of the expensive extraction work below (and before
-    # clear_page_images, which unconditionally wipes the current scenario's
-    # page images) — a second PDF landing while an earlier pending_pdf_upload
+    # Checked before any of the expensive extraction work below — a second PDF
+    # landing while an earlier pending_pdf_upload
     # choice is still unresolved would otherwise silently overwrite it, and
     # whichever button the GM clicks afterward (still labelled for the FIRST
     # upload — buttons carry no upload-specific id) would end up applying the

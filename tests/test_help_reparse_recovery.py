@@ -32,7 +32,7 @@ def reparse(state):
         expected_revision=latest.state_revision)
 
 
-def test_guarded_reparse_preserves_source_and_can_retry(staged):
+def test_guarded_reparse_preserves_concurrent_write_without_restoring_stale_pending(staged):
     state, key = staged
     def extract(_, **kwargs):
         current = load_state(state.group_id)
@@ -41,7 +41,7 @@ def test_guarded_reparse_preserves_source_and_can_retry(staged):
         return 'parsed text', [], False, {}, {}
     context = {'text': 'parsed text', 'indexes': {'npcs': [], 'locations': []}, 'pregens': [], 'scene_maps': {},
                'manifest': {'title': 'parsed title'}, 'active_chapter_id': 'one', 'context_chapter_ids': ['one']}
-    with patch.object(scenario_ingestion.pdf_loader, 'extract_text', side_effect=extract) as extraction, \
+    with patch.object(scenario_ingestion.pdf_loader, 'extract_text', side_effect=extract), \
          patch.object(scenario_ingestion.pdf_loader, 'extract_preview', return_value='preview'), \
          patch.object(scenario_ingestion.scenario_index, 'extract_scenario_index', return_value={'npcs': [], 'locations': []}), \
          patch.object(scenario_ingestion.pregen_extractor, 'extract_pregens', return_value=[]), \
@@ -49,18 +49,10 @@ def test_guarded_reparse_preserves_source_and_can_retry(staged):
          patch.object(scenario_library, 'load_context', return_value=context):
         asyncio.run(reparse(state))
         latest = load_state(state.group_id)
-        assert latest.pending_scenario_upload['key'] == key
+        assert latest.pending_scenario_upload is None
         assert latest.keeper_persona == 'concurrent change'
         assert latest.pending_pdf_upload is None
         assert scenario_library.read_staged_upload(key) == b'original-pdf'
-        extraction.side_effect = None
-        extraction.return_value = ('parsed text', [], False, {}, {})
-        asyncio.run(reparse(state))
-    latest = load_state(state.group_id)
-    assert latest.pending_scenario_upload is None
-    assert latest.pending_pdf_upload['scenario_id'] == 'parsed-id'
-    with pytest.raises(FileNotFoundError):
-        scenario_library.read_staged_upload(key)
 
 
 @pytest.mark.parametrize('failure', [RuntimeError('extraction failed'), asyncio.CancelledError()])
@@ -210,5 +202,24 @@ def test_reparse_without_help_revision_rejects_concurrent_same_timeline_write(st
     latest = load_state(state.group_id)
     assert latest.keeper_persona == 'new concurrent command'
     assert latest.pending_pdf_upload is None
-    assert latest.pending_scenario_upload['key'] == key
+    assert latest.pending_scenario_upload is None
+    assert scenario_library.read_staged_upload(key) == b'original-pdf'
+
+
+def test_failed_reparse_does_not_resurrect_claim_after_newer_revision(staged):
+    state, key = staged
+
+    async def fail_after_write(*_args, **_kwargs):
+        current = load_state(state.group_id)
+        current.keeper_persona = 'newer command'
+        save_state(current)
+        raise asyncio.CancelledError()
+
+    with patch.object(system, 'handle_pdf_upload', AsyncMock(side_effect=fail_after_write)), \
+         pytest.raises(asyncio.CancelledError):
+        asyncio.run(reparse(state))
+
+    latest = load_state(state.group_id)
+    assert latest.keeper_persona == 'newer command'
+    assert latest.pending_scenario_upload is None
     assert scenario_library.read_staged_upload(key) == b'original-pdf'

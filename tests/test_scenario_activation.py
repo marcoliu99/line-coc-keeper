@@ -99,6 +99,124 @@ def test_success_replaces_old_images_after_commit(storage: Path, monkeypatch: py
     assert group_state.load_page_image("group", 2) == b"new"
 
 
+def test_stale_postcommit_refresh_cannot_overwrite_newer_scenario_images(
+    storage: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_state.save_state(GroupState(group_id="group", scenario_library_id="old"))
+
+    def copy_images(scenario_id: str, _pages: set[int], save) -> None:
+        if scenario_id == "A":
+            newer = group_state.load_state("group")
+            newer.scenario_library_id = "B"
+            group_state.save_state(newer)
+            scenario_activation.refresh_context_images("group", "B", {"page_numbers": {1}})
+            save(1, b"image-A")
+        else:
+            save(1, b"image-B")
+
+    monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images", copy_images)
+
+    def commit_a() -> None:
+        current = group_state.load_state("group")
+        current.scenario_library_id = "A"
+        group_state.save_state(current)
+
+    scenario_activation.commit_and_refresh(commit_a, "group", "A", {"page_numbers": {1}})
+
+    assert group_state.load_state("group").scenario_library_id == "B"
+    assert group_state.load_page_image("group", 1) == b"image-B"
+
+
+def test_stale_same_scenario_refresh_cannot_overwrite_newer_revision(
+    storage: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_state.save_state(GroupState(group_id="group", scenario_library_id="old"))
+    copies = 0
+
+    def copy_images(_scenario_id: str, _pages: set[int], save) -> None:
+        nonlocal copies
+        copies += 1
+        if copies == 1:
+            newer = group_state.load_state("group")
+            newer.scenario_text = "newer published version"
+            group_state.save_state(newer)
+            scenario_activation.refresh_context_images("group", "same", {"page_numbers": {1}})
+            save(1, b"old-version")
+        else:
+            save(1, b"new-version")
+
+    monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images", copy_images)
+
+    def commit_a() -> None:
+        current = group_state.load_state("group")
+        current.scenario_library_id = "same"
+        group_state.save_state(current)
+
+    scenario_activation.commit_and_refresh(commit_a, "group", "same", {"page_numbers": {1}})
+
+    assert group_state.load_state("group").scenario_text == "newer published version"
+    assert group_state.load_page_image("group", 1) == b"new-version"
+
+
+def test_stale_copy_failure_does_not_clear_newer_images(
+    storage: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_state.save_state(GroupState(group_id="group", scenario_library_id="old"))
+
+    def copy_images(scenario_id: str, _pages: set[int], save) -> None:
+        if scenario_id == "A":
+            newer = group_state.load_state("group")
+            newer.scenario_library_id = "B"
+            group_state.save_state(newer)
+            scenario_activation.refresh_context_images("group", "B", {"page_numbers": {1}})
+            raise OSError("old image unavailable")
+        save(1, b"image-B")
+
+    monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images", copy_images)
+
+    def commit_a() -> None:
+        current = group_state.load_state("group")
+        current.scenario_library_id = "A"
+        group_state.save_state(current)
+
+    _, refreshed = scenario_activation.commit_and_refresh(commit_a, "group", "A", {"page_numbers": {1}})
+    assert not refreshed
+    assert group_state.load_page_image("group", 1) == b"image-B"
+
+
+def test_unrelated_write_during_image_copy_still_publishes_active_scenario_images(
+    storage: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = {
+        "page_numbers": {1}, "text": "same scene",
+        "manifest": {"updated_at": "library-version-1"},
+    }
+    group_state.save_state(GroupState(group_id="group", scenario_library_id="old"))
+    group_state.save_page_image("group", 1, b"old-image")
+    copies = 0
+
+    def copy_images(_scenario_id: str, _pages: set[int], save) -> None:
+        nonlocal copies
+        copies += 1
+        if copies == 1:
+            unrelated = group_state.load_state("group")
+            unrelated.keeper_persona = "concurrent persona change"
+            group_state.save_state(unrelated)
+        save(1, b"new-image")
+
+    monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images", copy_images)
+
+    def commit_a() -> None:
+        current = group_state.load_state("group")
+        current.scenario_library_id = "A"
+        current.scenario_text = "same scene"
+        group_state.save_state(current)
+
+    scenario_activation.commit_and_refresh(commit_a, "group", "A", context)
+    assert group_state.load_state("group").keeper_persona == "concurrent persona change"
+    assert group_state.load_page_image("group", 1) == b"new-image"
+
+
 def _context() -> dict:
     return {
         "manifest": {"title": "New scenario"}, "text": "New text", "active_chapter_id": "second",

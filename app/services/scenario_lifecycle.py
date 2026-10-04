@@ -8,12 +8,14 @@ including Markdown submissions.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
 from app import (
+    db,
     locks,
     observability,
     scenario_activation,
@@ -26,6 +28,23 @@ from app.keeper_tools import resource_bridge
 from app.models import GroupState
 from app.repositories import manual_pregens, state_transaction
 from app.repositories.group_state import load_state
+
+_logger = logging.getLogger(__name__)
+
+
+def _discard_unreferenced_staged_source(key: str) -> None:
+    """Keep old content-hash files while any persisted submission refers to them."""
+    for group_id in db.list_keys("group_states"):
+        try:
+            state = load_state(group_id)
+        except Exception:  # noqa: BLE001 - fail closed if any persisted state cannot be inspected
+            # An unreadable state cannot prove the source is safe to delete.
+            return
+        if (state.pending_scenario_upload or {}).get("key") == key:
+            return
+        if any(part.get("key") == key for part in state.staged_pdf_parts):
+            return
+    scenario_library.discard_staged_upload(key)
 
 
 @dataclass(frozen=True)
@@ -204,16 +223,16 @@ async def stage_similar_pdf(
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         if expected_revision is not None and state.state_revision != expected_revision:
-            scenario_library.discard_staged_upload(key)
+            _discard_unreferenced_staged_source(key)
             return LifecycleResult("stale")
         if state.pending_pregen_luck:
-            scenario_library.discard_staged_upload(key)
+            _discard_unreferenced_staged_source(key)
             return LifecycleResult("rejected", reason="pending_pregen_luck")
         if state.pending_pdf_upload is not None:
-            scenario_library.discard_staged_upload(key)
+            _discard_unreferenced_staged_source(key)
             return LifecycleResult("rejected", reason="pending_choice", title=state.pending_pdf_upload["title"])
         if state.pending_scenario_upload is not None:
-            scenario_library.discard_staged_upload(key)
+            _discard_unreferenced_staged_source(key)
             return LifecycleResult("rejected", reason="similar_pending")
         state.pending_scenario_upload = {
             "key": key, "file_name": filename, "title": title, "matches": matches,
@@ -386,11 +405,19 @@ async def reparse_pending_scenario(
         )
     finally:
         if accepted:
-            scenario_library.discard_staged_upload(pending["key"])
+            try:
+                _discard_unreferenced_staged_source(pending["key"])
+            except Exception:
+                _logger.exception("scenario_reparse_source_discard_failed group_id=%s", conversation_id)
         else:
             async with locks.get_conversation_lock(conversation_id):
                 latest = load_state(conversation_id)
-                if latest.timeline_id == claimed_timeline and latest.pending_scenario_upload is None:
+                if (
+                    latest.state_revision == claimed_revision
+                    and latest.timeline_id == claimed_timeline
+                    and latest.pending_scenario_upload is None
+                    and latest.pending_pdf_upload is None
+                ):
                     latest.pending_scenario_upload = pending
                     state_transaction.commit_snapshot(latest)
     return LifecycleResult("reparsed" if accepted else "rejected", reason="submission_failed" if not accepted else "")
@@ -406,9 +433,12 @@ async def cancel_pending_reparse(
         pending = state.pending_scenario_upload
         if pending is None:
             return LifecycleResult("missing", reason="pending_absent")
-        scenario_library.discard_staged_upload(pending.get("key", ""))
         state.pending_scenario_upload = None
         state_transaction.commit_snapshot(state)
+        try:
+            _discard_unreferenced_staged_source(pending.get("key", ""))
+        except Exception:
+            _logger.exception("scenario_reparse_cancel_discard_failed group_id=%s", conversation_id)
     return LifecycleResult("cancelled")
 
 
@@ -487,13 +517,23 @@ async def submit_merged_pdf(
     )
     if not accepted:
         return False
+    try:
+        async with locks.get_conversation_lock(conversation_id):
+            state = load_state(conversation_id)
+            state.staged_pdf_parts = [
+                part for part in state.staged_pdf_parts
+                if (part["key"], part["file_name"]) not in staged_refs
+            ]
+            state_transaction.commit_snapshot(state)
+    except Exception:
+        # The scenario submission has already committed. Keep staging
+        # references and bytes retryable, and do not report that activation failed.
+        _logger.exception("scenario_multipart_cleanup_commit_failed group_id=%s", conversation_id)
+        return True
     for key, _filename in staged_refs:
-        scenario_library.discard_staged_upload(key)
-    async with locks.get_conversation_lock(conversation_id):
-        state = load_state(conversation_id)
-        state.staged_pdf_parts = [
-            part for part in state.staged_pdf_parts
-            if (part["key"], part["file_name"]) not in staged_refs
-        ]
-        state_transaction.commit_snapshot(state)
+        try:
+            _discard_unreferenced_staged_source(key)
+        except Exception:
+            # State is committed; a retained unreferenced file is recoverable.
+            _logger.exception("scenario_multipart_source_discard_failed group_id=%s", conversation_id)
     return True

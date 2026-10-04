@@ -10,8 +10,8 @@ import pytest
 from app import db, pdf_loader, scenario_library
 from app.commands.handlers import system, uploads
 from app.models import Character, GroupState
-from app.repositories import group_state, manual_pregens
-from app.services import scenario_ingestion
+from app.repositories import group_state, manual_pregens, state_transaction
+from app.services import scenario_ingestion, scenario_lifecycle
 
 
 @pytest.fixture
@@ -54,6 +54,8 @@ def _seed(group: str, *, existing: bool = False) -> None:
     state.check_consequence_receipts = {"old": {"done": True}}
     state.kp_ooc_log = [{"role": "assistant", "content": "private"}]
     state.game_started = True
+    state.openai_previous_response_id = "old-provider-response"
+    state.openai_previous_response_timeline_id = "before"
     state.current_map_page = {"player": "1"}
     state.current_room_id = {"player": "study"}
     state.party_facing = {"player": "E"}
@@ -101,6 +103,7 @@ def test_first_submission_preserves_investigators_and_history_but_resets_new_sce
     assert state.resolved_check_events == []
     assert state.check_consequence_origins == state.check_consequence_receipts == {}
     assert state.kp_ooc_log == [] and not state.game_started
+    assert state.openai_previous_response_id == state.openai_previous_response_timeline_id == ""
     assert state.current_map_page == state.current_room_id == state.party_facing == {}
     assert state.log[0]["content"] == "舊敘事"
     assert state.characters["player"].name == "現有調查員"
@@ -142,6 +145,7 @@ def test_pending_submission_and_choice_preserve_distinct_transition_policies(
         assert state.resolved_check_events == []
         assert state.check_consequence_origins == state.check_consequence_receipts == {}
         assert state.kp_ooc_log == [] and not state.game_started
+        assert state.openai_previous_response_id == state.openai_previous_response_timeline_id == ""
         assert state.current_map_page == state.current_room_id == state.party_facing == {}
         assert [card["name"] for card in state.pregens] == ["新候選"]
     else:
@@ -151,6 +155,8 @@ def test_pending_submission_and_choice_preserve_distinct_transition_policies(
         assert state.resolved_check_events[0]["event_id"] == "old-result"
         assert "old" in state.check_consequence_origins and "old" in state.check_consequence_receipts
         assert state.kp_ooc_log and state.game_started
+        assert state.openai_previous_response_id == "old-provider-response"
+        assert state.openai_previous_response_timeline_id == "before"
         assert state.current_map_page == {"player": "1"}
         assert state.current_room_id == {"player": "study"}
         assert [card["name"] for card in state.pregens] == ["新候選"]
@@ -191,6 +197,8 @@ def test_scenario_use_keeps_its_own_reset_and_valid_location_policy(
     assert state.deterministic_check_results == {} and state.resolved_check_events == []
     assert "old" in state.check_consequence_origins and "old" in state.check_consequence_receipts
     assert state.log[0]["content"] == "舊敘事"
+    assert state.kp_ooc_log and state.game_started
+    assert state.openai_previous_response_id == state.openai_previous_response_timeline_id == ""
     assert state.characters["player"].name == "現有調查員"
     assert [card["name"] for card in state.pregens] == ["新候選"]
     assert state.current_map_page == {"player": "1"}
@@ -227,6 +235,27 @@ def test_similar_pdf_stages_raw_source_without_activation(
     assert group_state.load_page_image("similar", 1) == b"old-image"
 
 
+def test_rejected_identical_similarity_submission_keeps_existing_pending_bytes(
+    storage: None,
+) -> None:
+    payload = b"same-pdf-source"
+    matches = [{"id": "existing", "title": "Existing", "score": 0.9}]
+    first = asyncio.run(scenario_lifecycle.stage_similar_pdf(
+        "same-content", payload, "first.pdf", "First", matches,
+    ))
+    assert first.outcome == "pending"
+    pending = group_state.load_state("same-content").pending_scenario_upload
+    assert pending is not None
+
+    second = asyncio.run(scenario_lifecycle.stage_similar_pdf(
+        "same-content", payload, "second.pdf", "Second", matches,
+    ))
+
+    assert second.reason == "similar_pending"
+    assert group_state.load_state("same-content").pending_scenario_upload == pending
+    assert scenario_library.read_staged_upload(pending["key"]) == payload
+
+
 def test_failed_investigator_install_rolls_back_scenario_and_keeps_images(
     storage: None, extraction: None, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,6 +281,12 @@ def test_merged_pdf_parts_are_consumed_only_after_accepted_submission(
     _seed("merge")
     first = scenario_library.stage_upload(b"first-part")
     second = scenario_library.stage_upload(b"second-part")
+    newer_same_bytes = scenario_library.stage_upload(b"first-part")
+    assert newer_same_bytes != first
+    _seed("newer-merge")
+    newer_state = group_state.load_state("newer-merge")
+    newer_state.staged_pdf_parts = [{"key": newer_same_bytes, "file_name": "newer.pdf"}]
+    group_state.save_state(newer_state)
     state = group_state.load_state("merge")
     state.staged_pdf_parts = [
         {"key": first, "file_name": "first.pdf"},
@@ -274,6 +309,8 @@ def test_merged_pdf_parts_are_consumed_only_after_accepted_submission(
         ["/coc", "scenario", "merge", first[:12], second[:12]],
     ))
     latest = group_state.load_state("merge")
+    assert group_state.load_state("newer-merge").staged_pdf_parts[0]["key"] == newer_same_bytes
+    assert scenario_library.read_staged_upload(newer_same_bytes) == b"first-part"
     if fails:
         assert len(latest.staged_pdf_parts) == 2
         assert scenario_library.read_staged_upload(first) == b"first-part"
@@ -286,3 +323,43 @@ def test_merged_pdf_parts_are_consumed_only_after_accepted_submission(
             scenario_library.read_staged_upload(first)
         with pytest.raises(FileNotFoundError):
             scenario_library.read_staged_upload(second)
+
+
+def test_merged_pdf_cleanup_commit_failure_preserves_retryable_staging(
+    storage: None, extraction: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed("merge-commit")
+    first = scenario_library.stage_upload(b"first-part")
+    second = scenario_library.stage_upload(b"second-part")
+    state = group_state.load_state("merge-commit")
+    state.staged_pdf_parts = [
+        {"key": first, "file_name": "first.pdf"},
+        {"key": second, "file_name": "second.pdf"},
+    ]
+    group_state.save_state(state)
+    monkeypatch.setattr(pdf_loader, "combine_pdfs", lambda _parts: b"%PDF")
+    commit = state_transaction.commit_snapshot
+    commits = 0
+
+    def fail_cleanup(*args, **kwargs):
+        nonlocal commits
+        commits += 1
+        if commits == 2:
+            raise OSError("staging cleanup commit failed")
+        return commit(*args, **kwargs)
+
+    monkeypatch.setattr(state_transaction, "commit_snapshot", fail_cleanup)
+
+    async def send(_text: str) -> None:
+        pass
+
+    asyncio.run(system.handle_system_command(
+        "merge-commit", "kp", send, None, None, None,
+        ["/coc", "scenario", "merge", first[:12], second[:12]],
+    ))
+
+    latest = group_state.load_state("merge-commit")
+    assert latest.scenario_library_id
+    assert len(latest.staged_pdf_parts) == 2
+    assert scenario_library.read_staged_upload(first) == b"first-part"
+    assert scenario_library.read_staged_upload(second) == b"second-part"

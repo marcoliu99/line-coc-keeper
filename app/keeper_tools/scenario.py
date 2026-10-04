@@ -226,6 +226,7 @@ def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
     if result.get("ok") and context_holder:
         refreshed = scenario_activation.refresh_after_commit(
             state.group_id, state.scenario_library_id, context_holder,
+            expected_revision=state.state_revision,
         )
         if not refreshed:
             result["notice"] = (result.get("notice", "") + "\n頁面圖片快取刷新失敗；章節已推進，請聯絡 KP 檢查圖片。").strip()

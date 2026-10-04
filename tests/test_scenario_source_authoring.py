@@ -543,7 +543,7 @@ async def test_kp_can_select_corrected_english_explicitly(prepared, monkeypatch)
     save_state(state)
     before = deepcopy(load_state(group_id))
     from app import scenario_activation
-    monkeypatch.setattr(scenario_activation, 'refresh_after_commit', lambda *args: True)
+    monkeypatch.setattr(scenario_activation, 'refresh_after_commit', lambda *args, **kwargs: True)
     monkeypatch.setattr(templates, 'schedule_index_prewarm', lambda *args: None)
     monkeypatch.setattr(templates, 'preferred_variant', lambda *args: 'stale-zh-preference')
     selected_variants = []

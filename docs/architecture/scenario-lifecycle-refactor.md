@@ -53,9 +53,20 @@ transition; install manual/pregenerated investigator cards in the same
 clear/copy derived images through `scenario_activation.commit_and_refresh`.
 The image operation never runs on commit failure. An image failure leaves the
 scenario committed and returns the existing warning; the cache may be empty.
+Image preparation runs outside SQLite's write lock. Publication checks the
+committed scenario, timeline, chapter, and revision under `BEGIN IMMEDIATE`
+before clearing or writing cache files. If only the revision advanced, it
+also verifies that active scenario text and the library image bytes still
+match the prepared source. The lock serializes publication with newer state
+commits across gateway processes, so an older refresh cannot replace newer
+scenario images or strand old images after an unrelated state write.
 Multipart bytes are consumed only after the submission's authoritative
-transition succeeds. The persisted field remains `pending_pdf_upload` even for
-Markdown; no serialized format or schema was migrated.
+transition succeeds. Staged uploads now receive distinct opaque keys even when
+their bytes match; older content-hash keys remain readable. Multipart cleanup
+removes persisted references before deleting files. A cleanup failure after
+activation is logged without turning the completed submission into a failed
+one. The persisted field remains `pending_pdf_upload` even for Markdown; no
+serialized format or schema was migrated.
 
 ## Reparse Concurrency Protocol
 
@@ -64,10 +75,12 @@ read its staged bytes, remove the pending reference, and commit the claim.
 Release the lock for expensive PDF parsing. Reacquire through the normal
 submission transition and require the claimed timeline and claim revision
 before applying the result. On failure or cancellation, reload state
-under lock and restore the candidate only when its timeline still matches and
-no newer pending candidate exists. Restoration writes the latest snapshot, so
-unrelated concurrent fields are retained. A regression test pins the case
-where reparse has no Help revision and the timeline changes during parsing.
+under lock and restore the candidate only when the claimed revision and
+timeline still match and no newer pending candidate exists. A newer revision
+prevents resurrection; the old staged bytes remain for diagnosis, but the
+pending reference is not restored. Regression tests pin concurrent same-timeline
+writes, newer pending uploads, timeline changes, and cancellation without a
+Help revision.
 
 ## Preserved Behavior
 

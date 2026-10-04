@@ -366,7 +366,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             scenario_ingestion.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
             scenario_ingestion.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
             scenario_ingestion.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
-            scenario_activation.refresh_after_commit = lambda *args: True
+            scenario_activation.refresh_after_commit = lambda *args, **kwargs: True
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
