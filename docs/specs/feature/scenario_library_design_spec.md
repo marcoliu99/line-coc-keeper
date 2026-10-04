@@ -4,7 +4,7 @@
 
 ## Status and scope
 
-Category: `feature`. Status: **implemented**. Audited against `main_v2` at `afe8ace` (2026-09-27).
+Category: `feature`. Status: **implemented**. Updated from `main_v2` at `2affd06` (2026-10-04).
 
 This edition describes the current contract. Proposed work is explicitly identified; historical source text is linked below.
 
