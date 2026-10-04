@@ -8,7 +8,7 @@ from app.models import Character, GroupState
 
 
 def managed(state: GroupState) -> bool:
-    return state.combat.active and state.combat.pipeline_version == combat_resources.PIPELINE_VERSION
+    return combat_resources.is_managed(state)
 
 
 def participating(state: GroupState, character: Character) -> bool:

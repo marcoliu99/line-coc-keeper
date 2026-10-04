@@ -14,8 +14,8 @@ import re
 import uuid
 from collections.abc import Callable
 from copy import deepcopy
-from dataclasses import asdict, dataclass, fields
-from typing import Any
+from dataclasses import dataclass, fields
+from typing import Any, Protocol
 
 from app import (
     check_lifecycle,
@@ -35,7 +35,6 @@ from app.models import (
     EffectState,
     EnemyCombatCard,
     GroupState,
-    InjuryState,
     SpecialAbility,
 )
 
@@ -99,9 +98,10 @@ def _ensure_started(state: GroupState) -> None:
             raise combat_resources.CombatAdmissionError('Another combat is unclosed')
         state.combat = CombatState(active=True, round_number=1, order=_seed_from_characters(state), current_index=0)
         combat_resources.initialize_working_state(state, new_combat=True)
-        from app import combat_flow
-        combat_flow.admit_continuing_state(state)
-        process_timing(state, "round_start")
+        combat_resources.admit_continuing_state(state)
+        # A new battle has no effects yet, so its first fixed timing has
+        # nothing to apply; recording it as processed is all that is left.
+        state.combat.processed_timings.append(timing_key(state, "round_start", ""))
         _mark_round_start_abilities(state)
 
 
@@ -109,10 +109,6 @@ def start_combat(state: GroupState) -> CombatState:
     _ensure_started(state)
     combat_resources.initialize_working_state(state)
     return state.combat
-
-
-def is_managed(state: GroupState) -> bool:
-    return state.combat.active and state.combat.pipeline_version == combat_resources.PIPELINE_VERSION
 
 
 def _default_attack() -> AttackRule:
@@ -493,7 +489,7 @@ def add_combatant(
     return AddedCombatant(added, reused=False, defeated_namesake=namesake)
 
 
-def _card_for(state: GroupState, combatant: Combatant) -> EnemyCombatCard | None:
+def card_for(state: GroupState, combatant: Combatant) -> EnemyCombatCard | None:
     if combatant.enemy_card_id:
         return state.combat.enemy_cards.get(combatant.enemy_card_id)
     return None
@@ -505,7 +501,7 @@ def _sync_combatant_from_card(combatant: Combatant, card: EnemyCombatCard) -> No
     combatant.defeated = card.hp <= 0
 
 
-def _sync_pc_hp(state: GroupState, combatant: Combatant) -> None:
+def sync_pc_hp(state: GroupState, combatant: Combatant) -> None:
     if combatant.is_pc:
         if combatant.character_id and combatant.character_id in state.characters_by_id:
             state.characters_by_id[combatant.character_id].hp = combatant.hp
@@ -523,7 +519,7 @@ def _pc_for_combatant(state: GroupState, combatant: Combatant):
     return state.get_character_by_name(combatant.name)
 
 
-def _major_wound_pc(
+def major_wound_pc(
     state: GroupState, combatant: Combatant, final_damage: int, hp_after: int
 ) -> Character | None:
     """The investigator this hit gives a major wound, if any.
@@ -567,7 +563,7 @@ def major_wound_blocked(
     }
 
 
-def _planned_damage(
+def planned_damage(
     state: GroupState,
     combatant: Combatant,
     raw_damage: int,
@@ -576,12 +572,12 @@ def _planned_damage(
     bypass_armor: bool,
 ) -> tuple[int, str, int]:
     """Armor, armor label and final damage for a hit, without applying it."""
-    card = _card_for(state, combatant)
+    card = card_for(state, combatant)
     armor, armor_label = (0, "") if bypass_armor else _armor_reduction(card, damage_type, tags)
     return armor, armor_label, max(0, int(raw_damage) - armor)
 
 
-def _major_wound_block_for(
+def major_wound_block_for(
     state: GroupState,
     target_name: str,
     raw_damage: int,
@@ -596,8 +592,8 @@ def _major_wound_block_for(
     combatant = find_combatant(state, target_name)
     if not combatant:
         return None
-    _, _, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
-    pc = _major_wound_pc(state, combatant, final, max(0, combatant.hp - final))
+    _, _, final = planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
+    pc = major_wound_pc(state, combatant, final, max(0, combatant.hp - final))
     if pc is None:
         return None
     blocker = check_lifecycle.blocker(state, pc.owner_id)
@@ -614,12 +610,12 @@ def _resolve_major_wound_check(
     group-level exception. The HP mutation and pending registration remain in
     the same state mutation so a concurrent turn cannot lose either one.
     """
-    pc = _major_wound_pc(state, combatant, final_damage, hp_after)
+    pc = major_wound_pc(state, combatant, final_damage, hp_after)
     if pc is None:
         return None
 
     if not state.autoroll_checks:
-        # Callers refuse a blocked hit before mutating (_major_wound_block_for);
+        # Callers refuse a blocked hit before mutating (major_wound_block_for);
         # reaching here blocked is a bug, so say so rather than drop the check.
         blocker = check_lifecycle.blocker(state, pc.owner_id)
         if blocker:
@@ -673,6 +669,7 @@ def apply_combat_damage(
     target_name: str,
     raw_damage: int,
     *,
+    ops: ModeOps,
     damage_type: str = "physical",
     tags: list[str] | None = None,
     source_id: str = "",
@@ -680,20 +677,35 @@ def apply_combat_damage(
     entry_point: str = "apply_combat_damage",
     event_id: str = "",
 ) -> dict[str, Any]:
-    if is_managed(state):
-        return apply_managed_damage(state, target_name, raw_damage, event_id=event_id or f'damage:{uuid.uuid4().hex}',
-                                    damage_type=damage_type, tags=tags, source_id=source_id, bypass_armor=bypass_armor,
-                                    entry_point=entry_point)
+    return ops.apply_damage(
+        state, target_name, raw_damage, damage_type=damage_type, tags=tags, source_id=source_id,
+        bypass_armor=bypass_armor, entry_point=entry_point, event_id=event_id,
+    )
+
+
+def apply_legacy_damage(
+    state: GroupState,
+    target_name: str,
+    raw_damage: int,
+    *,
+    damage_type: str = "physical",
+    tags: list[str] | None = None,
+    source_id: str = "",
+    bypass_armor: bool = False,
+    entry_point: str = "apply_combat_damage",
+    event_id: str = "",
+) -> dict[str, Any]:
+    """Immediate-persistence damage of a battle saved before the working-resource pipeline."""
     combatant = find_combatant(state, target_name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
-    blocked = _major_wound_block_for(
+    blocked = major_wound_block_for(
         state, target_name, raw_damage, damage_type=damage_type, tags=tags, bypass_armor=bypass_armor
     )
     if blocked:
         return major_wound_blocked(state, *blocked, entry_point=entry_point)
-    card = _card_for(state, combatant)
-    armor, armor_label, final = _planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
+    card = card_for(state, combatant)
+    armor, armor_label, final = planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
     before = combatant.hp
     after = max(0, before - final)
     combatant.hp = after
@@ -701,9 +713,9 @@ def apply_combat_damage(
     if card:
         card.hp = after
         card.status_tags = [t for t in card.status_tags if t]
-        if final > 0 and _damage_taken_trigger_tag() not in card.status_tags:
-            card.status_tags.append(_damage_taken_trigger_tag())
-    _sync_pc_hp(state, combatant)
+        if final > 0 and damage_taken_trigger_tag() not in card.status_tags:
+            card.status_tags.append(damage_taken_trigger_tag())
+    sync_pc_hp(state, combatant)
     major_wound_check = _resolve_major_wound_check(state, combatant, final, after)
     state.last_combat_report = {
         "timeline_id": state.timeline_id,
@@ -742,53 +754,21 @@ def apply_combat_damage(
     }
 
 
-def apply_final_combat_damage(
-    state: GroupState,
-    target_name: str,
-    final_damage: int,
-    *,
-    damage_type: str = "physical",
-    tags: list[str] | None = None,
-    source_id: str = "",
-) -> dict[str, Any]:
-    """Apply an already-final damage amount without subtracting armor again.
-
-    This retains the authoritative combat-damage side effects while making
-    the damage/armor distinction explicit at the call site.
-    """
-    return apply_combat_damage(
-        state,
-        target_name,
-        final_damage,
-        damage_type=damage_type,
-        tags=tags,
-        source_id=source_id,
-        bypass_armor=True,
-        entry_point="apply_final_combat_damage",
-    )
-
-
-def damage_combatant(state: GroupState, name: str, delta: int) -> dict:
+def damage_combatant(state: GroupState, name: str, delta: int, *, ops: ModeOps) -> dict:
     combatant = find_combatant(state, name)
     if not combatant:
         return {"ok": False, "error": f"戰鬥中找不到「{name}」"}
 
     if delta < 0:
-        return apply_combat_damage(state, name, -delta, entry_point="damage_combatant")
+        return apply_combat_damage(state, name, -delta, ops=ops, entry_point="damage_combatant")
 
     before = combatant.hp
     combatant.hp = max(0, min(combatant.hp_max, combatant.hp + delta))
     combatant.defeated = combatant.hp <= 0
-    card = _card_for(state, combatant)
+    card = card_for(state, combatant)
     if card:
         card.hp = combatant.hp
-    if is_managed(state) and combatant.is_pc:
-        pc = character_for_combatant(state, combatant)
-        if pc:
-            combat_resources.set_resource(state, pc, 'hp', combatant.hp,
-                                          event_id=f'healing:{uuid.uuid4().hex}', reason='Combat healing')
-    else:
-        _sync_pc_hp(state, combatant)
+    ops.sync_hp(state, combatant)
 
     return {
         "ok": True,
@@ -812,7 +792,7 @@ def character_for_combatant(state: GroupState, combatant: Combatant) -> Characte
     return matches[0] if len(matches) == 1 else None
 
 
-def _is_skippable(state: GroupState, combatant: Combatant) -> bool:
+def is_skippable(state: GroupState, combatant: Combatant) -> bool:
     if combatant.defeated:
         return True
     if combatant.is_pc:
@@ -828,6 +808,7 @@ def finish_retired_current_turn(
     old_order: list[Combatant],
     old_index: int,
     removed_ids: set[str],
+    ops: ModeOps,
 ) -> None:
     """Initialize the next usable turn after the current PC is retired.
 
@@ -847,7 +828,7 @@ def finish_retired_current_turn(
     # guard. Do this before looking for a wrapped candidate: otherwise a
     # candidate at the start of the old order would apply round_end and
     # round_start timing for a round in which nobody can act.
-    if all(_is_skippable(state, combatant) for combatant in combat.order):
+    if all(is_skippable(state, combatant) for combatant in combat.order):
         combat.current_index = 0
         return
 
@@ -868,17 +849,17 @@ def finish_retired_current_turn(
         candidate_wrapped = old_index + offset >= len(old_order)
         if candidate_wrapped and not wrapped:
             wrapped = True
-            process_timing(state, "round_end")
+            process_timing(state, "round_end", ops=ops)
             combat.round_number += 1
             _reset_round_usage(state)
-            process_timing(state, "round_start")
+            process_timing(state, "round_start", ops=ops)
             _mark_round_start_abilities(state)
 
-        if _is_skippable(state, current):
+        if is_skippable(state, current):
             continue
 
-        process_timing(state, "turn_start", current.combatant_id)
-        if not _is_skippable(state, current):
+        process_timing(state, "turn_start", current.combatant_id, ops=ops)
+        if not is_skippable(state, current):
             return
 
     # There is no eligible participant. Keep combat intact so the existing
@@ -893,12 +874,12 @@ def _reset_round_usage(state: GroupState) -> None:
                 ability.current_cooldown -= 1
 
 
-def _tick_effect(effect: EffectState) -> None:
+def tick_effect(effect: EffectState) -> None:
     if effect.remaining_rounds is not None:
         effect.remaining_rounds -= 1
 
 
-def _timing_key(state: GroupState, timing: str, target_id: str) -> str:
+def timing_key(state: GroupState, timing: str, target_id: str) -> str:
     return f"{state.combat.round_number}:{state.combat.current_index}:{timing}:{target_id or '*'}"
 
 
@@ -906,7 +887,7 @@ def _round_start_trigger_tag(ability_id: str) -> str:
     return f"_trigger:round_start:{ability_id}"
 
 
-def _damage_taken_trigger_tag() -> str:
+def damage_taken_trigger_tag() -> str:
     return "_trigger:on_damage_taken"
 
 
@@ -1027,14 +1008,16 @@ def add_combat_effect(
     }
 
 
-def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[dict[str, Any]]:
+def process_timing(state: GroupState, timing: str, target_id: str = "", *, ops: ModeOps) -> list[dict[str, Any]]:
     """Apply fixed-timing effects. This first pass supports damage effects.
 
     More effect types can be added without changing the turn-order API.
     """
-    if is_managed(state):
-        return _process_managed_timing(state, timing, target_id)
-    key = _timing_key(state, timing, target_id)
+    return ops.process_timing(state, timing, target_id)
+
+
+def process_legacy_timing(state: GroupState, timing: str, target_id: str = "") -> list[dict[str, Any]]:
+    key = timing_key(state, timing, target_id)
     if key in state.combat.processed_timings:
         return []
 
@@ -1073,7 +1056,7 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                 blocked = [
                     (target, block)
                     for target in targets
-                    if (block := _major_wound_block_for(
+                    if (block := major_wound_block_for(
                         state, target, raw, damage_type=effect.damage_type, tags=effect.tags
                     ))
                 ]
@@ -1086,7 +1069,7 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
                 else:
                     applied = True
                     for target in targets:
-                        result = apply_combat_damage(
+                        result = apply_legacy_damage(
                             state,
                             target,
                             raw,
@@ -1104,7 +1087,7 @@ def process_timing(state: GroupState, timing: str, target_id: str = "") -> list[
             applied = True
         if applied:
             state.combat.processed_timings.append(effect_key)
-            _tick_effect(effect)
+            tick_effect(effect)
         if effect.remaining_rounds is None or effect.remaining_rounds > 0:
             remaining.append(effect)
     state.combat.effects = remaining
@@ -1128,7 +1111,7 @@ def _trigger_matches(ability: SpecialAbility, card: EnemyCombatCard, state: Grou
     if t == "round_start":
         return _round_start_trigger_tag(ability.id) in card.status_tags
     if t == "on_damage_taken":
-        return _damage_taken_trigger_tag() in card.status_tags
+        return damage_taken_trigger_tag() in card.status_tags
     if t == "target_in_range":
         return bool(target_id and _target_in_abstract_range(state, card, target_id, trigger))
     if t == "hp_below":
@@ -1176,7 +1159,7 @@ def _planning_signature(state: GroupState, card: EnemyCombatCard) -> str:
     """Capture state that can invalidate an unresolved enemy plan."""
     combat = state.combat
     combatants = tuple(
-        (item.combatant_id, item.hp, item.defeated, _is_skippable(state, item))
+        (item.combatant_id, item.hp, item.defeated, is_skippable(state, item))
         for item in combat.order
     )
     abilities = tuple(
@@ -1190,7 +1173,7 @@ def _choose_target(state: GroupState, enemy_id: str) -> str:
     valid = [
         c.combatant_id
         for c in state.combat.order
-        if c.side == "pc" and not _is_skippable(state, c)
+        if c.side == "pc" and not is_skippable(state, c)
     ]
     if not valid:
         return ""
@@ -1209,25 +1192,26 @@ def _choose_target(state: GroupState, enemy_id: str) -> str:
     return random.choice(valid)
 
 
-def plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
-    if is_managed(state) and state.combat.interaction:
-        return {'ok': False, 'error': 'Resolve the current interaction before NPC planning'}
-    return _all_or_nothing(state, lambda: _plan_enemy_turn(state, enemy_name))
+def plan_enemy_turn(state: GroupState, enemy_name: str = "", *, ops: ModeOps) -> dict[str, Any]:
+    refusal = ops.refuse_planning(state)
+    if refusal:
+        return refusal
+    return _all_or_nothing(state, lambda: _plan_enemy_turn(state, enemy_name, ops), ops)
 
 
-def _plan_enemy_turn(state: GroupState, enemy_name: str = "") -> dict[str, Any]:
+def _plan_enemy_turn(state: GroupState, enemy_name: str, ops: ModeOps) -> dict[str, Any]:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
     combatant = find_combatant(state, enemy_name) if enemy_name else combat.order[combat.current_index]
     if not combatant or combatant.side != "enemy":
         return {"ok": False, "error": "目前輪到的不是敵人，或找不到指定敵人"}
-    card = _card_for(state, combatant)
+    card = card_for(state, combatant)
     if not card:
         return {"ok": False, "error": f"敵人「{combatant.display_name}」沒有戰鬥卡"}
 
-    _process_timing_or_stop(state, "turn_start", combatant.combatant_id)
-    if _is_skippable(state, combatant):
+    _process_timing_or_stop(state, "turn_start", ops, combatant.combatant_id)
+    if is_skippable(state, combatant):
         return {
             "ok": True,
             "plan_id": "",
@@ -1391,11 +1375,7 @@ def resolve_enemy_action(
     plan_id: str,
     outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if is_managed(state):
-        from app import combat_flow
-        if outcome is not None:
-            return {'ok': False, 'error': 'Managed actions do not accept caller hit/damage results'}
-        return combat_flow.run_enemy_plan(state, plan_id)
+    """Resolve an enemy plan with a caller-supplied outcome (battles saved before the working-resource pipeline)."""
     plan = state.combat.plans.get(plan_id)
     if not plan:
         return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
@@ -1451,13 +1431,13 @@ def resolve_enemy_action(
         if trigger_type == "round_start":
             card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
         elif trigger_type == "on_damage_taken":
-            card.status_tags = [tag for tag in card.status_tags if tag != _damage_taken_trigger_tag()]
+            card.status_tags = [tag for tag in card.status_tags if tag != damage_taken_trigger_tag()]
     elif plan["selected_action"] == "attack":
         attack = next((item for item in card.attacks if item.id == plan.get("selected_id")), None)
         if not attack:
             return {"ok": False, "error": "行動計畫對應的攻擊不存在，請重新規劃"}
         target_id = next((item for item in plan.get("target_ids", []) if any(
-            combatant.combatant_id == item and not _is_skippable(state, combatant)
+            combatant.combatant_id == item and not is_skippable(state, combatant)
             for combatant in state.combat.order
         )), "")
         if not target_id:
@@ -1469,7 +1449,7 @@ def resolve_enemy_action(
             raw_damage = outcome.get("damage", outcome.get("raw_damage"))
             if not isinstance(raw_damage, int) or raw_damage < 0:
                 return {"ok": False, "error": "命中攻擊需要非負整數 damage"}
-            effect_result = apply_combat_damage(
+            effect_result = apply_legacy_damage(
                 state,
                 target_id,
                 raw_damage,
@@ -1486,7 +1466,7 @@ def resolve_enemy_action(
     return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
 
 
-class _TimingBlocked(Exception):
+class TimingBlocked(Exception):
     """A fixed-timing effect was refused for a blocked major wound."""
 
     def __init__(self, result: dict[str, Any]) -> None:
@@ -1494,19 +1474,113 @@ class _TimingBlocked(Exception):
         self.result = result
 
 
-def _process_timing_or_stop(state: GroupState, timing: str, target_id: str = "") -> None:
+class ModeOps(Protocol):
+    """The steps of a turn and of damage that differ between the two battle modes.
+
+    A battle runs either under the working-resource pipeline ("managed", every
+    battle started today) or as an old save with immediate persistence
+    ("legacy"). The combat engine picks the implementation **once**, when an
+    action arrives, and passes it down; the rules below never ask which mode
+    they are in. ``LEGACY_OPS`` is this module's; the managed one lives with the
+    pipeline in ``combat_flow``.
+    """
+
+    def process_timing(self, state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]: ...
+
+    def apply_damage(
+        self, state: GroupState, target_name: str, raw_damage: int, *, damage_type: str,
+        tags: list[str] | None, source_id: str, bypass_armor: bool, entry_point: str, event_id: str,
+    ) -> dict[str, Any]: ...
+
+    def sync_hp(self, state: GroupState, combatant: Combatant) -> None:
+        """Carry a combatant's hit points over to the character they belong to."""
+        ...
+
+    def refuse_planning(self, state: GroupState) -> dict[str, Any] | None: ...
+
+    def refuse_advance(self, state: GroupState) -> dict[str, Any] | None: ...
+
+    def round_wrapped(self, state: GroupState) -> None:
+        """Called when advancing wraps past the last combatant; may raise ``TimingBlocked``."""
+        ...
+
+    def check_timing_result(self, result: dict[str, Any]) -> None:
+        """Inspect one fixed-timing result; may raise ``TimingBlocked``."""
+        ...
+
+    def after_timing(self, state: GroupState) -> None:
+        """Called after a fixed timing ran; may raise ``TimingBlocked``."""
+        ...
+
+    def keep_rolls(self, restored: GroupState, snapshot: dict[str, Any], retained_rolls: dict[str, Any]) -> None:
+        """Re-attach dice already drawn when a blocked advance is rolled back."""
+        ...
+
+
+class ModeMismatch(RuntimeError):
+    """A battle was handed to the rules of the other mode; it must go through the combat engine."""
+
+
+def _require_legacy(state: GroupState) -> None:
+    if combat_resources.is_managed(state):
+        raise ModeMismatch("a managed battle must be handled through the combat engine")
+
+
+class LegacyOps:
+    """Battles saved before the working-resource pipeline: immediate persistence, no pending waits."""
+
+    def process_timing(self, state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]:
+        _require_legacy(state)
+        return process_legacy_timing(state, timing, target_id)
+
+    def apply_damage(
+        self, state: GroupState, target_name: str, raw_damage: int, *, damage_type: str,
+        tags: list[str] | None, source_id: str, bypass_armor: bool, entry_point: str, event_id: str,
+    ) -> dict[str, Any]:
+        _require_legacy(state)
+        return apply_legacy_damage(
+            state, target_name, raw_damage, damage_type=damage_type, tags=tags, source_id=source_id,
+            bypass_armor=bypass_armor, entry_point=entry_point, event_id=event_id,
+        )
+
+    def sync_hp(self, state: GroupState, combatant: Combatant) -> None:
+        _require_legacy(state)
+        sync_pc_hp(state, combatant)
+
+    def refuse_planning(self, state: GroupState) -> dict[str, Any] | None:
+        _require_legacy(state)
+        return None
+
+    def refuse_advance(self, state: GroupState) -> dict[str, Any] | None:
+        _require_legacy(state)
+        return None
+
+    def round_wrapped(self, state: GroupState) -> None:
+        return None
+
+    def check_timing_result(self, result: dict[str, Any]) -> None:
+        return None
+
+    def after_timing(self, state: GroupState) -> None:
+        return None
+
+    def keep_rolls(self, restored: GroupState, snapshot: dict[str, Any], retained_rolls: dict[str, Any]) -> None:
+        return None
+
+
+LEGACY_OPS: ModeOps = LegacyOps()
+
+
+def _process_timing_or_stop(state: GroupState, timing: str, ops: ModeOps, target_id: str = "") -> None:
     """process_timing for automatic turn advancement: stop at a blocked hit."""
-    for result in process_timing(state, timing, target_id):
+    for result in process_timing(state, timing, target_id, ops=ops):
         if result.get("blocked_by"):
-            raise _TimingBlocked(result)
-        if is_managed(state) and not result.get('ok'):
-            raise _TimingBlocked({**result, 'blocked_by': 'needs_ruling', 'retain_due': True})
-    if is_managed(state) and state.combat.interaction:
-        raise _TimingBlocked({'error': 'Resolve the due injury check before advancing',
-                              'blocked_by': 'pending_check', 'retain_due': True})
+            raise TimingBlocked(result)
+        ops.check_timing_result(result)
+    ops.after_timing(state)
 
 
-def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]], ops: ModeOps) -> dict[str, Any]:
     """Run a turn-advancing `step`, or leave `state` exactly as it was.
 
     Advancing runs several timings in a row (turn_end, round_end,
@@ -1518,7 +1592,7 @@ def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> di
     snapshot = deepcopy(state.to_dict())
     try:
         return step()
-    except _TimingBlocked as blocked:
+    except TimingBlocked as blocked:
         retained_rolls = deepcopy(state.combat.roll_receipts)
         if blocked.result.get('retain_due'):
             return {'ok': blocked.result['blocked_by'] == 'pending_check',
@@ -1526,9 +1600,7 @@ def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> di
                     'error': blocked.result['error'], 'blocked_by': blocked.result['blocked_by'],
                     'phase': state.combat.phase, 'interaction': deepcopy(state.combat.interaction)}
         restored = GroupState.from_dict(snapshot)
-        if is_managed(state):
-            restored.combat.roll_receipts.update(retained_rolls)
-            restored.combat.revision += len(set(retained_rolls) - set(snapshot['combat'].get('roll_receipts', {})))
+        ops.keep_rolls(restored, snapshot, retained_rolls)
         for field in fields(GroupState):
             setattr(state, field.name, getattr(restored, field.name))
         result = blocked.result
@@ -1548,59 +1620,52 @@ def _all_or_nothing(state: GroupState, step: Callable[[], dict[str, Any]]) -> di
         }
 
 
-def _move_to_next_available(state: GroupState) -> bool:
+def _move_to_next_available(state: GroupState, ops: ModeOps) -> bool:
     combat = state.combat
     n = len(combat.order)
     for _ in range(n):
         next_index = (combat.current_index + 1) % n
         wrapped = next_index == 0
         if wrapped:
-            if is_managed(state):
-                from app import combat_flow
-                clock_id = f'{combat.combat_id}:round:{combat.round_number}'
-                clock_record = combat.actions.setdefault(clock_id, {'action_id': clock_id, 'completed': True,
-                                                                   'clock_round': state.mechanical_round + 1})
-                due = combat_flow.process_postcombat(state, logical_round=clock_record['clock_round'], event_id=clock_id)
-                if not due.get('ok') or any(r.get('pending') for r in due.get('results', [])):
-                    raise _TimingBlocked({'error': due.get('error', 'Due continuing CON check'),
-                                          'blocked_by': 'pending_check', 'retain_due': True})
-            _process_timing_or_stop(state, "round_end")
+            ops.round_wrapped(state)
+            _process_timing_or_stop(state, "round_end", ops)
             combat.round_number += 1
             _reset_round_usage(state)
-            _process_timing_or_stop(state, "round_start")
+            _process_timing_or_stop(state, "round_start", ops)
             _mark_round_start_abilities(state)
         combat.current_index = next_index
-        if not _is_skippable(state, combat.order[combat.current_index]):
+        if not is_skippable(state, combat.order[combat.current_index]):
             return True
     return False
 
 
-def advance_turn(state: GroupState) -> dict:
-    if is_managed(state) and (state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values())):
-        return {'ok': False, 'error': 'Combat action or interaction is unresolved'}
-    return _all_or_nothing(state, lambda: _advance_turn(state))
+def advance_turn(state: GroupState, *, ops: ModeOps) -> dict:
+    refusal = ops.refuse_advance(state)
+    if refusal:
+        return refusal
+    return _all_or_nothing(state, lambda: _advance_turn(state, ops), ops)
 
 
-def _advance_turn(state: GroupState) -> dict:
+def _advance_turn(state: GroupState, ops: ModeOps) -> dict:
     combat = state.combat
     if not combat.active or not combat.order:
         return {"ok": False, "error": "目前沒有進行中的戰鬥"}
-    if all(_is_skippable(state, c) for c in combat.order):
+    if all(is_skippable(state, c) for c in combat.order):
         return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
-    _process_timing_or_stop(state, "turn_end", current.combatant_id)
+    _process_timing_or_stop(state, "turn_end", ops, current.combatant_id)
 
-    if not _move_to_next_available(state):
+    if not _move_to_next_available(state, ops):
         return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
 
     current = combat.order[combat.current_index]
-    _process_timing_or_stop(state, "turn_start", current.combatant_id)
-    while _is_skippable(state, current):
-        if not _move_to_next_available(state):
+    _process_timing_or_stop(state, "turn_start", ops, current.combatant_id)
+    while is_skippable(state, current):
+        if not _move_to_next_available(state, ops):
             return {"ok": False, "error": "所有戰鬥角色都已倒下或暫離，戰鬥應該結束了，請呼叫 end_combat 結束戰鬥"}
         current = combat.order[combat.current_index]
-        _process_timing_or_stop(state, "turn_start", current.combatant_id)
+        _process_timing_or_stop(state, "turn_start", ops, current.combatant_id)
     return {
         "ok": True,
         "round": combat.round_number,
@@ -1613,36 +1678,9 @@ def _advance_turn(state: GroupState) -> dict:
 
 
 def end_combat(state: GroupState) -> dict[str, Any] | None:
-    if is_managed(state):
-        from app import combat_flow
-        return combat_resources.get_settlement(state, obligations=combat_flow.postcombat_obligations(state))
+    """Leave an idle battle slot empty; a battle that is still running needs explicit closure."""
     if state.combat.active:
         raise combat_resources.CombatAdmissionError('Legacy combat requires explicit controller closure')
-    if state.combat.active:
-        report = state.last_combat_report
-        if (
-            report.get("timeline_id") != state.timeline_id
-            or report.get("scenario_library_id") != state.scenario_library_id
-            or report.get("scenario_title") != state.scenario_title
-        ):
-            report = {}
-        state.last_combat_report = {
-            "timeline_id": state.timeline_id,
-            "scenario_library_id": state.scenario_library_id,
-            "scenario_title": state.scenario_title,
-            "ended": True,
-            "combatants": [
-                {
-                    "name": member.display_name,
-                    "side": member.side,
-                    "defeated": member.defeated,
-                    "hp": member.hp,
-                    "hp_max": member.hp_max,
-                }
-                for member in state.combat.order
-            ],
-            "last_damage": report.get("last_damage", {}),
-        }
     state.combat = CombatState()
     return None
 
@@ -1671,7 +1709,7 @@ def last_ended_combat_evidence(state: GroupState, *, include_private: bool) -> d
     return {"ended": True, "combatants": members, "last_damage": damage}
 
 
-def status_text(state: GroupState, include_private: bool = False) -> str:
+def status_text(state: GroupState, include_private: bool = False, *, provisional: bool = False) -> str:
     # §3.4 mechanism #7: with privacy isolation off, enemy HP/armor/abilities
     # are treated as always visible, regardless of what the caller asked for.
     include_private = include_private or not spoiler_policy.is_privacy_isolation_enabled()
@@ -1679,12 +1717,12 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
     if not combat.active or not combat.order:
         return "目前沒有進行中的戰鬥。"
 
-    lines = [f"戰鬥中 - 第 {combat.round_number} 輪" + ("（戰鬥暫定；尚未結算）" if is_managed(state) else "")]
+    lines = [f"戰鬥中 - 第 {combat.round_number} 輪" + ("（戰鬥暫定；尚未結算）" if provisional else "")]
     for i, c in enumerate(combat.order):
-        card = _card_for(state, c)
+        card = card_for(state, c)
         if card:
             _sync_combatant_from_card(c, card)
-        skippable = _is_skippable(state, c)
+        skippable = is_skippable(state, c)
         marker = "=> " if i == combat.current_index and not skippable else "   "
         character = character_for_combatant(state, c) if c.is_pc else None
         retired = character is not None and not character.active
@@ -1704,98 +1742,12 @@ def status_text(state: GroupState, include_private: bool = False) -> str:
     return "\n".join(lines)
 
 
-def apply_managed_damage(
-    state: GroupState, target_id: str, raw_damage: int, *, event_id: str,
-    damage_type: str = 'physical', tags: list[str] | None = None,
-    source_id: str = '', bypass_armor: bool = False, defer_injury: bool = False,
-    entry_point: str = 'apply_managed_damage',
-) -> dict[str, Any]:
-    """Trusted single-hit primitive; transport must not expose caller hit amounts."""
-    from app import combat_flow
-    combat_resources.initialize_working_state(state)
-    previous = next((e for e in state.combat.events if e['event_id'] == event_id), None)
-    if previous:
-        return dict(previous['data'])
-    if not event_id or not isinstance(raw_damage, int) or isinstance(raw_damage, bool) or raw_damage < 0:
-        return {'ok': False, 'error': 'Damage requires stable event identity and nonnegative integer'}
-    target = find_combatant(state, target_id)
-    if target is None:
-        return {'ok': False, 'error': 'Unknown combat participant'}
-    _, armor_label, final = _planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
-    pc = character_for_combatant(state, target) if target.is_pc else None
-    effective = combat_resources.effective_character(state, pc) if pc else None
-    before = effective.hp if effective else target.hp
-    after = max(0, before - final)
-    requires_con = effective is not None and effective.hp_max / 2 <= final < effective.hp_max
-    if requires_con:
-        assert pc is not None
-        block = check_lifecycle.blocker(state, pc.owner_id)
-        if block and not state.autoroll_checks:
-            return major_wound_blocked(state, pc, block, entry_point=entry_point)
-        if state.combat.interaction and state.combat.interaction.get('owner_id') != pc.owner_id:
-            return {'ok': False, 'error': 'Another combat interaction is unresolved'}
-    injury: InjuryState = deepcopy(effective.injury) if effective else InjuryState()
-    if effective:
-        if final >= effective.hp_max:
-            injury.update({'dead': True, 'unconscious': True, 'dying': False})
-        elif final >= effective.hp_max / 2:
-            injury['major_wound'] = True
-        if after == 0:
-            injury['unconscious'] = True
-            injury['dying'] = bool(injury.get('major_wound') and not injury.get('dead'))
-        assert pc is not None
-        combat_resources.set_resource(state, pc, 'hp', after, event_id=event_id + ':hp', reason=source_id)
-        combat_resources.set_injury(state, pc, injury, event_id=event_id + ':injury', reason=source_id)
-        if injury.get('unconscious'):
-            for tag in ('昏迷', '倒地'):
-                combat_resources.set_status_tag(state, pc, tag, True, event_id=event_id + ':status:' + tag)
-        if injury.get('dying'):
-            combat_flow.ensure_dying_obligation(state, pc, event_id)
-    target.hp = after
-    target.defeated = after == 0 or bool(injury.get('unconscious'))
-    card = _card_for(state, target)
-    if card:
-        card.hp = after
-        if final and _damage_taken_trigger_tag() not in card.status_tags:
-            card.status_tags.append(_damage_taken_trigger_tag())
-    result: dict[str, Any] = {
-        'ok': True, 'event_id': event_id, 'name': target.display_name, 'target': target.display_name,
-        'target_id': target.combatant_id, 'side': target.side, 'raw_damage': raw_damage,
-        'final_damage': final, 'armor_reduction': raw_damage - final, 'armor_label': armor_label,
-        'damage_type': damage_type, 'weakness_bonus': 0,
-        'private_notes': f'raw={raw_damage}, armor={armor_label}, source={source_id}',
-        'hp_before': before, 'hp_after': after, 'hp': after, 'hp_max': target.hp_max,
-        'injury': injury, 'major_wound_triggered': requires_con, 'defeated': target.defeated,
-        'public_summary': f'{target.display_name} 受到 {final} 點傷害（戰鬥暫定）' + ('（部分傷害被擋下）' if armor_label else ''),
-    }
-    combat_resources.record_event(state, event_id, 'damage', data=result, reason=source_id)
-    if requires_con and pc and not defer_injury:
-        result['major_wound_check'] = combat_flow.request_injury_check(state, pc, event_id)
-        # The damage receipt includes the wait and remains identical on retry.
-        next(e for e in state.combat.events if e['event_id'] == event_id)['data'] = dict(result)
-    state.last_combat_report = {'timeline_id': state.timeline_id,
-                               'scenario_library_id': state.scenario_library_id,
-                               'scenario_title': state.scenario_title, 'last_damage': dict(result)}
-    return result
-
-
-def managed_single_hit(
-    state: GroupState, character: Character, damage: int, *, event_id: str, reason: str,
-) -> dict[str, Any]:
-    """Explicit resource adjustment's trusted injury seam, not primary attack adjudication."""
-    target = next((p for p in state.combat.order if p.character_id == character.character_id), None)
-    if target is None:
-        return {'ok': False, 'error': 'Investigator is not in this battle'}
-    return apply_managed_damage(state, target.combatant_id, damage, event_id=event_id,
-                                source_id=reason, bypass_armor=True, entry_point='managed_single_hit')
-
-
 def close_legacy_combat(state: GroupState, *, event_id: str, reason: str) -> dict[str, Any]:
     """Controller explicitly closes old immediate-persistence history without guessing baselines."""
     for receipt in state.closed_combat_receipts.values():
         if receipt.get('legacy_close_event_id') == event_id:
             return dict(receipt)
-    if not state.combat.active or state.combat.pipeline_version or not event_id or not reason.strip():
+    if not state.combat.active or combat_resources.is_managed(state) or not event_id or not reason.strip():
         raise combat_resources.CombatAdmissionError('Explicit legacy closure requires an old active battle and reason')
     owners = {c.owner_id for c in active_characters(state)}
     if owners & (state.pending_checks.keys() | state.pending_luck_decisions.keys()):
@@ -1811,78 +1763,3 @@ def close_legacy_combat(state: GroupState, *, event_id: str, reason: str) -> dic
                                                'hp': p.hp, 'hp_max': p.hp_max} for p in state.combat.order]}
     state.combat = CombatState()
     return receipt
-
-
-def _process_managed_timing(state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]:
-    """Recorded damage draws and all-target ownership admission before any effect hit."""
-    key = _timing_key(state, timing, target_id)
-    if key in state.combat.processed_timings:
-        return []
-    results: list[dict[str, Any]] = []
-    failed = False
-    for effect in list(state.combat.effects):
-        if effect.timing != timing or (target_id and effect.target_id not in (target_id, '__all__')):
-            continue
-        identity = f'{key}:effect:{effect.id}'
-        if identity in state.combat.processed_timings:
-            continue
-        if effect.damage and (not effect.save_or_check.get('rule_source')
-                              or effect.save_or_check.get('severity_id') is None):
-            state.combat.phase = 'NEEDS_RULING'
-            results.append({'ok': False, 'effect_id': effect.id, 'error': 'Effect requires reviewed severity and special-rule handling'})
-            failed = True
-            continue
-        targets = ([p.combatant_id for p in state.combat.order if not p.defeated]
-                   if effect.target_id == '__all__' else [effect.target_id])
-        raw = 0
-        if effect.damage:
-            def draw_effect_damage(expression: str = effect.damage) -> dict[str, Any]:
-                return asdict(dice.roll_expression(expression))
-            try:
-                receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage', draw_effect_damage)
-            except ValueError as exc:
-                results.append({'ok': False, 'effect_id': effect.id, 'error': f'無法解析效果傷害：{exc}'})
-                failed = True
-                state.combat.phase = 'NEEDS_RULING'
-                continue
-            raw = max(0, receipt['total'])
-        blocked = [(target, block) for target in targets
-                   if (block := _major_wound_block_for(state, target, raw, damage_type=effect.damage_type, tags=effect.tags))]
-        if blocked:
-            failed = True
-            for target, block in blocked:
-                result = major_wound_blocked(state, *block, entry_point='process_timing')
-                result.update(effect_id=effect.id, target_id=target)
-                results.append(result)
-            continue
-        required = [target for target in targets if (p := find_combatant(state, target))
-                    and _major_wound_pc(state, p, _planned_damage(state, p, raw, effect.damage_type, effect.tags, False)[2], 0)]
-        applied = True
-        for target in targets:
-            if effect.damage:
-                result = apply_managed_damage(state, target, raw, event_id=f'{identity}:{target}',
-                                              damage_type=effect.damage_type, tags=effect.tags, source_id=effect.source_id, defer_injury=True)
-                result['effect_id'] = effect.id
-                results.append(result)
-                applied = applied and result['ok']
-        if applied:
-            if required:
-                from app import combat_flow
-                characters = []
-                for injured_target_id in required:
-                    participant = find_combatant(state, injured_target_id)
-                    if participant is not None:
-                        pc = character_for_combatant(state, participant)
-                        if pc is not None:
-                            characters.append(pc)
-                combat_flow.request_injury_checks(state, characters, identity)
-            state.combat.processed_timings.append(identity)
-            _tick_effect(effect)
-            effect.save_or_check['next_round'] = state.mechanical_round + 1
-            combat_resources.record_event(state, identity, 'timing', data={'effect_id': effect.id, 'timing': timing})
-        else:
-            failed = True
-    state.combat.effects = [e for e in state.combat.effects if e.remaining_rounds is None or e.remaining_rounds > 0]
-    if not failed:
-        state.combat.processed_timings.append(key)
-    return results

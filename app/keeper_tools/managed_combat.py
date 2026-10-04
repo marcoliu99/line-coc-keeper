@@ -5,8 +5,10 @@ from copy import deepcopy
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from app import combat_resources, combat_rules
+from app import combat_rules
 from app.keeper_tools import resource_bridge
+from app.services import combat_actions as act
+from app.services import combat_engine
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
@@ -48,15 +50,6 @@ def public_result(result: dict[str, Any], *, include_private: bool = False) -> d
     return projected
 
 
-def _battle(state, call):
-    if str(call.input.get('combat_id') or '') != state.combat.combat_id:
-        raise ValueError('Administrative command requires the current combat_id')
-    reason = str(call.input.get('reason') or '').strip()
-    if not reason:
-        raise ValueError('Explicit controller reason is required')
-    return reason
-
-
 def _owned_weapon_evidence(state, character, reference):
     metadata = resource_bridge.effective(state, character).weapon_instances.get(reference, {})
     if not metadata:
@@ -79,7 +72,7 @@ def _owned_weapon_evidence(state, character, reference):
 
 
 def declare_combat_action(call: ToolCall) -> dict[str, Any]:
-    from app import combat, combat_flow
+    from app import combat
 
     def operation(state):
         actor = combat.find_combatant(state, call.input['actor_id'])
@@ -97,129 +90,90 @@ def declare_combat_action(call: ToolCall) -> dict[str, Any]:
                 instance, scenario_definitions = _owned_weapon_evidence(state, character, call.input['weapon_reference'])
             except (ValueError, TypeError, KeyError) as error:
                 return {'ok': False, 'phase': 'NEEDS_RULING', 'error': str(error)}
-        result = combat_flow.declare_action(
-            state, action_id=call.input['action_id'], actor_id=actor.combatant_id,
+        result = combat_engine.handle(state, act.Declare(
+            action_id=call.input['action_id'], actor_id=actor.combatant_id,
             target_id=call.input['target_id'], weapon_reference=call.input['weapon_reference'],
             action_kind=call.input.get('action_kind', 'melee'),
             distance_yards=call.input.get('distance_yards'), weapon_instance=instance,
             scenario_definitions=scenario_definitions,
-        )
+        ))
         result['provisional'] = True
         return result
     return _mutate(call, operation)
 
 
 def run_combat_action(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    return _mutate(call, lambda state: combat_flow.run_action(state, call.input['action_id']))
+    return _mutate(call, lambda state: combat_engine.handle(state, act.Run(call.input['action_id'])))
 
 
 def submit_combat_choice(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
     if not call.actor_id:
         return {'ok': False, 'error': 'Owned combat choice requires player identity'}
     def operation(state):
-        retained = combat_flow.choice_receipt(state, interaction_id=call.input['interaction_id'],
-                                              owner_id=call.actor_id, choice=call.input['choice'])
+        retained = combat_engine.handle(state, act.ChoiceReceipt(
+            interaction_id=call.input['interaction_id'], owner_id=call.actor_id, choice=call.input['choice'],
+        ))
         if retained is not None:
             return retained
         pending = state.pending_checks.get(call.actor_id, {})
         resource_bridge.owned_character(state, pending, call.actor_id)
-        return combat_flow.submit_choice(state, interaction_id=call.input['interaction_id'],
-                                        owner_id=call.actor_id, choice=call.input['choice'])
+        return combat_engine.handle(state, act.Choose(
+            interaction_id=call.input['interaction_id'], owner_id=call.actor_id, choice=call.input['choice'],
+        ))
     return _mutate(call, operation)
 
 
 def preview_combat_settlement(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    def operation(state):
-        preview = combat_resources.get_settlement(state, obligations=combat_flow.postcombat_obligations(state))
-        return {'ok': True, 'preview': preview, 'provisional': True}
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.PreviewSettlement()))
 
 
 def confirm_combat_settlement(call: ToolCall) -> dict[str, Any]:
-    def operation(state):
-        if not str(call.input.get('reason') or '').strip():
-            raise ValueError('Explicit controller reason is required')
-        old = state.closed_combat_receipts.get(str(call.input.get('combat_id') or ''), {})
-        if old.get('settlement_id') != call.input['settlement_id']:
-            _battle(state, call)
-        first_commit = old.get('settlement_id') != call.input['settlement_id']
-        receipt = combat_resources.commit_settlement(state, call.input['settlement_id'])
-        if first_commit:
-            from copy import deepcopy
-            report = state.last_combat_report
-            scoped = (report.get('timeline_id') == state.timeline_id
-                      and report.get('scenario_library_id') == state.scenario_library_id
-                      and report.get('scenario_title') == state.scenario_title)
-            last_damage = deepcopy(report.get('last_damage', {})) if scoped else {}
-            if last_damage.get('public_summary'):
-                last_damage['public_summary'] = last_damage['public_summary'].replace('（戰鬥暫定）', '（已結算）')
-            state.last_combat_report = {
-                'timeline_id': state.timeline_id, 'scenario_library_id': state.scenario_library_id,
-                'scenario_title': state.scenario_title, 'combat_id': receipt['combat_id'],
-                'settlement_id': receipt['settlement_id'], 'ended': True, 'provisional': False,
-                'combatants': [{'name': member.display_name, 'side': member.side, 'defeated': member.defeated,
-                               'hp': member.hp, 'hp_max': member.hp_max} for member in state.combat.order],
-                'last_damage': last_damage,
-            }
-        return {'ok': True, 'receipt': receipt, 'provisional': False}
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.ConfirmSettlement(
+        combat_id=str(call.input.get('combat_id') or ''), settlement_id=call.input['settlement_id'],
+        reason=str(call.input.get('reason') or ''),
+    )))
 
 
 def rollback_combat(call: ToolCall) -> dict[str, Any]:
-    def operation(state):
-        reason = str(call.input.get('reason') or '').strip()
-        if not reason:
-            raise ValueError('Explicit controller reason is required')
-        old = state.closed_combat_receipts.get(str(call.input.get('combat_id') or ''), {})
-        if old.get('rollback_event_id') != call.input['event_id']:
-            reason = _battle(state, call)
-        receipt = combat_resources.rollback_combat(state, event_id=call.input['event_id'], reason=reason)
-        return {'ok': True, 'receipt': receipt, 'rolled_back': True}
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.Rollback(
+        combat_id=str(call.input.get('combat_id') or ''), event_id=call.input['event_id'],
+        reason=str(call.input.get('reason') or ''),
+    )))
 
 
 def correct_combat_event(call: ToolCall) -> dict[str, Any]:
-    def operation(state):
-        reason = _battle(state, call)
-        receipt = combat_resources.correct_event(state, call.input['target_event_id'],
-            event_id=call.input['event_id'], changes=call.input['changes'], reason=reason)
-        return {'ok': True, 'receipt': receipt, 'phase': state.combat.phase, 'provisional': True}
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.CorrectEvent(
+        combat_id=str(call.input.get('combat_id') or ''), target_event_id=call.input['target_event_id'],
+        event_id=call.input['event_id'], changes=call.input['changes'],
+        reason=str(call.input.get('reason') or ''),
+    )))
 
 
 def reconcile_combat_baseline(call: ToolCall) -> dict[str, Any]:
     from app import keeper
 
     def operation(state):
-        reason = _battle(state, call)
+        combat_engine.authorize(state, str(call.input.get('combat_id') or ''), str(call.input.get('reason') or ''))
         character = keeper.require_character(state, call.input['investigator'])
-        receipt = combat_resources.reconcile_baseline(state, character, event_id=call.input['event_id'],
-            decision=call.input['decision'], reason=reason)
-        return {'ok': True, 'receipt': receipt, 'provisional': True}
+        return combat_engine.handle(state, act.ReconcileBaseline(
+            combat_id=str(call.input.get('combat_id') or ''), character=character,
+            event_id=call.input['event_id'], decision=call.input['decision'],
+            reason=str(call.input.get('reason') or ''),
+        ))
     return _mutate(call, operation)
 
 
 def change_combat_initiative(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    def operation(state):
-        reason = _battle(state, call)
-        return combat_flow.set_initiative(state, actor_ids=call.input['order'],
-                                            event_id=call.input['event_id'], reason=reason)
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.SetInitiative(
+        combat_id=str(call.input.get('combat_id') or ''), actor_ids=call.input['order'],
+        event_id=call.input['event_id'], reason=str(call.input.get('reason') or ''),
+    )))
 
 
 def process_postcombat_obligations(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    return _mutate(call, lambda state: combat_flow.process_postcombat(
-        state, logical_round=call.input['logical_round'], event_id=call.input['event_id']))
+    return _mutate(call, lambda state: combat_engine.handle(state, act.ProcessPostcombat(
+        logical_round=call.input['logical_round'], event_id=call.input['event_id'],
+    )))
 
 
 def get_damage_severity(call: ToolCall) -> dict[str, Any]:
@@ -230,48 +184,35 @@ def get_damage_severity(call: ToolCall) -> dict[str, Any]:
 
 
 def declare_combat_effect(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    def operation(state):
-        reason = _battle(state, call)
-        return combat_flow.declare_effect(state, effect_id=call.input['effect_id'],
-            target_id=call.input['target_id'], severity_id=call.input['severity_id'],
-            scope=call.input.get('scope', 'incident'), reason=reason,
-            stop_condition=call.input['stop_condition'], timing=call.input.get('timing', 'round_end'),
-            special_rule=call.input.get('special_rule'), defense=call.input.get('defense', 'none'))
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.DeclareEffect(
+        combat_id=str(call.input.get('combat_id') or ''), effect_id=call.input['effect_id'],
+        target_id=call.input['target_id'], severity_id=call.input['severity_id'],
+        scope=call.input.get('scope', 'incident'), reason=str(call.input.get('reason') or ''),
+        stop_condition=call.input['stop_condition'], timing=call.input.get('timing', 'round_end'),
+        special_rule=call.input.get('special_rule'), defense=call.input.get('defense', 'none'),
+    )))
 
 
 def stop_combat_effect(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    def operation(state):
-        reason = str(call.input.get('reason') or '').strip()
-        if not reason:
-            raise ValueError('Explicit controller reason is required')
-        return combat_flow.stop_effect(state, combat_id=call.input['combat_id'],
-                                       effect_id=call.input['effect_id'],
-                                       event_id=call.input['event_id'], reason=reason)
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.StopEffect(
+        combat_id=call.input['combat_id'], effect_id=call.input['effect_id'],
+        event_id=call.input['event_id'], reason=str(call.input.get('reason') or ''),
+    )))
 
 
 def close_legacy_combat(call: ToolCall) -> dict[str, Any]:
-    from app import combat
-
     def operation(state):
         reason = str(call.input.get('reason') or '').strip()
         if not reason:
             raise ValueError('Explicit controller reason required for legacy closure')
-        return combat.close_legacy_combat(state, event_id=call.input['event_id'], reason=reason)
+        return combat_engine.handle(state, act.CloseLegacy(event_id=call.input['event_id'], reason=reason))
     return _mutate(call, operation)
 
 
 def resolve_combat_ruling(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
     def operation(state):
         from app import combat
-        reason = _battle(state, call)
+        combat_engine.authorize(state, str(call.input.get('combat_id') or ''), str(call.input.get('reason') or ''))
         action = state.combat.actions.get(call.input['action_id'], {})
         actor = combat.find_combatant(state, action.get('actor_id', ''))
         character = combat.character_for_combatant(state, actor) if actor and actor.is_pc else None
@@ -286,23 +227,24 @@ def resolve_combat_ruling(call: ToolCall) -> dict[str, Any]:
                     definitions += (instance.pinned_definition,)
             except (ValueError, TypeError, KeyError) as error:
                 return {'ok': False, 'phase': 'NEEDS_RULING', 'error': str(error)}
-        return combat_flow.resolve_ruling(state, action_id=call.input['action_id'],
-            event_id=call.input['event_id'], reason=reason, decision=call.input['decision'],
-            weapon_reference=reference, distance_yards=call.input.get('distance_yards'),
-            scenario_definitions=definitions, weapon_instance=instance)
+        return combat_engine.handle(state, act.Rule(
+            combat_id=str(call.input.get('combat_id') or ''), action_id=call.input['action_id'],
+            event_id=call.input['event_id'], reason=str(call.input.get('reason') or ''),
+            decision=call.input['decision'], weapon_reference=reference,
+            distance_yards=call.input.get('distance_yards'), scenario_definitions=definitions,
+            weapon_instance=instance,
+        ))
     return _mutate(call, operation)
 
 
 def reconcile_combat_correction(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    def operation(state):
-        reason = _battle(state, call)
-        return combat_flow.reconcile_correction(state, event_id=call.input['event_id'], reason=reason,
-            injury_by_character=call.input['injury_by_character'],
-            acknowledge_action_ids=call.input['acknowledge_action_ids'],
-            acknowledge_check_ids=call.input.get('acknowledge_check_ids'))
-    return _mutate(call, operation)
+    return _mutate(call, lambda state: combat_engine.handle(state, act.ReconcileCorrection(
+        combat_id=str(call.input.get('combat_id') or ''), event_id=call.input['event_id'],
+        reason=str(call.input.get('reason') or ''),
+        injury_by_character=call.input['injury_by_character'],
+        acknowledge_action_ids=call.input['acknowledge_action_ids'],
+        acknowledge_check_ids=call.input.get('acknowledge_check_ids'),
+    )))
 
 
 def get_weapon_definition(call: ToolCall) -> dict[str, Any]:
@@ -316,37 +258,31 @@ def get_weapon_definition(call: ToolCall) -> dict[str, Any]:
 
 def stabilize_investigator(call: ToolCall) -> dict[str, Any]:
     """Use a recorded successful First Aid check; never accept a supplied outcome."""
-    from app import combat_flow
-
-    return _mutate(call, lambda state: combat_flow.stabilize_investigator(
-        state, character_id=call.input['character_id'], source_check_id=call.input['source_check_id'],
-        event_id=call.input['event_id'], reason=call.input['reason']))
+    return _mutate(call, lambda state: combat_engine.handle(state, act.Stabilize(
+        character_id=call.input['character_id'], source_check_id=call.input['source_check_id'],
+        event_id=call.input['event_id'], reason=call.input['reason'],
+    )))
 
 
 def request_stabilization_check(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
     def operation(state):
         healer = state.characters_by_id.get(call.input['healer_character_id'])
         if not healer or not call.actor_id or healer.owner_id != call.actor_id:
             return {'ok': False, 'error': 'First Aid declaration belongs to another investigator'}
-        return combat_flow.request_stabilization_check(
-            state, healer_character_id=healer.character_id, character_id=call.input['character_id'],
-            event_id=call.input['event_id'], reason=call.input['reason'])
+        return combat_engine.handle(state, act.RequestStabilization(
+            healer_character_id=healer.character_id, character_id=call.input['character_id'],
+            event_id=call.input['event_id'], reason=call.input['reason'],
+        ))
     return _mutate(call, operation)
 
 
 def run_enemy_combat_plan(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
-    return _mutate(call, lambda state: combat_flow.run_enemy_plan(state, call.input['plan_id']))
+    return _mutate(call, lambda state: combat_engine.handle(state, act.RunEnemyPlan(call.input['plan_id'])))
 
 
 def run_combat_effect(call: ToolCall) -> dict[str, Any]:
-    from app import combat_flow
-
     def operation(state):
         if call.input['combat_id'] != state.combat.combat_id:
             return {'ok': False, 'error': 'Effect retry requires its current source battle'}
-        return combat_flow.run_effect(state, call.input['effect_id'])
+        return combat_engine.handle(state, act.RunEffect(call.input['effect_id']))
     return _mutate(call, operation)

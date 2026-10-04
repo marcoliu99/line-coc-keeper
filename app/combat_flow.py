@@ -5,6 +5,7 @@ Authoritative check callbacks are server-only; tools never accept die results.
 """
 from __future__ import annotations
 
+import uuid
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Literal
@@ -18,6 +19,7 @@ from app.models import (
     CombatCheckIdentity,
     CombatCheckRole,
     GroupState,
+    InjuryState,
     PostcombatObligation,
     damage_bonus_and_build,
 )
@@ -101,7 +103,7 @@ def validate_pending_context(state: GroupState, pending: dict[str, Any], owner_i
     if not context:
         return {'ok': True}
     wait = state.combat.interaction
-    if (not combat.is_managed(state) or context.get('combat_id') != state.combat.combat_id
+    if (not combat_resources.is_managed(state) or context.get('combat_id') != state.combat.combat_id
             or any(context.get(k) != wait.get(k) for k in ('action_id', 'interaction_id', 'check_role'))
             or owner_id != wait.get('owner_id') or pending.get('check_id') != wait.get('check_id')):
         return _error('Stale or foreign combat control')
@@ -540,7 +542,7 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
         return asdict(dice.roll_weapon_damage(action['damage'], action.get('db', '0'),
                                              db_policy=weapon.get('db_policy', 'none')))
     receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{action_id}:damage', draw_damage)
-    damage_result = combat.apply_managed_damage(state, recipient.combatant_id, max(0, receipt['total']),
+    damage_result = apply_managed_damage(state, recipient.combatant_id, max(0, receipt['total']),
                                                 event_id=action_id + ':damage', source_id=action['weapon_reference'])
     if not damage_result['ok']:
         return damage_result
@@ -686,14 +688,14 @@ def advance_combat(state: GroupState, *, actor_id: str, event_id: str, transitio
         return _error('Current actor has no completed action; explicit initiative ruling required')
     if not 1 <= transition_budget <= 64:
         return _error('Transition budget must be 1..64')
-    result = combat.advance_turn(state)
+    result = combat.advance_turn(state, ops=MANAGED_OPS)
     if not result.get('ok'):
         return result
     transition = deepcopy(result)
     if not result.get('pending'):
         next_actor = state.combat.order[state.combat.current_index]
         if next_actor.side == 'enemy':
-            plan = combat.plan_enemy_turn(state, next_actor.display_name)
+            plan = combat.plan_enemy_turn(state, next_actor.display_name, ops=MANAGED_OPS)
             if plan.get('ok'):
                 result = run_enemy_plan(state, plan['plan_id'])
     combat_resources.record_event(state, event_id, 'initiative',
@@ -760,11 +762,11 @@ def declare_effect(
 
 
 def stop_effect(state: GroupState, *, effect_id: str, event_id: str, reason: str, combat_id: str | None = None) -> dict[str, Any]:
-    source_combat = combat_id or (state.combat.combat_id if combat.is_managed(state) else '')
+    source_combat = combat_id or (state.combat.combat_id if combat_resources.is_managed(state) else '')
     if not reason.strip() or not event_id or not source_combat:
         return _error('Stopping an effect requires an explicit source battle and recorded reason')
     result = {'ok': True, 'stopped_effect_id': effect_id, 'combat_id': source_combat}
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         prior = next((event for event in state.combat.events if event['event_id'] == event_id), None)
         if prior:
             if (prior['kind'] != 'effect' or prior['data'].get('stopped_effect_id') != effect_id
@@ -774,7 +776,7 @@ def stop_effect(state: GroupState, *, effect_id: str, event_id: str, reason: str
     obligations = [obligation for obligation in _continuing_store(state)
                    if obligation.get('combat_id') == source_combat
                    and obligation.get('effect', {}).get('id') == effect_id]
-    active_match = (combat.is_managed(state) and source_combat == state.combat.combat_id
+    active_match = (combat_resources.is_managed(state) and source_combat == state.combat.combat_id
                     and any(effect.id == effect_id for effect in state.combat.effects))
     if not active_match and not obligations:
         return _error('No matching effect in the specified source battle')
@@ -785,7 +787,7 @@ def stop_effect(state: GroupState, *, effect_id: str, event_id: str, reason: str
         marker = 'stop:' + event_id
         if marker not in obligation.setdefault('processed_timings', []):
             obligation['processed_timings'].append(marker)
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         combat_resources.record_event(state, event_id, 'effect', data=result, reason=reason)
     return result
 
@@ -823,11 +825,11 @@ def postcombat_obligations(state: GroupState) -> list[PostcombatObligation]:
 
 
 def _all_obligations(state: GroupState) -> list[PostcombatObligation]:
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         obligations = list(state.combat.actions.get(combat_resources.CONTINUING_STATE_KEY, {}).get('working_obligations', state.postcombat_obligations))
     else:
         obligations = list(state.postcombat_obligations)
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         obligations.extend(a['obligation'] for a in state.combat.actions.values() if a.get('obligation'))
     return obligations
 
@@ -923,7 +925,7 @@ def _finish_obligation_check(state: GroupState, pending: dict[str, Any], owner_i
 
 
 def _write_character(state: GroupState, effective: Character, event_id: str, reason: str) -> None:
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         if effective.character_id not in state.combat.working_resources:
             raise combat_resources.CombatAdmissionError('Continuing participant must be admitted before any mutation')
         combat_resources.reconcile_effective_character(state, effective, event_id=event_id, reason=reason)
@@ -947,8 +949,8 @@ def _process_obligation_effect(state: GroupState, obligation: PostcombatObligati
         receipts[identity] = asdict(dice.roll_expression(effect['damage']))
     damage = max(0, receipts[identity]['total'])
     effective = combat_resources.effective_character(state, character)
-    if combat.is_managed(state) and character.character_id in state.combat.working_resources:
-        result = combat.managed_single_hit(state, character, damage, event_id=identity, reason='Continuing effect')
+    if combat_resources.is_managed(state) and character.character_id in state.combat.working_resources:
+        result = managed_single_hit(state, character, damage, event_id=identity, reason='Continuing effect')
         if not result['ok']:
             obligation['status'] = 'due'
             return result
@@ -1203,34 +1205,8 @@ def reconcile_correction(
     return result
 
 
-def admit_continuing_state(state: GroupState) -> None:
-    """Freeze prior committed obligations and a separate provisional projection."""
-    if combat_resources.CONTINUING_STATE_KEY in state.combat.actions:
-        return
-    current_id = state.combat.order[state.combat.current_index].combatant_id if state.combat.order else None
-    for obligation in state.postcombat_obligations:
-        if obligation.get('status') == 'resolved':
-            continue
-        character = state.characters_by_id.get(obligation.get('character_id', ''))
-        if character is None:
-            raise combat_resources.CombatAdmissionError('Continuing obligation participant no longer exists')
-        combat_resources.admit_character(state, character)
-        if not any(p.character_id == character.character_id for p in state.combat.order):
-            state.combat.order.append(Combatant(name=character.name, display_name=character.name,
-                character_id=character.character_id, combatant_id='pc:' + character.character_id,
-                dex=character.dex, hp=character.hp, hp_max=character.hp_max, is_pc=True, side='pc',
-                defeated=character.hp == 0 or bool(character.injury.get('unconscious'))))
-    state.combat.order.sort(key=lambda p: -p.dex)
-    if current_id is not None:
-        state.combat.current_index = next(i for i,p in enumerate(state.combat.order) if p.combatant_id == current_id)
-    state.combat.actions[combat_resources.CONTINUING_STATE_KEY] = {'action_id': combat_resources.CONTINUING_STATE_KEY, 'completed': True,
-                                               'kind': combat_resources.CONTINUING_STATE_KEY,
-                                               'obligation_baseline': deepcopy(state.postcombat_obligations),
-                                               'working_obligations': deepcopy(state.postcombat_obligations)}
-
-
 def _continuing_store(state: GroupState) -> list[PostcombatObligation]:
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         return state.combat.actions[combat_resources.CONTINUING_STATE_KEY]['working_obligations']
     return state.postcombat_obligations
 
@@ -1240,7 +1216,7 @@ def stabilize_investigator(
 ) -> dict[str, Any]:
     """Apply successful recorded First Aid stabilization; never accept caller success."""
     character = state.characters_by_id.get(character_id)
-    medical_receipts = [a['medical_receipt'] for a in state.combat.actions.values() if combat.is_managed(state) and a.get('medical_receipt')]
+    medical_receipts = [a['medical_receipt'] for a in state.combat.actions.values() if combat_resources.is_managed(state) and a.get('medical_receipt')]
     medical_receipts.extend(a['medical_receipt'] for closed in state.closed_combat_receipts.values()
                             for a in closed.get('actions', {}).values() if closed.get('status') == 'committed' and a.get('medical_receipt'))
     evidence = next((e for e in state.resolved_check_events + medical_receipts if e.get('check_id') == source_check_id
@@ -1249,11 +1225,11 @@ def stabilize_investigator(
     if not character or evidence is None or not event_id or not reason.strip():
         return _error('Stabilization requires a successful authoritative First Aid check and explicit target/reason')
     source_battle = evidence.get('medical_context', {}).get('combat_id')
-    if (source_battle and source_battle != (state.combat.combat_id if combat.is_managed(state) else None)
+    if (source_battle and source_battle != (state.combat.combat_id if combat_resources.is_managed(state) else None)
             and state.closed_combat_receipts.get(source_battle, {}).get('status') != 'committed'):
         return _error('A rolled-back medical check cannot publish stabilization')
     applied = [e['data']['stabilization_receipt'] for e in state.combat.events
-               if combat.is_managed(state) and e.get('data', {}).get('stabilization_receipt')]
+               if combat_resources.is_managed(state) and e.get('data', {}).get('stabilization_receipt')]
     applied.extend(e['data']['stabilization_receipt'] for closed in state.closed_combat_receipts.values()
                    for e in closed.get('events', []) if closed.get('status') == 'committed'
                    and e.get('data', {}).get('stabilization_receipt'))
@@ -1262,7 +1238,7 @@ def stabilize_investigator(
         if used['event_id'] == event_id and used['character_id'] == character_id:
             return deepcopy(used)
         return _error('First Aid result has already been applied to a stabilization')
-    if combat.is_managed(state) and character_id not in state.combat.working_resources:
+    if combat_resources.is_managed(state) and character_id not in state.combat.working_resources:
         return _error('Stabilized investigator must be admitted to the working state')
     effective = combat_resources.effective_character(state, character)
     active_ids = sorted(o['obligation_id'] for o in _all_obligations(state) if o.get('character_id') == character_id
@@ -1286,9 +1262,9 @@ def stabilize_investigator(
                 state.pending_checks.pop(character.owner_id)
     result = {'ok': True, 'character_id': character_id, 'stabilized': True,
               'source_check_id': source_check_id, 'event_id': event_id}
-    if not combat.is_managed(state):
+    if not combat_resources.is_managed(state):
         evidence['stabilization_receipt'] = deepcopy(result)
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         combat_resources.record_event(state, event_id, 'injury', data={'character_id': character_id,
                                        'after': deepcopy(effective.injury), 'stabilization_receipt': deepcopy(result)}, reason=reason)
     return result
@@ -1311,14 +1287,14 @@ def request_stabilization_check(
         return _error('Healer has no authoritative First Aid value')
     context = {'request_id': event_id, 'healer_character_id': healer_character_id,
                'character_id': character_id, 'obligation_ids': obligations, 'reason': reason}
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         context['combat_id'] = state.combat.combat_id
     pending = state.pending_checks.get(healer.owner_id)
     if pending and pending.get('medical_context') == context:
         return {'ok': True, 'pending': True, 'check_id': pending['check_id'], 'medical_context': context}
     if check_lifecycle.blocker(state, healer.owner_id):
         return _error('Healer already has a pending check or Luck decision')
-    if combat.is_managed(state):
+    if combat_resources.is_managed(state):
         if event_id in state.combat.actions:
             action = state.combat.actions[event_id]
             if action.get('medical_context') != context:
@@ -1380,8 +1356,243 @@ def run_effect(state: GroupState, effect_id: str) -> dict[str, Any]:
         return _error('Incident requires reviewed severity evidence')
     receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage',
                                            lambda: asdict(dice.roll_expression(effect.damage)))
-    result = combat.apply_managed_damage(state, effect.target_id, max(0, receipt['total']), event_id=identity,
+    result = apply_managed_damage(state, effect.target_id, max(0, receipt['total']), event_id=identity,
                                         source_id=effect.source_id, damage_type=effect.damage_type, tags=effect.tags)
     if result['ok']:
         state.combat.effects.remove(effect)
     return result
+
+
+def apply_managed_damage(
+    state: GroupState, target_id: str, raw_damage: int, *, event_id: str,
+    damage_type: str = 'physical', tags: list[str] | None = None,
+    source_id: str = '', bypass_armor: bool = False, defer_injury: bool = False,
+    entry_point: str = 'apply_managed_damage',
+) -> dict[str, Any]:
+    """Trusted single-hit primitive; transport must not expose caller hit amounts."""
+    combat_resources.initialize_working_state(state)
+    previous = next((e for e in state.combat.events if e['event_id'] == event_id), None)
+    if previous:
+        return dict(previous['data'])
+    if not event_id or not isinstance(raw_damage, int) or isinstance(raw_damage, bool) or raw_damage < 0:
+        return {'ok': False, 'error': 'Damage requires stable event identity and nonnegative integer'}
+    target = combat.find_combatant(state, target_id)
+    if target is None:
+        return {'ok': False, 'error': 'Unknown combat participant'}
+    _, armor_label, final = combat.planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
+    pc = combat.character_for_combatant(state, target) if target.is_pc else None
+    effective = combat_resources.effective_character(state, pc) if pc else None
+    before = effective.hp if effective else target.hp
+    after = max(0, before - final)
+    requires_con = effective is not None and effective.hp_max / 2 <= final < effective.hp_max
+    if requires_con:
+        assert pc is not None
+        block = check_lifecycle.blocker(state, pc.owner_id)
+        if block and not state.autoroll_checks:
+            return combat.major_wound_blocked(state, pc, block, entry_point=entry_point)
+        if state.combat.interaction and state.combat.interaction.get('owner_id') != pc.owner_id:
+            return {'ok': False, 'error': 'Another combat interaction is unresolved'}
+    injury: InjuryState = deepcopy(effective.injury) if effective else InjuryState()
+    if effective:
+        if final >= effective.hp_max:
+            injury.update({'dead': True, 'unconscious': True, 'dying': False})
+        elif final >= effective.hp_max / 2:
+            injury['major_wound'] = True
+        if after == 0:
+            injury['unconscious'] = True
+            injury['dying'] = bool(injury.get('major_wound') and not injury.get('dead'))
+        assert pc is not None
+        combat_resources.set_resource(state, pc, 'hp', after, event_id=event_id + ':hp', reason=source_id)
+        combat_resources.set_injury(state, pc, injury, event_id=event_id + ':injury', reason=source_id)
+        if injury.get('unconscious'):
+            for tag in ('昏迷', '倒地'):
+                combat_resources.set_status_tag(state, pc, tag, True, event_id=event_id + ':status:' + tag)
+        if injury.get('dying'):
+            ensure_dying_obligation(state, pc, event_id)
+    target.hp = after
+    target.defeated = after == 0 or bool(injury.get('unconscious'))
+    card = combat.card_for(state, target)
+    if card:
+        card.hp = after
+        if final and combat.damage_taken_trigger_tag() not in card.status_tags:
+            card.status_tags.append(combat.damage_taken_trigger_tag())
+    result: dict[str, Any] = {
+        'ok': True, 'event_id': event_id, 'name': target.display_name, 'target': target.display_name,
+        'target_id': target.combatant_id, 'side': target.side, 'raw_damage': raw_damage,
+        'final_damage': final, 'armor_reduction': raw_damage - final, 'armor_label': armor_label,
+        'damage_type': damage_type, 'weakness_bonus': 0,
+        'private_notes': f'raw={raw_damage}, armor={armor_label}, source={source_id}',
+        'hp_before': before, 'hp_after': after, 'hp': after, 'hp_max': target.hp_max,
+        'injury': injury, 'major_wound_triggered': requires_con, 'defeated': target.defeated,
+        'public_summary': f'{target.display_name} 受到 {final} 點傷害（戰鬥暫定）' + ('（部分傷害被擋下）' if armor_label else ''),
+    }
+    combat_resources.record_event(state, event_id, 'damage', data=result, reason=source_id)
+    if requires_con and pc and not defer_injury:
+        result['major_wound_check'] = request_injury_check(state, pc, event_id)
+        # The damage receipt includes the wait and remains identical on retry.
+        next(e for e in state.combat.events if e['event_id'] == event_id)['data'] = dict(result)
+    state.last_combat_report = {'timeline_id': state.timeline_id,
+                               'scenario_library_id': state.scenario_library_id,
+                               'scenario_title': state.scenario_title, 'last_damage': dict(result)}
+    return result
+
+
+
+
+def managed_single_hit(
+    state: GroupState, character: Character, damage: int, *, event_id: str, reason: str,
+) -> dict[str, Any]:
+    """Explicit resource adjustment's trusted injury seam, not primary attack adjudication."""
+    target = next((p for p in state.combat.order if p.character_id == character.character_id), None)
+    if target is None:
+        return {'ok': False, 'error': 'Investigator is not in this battle'}
+    return apply_managed_damage(state, target.combatant_id, damage, event_id=event_id,
+                                source_id=reason, bypass_armor=True, entry_point='managed_single_hit')
+
+
+
+
+def process_managed_timing(state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]:
+    """Recorded damage draws and all-target ownership admission before any effect hit."""
+    key = combat.timing_key(state, timing, target_id)
+    if key in state.combat.processed_timings:
+        return []
+    results: list[dict[str, Any]] = []
+    failed = False
+    for effect in list(state.combat.effects):
+        if effect.timing != timing or (target_id and effect.target_id not in (target_id, '__all__')):
+            continue
+        identity = f'{key}:effect:{effect.id}'
+        if identity in state.combat.processed_timings:
+            continue
+        if effect.damage and (not effect.save_or_check.get('rule_source')
+                              or effect.save_or_check.get('severity_id') is None):
+            state.combat.phase = 'NEEDS_RULING'
+            results.append({'ok': False, 'effect_id': effect.id, 'error': 'Effect requires reviewed severity and special-rule handling'})
+            failed = True
+            continue
+        targets = ([p.combatant_id for p in state.combat.order if not p.defeated]
+                   if effect.target_id == '__all__' else [effect.target_id])
+        raw = 0
+        if effect.damage:
+            def draw_effect_damage(expression: str = effect.damage) -> dict[str, Any]:
+                return asdict(dice.roll_expression(expression))
+            try:
+                receipt = combat_resources.record_roll(state, f'{state.combat.combat_id}:{identity}:damage', draw_effect_damage)
+            except ValueError as exc:
+                results.append({'ok': False, 'effect_id': effect.id, 'error': f'無法解析效果傷害：{exc}'})
+                failed = True
+                state.combat.phase = 'NEEDS_RULING'
+                continue
+            raw = max(0, receipt['total'])
+        blocked = [(target, block) for target in targets
+                   if (block := combat.major_wound_block_for(state, target, raw, damage_type=effect.damage_type, tags=effect.tags))]
+        if blocked:
+            failed = True
+            for target, block in blocked:
+                result = combat.major_wound_blocked(state, *block, entry_point='process_timing')
+                result.update(effect_id=effect.id, target_id=target)
+                results.append(result)
+            continue
+        required = [target for target in targets if (p := combat.find_combatant(state, target))
+                    and combat.major_wound_pc(state, p, combat.planned_damage(state, p, raw, effect.damage_type, effect.tags, False)[2], 0)]
+        applied = True
+        for target in targets:
+            if effect.damage:
+                result = apply_managed_damage(state, target, raw, event_id=f'{identity}:{target}',
+                                              damage_type=effect.damage_type, tags=effect.tags, source_id=effect.source_id, defer_injury=True)
+                result['effect_id'] = effect.id
+                results.append(result)
+                applied = applied and result['ok']
+        if applied:
+            if required:
+                characters = []
+                for injured_target_id in required:
+                    participant = combat.find_combatant(state, injured_target_id)
+                    if participant is not None:
+                        pc = combat.character_for_combatant(state, participant)
+                        if pc is not None:
+                            characters.append(pc)
+                request_injury_checks(state, characters, identity)
+            state.combat.processed_timings.append(identity)
+            combat.tick_effect(effect)
+            effect.save_or_check['next_round'] = state.mechanical_round + 1
+            combat_resources.record_event(state, identity, 'timing', data={'effect_id': effect.id, 'timing': timing})
+        else:
+            failed = True
+    state.combat.effects = [e for e in state.combat.effects if e.remaining_rounds is None or e.remaining_rounds > 0]
+    if not failed:
+        state.combat.processed_timings.append(key)
+    return results
+
+
+def _require_managed(state: GroupState) -> None:
+    if not combat_resources.is_managed(state):
+        raise combat.ModeMismatch("only a managed battle can be handled by the managed rules")
+
+
+class ManagedOps:
+    """Battles under the working-resource pipeline: receipts, owned waits, logical-time obligations."""
+
+    def process_timing(self, state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]:
+        _require_managed(state)
+        return process_managed_timing(state, timing, target_id)
+
+    def apply_damage(
+        self, state: GroupState, target_name: str, raw_damage: int, *, damage_type: str,
+        tags: list[str] | None, source_id: str, bypass_armor: bool, entry_point: str, event_id: str,
+    ) -> dict[str, Any]:
+        _require_managed(state)
+        return apply_managed_damage(
+            state, target_name, raw_damage, event_id=event_id or f'damage:{uuid.uuid4().hex}',
+            damage_type=damage_type, tags=tags, source_id=source_id, bypass_armor=bypass_armor,
+            entry_point=entry_point,
+        )
+
+    def sync_hp(self, state: GroupState, combatant: Combatant) -> None:
+        _require_managed(state)
+        if not combatant.is_pc:
+            combat.sync_pc_hp(state, combatant)
+            return
+        pc = combat.character_for_combatant(state, combatant)
+        if pc:
+            combat_resources.set_resource(state, pc, 'hp', combatant.hp,
+                                          event_id=f'healing:{uuid.uuid4().hex}', reason='Combat healing')
+
+    def refuse_planning(self, state: GroupState) -> dict[str, Any] | None:
+        _require_managed(state)
+        if state.combat.interaction:
+            return {'ok': False, 'error': 'Resolve the current interaction before NPC planning'}
+        return None
+
+    def refuse_advance(self, state: GroupState) -> dict[str, Any] | None:
+        _require_managed(state)
+        if state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values()):
+            return {'ok': False, 'error': 'Combat action or interaction is unresolved'}
+        return None
+
+    def round_wrapped(self, state: GroupState) -> None:
+        battle = state.combat
+        clock_id = f'{battle.combat_id}:round:{battle.round_number}'
+        clock_record = battle.actions.setdefault(clock_id, {'action_id': clock_id, 'completed': True,
+                                                           'clock_round': state.mechanical_round + 1})
+        due = process_postcombat(state, logical_round=clock_record['clock_round'], event_id=clock_id)
+        if not due.get('ok') or any(r.get('pending') for r in due.get('results', [])):
+            raise combat.TimingBlocked({'error': due.get('error', 'Due continuing CON check'),
+                                        'blocked_by': 'pending_check', 'retain_due': True})
+
+    def check_timing_result(self, result: dict[str, Any]) -> None:
+        if not result.get('ok'):
+            raise combat.TimingBlocked({**result, 'blocked_by': 'needs_ruling', 'retain_due': True})
+
+    def after_timing(self, state: GroupState) -> None:
+        if state.combat.interaction:
+            raise combat.TimingBlocked({'error': 'Resolve the due injury check before advancing',
+                                        'blocked_by': 'pending_check', 'retain_due': True})
+
+    def keep_rolls(self, restored: GroupState, snapshot: dict[str, Any], retained_rolls: dict[str, Any]) -> None:
+        restored.combat.roll_receipts.update(retained_rolls)
+        restored.combat.revision += len(set(retained_rolls) - set(snapshot['combat'].get('roll_receipts', {})))
+
+
+MANAGED_OPS: combat.ModeOps = ManagedOps()

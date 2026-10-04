@@ -3,7 +3,8 @@ from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.commands.types import Reply
 from app.models import GroupState
 from app.repositories.group_state import load_state
-from app.services import mutation_admission
+from app.services import combat_actions as act
+from app.services import combat_engine, mutation_admission
 
 
 def _apply_combat_command(state: GroupState, parts: list[str]) -> Outcome:
@@ -16,8 +17,8 @@ def _apply_combat_command(state: GroupState, parts: list[str]) -> Outcome:
         return refuse('請由 Keeper 完成目前行動後推進；玩家指令不能略過待處理選擇或檢定。')
 
     if action == "start":
-        combat.begin_combat(state)
-        return done(combat.status_text(state))
+        combat_engine.handle(state, act.Start())
+        return done(combat_engine.handle(state, act.Status()))
 
     if action in ("addnpc", "addally"):
         if len(parts) < 6:
@@ -27,17 +28,18 @@ def _apply_combat_command(state: GroupState, parts: list[str]) -> Outcome:
             dex, hp = int(dex_str), int(hp_str)
         except ValueError:
             return refuse("DEX 和 HP 必須是整數。")
-        added = combat.add_combatant(state, name, dex, hp, is_ally=action == "addally")
+        added = combat_engine.handle(state, act.AddCombatant(name=name, dex=dex, hp=hp, is_ally=action == "addally"))
         if added.reused:
             return refuse(
                 f"「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
                 "這隻怪物的血量與狀態沿用原本那份。"
             )
         notice = combat.defeated_namesake_notice(added)
-        return done(f"{notice}\n{combat.status_text(state)}" if notice else combat.status_text(state))
+        status = combat_engine.handle(state, act.Status())
+        return done(f"{notice}\n{status}" if notice else status)
 
     if action == "next":
-        result = combat.advance_turn(state)
+        result = combat_engine.handle(state, act.Advance())
         if not result["ok"]:
             return Outcome(False, result["error"])
         hp_text = f"HP {result['hp']}/{result['hp_max']}" if result.get("side") != "enemy" else "HP 未公開"
@@ -51,7 +53,7 @@ def _apply_combat_command(state: GroupState, parts: list[str]) -> Outcome:
             delta = int(delta_str)
         except ValueError:
             return refuse("增減量必須是整數。")
-        result = combat.damage_combatant(state, name, delta)
+        result = combat_engine.handle(state, act.DamageCombatant(name, delta))
         if not result["ok"]:
             return Outcome(False, result["error"])
         if result.get("side") == "enemy":
@@ -73,7 +75,7 @@ async def handle_combat_command(conversation_id: str, reply: Reply, parts: list[
         await reply('此操作須由 Keeper 發出明確範圍與理由的命令；玩家不能直接變更戰鬥結算或回滾。')
         return
     if action == "status":
-        await reply(combat.status_text(load_state(conversation_id)))
+        await reply(combat_engine.handle(load_state(conversation_id), act.Status()))
         return
     outcome = await transact(conversation_id, lambda state: _apply_combat_command(state, parts), reason="combat")
     await reply(outcome.text)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 import random
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, TypedDict, cast
 
@@ -803,6 +804,7 @@ class CombatState:
         character_name: str | None = None,
         *,
         state: Any | None = None,
+        finish_turn: Callable[..., None] | None = None,
     ) -> None:
         """Remove a retired investigator from the live initiative state.
 
@@ -816,9 +818,10 @@ class CombatState:
         allowing a possibly retired character to remain actionable.
         The next eligible combatant becomes current when the retired PC was
         the current turn; the state-aware caller also applies the new turn's
-        timing effects and skips away/defeated combatants.  The optional state
-        argument keeps this model-level cleanup usable for legacy callers that
-        only have a CombatState snapshot.
+        timing effects and skips away/defeated combatants.  That caller passes
+        ``finish_turn`` (the combat engine's turn finisher), so this model never
+        imports combat code.  Without both arguments this model-level cleanup
+        stays usable for callers that only have a CombatState snapshot.
         """
         if not self.order:
             return
@@ -879,10 +882,8 @@ class CombatState:
             # have the owning GroupState available.
             assert current is not None
             old_index = current_index
-            if state is not None:
-                from app import combat as combat_engine
-
-                combat_engine.finish_retired_current_turn(
+            if state is not None and finish_turn is not None:
+                finish_turn(
                     state,
                     old_order=old_order,
                     old_index=old_index,
@@ -1224,7 +1225,9 @@ class GroupState:
         self.characters[owner_id] = character
         return character
 
-    def retire_active_character(self, owner_id: str, name: str | None = None) -> Character:
+    def retire_active_character(
+        self, owner_id: str, name: str | None = None, *, finish_turn: Callable[..., None] | None = None,
+    ) -> Character:
         """解除一名玩家目前的角色 binding，但保留角色歷史資料。
 
         ``characters_by_id`` is the durable character history.  The legacy
@@ -1252,7 +1255,9 @@ class GroupState:
         # Keep a pending pregen Luck roll: only the player may roll it, and
         # clearing it here would let a later reactivation bypass that rule.
         self.characters_by_id[character.character_id] = character
-        self.combat.retire_character(character.character_id, character.name, state=self)
+        self.combat.retire_character(
+            character.character_id, character.name, state=self, finish_turn=finish_turn,
+        )
         return character
 
     def active_characters(self) -> list[Character]:

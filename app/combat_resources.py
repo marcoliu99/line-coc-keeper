@@ -15,6 +15,7 @@ from uuid import uuid4
 from app.models import (
     Character,
     CombatAction,
+    Combatant,
     CombatState,
     GroupState,
     InjuryState,
@@ -30,12 +31,24 @@ RESOURCE_FIELDS = ('hp', 'hp_max', 'luck', 'san', 'san_max', 'mp', 'mp_max',
                    'weapons', 'weapon_instances', 'status_tags', 'injury')
 
 
+LEGACY_NEEDS_ADMISSION = 'Legacy active combat needs explicit admission, not baseline reconstruction'
+
+
 class CombatAdmissionError(ValueError):
     """A legacy/malformed/unclosed battle needs explicit controller admission."""
 
 
 class SettlementConflict(ValueError):
     """Persistent resources or the preview changed; reconciliation is required."""
+
+
+def is_managed(state: GroupState) -> bool:
+    """Whether a battle is running under the working-resource pipeline.
+
+    The one definition of "managed". Everything else asks the combat engine for
+    the mode of a battle, once, when an action arrives.
+    """
+    return state.combat.active and state.combat.pipeline_version == PIPELINE_VERSION
 
 
 def _character_id(character: Character) -> str:
@@ -80,7 +93,7 @@ def initialize_working_state(state: GroupState, *, combat_id: str | None = None,
             raise CombatAdmissionError('Another combat is already unclosed')
         return managed
     if combat.active and not new_combat:
-        raise CombatAdmissionError('Legacy active combat needs explicit admission, not baseline reconstruction')
+        raise CombatAdmissionError(LEGACY_NEEDS_ADMISSION)
     if combat.baseline_resources or combat.combat_id:
         raise CombatAdmissionError('Unclosed combat metadata cannot be replaced')
     participants = []
@@ -109,6 +122,32 @@ def admit_character(state: GroupState, character: Character) -> None:
     combat.working_resources[identity] = _snapshot(admitted)
     combat.revision += 1
     combat.settlement = {}
+
+
+def admit_continuing_state(state: GroupState) -> None:
+    """Freeze prior committed obligations and a separate provisional projection."""
+    if CONTINUING_STATE_KEY in state.combat.actions:
+        return
+    current_id = state.combat.order[state.combat.current_index].combatant_id if state.combat.order else None
+    for obligation in state.postcombat_obligations:
+        if obligation.get('status') == 'resolved':
+            continue
+        character = state.characters_by_id.get(obligation.get('character_id', ''))
+        if character is None:
+            raise CombatAdmissionError('Continuing obligation participant no longer exists')
+        admit_character(state, character)
+        if not any(p.character_id == character.character_id for p in state.combat.order):
+            state.combat.order.append(Combatant(name=character.name, display_name=character.name,
+                character_id=character.character_id, combatant_id='pc:' + character.character_id,
+                dex=character.dex, hp=character.hp, hp_max=character.hp_max, is_pc=True, side='pc',
+                defeated=character.hp == 0 or bool(character.injury.get('unconscious'))))
+    state.combat.order.sort(key=lambda p: -p.dex)
+    if current_id is not None:
+        state.combat.current_index = next(i for i,p in enumerate(state.combat.order) if p.combatant_id == current_id)
+    state.combat.actions[CONTINUING_STATE_KEY] = {'action_id': CONTINUING_STATE_KEY, 'completed': True,
+                                               'kind': CONTINUING_STATE_KEY,
+                                               'obligation_baseline': deepcopy(state.postcombat_obligations),
+                                               'working_obligations': deepcopy(state.postcombat_obligations)}
 
 
 def effective_character(state: GroupState, character: Character) -> Character:

@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from app import combat, combat_resources, dice
 from app.models import Character, Combatant, EffectState, GroupState
+from tests import combat_calls as calls
 
 SCENARIO_SOURCE = {'url': 'https://example.test/reviewed-scenario', 'revision': 'v1', 'sha256': 'fixture'}
 
@@ -124,7 +125,7 @@ class CombatCardTests(unittest.TestCase):
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertTrue(plan["ok"])
         self.assertEqual(plan["selected_action"], "special_ability")
@@ -150,10 +151,10 @@ class CombatCardTests(unittest.TestCase):
             }],
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
-        result = combat.resolve_enemy_action(state, plan["plan_id"])
-        second_plan = combat.plan_enemy_turn(state)
+        result = calls.resolve_enemy_action(state, plan["plan_id"])
+        second_plan = calls.plan_enemy_turn(state)
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["phase"], "NEEDS_RULING")
@@ -167,9 +168,9 @@ class CombatCardTests(unittest.TestCase):
             {"id": "bite", "label": "Bite", "skill_value": 50, "damage": "1D4"},
         ])
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Attacker")
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
-        result = combat.resolve_enemy_action(
+        result = calls.resolve_enemy_action(
             state, plan["plan_id"], outcome={"hit": True, "damage": 4, "damage_type": "physical"}
         )
 
@@ -190,7 +191,7 @@ class CombatCardTests(unittest.TestCase):
         ])
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Sniper")
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(plan["selected_action"], "attack")
         self.assertEqual(plan["required_rolls"][0]["range_band"], "near")
@@ -207,7 +208,7 @@ class CombatCardTests(unittest.TestCase):
         ])
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Bruiser")
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(plan["required_rolls"][0]["range_band"], "engaged")
 
@@ -216,9 +217,9 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
         combat.add_npc(state, "Attacker", 60, 14)
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Attacker")
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
-        result = combat.resolve_enemy_action(state, plan["plan_id"])
+        result = calls.resolve_enemy_action(state, plan["plan_id"])
 
         self.assertFalse(result["ok"])
         self.assertFalse(plan.get("resolved", False))
@@ -230,7 +231,7 @@ class CombatCardTests(unittest.TestCase):
         enemy_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Lonely Enemy")
         state.combat.current_index = enemy_index
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertNotEqual(plan["selected_action"], "attack")
 
@@ -241,10 +242,10 @@ class CombatCardTests(unittest.TestCase):
             {"id": "special", "name": "Special", "trigger": {"type": "first_available"}},
         ])
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Ability Enemy")
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
         state.combat.enemy_cards[plan["enemy_card_id"]].abilities.clear()
 
-        result = combat.resolve_enemy_action(state, plan["plan_id"])
+        result = calls.resolve_enemy_action(state, plan["plan_id"])
 
         self.assertFalse(result["ok"])
         self.assertFalse(plan.get("resolved", False))
@@ -266,11 +267,11 @@ class CombatCardTests(unittest.TestCase):
             }],
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
         card = state.combat.enemy_cards[plan["enemy_card_id"]]
 
-        first = combat.resolve_enemy_action(state, plan["plan_id"])
-        second = combat.resolve_enemy_action(state, plan["plan_id"])
+        first = calls.resolve_enemy_action(state, plan["plan_id"])
+        second = calls.resolve_enemy_action(state, plan["plan_id"])
 
         self.assertFalse(first["ok"])
         self.assertEqual(first, second)
@@ -340,7 +341,7 @@ class CombatCardTests(unittest.TestCase):
         # Must not raise -- plan_enemy_turn reads ability.trigger via
         # (ability.trigger or {}).get("type"), which used to crash here
         # before the coercion when trigger was still the raw string.
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
         self.assertIn("ok", plan)
 
     def test_repeated_enemy_planning_reuses_unresolved_plan(self):
@@ -361,10 +362,10 @@ class CombatCardTests(unittest.TestCase):
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
 
-        first = combat.plan_enemy_turn(state)
-        second = combat.plan_enemy_turn(state)
-        result = combat.resolve_enemy_action(state, first["plan_id"])
-        duplicate_result = combat.resolve_enemy_action(state, second["plan_id"])
+        first = calls.plan_enemy_turn(state)
+        second = calls.plan_enemy_turn(state)
+        result = calls.resolve_enemy_action(state, first["plan_id"])
+        duplicate_result = calls.resolve_enemy_action(state, second["plan_id"])
 
         ability = state.combat.enemy_cards[first["enemy_card_id"]].abilities[0]
         self.assertEqual(first["plan_id"], second["plan_id"])
@@ -390,8 +391,8 @@ class CombatCardTests(unittest.TestCase):
             }],
         )
 
-        plan = combat.plan_enemy_turn(state, "Enemy")
-        result = combat.resolve_enemy_action(state, plan["plan_id"])
+        plan = calls.plan_enemy_turn(state, "Enemy")
+        result = calls.resolve_enemy_action(state, plan["plan_id"])
 
         self.assertFalse(result["ok"])
         self.assertIn("not current", result["error"])
@@ -416,7 +417,7 @@ class CombatCardTests(unittest.TestCase):
         target_id = next(c.combatant_id for c in state.combat.order if c.side == "pc")
         state.combat.range_bands[f"{target_id}:{enemy.enemy_card_id}"] = "far"
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(plan["selected_action"], "move")
 
@@ -467,8 +468,8 @@ class CombatCardTests(unittest.TestCase):
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
 
-        plan = combat.plan_enemy_turn(state)
-        result = combat.resolve_enemy_action(state, plan["plan_id"], outcome={"success": True})
+        plan = calls.plan_enemy_turn(state)
+        result = calls.resolve_enemy_action(state, plan["plan_id"], outcome={"success": True})
 
         self.assertFalse(result["ok"])
         self.assertEqual(state.combat.effects, [])
@@ -491,9 +492,9 @@ class CombatCardTests(unittest.TestCase):
             }],
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
-        result = combat.resolve_enemy_action(state, plan["plan_id"])
+        result = calls.resolve_enemy_action(state, plan["plan_id"])
 
         self.assertFalse(result["ok"])
         card = state.combat.enemy_cards[plan["enemy_card_id"]]
@@ -516,8 +517,8 @@ class CombatCardTests(unittest.TestCase):
             tags=["fire"],
         )
 
-        first = combat.plan_enemy_turn(state)
-        second = combat.plan_enemy_turn(state)
+        first = calls.plan_enemy_turn(state)
+        second = calls.plan_enemy_turn(state)
         enemy = next(c for c in state.combat.order if c.name == "Burning Thing")
 
         self.assertTrue(first["ok"])
@@ -534,7 +535,7 @@ class CombatCardTests(unittest.TestCase):
             state, "Burning Thing", "Fatal fire", timing="turn_start", damage="1", remaining_rounds=1
         )
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertTrue(plan["ok"])
         self.assertEqual(plan["selected_action"], "none")
@@ -558,17 +559,17 @@ class CombatCardTests(unittest.TestCase):
             }],
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
-        first = combat.plan_enemy_turn(state)
+        first = calls.plan_enemy_turn(state)
         card = state.combat.enemy_cards[first["enemy_card_id"]]
         card.abilities[0].usage["used_this_round"] = 1
         card.abilities[0].current_cooldown = 1
-        same_round = combat.plan_enemy_turn(state)
+        same_round = calls.plan_enemy_turn(state)
 
         self.assertEqual(same_round["selected_action"], "attack")
 
-        combat.advance_turn(state)
-        combat.advance_turn(state)
-        next_round = combat.plan_enemy_turn(state, "Dream Singer")
+        calls.advance_turn(state)
+        calls.advance_turn(state)
+        next_round = calls.plan_enemy_turn(state, "Dream Singer")
 
         self.assertEqual(next_round["selected_action"], "special_ability")
 
@@ -590,10 +591,10 @@ class CombatCardTests(unittest.TestCase):
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Dream Singer")
 
-        first_round = combat.plan_enemy_turn(state)
-        combat.advance_turn(state)
-        combat.advance_turn(state)
-        next_round = combat.plan_enemy_turn(state)
+        first_round = calls.plan_enemy_turn(state)
+        calls.advance_turn(state)
+        calls.advance_turn(state)
+        next_round = calls.plan_enemy_turn(state)
 
         self.assertEqual(first_round["selected_action"], "special_ability")
         self.assertEqual(first_round["selected_id"], "round_song")
@@ -603,7 +604,7 @@ class CombatCardTests(unittest.TestCase):
     def test_round_start_ability_added_mid_round_waits_for_next_round(self):
         state = self._state_with_pc()
         combat.start_combat(state)
-        combat.advance_turn(state)
+        calls.advance_turn(state)
         combat.add_npc(
             state,
             "Late Watcher",
@@ -637,11 +638,11 @@ class CombatCardTests(unittest.TestCase):
         )
         state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Spiteful Thing")
 
-        before_damage = combat.plan_enemy_turn(state)
-        combat.apply_combat_damage(state, "Spiteful Thing", 1)
-        after_damage = combat.plan_enemy_turn(state)
-        combat.resolve_enemy_action(state, after_damage["plan_id"])
-        after_resolve = combat.plan_enemy_turn(state)
+        before_damage = calls.plan_enemy_turn(state)
+        calls.apply_combat_damage(state, "Spiteful Thing", 1)
+        after_damage = calls.plan_enemy_turn(state)
+        calls.resolve_enemy_action(state, after_damage["plan_id"])
+        after_resolve = calls.plan_enemy_turn(state)
 
         self.assertEqual(before_damage["selected_action"], "attack")
         self.assertEqual(after_damage["selected_action"], "special_ability")
@@ -669,9 +670,9 @@ class CombatCardTests(unittest.TestCase):
         target_id = next(c.combatant_id for c in state.combat.order if c.side == "pc")
 
         state.combat.range_bands[f"{card.id}:{target_id}"] = "far"
-        far_plan = combat.plan_enemy_turn(state)
+        far_plan = calls.plan_enemy_turn(state)
         state.combat.range_bands[f"{card.id}:{target_id}"] = "near"
-        near_plan = combat.plan_enemy_turn(state)
+        near_plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(far_plan["selected_action"], "move")
         self.assertEqual(near_plan["selected_action"], "special_ability")
@@ -682,7 +683,7 @@ class CombatCardTests(unittest.TestCase):
         state.combat.range_bands[f"{enemy_card_id}:pc:char-first"] = "near"
         state.combat.range_bands[f"{enemy_card_id}:pc:char-second"] = "engaged"
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(plan["target_ids"], ["pc:char-second"])
 
@@ -692,7 +693,7 @@ class CombatCardTests(unittest.TestCase):
         state.combat.range_bands[f"{enemy_card_id}:pc:char-second"] = "far"
 
         with patch("app.combat.random.choice", return_value="pc:char-second") as choose:
-            plan = combat.plan_enemy_turn(state)
+            plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(plan["target_ids"], ["pc:char-second"])
         choose.assert_called_once_with(["pc:char-first", "pc:char-second"])
@@ -703,7 +704,7 @@ class CombatCardTests(unittest.TestCase):
         next(c for c in state.combat.order if c.combatant_id == "pc:char-second").defeated = True
         state.combat.range_bands[f"{enemy_card_id}:{target_id}"] = "far"
 
-        plan = combat.plan_enemy_turn(state)
+        plan = calls.plan_enemy_turn(state)
 
         self.assertEqual(plan["target_ids"], [target_id])
         self.assertEqual(plan["selected_action"], "move")
@@ -719,7 +720,7 @@ class CombatCardTests(unittest.TestCase):
             armor=[{"id": "hide", "label": "Thick Hide", "value": 3, "applies_to": "physical"}],
         )
 
-        result = combat.apply_combat_damage(state, "Armored Thing", 8, damage_type="physical")
+        result = calls.apply_combat_damage(state, "Armored Thing", 8, damage_type="physical")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["raw_damage"], 8)
@@ -741,7 +742,7 @@ class CombatCardTests(unittest.TestCase):
             armor=[{"id": "hide", "label": "Thick Hide", "value": 3, "applies_to": "physical"}],
         )
 
-        result = combat.apply_final_combat_damage(state, "Armored Thing", 5, damage_type="physical")
+        result = calls.apply_final_combat_damage(state, "Armored Thing", 5, damage_type="physical")
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["raw_damage"], 5)
@@ -780,7 +781,7 @@ class CombatCardTests(unittest.TestCase):
             "skill_check",
             return_value=dice.SkillCheckResult(50, 42, 0, 0, "regular", True),
         ) as check_mock:
-            result = combat.apply_combat_damage(state, "Mark", 6)
+            result = calls.apply_combat_damage(state, "Mark", 6)
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
@@ -803,7 +804,7 @@ class CombatCardTests(unittest.TestCase):
             "skill_check",
             return_value=dice.SkillCheckResult(50, 99, 0, 0, "fail", False),
         ):
-            result = combat.apply_combat_damage(state, "Mark", 6)
+            result = calls.apply_combat_damage(state, "Mark", 6)
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
@@ -817,7 +818,7 @@ class CombatCardTests(unittest.TestCase):
         combat.start_combat(state)
 
         with patch.object(combat.dice, "skill_check") as check_mock:
-            result = combat.apply_combat_damage(state, "Mark", 6)
+            result = calls.apply_combat_damage(state, "Mark", 6)
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["major_wound_triggered"])
@@ -843,7 +844,7 @@ class CombatCardTests(unittest.TestCase):
         for effect in state.combat.effects:
             effect.save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
                                     'stop_condition': 'Scenario incident completes'}
-        results = combat.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
+        results = calls.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
 
         self.assertTrue(added["ok"])
         self.assertEqual(added["damage"], "1")
@@ -869,7 +870,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertTrue(environment["ok"])
         self.assertTrue(all_damage["ok"])
         state.combat.processed_timings.clear()
-        combat.process_timing(state, "round_start")
+        calls.process_timing(state, "round_start")
         self.assertEqual(sorted(c.hp for c in state.combat.order), [11, 11])
 
     def test_pc_turn_start_effect_triggers_when_advance_turn_reaches_pc(self):
@@ -888,7 +889,7 @@ class CombatCardTests(unittest.TestCase):
             tags=["fire"],
         )
 
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["current_turn"], "Mark")
@@ -914,7 +915,7 @@ class CombatCardTests(unittest.TestCase):
             tags=["fire"],
         )
 
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
 
         self.assertTrue(result["ok"])
         self.assertEqual(state.combat.round_number, 2)
@@ -935,7 +936,7 @@ class CombatCardTests(unittest.TestCase):
             remaining_rounds=2,
         )
 
-        result = combat.advance_turn(state)
+        result = calls.advance_turn(state)
 
         self.assertTrue(result["ok"])
         self.assertEqual(state.combat.round_number, 1)
@@ -957,7 +958,7 @@ class CombatCardTests(unittest.TestCase):
         for effect in state.combat.effects:
             effect.save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
                                     'stop_condition': 'Scenario incident completes'}
-        results = combat.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
+        results = calls.process_timing(state, "turn_start", state.combat.order[0].combatant_id)
 
         self.assertEqual(state.combat.order[0].hp, 12)
         self.assertEqual(len(results), 1)
@@ -981,9 +982,9 @@ class CombatCardTests(unittest.TestCase):
 
         state.combat.effects[0].save_or_check = {'severity_id': 'minor', 'rule_source': SCENARIO_SOURCE,
                                                 'stop_condition': 'Scenario incident completes'}
-        first = combat.process_timing(state, "turn_start", target_id)
+        first = calls.process_timing(state, "turn_start", target_id)
         state.combat.effects[0].damage = "1"
-        second = combat.process_timing(state, "turn_start", target_id)
+        second = calls.process_timing(state, "turn_start", target_id)
 
         self.assertFalse(first[0]["ok"])
         self.assertTrue(second[0]["ok"])
@@ -1009,8 +1010,8 @@ class CombatCardTests(unittest.TestCase):
         )
 
         restored = GroupState.from_dict(state.to_dict())
-        plan = combat.plan_enemy_turn(restored, "Dream Singer")
-        damage = combat.apply_combat_damage(restored, "Dream Singer", 5, damage_type="physical")
+        plan = calls.plan_enemy_turn(restored, "Dream Singer")
+        damage = calls.apply_combat_damage(restored, "Dream Singer", 5, damage_type="physical")
 
         self.assertEqual(plan["selected_action"], "special_ability")
         self.assertEqual(damage["armor_reduction"], 2)
@@ -1037,7 +1038,7 @@ class CombatCardTests(unittest.TestCase):
         state.active_character_id_by_user = {"u1": first.character_id, "u2": second.character_id}
         combat.start_combat(state)
 
-        combat.apply_combat_damage(state, "pc:char-2", 3)
+        calls.apply_combat_damage(state, "pc:char-2", 3)
 
         self.assertEqual(first.hp, 10)
         self.assertEqual(second.hp, 10)
@@ -1182,7 +1183,7 @@ class FindCombatantTests(unittest.TestCase):
         combat.add_npc(state, "深潛者", 50, 10)
         combat.add_npc(state, "深潛者頭目", 60, 30)
 
-        result = combat.apply_combat_damage(state, "深潛者頭目", 5)
+        result = calls.apply_combat_damage(state, "深潛者頭目", 5)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["target"], "深潛者頭目")

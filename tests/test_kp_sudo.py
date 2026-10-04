@@ -18,6 +18,7 @@ from app import legacy_commands as commands
 from app.commands import router
 from app.commands.sudo import parse_sudo_command
 from app.models import Character, Combatant, CombatState, EffectState, GroupState
+from tests import combat_calls as calls
 from tests.state_store import StateStorePatch
 
 
@@ -80,7 +81,7 @@ class SudoStateTests(unittest.TestCase):
         state.pending_luck_decisions["p1"] = {"options": []}
         state.pending_pregen_luck["p1"] = character.character_id
 
-        retired = state.retire_active_character("p1", "小明")
+        retired = calls.retire_active_character(state, "p1", "小明")
 
         self.assertIs(retired, state.characters_by_id[retired.character_id])
         self.assertIsNone(state.get_active_character("p1"))
@@ -125,7 +126,7 @@ class SudoStateTests(unittest.TestCase):
             f"enemy:2:{survivor_id}": "near",
         }
 
-        state.retire_active_character("p1", "小明")
+        calls.retire_active_character(state, "p1", "小明")
 
         self.assertEqual([item.character_id for item in state.combat.order], [second.character_id])
         self.assertEqual(state.combat.current_index, 0)
@@ -146,7 +147,7 @@ class SudoStateTests(unittest.TestCase):
             current_index=0,
         )
 
-        state.retire_active_character("p1", "小明")
+        calls.retire_active_character(state, "p1", "小明")
 
         self.assertEqual(state.combat.order, [])
         self.assertFalse(state.combat.active)
@@ -181,7 +182,7 @@ class SudoStateTests(unittest.TestCase):
             effects=[EffectState(id="next-turn", label="毒", target_id=next_id, timing="turn_start", damage="3")],
         )
 
-        state.retire_active_character("p1", first.name)
+        calls.retire_active_character(state, "p1", first.name)
 
         self.assertEqual(state.combat.order[state.combat.current_index].combatant_id, next_id)
         self.assertEqual(state.combat.order[state.combat.current_index].hp, 7)
@@ -212,7 +213,7 @@ class SudoStateTests(unittest.TestCase):
             current_index=1,
         )
 
-        state.retire_active_character("p1", first.name)
+        calls.retire_active_character(state, "p1", first.name)
 
         self.assertEqual(state.combat.round_number, 2)
         self.assertEqual(state.combat.current_index, 0)
@@ -245,7 +246,7 @@ class SudoStateTests(unittest.TestCase):
             effects=[EffectState(id="round-end", label="毒", timing="round_end", remaining_rounds=2)],
         )
 
-        state.retire_active_character("p2", current.name)
+        calls.retire_active_character(state, "p2", current.name)
 
         self.assertEqual(state.combat.round_number, 3)
         self.assertEqual(state.combat.current_index, 0)
@@ -452,7 +453,7 @@ class SudoRouterTests(unittest.IsolatedAsyncioTestCase):
         current = state.get_active_character("p1")
         historical = Character(name="小華", owner_id="p1")
         state.characters_by_id[historical.character_id] = historical
-        state.retire_active_character("p1", current.name)
+        calls.retire_active_character(state, "p1", current.name)
 
         with StateStorePatch(router, commands, router.character_handler) as store:
             store.put(state)

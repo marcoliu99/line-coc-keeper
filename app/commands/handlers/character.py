@@ -15,7 +15,7 @@ from app.legacy_commands import (
 )
 from app.models import OCCUPATIONS, GroupState, generate_investigator
 from app.repositories.group_state import load_state
-from app.services import mutation_admission
+from app.services import combat_engine, mutation_admission
 
 _logger = logging.getLogger(__name__)
 
@@ -56,7 +56,9 @@ def _retire(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
         return refuse(kp_block)
     requested_name = " ".join(parts[2:]).strip() or None
     try:
-        character = state.retire_active_character(user_id, requested_name)
+        character = state.retire_active_character(
+            user_id, requested_name, finish_turn=combat_engine.finish_retired_turn,
+        )
     except KeyError:
         return refuse("你目前沒有正在使用的角色。")
     except ValueError as exc:
