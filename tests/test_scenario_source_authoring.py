@@ -534,14 +534,16 @@ def test_raster_cards_blank_pages_and_reference_backs_all_publish(prepared):
 @_sync
 async def test_kp_can_select_corrected_english_explicitly(prepared, monkeypatch):
     from app.commands.handlers import system
+    from app.repositories.group_state import load_state, save_state
+    group_id = 'scenario-source-selection'
     sid, _, path, payload = prepared(('Armor 1D40.',))
     finish(payload, ['Armor +1D4.'])
     target = run(sid, path, payload)['published_id']
-    state = GroupState(group_id='g', scenario_text='Original active game', scenario_library_id=sid)
-    before = deepcopy(state)
-    monkeypatch.setattr(system, 'load_state', lambda _: state)
-    monkeypatch.setattr(system.state_transaction, 'commit_snapshot', lambda *args, **kwargs: None)
-    monkeypatch.setattr(system.scenario_activation, 'refresh_after_commit', lambda *args: True)
+    state = GroupState(group_id=group_id, scenario_text='Original active game', scenario_library_id=sid)
+    save_state(state)
+    before = deepcopy(load_state(group_id))
+    from app import scenario_activation
+    monkeypatch.setattr(scenario_activation, 'refresh_after_commit', lambda *args, **kwargs: True)
     monkeypatch.setattr(templates, 'schedule_index_prewarm', lambda *args: None)
     monkeypatch.setattr(templates, 'preferred_variant', lambda *args: 'stale-zh-preference')
     selected_variants = []
@@ -551,14 +553,16 @@ async def test_kp_can_select_corrected_english_explicitly(prepared, monkeypatch)
     assert options[0][1] == f'{target} original' and sid in options[0][0]
     command = help_actions.build_command(help_actions.BY_KEY['source_use'], options[0][1])
     reply = AsyncMock()
-    await system.handle_system_command('g', '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split())
-    assert state == before  # Ordinary player is denied even after a valid selection.
+    await system.handle_system_command(group_id, '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split())
+    assert load_state(group_id) == before  # Ordinary player is denied even after a valid selection.
     # No Discord role lets someone select without being the KP Assistant any more.
     state.kp_assistant_user_id = '42'
-    await system.handle_system_command('g', '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split())
+    save_state(state)
+    await system.handle_system_command(group_id, '42', reply, AsyncMock(), AsyncMock(), AsyncMock(), command.split())
+    state = load_state(group_id)
     assert state.scenario_library_id == target and state.scenario_variant_id == 'original'
     assert state.scenario_text.endswith('Armor +1D4.') and state.kp_assistant_user_id == '42'
-    assert selected_variants == [('g', target, 'original')]
+    assert selected_variants == [(group_id, target, 'original')]
 
 
 def test_export_prompt_prefers_full_delivery_and_omits_backlog_placeholders(prepared):

@@ -355,7 +355,8 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
         original_guess_title = scenario_ingestion.pdf_loader.guess_title
         original_extract_preview = scenario_ingestion.pdf_loader.extract_preview
         original_extract_index = scenario_ingestion.scenario_index.extract_scenario_index
-        original_refresh_images = scenario_ingestion.scenario_activation.refresh_after_commit
+        from app import scenario_activation
+        original_refresh_images = scenario_activation.refresh_after_commit
 
         with StateStorePatch(scenario_ingestion) as store:
             state = GroupState(group_id="g")
@@ -365,7 +366,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             scenario_ingestion.pdf_loader.guess_title = lambda text, file_name="": "New Scenario"
             scenario_ingestion.pdf_loader.extract_preview = lambda pdf_bytes: "preview"
             scenario_ingestion.scenario_index.extract_scenario_index = lambda text: {"npcs": [], "locations": []}
-            scenario_ingestion.scenario_activation.refresh_after_commit = lambda *args: True
+            scenario_activation.refresh_after_commit = lambda *args, **kwargs: True
             try:
                 reply = ReplyCollector()
                 push = ReplyCollector()
@@ -394,7 +395,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
                 scenario_ingestion.pdf_loader.guess_title = original_guess_title
                 scenario_ingestion.pdf_loader.extract_preview = original_extract_preview
                 scenario_ingestion.scenario_index.extract_scenario_index = original_extract_index
-                scenario_ingestion.scenario_activation.refresh_after_commit = original_refresh_images
+                scenario_activation.refresh_after_commit = original_refresh_images
                 scenario_ingestion.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
                 temp_library.cleanup()
 

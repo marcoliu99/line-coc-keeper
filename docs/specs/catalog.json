@@ -1757,6 +1757,25 @@
       ],
       "path": "docs/specs/enhancement/paddle_three_column_reading_order.md",
       "zh_path": "docs/specs/enhancement/paddle_three_column_reading_order_zh.md"
+    },
+    {
+      "title": "Deep scenario lifecycle module",
+      "zh": "深化劇本生命週期模組",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/scenario_lifecycle.py",
+        "app/services/scenario_ingestion.py",
+        "app/commands/handlers/system.py",
+        "app/commands/handlers/uploads.py",
+        "app/scenario_activation.py",
+        "tests/test_scenario_lifecycle_characterization.py",
+        "tests/test_scenario_activation.py",
+        "tests/test_help_reparse_recovery.py",
+        "docs/architecture/scenario-lifecycle-refactor.md"
+      ],
+      "path": "docs/specs/refactor/scenario_lifecycle_module_design_spec.md",
+      "zh_path": "docs/specs/refactor/scenario_lifecycle_module_design_spec_zh.md"
     }
   ]
 }

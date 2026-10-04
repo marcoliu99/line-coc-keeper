@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -423,12 +424,21 @@ def clean_scenario(scenario_id: str) -> None:
 
 
 def stage_upload(pdf_bytes: bytes) -> str:
-    """Persist a candidate PDF while the KP decides whether to reparse it."""
+    """Persist one submission under an opaque, unique 64-character key.
+
+    Older content-hash keys remain readable. A new key per submission lets an
+    old rejection or cleanup delete only its own bytes, even for identical PDFs.
+    """
     directory = SCENARIO_LIBRARY_DIR / ".staging"
     directory.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha256(pdf_bytes).hexdigest()
-    (directory / f"{key}.pdf").write_bytes(pdf_bytes)
-    return key
+    while True:
+        key = secrets.token_hex(32)
+        try:
+            with (directory / f"{key}.pdf").open("xb") as staged:
+                staged.write(pdf_bytes)
+            return key
+        except FileExistsError:
+            continue
 
 
 def read_staged_upload(key: str) -> bytes:

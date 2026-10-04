@@ -9,17 +9,13 @@ KP/Host-only.
 """
 from __future__ import annotations
 
-import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app import locks, scenario_library, scenario_templates
 from app.commands import permissions
 from app.commands.types import PdfChoice, Reply
-from app.repositories import state_transaction
-from app.repositories.group_state import load_state
 from app.services import mutation_admission
 from app.services.map_service import handle_map_upload
 from app.services.scenario_ingestion import (
@@ -28,6 +24,7 @@ from app.services.scenario_ingestion import (
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
     handle_scenario_markdown_upload,
+    stage_pdf_parts,
 )
 
 _PART_NAME = re.compile(r"(?:^|[_ .-])part(?:[_ .-]?\d+)(?:$|[_ .-])", re.IGNORECASE)
@@ -125,21 +122,12 @@ async def _stage_pdf_parts(conversation_id: str, pdfs: list[Upload], reply: Repl
     if mutation_admission.is_held(conversation_id):
         await reply(mutation_admission.NOTICE)
         return
-    staged = []
-    for upload in pdfs:
-        key = await asyncio.to_thread(scenario_library.stage_upload, await upload.read())
-        staged.append({"key": key, "file_name": upload.filename})
-    def stage(ctx: state_transaction.TxContext) -> None:
-        ctx.state.staged_pdf_parts.extend(staged)
-
-    async with locks.get_conversation_lock(conversation_id):
-        try:
-            await state_transaction.amutate(conversation_id, stage, reason="pdf_stage")
-        except mutation_admission.MutationHeld:
-            # A content-addressed key may already be referenced by another
-            # conversation or a pending similarity decision. Keep the bytes.
-            await reply(mutation_admission.NOTICE)
-            return
+    staged = await stage_pdf_parts(
+        conversation_id, [(upload.filename, await upload.read()) for upload in pdfs],
+    )
+    if staged is None:
+        await reply(mutation_admission.NOTICE)
+        return
     await reply(
         "已暫存 PDF part，尚未合併或解析：\n"
         + "\n".join(f"・{item['key'][:12]} {item['file_name']}" for item in staged)
@@ -159,14 +147,11 @@ async def resolve_pdf_upload_choice(
     the text command remains available as a manual fallback. The actor is
     checked again while holding the conversation lock so a button cannot
     mutate the scenario from an unauthorized account."""
-    async with locks.get_conversation_lock(conversation_id):
-        state = load_state(conversation_id)
-        if not permissions.may_manage_scenario_lifecycle(state, user_id):
-            await push(permissions.kp_only("處理劇本檔案"))
-            return
-        text = apply_pdf_upload_choice(conversation_id, choice)
-        state = load_state(conversation_id)
-    scenario_templates.schedule_index_prewarm(state)
+    text = await apply_pdf_upload_choice(
+        conversation_id, choice,
+        authorized=lambda state: permissions.may_manage_scenario_lifecycle(state, user_id),
+        unauthorized_message=permissions.kp_only("處理劇本檔案"),
+    )
     await push(text)
 
 

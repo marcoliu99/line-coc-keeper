@@ -47,6 +47,9 @@ class Recorder:
 
     def wrap(self, name: str, result: Any) -> Any:
         def call(*args: Any, **kwargs: Any) -> Any:
+            if name == "refresh_after_commit":
+                # Internal publication guard is not part of the upload trace.
+                kwargs.pop("expected_revision", None)
             self.calls.append([name, _stable(repr(args)), _stable(repr(sorted(kwargs.items())))])
             return result(*args, **kwargs) if callable(result) else result
         return call
