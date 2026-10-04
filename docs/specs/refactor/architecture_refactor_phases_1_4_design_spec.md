@@ -4,7 +4,7 @@
 
 ## Status and goal
 
-Category: `refactor`. Status: **partial** — phase 1 is implemented; phases 2–4 land as stacked pull requests. Based on `main_v2` at `2affd06` (2026-10-04). The Traditional Chinese edition is the full requirements document this summary is drawn from; where the two differ, treat the Chinese edition as the source of intent and this page as the index to what is built.
+Category: `refactor`. Status: **partial** — phases 1–2 are implemented; phases 3–4 land as stacked pull requests. Based on `main_v2` at `2affd06` (2026-10-04). The Traditional Chinese edition is the full requirements document this summary is drawn from; where the two differ, treat the Chinese edition as the source of intent and this page as the index to what is built.
 
 Principle: **the AI understands intent, chooses legal operations and narrates; the engine owns dice, resource changes, the check lifecycle and consistency.** No extra model call, narrator service or reasoning round is introduced.
 
@@ -13,7 +13,7 @@ Principle: **the AI understands intent, chooses legal operations and narrates; t
 | Phase | Goal | Spec / report | Status |
 | --- | --- | --- | --- |
 | 1 | One transaction boundary for every game-state write (lock, reload, timeline, action ledger, revision, atomic commit) | [state transaction](state_transaction_design_spec.md), [report](../../refactor/phase1-result.md) | implemented |
-| 2 | One check engine and lifecycle (command, button and tool share rules; Luck and pending; consequences) | report in `docs/refactor/phase2-result.md` | planned |
+| 2 | One check engine and lifecycle (command, button and tool share rules; Luck and pending; consequences) | [check engine](check_engine_design_spec.md), [report](../../refactor/phase2-result.md) | implemented |
 | 3 | One combat engine; remove the `combat` ↔ `combat_flow` cycle; keep legacy and managed modes | report in `docs/refactor/phase3-result.md` | planned |
 | 4 | Retire `legacy_commands`; move the remaining duties to their owners | report in `docs/refactor/phase4-result.md` | planned |
 

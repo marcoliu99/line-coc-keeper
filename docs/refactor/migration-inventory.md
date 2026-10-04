@@ -21,7 +21,7 @@
 | Keeper 工具（`keeper_tools/*` → `keeper.mutate_tool_state`） | 鎖內 reload | `_mutate_and_save_state` → `save_state` | state `RLock` | 隨 state（`resolved_check_events`、combat receipts） | 私訊／圖片排入佇列 | `state_transaction.run_snapshot` | `test_keeper_tool_registry`、`test_state_transaction_adapters` | **PR1 完成** |
 | 回合提交 `keeper._commit_turn_result`（supervisor、assistant） | 鎖內 reload | `save_state` | state `RLock` | 隨 state（`log`） | 無（Discord 傳送在提交之後） | `commit_for_snapshot` + action id `turn:<id>:<digest>` | `test_state_transaction_adapters::TurnCommitTests` | **PR1 完成** |
 | KP OOC 提交 `_commit_kp_ooc_turn_result` | 鎖內 reload | `save_state` | state `RLock` | 隨 state | 無 | `commit_for_snapshot` | `test_kp_assistant_v2` | **PR1 完成** |
-| 已結算檢定事件 `keeper._persist_resolved_check_event`、`legacy_commands._persist_resolved_check_event`（兩份重複） | 鎖內 reload | `save_state` | state `RLock` | `resolved_check_events` | 無 | `mutate` + action id `check-event:<event_id>`（兩份仍在，PR2 合併） | `test_resolved_check_events` | **PR1 完成**（重複碼待 PR2） |
+| 已結算檢定事件 `keeper._persist_resolved_check_event`、`legacy_commands._persist_resolved_check_event`（兩份重複） | 鎖內 reload | `save_state` | state `RLock` | `resolved_check_events` | 無 | `mutate` + action id `check-event:<event_id>`（PR2 合併為 `checks.events`） | `test_resolved_check_events` | **PR1 完成；PR2 合併重複碼** |
 | 檢定後果來源 `_persist_check_consequence_origin` | 鎖內 reload | `save_state` | state `RLock` | `check_consequence_origins` | 無 | `mutate` | `test_resolved_check_consequences` | **PR1 完成** |
 | 記憶維護 `keeper._persist_memory_maintenance_state` | 自開 `BEGIN IMMEDIATE` | `_save_state_unlocked` + `memory_chunks` | state `RLock` | `memory_chunks` 同交易 | 無 | `mutate`（`ctx.conn`） | `test_state_loss_amnesia`、`test_state_persistence` | **PR1 完成** |
 | `_ensure_turn_timeline`、工具恢復標記 | reload／快照 | `save_state` | state `RLock` | `tool_recovery_markers` | 無 | `run_snapshot` | `test_state_loss_amnesia` | **PR1 完成** |
@@ -34,20 +34,24 @@
 | 上傳：`handle_pdf_upload`、`resolve_pdf_upload_choice`、`handle_map_upload`、`handle_role_sheet_upload`、`handlers/uploads._stage_pdf_parts` | 鎖內 reload | `save_state(mutate_tx=…)` | 對話鎖 | 劇本庫／手動角色卡同交易 | 圖片快取（提交後） | `commit_snapshot`；PDF staging 為 `amutate` delta | `test_upload_routing`、`test_manual_pregen_persistence` | **PR1 完成**（PR4 搬移） |
 | 待處理按鈕認領／釋放 `services/pending_buttons` | 無鎖 `load_state` | `save_state` | 對話鎖 | `_buttons_posted` 標記 | Discord 傳送（鎖外） | `amutate` delta | `test_pending_button_latency`、`test_pending_control_completion` | **PR1 完成** |
 | 更正服務 `narrative_corrections.save`、`correction_summary` | 鎖內 reload | `save_state(mutate_tx=archive)` | 對話鎖 | `narrative_correction_archive` 同交易 | 記憶標記（交易外、可失敗） | `commit_snapshot` | `test_narrative_correction_*` | **PR1 完成** |
-| 舊檢定／Luck 解析（`_resolve_check_deterministically` 等 12 處） | 鎖內 reload | `save_state` | state `RLock` | `resolved_check_events` 另行保存 | 無 | `commit_snapshot`；PR2 改為 check service | `test_combat_wiring`、`test_scenario_action_check_handoff` | PR1 已改道；**PR2 重構** |
+| 舊檢定／Luck 解析（`_resolve_check_deterministically` 等 12 處） | 鎖內 reload | `save_state` | state `RLock` | `resolved_check_events` 另行保存 | 無 | `state_transaction.mutate` 內執行 `checks.service` | `test_check_engine`、`test_combat_wiring`、`test_scenario_action_check_handoff` | PR1 改道；**PR2 完成** |
 | 營運腳本 | — | `db.set_json*`、`save_state` | — | — | — | allowlist（附理由）：`migrate_json_to_sqlite`、`migrate_skill_names`、`benchmark_*`、`codex_*` 煙霧腳本 | `test_architecture_state_writes` | 明列例外 |
 
 低階符號 `save_state` 仍留在 `repositories/group_state.py` 作為 storage primitive（測試 fixture 使用）；`_save_state_unlocked` 改名為 `write_state_tx`。AST gate：`tests/test_architecture_state_writes.py`。
 
-## 2. 檢定（PR2 的盤點，PR1 時為基線）
+## 2. 檢定（PR2 完成；「遷移前」是 2026-10-04 在 `main_v2` `2affd06` 的實測，「PR2 之後」是目前狀態）
 
-| 路徑 | 位置 | 說明 |
+| 路徑 | 遷移前 | PR2 之後 |
 | --- | --- | --- |
-| Keeper 工具建立／自動擲骰 | `keeper_tools/checks.py`（607 行）：`skill_check`、`offer_check_choice`、`offer_npc_attack_defense_choice`、`npc_skill_check`、`sanity_check` | 擲骰、pending 註冊、autoroll 快取 `deterministic_check_results` |
-| 玩家擲骰（指令／按鈕） | `legacy_commands._resolve_check_deterministically`（約 390 行）、`_resolve_luck_decision_deterministically`、`_resolve_managed_check`、`_resolve_managed_luck`、`handlers/buttons.py` | 與工具路徑各有一份 tier／Luck／SAN／INT 瘋狂邏輯 |
-| 生命週期 | `check_lifecycle.py`（register/blocker）、`check_identity.py`、`luck.py`、`resolved_check_consequences.py`、`services/opposed_checks.py` | PR2 吸收，不平行維護 |
-| 重傷 CON | `keeper.apply_character_delta_in_state`、`combat.major_wound_blocked` | 與 combat 共用 |
-| 結算後敘事 | `legacy_commands._finalize_check_result`、`supervisor.run_turn(turn_kind="resolved_check_followup")` | 事件保存已在 PR1 走 action id |
+| Keeper 工具建立／自動擲骰 | `keeper_tools/checks.py`（607 行）自帶 tier／Luck／SAN／INT 邏輯與事件種子 | `keeper_tools/checks.py` 只剩登記 pending、快取與 `ToolSpec` 轉接；自動擲骰呼叫 `checks.service.autoroll_skill`／`autoroll_sanity` |
+| 玩家擲骰（指令／按鈕） | `legacy_commands._resolve_check_deterministically`（約 390 行）、`_resolve_luck_decision_deterministically`、`handlers/buttons.py` | `checks.service.resolve_player_check`／`resolve_luck_decision`；`commands/handlers/checks.py` 為唯一轉接，按鈕沿用同一組 `handle_check_command`／`handle_luck_decision` |
+| 戰鬥管轄的檢定 | `legacy_commands._resolve_managed_check`／`_resolve_managed_luck` | `services/managed_checks.ManagedCombatChecks`（`ManagedChecks` port 的實作）；PR3 併入戰鬥引擎 |
+| 生命週期 | `check_lifecycle.py`、`check_identity.py`、`luck.py`、`resolved_check_consequences.py`、`services/opposed_checks.py` | 保留並由引擎呼叫，不平行維護第二套；Luck 政策集中在 `checks/luck.py` |
+| 重傷 CON | `keeper.apply_character_delta_in_state`、`combat.major_wound_blocked` | 不變（PR3 與戰鬥一起處理）；失敗標記改由 `checks.rules.apply_major_wound_failure` 一處套用 |
+| 結算後敘事 | `legacy_commands._finalize_check_result` | `commands/handlers/checks.finalize_check_result`（行為相同，狀態改由 `load_state` 取得最新快照） |
+| 已結算事件保存 | `keeper._persist_resolved_check_event` 與 `legacy_commands._persist_resolved_check_event` 各一份 | `checks.events.persist_resolved_event`（`check-event:<event_id>`），兩份皆刪除 |
+| 後處理（delivery／maintenance） | `legacy_commands._deliver_side_effects`、`_spawn_post_turn_maintenance`、`_run_post_turn_maintenance_*` | `services/post_turn.py`（PR4 前先移出，供 check 與 router 共用） |
+| 型別別名（`Reply`、`SendDM`…） | `legacy_commands` | `commands/types.py` |
 
 ## 3. 戰鬥（PR3 的盤點）
 
@@ -66,10 +70,10 @@
 
 | 符號群 | 預定 owner |
 | --- | --- |
-| `Reply`／`SendDM`／`SendImage`／`FormatMention`／`PdfChoice` 型別 | `app/commands/types.py` |
+| `Reply`／`SendDM`／`SendImage`／`FormatMention`／`PdfChoice` 型別 | **PR2 已完成**：`app/commands/types.py` |
 | `handle_pdf_upload`、`resolve_pdf_upload_choice`、`_apply_new_scenario`、`_apply_scenario_correction`、`_install_library_context`、`_pdf_upload_confirmation_text`、`_merge_extracted_pregens`、`handle_scenario_compare_upload`、`handle_role_sheet_upload` | ingestion application service |
 | `handle_map_upload`、`_resolve_map_action_*`、`_find_room_via_rag`、`_find_scene_map_by_location` | map service |
 | `_claim_pregen`、`handle_pregen_luck_roll`、`_blocked_by_*`、`_heal_character`、`_build_readiness_roster`、`_pregen_full_sheet_text`、`_set_character_away_state` | character service |
-| `_check_*`、`_resolve_*`、`_finalize_check_result`、`handle_check_command`、`handle_luck_decision` | PR2 的 check service |
-| `_deliver_side_effects`、`_spawn_post_turn_maintenance`、`_run_post_turn_maintenance_*` | turn delivery |
+| `_check_*`、`_resolve_*`、`_finalize_check_result`、`handle_check_command`、`handle_luck_decision` | **PR2 已完成**：`app/checks` 與 `commands/handlers/checks.py` |
+| `_deliver_side_effects`、`_spawn_post_turn_maintenance`、`_run_post_turn_maintenance_*` | **PR2 已完成**：`services/post_turn.py` |
 | `handle_roll_command`、`handle_unsupported_message` | handlers |

@@ -1611,7 +1611,10 @@
         "app/repositories/state_transaction.py",
         "tests/test_state_transaction.py",
         "tests/test_architecture_state_writes.py",
-        "docs/refactor/phase1-result.md"
+        "app/checks/service.py",
+        "tests/test_check_engine.py",
+        "docs/refactor/phase1-result.md",
+        "docs/refactor/phase2-result.md"
       ],
       "path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec.md",
       "zh_path": "docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md",
@@ -1634,6 +1637,26 @@
       ],
       "path": "docs/specs/refactor/state_transaction_design_spec.md",
       "zh_path": "docs/specs/refactor/state_transaction_design_spec_zh.md",
+      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+    },
+    {
+      "title": "Check engine",
+      "zh": "檢定引擎",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/checks/service.py",
+        "app/checks/rules.py",
+        "app/checks/luck.py",
+        "app/checks/events.py",
+        "app/commands/handlers/checks.py",
+        "app/keeper_tools/checks.py",
+        "app/services/managed_checks.py",
+        "tests/test_check_engine.py",
+        "tests/test_architecture_checks.py"
+      ],
+      "path": "docs/specs/refactor/check_engine_design_spec.md",
+      "zh_path": "docs/specs/refactor/check_engine_design_spec_zh.md",
       "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
     }
   ]

@@ -78,7 +78,7 @@ Persistence:
 - **`app/discord_bot.py`** maintains the Discord gateway connection and forwards events to the command router.
 - **`app/commands/router.py`** is the platform-independent routing entry point. It dispatches commands to domain handlers and ordinary messages to the Supervisor.
 - **`app/commands/handlers/`** separates character, combat, system/scenario, and map commands into `character.py`, `combat.py`, `system.py`, and `map_handler.py`. Handlers reuse existing command logic where appropriate.
-- **`app/legacy_commands.py`**, formerly the single `app/commands.py` module, contains shared implementations such as PDF uploads, player checks and Luck decisions, pregen merging, and away/back handling. Resolved-check narration now enters the unified Supervisor flow rather than a separate `keeper.run_turn` path.
+- **`app/legacy_commands.py`**, formerly the single `app/commands.py` module, contains shared implementations such as PDF uploads, pregen merging, and away/back handling (check and Luck resolution moved to `app/checks`). Resolved-check narration now enters the unified Supervisor flow rather than a separate `keeper.run_turn` path.
 
 ### Agentic Keeper and the unified turn flow
 
@@ -117,6 +117,7 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 - **`app/markitdown_shim.py`** connects MarkItDown's OpenAI-style vision interface to the project's configured provider, including an Anthropic adapter.
 - **`app/db.py`** stores session state, character indexes, and scenario/memory retrieval caches in SQLite.
 - **`app/repositories/group_state.py`**, formerly `app/state.py`, handles session persistence and character-index mirrors. Page images remain separate PNG files.
+- **`app/checks/`** is the check engine: `service.py` applies the check rules to the state a transaction hands it (a player's `/coc check` or button, a Luck decision, the Keeper's autoroll), `rules.py` does the dice and arithmetic behind a `DicePort`, `luck.py` states who may spend Luck, and `events.py` records the settled check once. Commands (`app/commands/handlers/checks.py`) and Keeper tools (`app/keeper_tools/checks.py`) are thin adapters over it; `tests/test_architecture_checks.py` keeps the engine free of transport, Keeper, provider and combat imports ([spec](docs/specs/refactor/check_engine_design_spec.md)).
 - **`app/repositories/state_transaction.py`** is the only door for game-state writes: it locks the conversation, reads the latest row inside a `BEGIN IMMEDIATE` transaction, validates timeline, action ledger and revision, runs the mutation and commits state, events and the action result together. `tests/test_architecture_state_writes.py` fails the build when anything else writes a game-state row ([spec](docs/specs/refactor/state_transaction_design_spec.md)).
 
 Only the Discord bot entry point needs to run. Discord receives image attachments directly; no webhook, ngrok tunnel, or public image URL is required.
