@@ -20,12 +20,15 @@
 
 5. 圖片／地圖資產帶可見性與劇透中繼資料；搜尋／展示遵守角色與隱私政策，不能只因圖像像地圖或文字提到 map 就公開。
 
-6. 來源／章節變更使不相容中文版失效；啟用回覆顯示後備提示，手動預製資產依來源識別協調，不跨無關劇本默默重用。\n\n7. `scenario*.md` 的附件路由優先於一般 `.md` 比對檔。原始 bytes 保存為 `source.md`；只有來源本身沒有頁碼標記時，runtime 文字才補一個第 1 頁標記。Markdown 匯入不製造假的 PDF、頁圖、OCR 證據或樓層圖。若群組已在跑劇本，Markdown 與 PDF 共用「全新劇本／修正目前劇本」確認流程；僅適用 PDF 的來源審查／匯出工具必須明確拒絕 Markdown。
+6. 來源／章節變更使不相容中文版失效；啟用回覆顯示後備提示，手動預製資產依來源識別協調，不跨無關劇本默默重用。
+
+7. `scenario*.md` 的附件路由優先於一般 `.md` 比對檔。原始 bytes 保存為 `source.md`；只有來源本身沒有頁碼標記時，runtime 文字才補一個第 1 頁標記。Markdown 匯入不製造假的 PDF、頁圖、OCR 證據或樓層圖。若群組已在跑劇本，Markdown 與 PDF 共用「全新劇本／修正目前劇本」確認流程；僅適用 PDF 的來源審查／匯出工具必須明確拒絕 Markdown。
 
 ## 流程與介面
 
 ```text
-scenario*.md -> UTF-8 文字匯入（不跑 OCR） --\\\n\n                                           > 劇本庫清單／資產 -> 選擇章節視窗 -> 安裝群組快照 -> 遊戲\nPDF／暫存 PDF -> PDF/OCR 解析 ---------------/
+scenario*.md -> UTF-8 文字匯入（不跑 OCR） -> 劇本庫清單／資產 -> 選擇章節視窗 -> 安裝群組快照 -> 遊戲
+PDF／暫存 PDF -> PDF/OCR 解析 -> 劇本庫清單／資產 -> 選擇章節視窗 -> 安裝群組快照 -> 遊戲
 ```
 
 ## 實作與驗證
@@ -34,10 +37,14 @@ scenario*.md -> UTF-8 文字匯入（不跑 OCR） --\\\n\n                     
 
 - [app/scenario_library.py](../../../app/scenario_library.py)
 - [app/pdf_loader.py](../../../app/pdf_loader.py)
-- [app/legacy_commands.py](../../../app/legacy_commands.py)\n- [app/commands/handlers/uploads.py](../../../app/commands/handlers/uploads.py)\n- [app/trusted_scenario_source.py](../../../app/trusted_scenario_source.py)
+- [app/legacy_commands.py](../../../app/legacy_commands.py)
+- [app/commands/handlers/uploads.py](../../../app/commands/handlers/uploads.py)
+- [app/trusted_scenario_source.py](../../../app/trusted_scenario_source.py)
 - [app/commands/handlers/system.py](../../../app/commands/handlers/system.py)
 - [app/scene_map.py](../../../app/scene_map.py)
-- [tests/test_scenario_library.py](../../../tests/test_scenario_library.py)\n- [tests/test_upload_routing.py](../../../tests/test_upload_routing.py)\n- [tests/test_trusted_scenario_source.py](../../../tests/test_trusted_scenario_source.py)
+- [tests/test_scenario_library.py](../../../tests/test_scenario_library.py)
+- [tests/test_upload_routing.py](../../../tests/test_upload_routing.py)
+- [tests/test_trusted_scenario_source.py](../../../tests/test_trusted_scenario_source.py)
 - [tests/test_spoiler_policy.py](../../../tests/test_spoiler_policy.py)
 
 ## 歷史依據
