@@ -4,18 +4,14 @@ import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, Literal
-from uuid import uuid4
 
 from app import (
     character_matcher,
-    check_lifecycle,
     checkpoints,
     keeper,
-    locks,
     observability,
     scenario_authoring,
     scenario_index,
-    scenario_intro,
     scenario_library,
     scenario_rag,  # noqa: F401 - retained for existing command integration mocks
     scenario_source_authoring,
@@ -23,7 +19,6 @@ from app import (
     scene_digest,
     spoiler_policy,
 )
-from app.agents import supervisor
 from app.commands import permissions
 from app.commands.types import (
     FormatMention,
@@ -43,13 +38,13 @@ from app.repositories.group_state import (
 )
 from app.services import (
     correction_adjudication,
-    history_authority,
+    game_opening,
     mutation_admission,
     scenario_lifecycle,
 )
 from app.services.character_service import (
+    OpeningReadiness,
     build_readiness_roster,
-    heal_character,
     set_away_state,
 )
 from app.services.post_turn import run_post_turn_maintenance_after_output
@@ -171,7 +166,7 @@ async def handle_system_command(
     server: permissions.ServerFacts = permissions.NO_SERVER_FACTS,
 ) -> None:
     sub = parts[1].casefold() if len(parts) > 1 else ""
-    if sub in {'newgame', 'end', 'rollback', 'start', 'era'} or (
+    if sub in {'newgame', 'end', 'rollback', 'era'} or (
         sub == 'scenario' and len(parts) > 2 and parts[2].casefold() in {'use', 'merge', 'reparse', 'import'}
     ):
         guard_state = load_state(conversation_id)
@@ -762,126 +757,36 @@ async def handle_system_command(
         return
 
     if sub == "start":
-        state = load_state(conversation_id)
-        if not state.active or not state.scenario_text:
-            await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
-            return
-        if not state.characters:
-            await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
-            return
-        if state.pending_pregen_luck:
-            names = "、".join(
-                state.characters_by_id[character_id].name
-                for character_id in state.pending_pregen_luck.values()
-                if character_id in state.characters_by_id
-            ) or "部分角色"
-            await reply(f"{names} 尚未由玩家擲 LUCK，請相關玩家輸入「/coc luck roll」後才能開始遊戲。")
-            return
-        if state.game_started:
-            await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
-            return
+        async def on_readiness(readiness: OpeningReadiness) -> None:
+            await reply(build_readiness_roster(readiness, format_mention=format_mention))
 
-        with locks.get_state_lock(conversation_id):
-            state = load_state(conversation_id)
-            healed_notes: dict[str, list[str]] = {}
-            for owner_id, char in state.characters.items():
-                notes = heal_character(char)
-                if notes:
-                    healed_notes[owner_id] = notes
-            if healed_notes:
-                state_transaction.commit_snapshot(state)
-        await reply(build_readiness_roster(state, healed_notes, format_mention))
-
-        opening_data: dict[str, Any] = await asyncio.to_thread(scenario_intro.extract_opening_narration, state.scenario_text)
-
-        if opening_data["found"]:
-            opening_text = opening_data["text"]
-            opening_check = opening_data.get("opening_check")
-            opening_blocker = ""
-            with locks.get_state_lock(conversation_id):
-                state = load_state(conversation_id)
-                if state.game_started:
-                    return
-                if opening_check:
-                    candidates: dict[str, dict[str, Any]] = {}
-                    for owner_id, char in state.characters.items():
-                        if opening_check["type"] == "skill":
-                            candidates[owner_id] = {
-                                "type": "skill", "skill": opening_check["skill"],
-                                "skill_value": keeper.resolve_skill_value(char, opening_check["skill"], register_unknown=False),
-                                "bonus_dice": 0, "penalty_dice": 0,
-                                "difficulty": "regular", "pushed": False,
-                            }
-                        else:
-                            candidates[owner_id] = {
-                                "type": "sanity",
-                                "loss_success": opening_check.get("loss_success", "0"),
-                                "loss_failure": opening_check.get("loss_failure", "1d4"),
-                            }
-                    registrations = check_lifecycle.register_many(
-                        state, candidates, source={"action_context": opening_check.get("reason", "")}
-                    )
-                    blocked = next(
-                        ((owner_id, entry.blocker) for owner_id, entry in registrations.items()
-                         if entry.status == "blocked"), None
-                    )
-                    if blocked:
-                        owner_id, reason = blocked
-                        character = state.characters[owner_id]
-                        if reason == "pending_luck_decision":
-                            opening_blocker = f"{character.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。"
-                        else:
-                            opening_blocker = f"{character.name} 尚有待處理的檢定，請先完成後再開始遊戲。"
-                if not opening_blocker:
-                    if opening_check and opening_check["type"] == "skill":
-                        for char in state.characters.values():
-                            keeper.resolve_skill_value(char, opening_check["skill"])
-                    turn_id = str(observability.current_context().get("turn_id") or uuid4().hex)
-                    state.log.append(history_authority.annotate_entry(
-                        {"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"},
-                        turn_id=turn_id, timeline_id=state.timeline_id,
-                        record_kind="opening_instruction", authority="claim",
-                    ))
-                    state.log.append(history_authority.annotate_entry(
-                        {"role": "assistant", "content": opening_text},
-                        turn_id=turn_id, timeline_id=state.timeline_id,
-                    ))
-                    state.game_started = True
-                    state_transaction.commit_snapshot(state)
-            if opening_blocker:
-                await reply(opening_blocker)
-                return
-            await reply(opening_text)
-            if opening_check and opening_check.get("reason"):
-                await reply(f"👉 {opening_check['reason']}——請各自用「/coc check」擲骰。")
+        opening_result = await game_opening.open_game(conversation_id, user_id, on_readiness=on_readiness)
+        if opening_result.outcome == "silent":
             return
-
-        keeper_message = (
-            "（守密人，遊戲即將開始，劇本沒有寫現成的開場白，需要你自己撰寫一段。這份劇本沒有"
-            "明確的「序幕」或「開場」段落可以直接查到，不代表劇本沒有背景資訊——如果目前是檢索模式，"
-            "請呼叫 search_scenario 查詢劇本的背景設定、調查員的委託／緣由、故事開始的地點等關鍵字"
-            "（例如劇本標題、背景、委託人、開場地點），根據查到的背景資訊撰寫開場白，不要因為查不到"
-            "「開場」兩個字面就直接放棄。撰寫一段開場白，把調查員們帶入故事的起點——描述他們此刻"
-            "身處的場景、氛圍，以及是什麼把他們捲進這個劇本裡，控制在三百字以內，用第二人稱「你」"
-            "對調查員說話。這是遊戲的第一段敘述，還沒有任何人採取行動，不要假設玩家已經做了什麼、"
-            "也不要在這段話裡問問題或要求玩家回覆什麼——單純把場景鋪陳出來即可。）"
-        )
-        async with locks.narrating_turn(conversation_id):
-            fresh_state = keeper._refresh_state_snapshot(state)
-            if fresh_state.game_started:
-                return
-            keeper_reply, private_messages, image_requests = await supervisor.run_turn(
-                state=fresh_state,
-                user_id=user_id,
-                display_name="守密人",
-                text=keeper_message,
-                resolved_location=None,
-                speaker_role="player",
-                conversation_id=conversation_id,
-                turn_kind="opening_fallback",
-            )
+        if opening_result.outcome == "rejected":
+            if opening_result.reason == "combat_unsettled":
+                await reply(opening_result.text)
+            elif opening_result.reason == "no_scenario":
+                await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
+            elif opening_result.reason == "no_characters":
+                await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
+            elif opening_result.reason == "pending_pregen_luck":
+                await reply(f"{opening_result.name} 尚未由玩家擲 LUCK，請相關玩家輸入「/coc luck roll」後才能開始遊戲。")
+            elif opening_result.reason == "already_started":
+                await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
+            elif opening_result.reason == "pending_luck_decision":
+                await reply(f"{opening_result.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。")
+            else:
+                await reply(f"{opening_result.name} 尚有待處理的檢定，請先完成後再開始遊戲。")
+            return
+        if opening_result.outcome == "scripted":
+            await reply(opening_result.text)
+            if opening_result.check_reason:
+                await reply(f"👉 {opening_result.check_reason}——請各自用「/coc check」擲骰。")
+            return
         await run_post_turn_maintenance_after_output(
-            conversation_id, reply, keeper_reply, send_dm, send_image, send_dm_image, private_messages, image_requests
+            conversation_id, reply, opening_result.text, send_dm, send_image, send_dm_image,
+            list(opening_result.private_messages), list(opening_result.image_requests),
         )
         return
 
