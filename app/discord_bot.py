@@ -1721,6 +1721,15 @@ async def on_message(message: discord.Message) -> None:
                 )
 
 
+def _error_reference() -> str:
+    """A short code the KP can search for in the log: the tail of the request id every log line of this request carries.
+
+    Empty when logging is entirely off, because then there is no id and nothing to find.
+    """
+    request_id = observability.current_context().get("request_id", "")
+    return f"（代碼 {request_id[-6:]}）" if request_id else ""
+
+
 async def _handle_message(message: discord.Message) -> None:
     conversation_id = _conversation_id(message.channel.id)
     user_id = str(message.author.id)
@@ -1811,7 +1820,7 @@ async def _handle_message(message: discord.Message) -> None:
         observability.mark_request_error()
         _logger.exception("on_message failed for conversation_id=%s", conversation_id)
         try:
-            await reply("發生內部錯誤了，請稍後再試；詳細資訊已記錄到 Bot log。")
+            await reply(f"發生內部錯誤了，請稍後再試；詳細資訊已記錄到 Bot log{_error_reference()}。")
         except Exception:
             _logger.exception("also failed to report the above error back to conversation_id=%s", conversation_id)
 
