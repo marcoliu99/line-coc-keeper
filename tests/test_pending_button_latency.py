@@ -11,6 +11,7 @@ from app.check_identity import (
 )
 from app.commands import router
 from app.commands.handlers import buttons
+from app.discord_transport import controls, delivery
 from app.models import GroupState
 from app.services import pending_buttons
 from tests.state_store import MemoryTransactions
@@ -48,15 +49,15 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched(), \
                 patch.object(discord_bot.discord.ui, "View", _FakeView), \
-                patch.object(discord_bot, "CheckButton", _FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send):
+                patch.object(controls, "CheckButton", _FakeButton), \
+                patch.object(delivery, "send_direct_message", send):
             async with locks.get_conversation_lock(conversation_id):
                 intents = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
             blocker = asyncio.create_task(next_turn())
             await acquired.wait()
             try:
                 await asyncio.wait_for(
-                    discord_bot._send_claimed_button_intents(SimpleNamespace(), conversation_id, intents),
+                    controls.send_claimed_button_intents(SimpleNamespace(), conversation_id, intents),
                     timeout=0.1,
                 )
                 send.assert_awaited_once()
@@ -79,17 +80,17 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                         memory.patched(), \
                         patch.object(discord_bot.discord.ui, "View", _FakeView), \
-                        patch.object(discord_bot, "CheckButton", _FakeButton), \
-                        patch.object(discord_bot, "_send_direct_message", AsyncMock(side_effect=failure)):
+                        patch.object(controls, "CheckButton", _FakeButton), \
+                        patch.object(delivery, "send_direct_message", AsyncMock(side_effect=failure)):
                     async with locks.get_conversation_lock(conversation_id):
                         intents = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
                     if isinstance(failure, asyncio.CancelledError):
                         with self.assertRaises(asyncio.CancelledError):
-                            await discord_bot._send_claimed_button_intents(
+                            await controls.send_claimed_button_intents(
                                 SimpleNamespace(), conversation_id, intents,
                             )
                     else:
-                        await discord_bot._send_claimed_button_intents(
+                        await controls.send_claimed_button_intents(
                             SimpleNamespace(), conversation_id, intents,
                         )
                 self.assertNotIn("_buttons_posted", state.pending_checks["123"])
@@ -169,11 +170,11 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched(), \
                 patch.object(discord_bot.discord.ui, "View", _FakeView), \
-                patch.object(discord_bot, "CheckButton", _FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send):
+                patch.object(controls, "CheckButton", _FakeButton), \
+                patch.object(delivery, "send_direct_message", send):
             async with locks.get_conversation_lock(conversation_id):
                 intents = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
-            await discord_bot._send_claimed_button_intents(SimpleNamespace(), conversation_id, intents)
+            await controls.send_claimed_button_intents(SimpleNamespace(), conversation_id, intents)
         self.assertEqual([intent.kind for intent in intents], ["check", "luck"])
         send.assert_awaited_once()
 
@@ -240,10 +241,10 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched(), \
                 patch.object(discord_bot.command_router, "handle_text_message", side_effect=route), \
-                patch.object(discord_bot, "_make_reply", return_value=AsyncMock()), \
-                patch.object(discord_bot, "_make_send_image", return_value=AsyncMock()), \
-                patch.object(discord_bot, "_send_check_button", side_effect=send_check), \
-                patch.object(discord_bot, "_post_pending_buttons", AsyncMock()) as fallback:
+                patch.object(delivery, "make_reply", return_value=AsyncMock()), \
+                patch.object(delivery, "make_send_image", return_value=AsyncMock()), \
+                patch.object(controls, "send_check_button", side_effect=send_check), \
+                patch.object(controls, "post_pending_buttons", AsyncMock()) as fallback:
             await discord_bot._handle_message(message)
         self.assertEqual(observed, [True])
         self.assertTrue(state.pending_checks["123"]["_buttons_posted"])
@@ -259,7 +260,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         token = compact_identity_token(
             "check", owner_id, effective_check_id(owner_id, pending, timeline_id), timeline_id,
         )
-        button = discord_bot.CheckButton(conversation_id, owner_id, "擲骰", check_id=token)
+        button = controls.CheckButton(conversation_id, owner_id, "擲骰", check_id=token)
         interaction = SimpleNamespace(
             user=SimpleNamespace(id=123), channel=SimpleNamespace(id=71006),
         )
@@ -274,12 +275,12 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(locks, "try_acquire_check", return_value=True), \
                 patch.object(locks, "release_check"), \
-                patch.object(discord_bot, "_edit_interaction_view", AsyncMock()), \
-                patch.object(discord_bot, "_make_interaction_reply", return_value=AsyncMock()), \
-                patch.object(discord_bot, "_make_send_image", return_value=AsyncMock()), \
+                patch.object(delivery, "edit_interaction_view", AsyncMock()), \
+                patch.object(delivery, "make_interaction_reply", return_value=AsyncMock()), \
+                patch.object(delivery, "make_send_image", return_value=AsyncMock()), \
                 patch.object(buttons, "handle_check_command", side_effect=handle), \
-                patch.object(discord_bot, "_send_luck_button", side_effect=send_luck), \
-                patch.object(discord_bot, "_post_pending_buttons", AsyncMock()) as fallback, \
+                patch.object(controls, "send_luck_button", side_effect=send_luck), \
+                patch.object(controls, "post_pending_buttons", AsyncMock()) as fallback, \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched():
             await button.callback(interaction)
@@ -297,7 +298,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         token = compact_identity_token(
             "decision", owner_id, effective_decision_id(owner_id, decision, timeline_id), timeline_id,
         )
-        button = discord_bot.LuckSpendButton(
+        button = controls.LuckSpendButton(
             conversation_id, owner_id, "維持目前結果", "skip", decision_id=token,
         )
         interaction = SimpleNamespace(
@@ -314,12 +315,12 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(locks, "try_acquire_check", return_value=True), \
                 patch.object(locks, "release_check"), \
-                patch.object(discord_bot, "_edit_interaction_view", AsyncMock()), \
-                patch.object(discord_bot, "_make_interaction_reply", return_value=AsyncMock()), \
-                patch.object(discord_bot, "_make_send_image", return_value=AsyncMock()), \
+                patch.object(delivery, "edit_interaction_view", AsyncMock()), \
+                patch.object(delivery, "make_interaction_reply", return_value=AsyncMock()), \
+                patch.object(delivery, "make_send_image", return_value=AsyncMock()), \
                 patch.object(buttons, "handle_luck_decision", side_effect=handle), \
-                patch.object(discord_bot, "_send_check_button", side_effect=send_check), \
-                patch.object(discord_bot, "_post_pending_buttons", AsyncMock()) as fallback, \
+                patch.object(controls, "send_check_button", side_effect=send_check), \
+                patch.object(controls, "post_pending_buttons", AsyncMock()) as fallback, \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched():
             await button.callback(interaction)

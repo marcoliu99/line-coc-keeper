@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app import discord_bot
+from app.discord_transport import delivery
 
 
 class FakeChannel:
@@ -31,9 +32,9 @@ class DiscordReplyTextLogTests(unittest.TestCase):
 
     def test_make_reply_logs_full_text_when_log_text_enabled(self):
         channel = FakeChannel()
-        reply = discord_bot._make_reply(channel)
+        reply = delivery.make_reply(channel)
         with patch.object(discord_bot.config, "LOG_TEXT_ENABLED", True), \
-                patch.object(discord_bot, "_logger") as mock_logger:
+                patch.object(delivery, "_logger") as mock_logger:
             asyncio.run(reply("你走進了圖書館，燈光昏暗。"))
         mock_logger.info.assert_called_once_with(
             "discord_reply text=%r", "你走進了圖書館，燈光昏暗。"
@@ -47,9 +48,9 @@ class DiscordReplyTextLogTests(unittest.TestCase):
         and even under normal setup a disabled toggle should cost nothing
         (no LogRecord built or queued) on this now-per-reply hot path."""
         channel = FakeChannel()
-        reply = discord_bot._make_reply(channel)
+        reply = delivery.make_reply(channel)
         with patch.object(discord_bot.config, "LOG_TEXT_ENABLED", False), \
-                patch.object(discord_bot, "_logger") as mock_logger:
+                patch.object(delivery, "_logger") as mock_logger:
             asyncio.run(reply("這段文字在 LOG_TEXT_ENABLED=false 時絕對不能被記錄。"))
         mock_logger.info.assert_not_called()
 
@@ -58,10 +59,10 @@ class DiscordReplyTextLogTests(unittest.TestCase):
         text log must fire regardless of its value, as long as
         LOG_TEXT_ENABLED is true."""
         channel = FakeChannel()
-        reply = discord_bot._make_reply(channel)
+        reply = delivery.make_reply(channel)
         with patch.object(discord_bot.config, "LOG_TEXT_ENABLED", True), \
                 patch.object(discord_bot.config, "LOG_ENABLED", False), \
-                patch.object(discord_bot, "_logger") as mock_logger:
+                patch.object(delivery, "_logger") as mock_logger:
             asyncio.run(reply("這段文字即使 LOG_ENABLED 關閉也該被記錄。"))
         mock_logger.info.assert_called_once_with(
             "discord_reply text=%r", "這段文字即使 LOG_ENABLED 關閉也該被記錄。"
@@ -72,11 +73,11 @@ class DiscordReplyTextLogTests(unittest.TestCase):
         — chunking is a Discord API constraint, not a meaningful semantic
         boundary for "what did the Keeper say this turn"."""
         channel = FakeChannel()
-        reply = discord_bot._make_reply(channel)
-        long_text = "字" * (discord_bot.MAX_DISCORD_MESSAGE_CHARS + 100)
+        reply = delivery.make_reply(channel)
+        long_text = "字" * (delivery.MAX_DISCORD_MESSAGE_CHARS + 100)
         with patch.object(discord_bot.config, "LOG_TEXT_ENABLED", True), \
                 patch.object(discord_bot.config, "LOG_ENABLED", True), \
-                patch.object(discord_bot, "_logger") as mock_logger:
+                patch.object(delivery, "_logger") as mock_logger:
             asyncio.run(reply(long_text))
         mock_logger.info.assert_called_once_with("discord_reply text=%r", long_text)
         self.assertGreater(channel.send.await_count, 1)
@@ -87,17 +88,17 @@ class DiscordReplyTextLogTests(unittest.TestCase):
         this path must log the same way or "what did the Keeper say" stays
         unanswerable for every check/luck-roll turn."""
         interaction = FakeInteraction()
-        reply = discord_bot._make_interaction_reply(interaction)
+        reply = delivery.make_interaction_reply(interaction)
         with patch.object(discord_bot.config, "LOG_TEXT_ENABLED", True), \
-                patch.object(discord_bot, "_logger") as mock_logger:
+                patch.object(delivery, "_logger") as mock_logger:
             asyncio.run(reply("你擲出了一個大成功！"))
         mock_logger.info.assert_called_once_with("discord_reply text=%r", "你擲出了一個大成功！")
 
     def test_make_interaction_reply_skips_logging_when_log_text_disabled(self):
         interaction = FakeInteraction()
-        reply = discord_bot._make_interaction_reply(interaction)
+        reply = delivery.make_interaction_reply(interaction)
         with patch.object(discord_bot.config, "LOG_TEXT_ENABLED", False), \
-                patch.object(discord_bot, "_logger") as mock_logger:
+                patch.object(delivery, "_logger") as mock_logger:
             asyncio.run(reply("這段文字在 LOG_TEXT_ENABLED=false 時絕對不能被記錄。"))
         mock_logger.info.assert_not_called()
 

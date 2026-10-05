@@ -215,7 +215,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
     def test_discord_identity_token_keeps_component_id_under_limit(self) -> None:
         try:
             from app.check_identity import compact_identity_token
-            from app.discord_bot import CheckButton, LuckSpendButton
+            from app.discord_transport.controls import CheckButton, LuckSpendButton
         except ImportError:
             self.skipTest("discord.py is not installed")
 

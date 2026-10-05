@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from app import config, embedding_execution, memory_rag, observability, scenario_rag
 from app.agents import assistant
 from app.commands.handlers import buttons
+from app.discord_transport import controls, delivery, gateway
 from app.domain.models import AgentMessage
 from app.models import GroupState
 from app.providers import registry
@@ -225,7 +226,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         observability._METRICS.set({})
 
     async def test_direct_message_has_reply_span_and_new_message_metrics(self):
-        from app.discord_bot import _send_direct_message
+        from app.discord_transport.delivery import send_direct_message
 
         channel = SimpleNamespace(send=AsyncMock())
         metrics = {}
@@ -235,7 +236,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             self.assertLogs("app.observability", level="INFO") as captured,
             observability.metrics_context(metrics),
         ):
-            await _send_direct_message(channel, "按鈕提示", view="view")
+            await send_direct_message(channel, "按鈕提示", view="view")
 
         channel.send.assert_awaited_once_with("按鈕提示", view="view")
         self.assertEqual(metrics["reply_message_count"], 1)
@@ -248,12 +249,12 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         reply_message_count/reply_bytes — same gap as the two tests above
         had for _record_reply_output/_record_reply_edit, just not covered
         by any test until now."""
-        from app.discord_bot import _send_direct_image
+        from app.discord_transport.delivery import send_direct_image
 
         channel = SimpleNamespace(send=AsyncMock())
         metrics = {}
         with patch.object(config, "LOG_ENABLED", True), observability.metrics_context(metrics):
-            await _send_direct_image(channel, b"\x89PNG", 1)
+            await send_direct_image(channel, b"\x89PNG", 1)
 
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_bytes"], 4)
@@ -261,12 +262,12 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_help_edit_counts_edit_not_new_message(self):
-        from app.discord_bot import _edit_interaction_message
+        from app.discord_transport.delivery import edit_interaction_message
 
         interaction = SimpleNamespace(response=SimpleNamespace(edit_message=AsyncMock()))
         metrics = {}
         with patch.object(config, "LOG_ENABLED", True), observability.metrics_context(metrics):
-            await _edit_interaction_message(interaction, "Help 內容", view="view")
+            await edit_interaction_message(interaction, "Help 內容", view="view")
 
         interaction.response.edit_message.assert_awaited_once_with(content="Help 內容", view="view")
         self.assertEqual(metrics["reply_edit_count"], 1)
@@ -274,7 +275,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_chunk_count"], 0)
 
     async def test_direct_output_failure_does_not_count_successful_output(self):
-        from app.discord_bot import _send_direct_message
+        from app.discord_transport.delivery import send_direct_message
 
         channel = SimpleNamespace(send=AsyncMock(side_effect=RuntimeError("discord unavailable")))
         metrics = {}
@@ -283,11 +284,11 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             observability.metrics_context(metrics),
             self.assertRaises(RuntimeError),
         ):
-            await _send_direct_message(channel, "not sent")
+            await send_direct_message(channel, "not sent")
         self.assertEqual(metrics, {})
 
     async def test_discord_operation_timeout_is_logged_without_retrying(self):
-        from app.discord_bot import _send_direct_message
+        from app.discord_transport.delivery import send_direct_message
 
         async def slow_send(*_args, **_kwargs):
             await asyncio.sleep(0.05)
@@ -301,13 +302,13 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(asyncio.TimeoutError),
             self.assertLogs("app.observability", level="ERROR") as captured,
         ):
-            await _send_direct_message(channel, "timeout")
+            await send_direct_message(channel, "timeout")
 
         self.assertTrue(any("discord.request.timeout" in line for line in captured.output))
         self.assertEqual(metrics, {})
 
     async def test_partial_chunk_failure_counts_only_successful_chunks(self):
-        from app.discord_bot import _make_reply
+        from app.discord_transport.delivery import make_reply
 
         channel = SimpleNamespace(send=AsyncMock(side_effect=[None, RuntimeError("discord unavailable")]))
         metrics = {}
@@ -317,7 +318,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             observability.metrics_context(metrics),
             self.assertRaises(RuntimeError),
         ):
-            await _make_reply(channel)(text)
+            await make_reply(channel)(text)
 
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
@@ -325,7 +326,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_interaction_followup_partial_failure_counts_only_successful_chunks(self):
-        from app.discord_bot import _make_interaction_reply
+        from app.discord_transport.delivery import make_interaction_reply
 
         interaction = SimpleNamespace(
             followup=SimpleNamespace(
@@ -339,7 +340,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             observability.metrics_context(metrics),
             self.assertRaises(RuntimeError),
         ):
-            await _make_interaction_reply(interaction)(text)
+            await make_interaction_reply(interaction)(text)
 
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_chunk_count"], 1)
@@ -347,7 +348,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_interaction_followup_output_has_a_latency_span(self):
-        from app.discord_bot import _make_interaction_reply
+        from app.discord_transport.delivery import make_interaction_reply
 
         interaction = SimpleNamespace(followup=SimpleNamespace(send=AsyncMock()))
         metrics = {}
@@ -356,24 +357,23 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             observability.metrics_context(metrics),
             self.assertLogs("app.observability", level="INFO") as captured,
         ):
-            await _make_interaction_reply(interaction)("follow-up")
+            await make_interaction_reply(interaction)("follow-up")
 
         self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
         self.assertEqual(metrics["reply_message_count"], 1)
         self.assertEqual(metrics["reply_edit_count"], 0)
 
     async def test_direct_dm_output_has_a_latency_span_and_metrics(self):
-        from app import discord_bot
 
         user = SimpleNamespace(send=AsyncMock())
         metrics = {}
         with (
             patch.object(config, "LOG_ENABLED", True),
-            patch.object(discord_bot.client, "get_user", return_value=user),
+            patch.object(gateway.client, "get_user", return_value=user),
             observability.metrics_context(metrics),
             self.assertLogs("app.observability", level="INFO") as captured,
         ):
-            await discord_bot._send_dm("123", "private reply")
+            await delivery.send_dm("123", "private reply")
 
         self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
         self.assertEqual(metrics["reply_message_count"], 1)
@@ -388,7 +388,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             is_closed=lambda: False,
             close=AsyncMock(side_effect=RuntimeError("close failed")),
         )
-        with patch.object(discord_bot, "client", fake_client), \
+        with patch.object(gateway, "client", fake_client), \
                 patch.object(discord_bot.scenario_rag, "shutdown_prewarm", new_callable=AsyncMock) as shutdown_prewarm, \
                 patch.object(discord_bot.async_utils, "wait_for_background_tasks", new_callable=AsyncMock) as wait_background_tasks, \
                 patch.object(discord_bot.providers, "shutdown_async_clients", new_callable=AsyncMock) as shutdown_providers, \
@@ -400,10 +400,10 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         shutdown_providers.assert_awaited_once()
 
     async def test_request_metrics_have_stable_zero_defaults(self):
-        from app.discord_bot import _request_metrics
+        from app.discord_transport.delivery import request_metrics
 
         with patch.object(config, "LOG_ENABLED", True):
-            self.assertEqual(_request_metrics(), {
+            self.assertEqual(request_metrics(), {
                 "reply_message_count": 0,
                 "reply_edit_count": 0,
                 "reply_chunk_count": 0,
@@ -437,11 +437,11 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         send = AsyncMock()
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
-                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(controls, "LuckSpendButton", FakeButton), \
+                patch.object(delivery, "send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched():
-            await discord_bot._post_luck_buttons(
+            await controls.post_luck_buttons(
                 channel,
                 "discord-channel-1",
                 state,
@@ -487,16 +487,16 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
-                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(controls, "LuckSpendButton", FakeButton), \
+                patch.object(delivery, "send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
             # Two overlapping callers, each with its own stale before-
             # snapshot captured before the decision existed — exactly what
             # a genuine race between two concurrent request-handling flows
             # looks like from _post_luck_buttons' point of view.
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
 
         send.assert_awaited_once()
         self.assertEqual(memory.commits, 1)
@@ -522,12 +522,12 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
-                patch.object(discord_bot, "CheckButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(controls, "CheckButton", FakeButton), \
+                patch.object(delivery, "send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
-            await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
-            await discord_bot._post_check_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_check_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_check_buttons(channel, "discord-channel-1", state, {})
 
         send.assert_awaited_once()
         self.assertEqual(memory.commits, 1)
@@ -557,11 +557,11 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
-                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(controls, "LuckSpendButton", FakeButton), \
+                patch.object(delivery, "send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
 
         send.assert_awaited_once()
 
@@ -599,11 +599,11 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         conversation_id = "discord-channel-1"
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
-                patch.object(discord_bot, "CheckButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(controls, "CheckButton", FakeButton), \
+                patch.object(delivery, "send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
-            await discord_bot._post_check_buttons(channel, conversation_id, state, {})
+            await controls.post_check_buttons(channel, conversation_id, state, {})
 
         marked_entry = state.pending_checks["123"]
         self.assertTrue(marked_entry.get("_buttons_posted"))
@@ -613,7 +613,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recomputed_token, captured_check_id["value"])
 
     async def test_stranded_posting_claim_is_released_so_a_later_call_can_repost(self):
-        """Review finding on PR #78: if _send_direct_message raises after
+        """Review finding on PR #78: if send_direct_message raises after
         the _buttons_posted claim was already saved (an exhausted rate-
         limit/network retry, or the process exiting between the save and
         the send), the entry must not be permanently stranded — a later
@@ -640,17 +640,17 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         memory = MemoryTransactions(state)
 
         with patch.object(discord_bot.discord.ui, "View", FakeView), \
-                patch.object(discord_bot, "LuckSpendButton", FakeButton), \
-                patch.object(discord_bot, "_send_direct_message", send), \
+                patch.object(controls, "LuckSpendButton", FakeButton), \
+                patch.object(delivery, "send_direct_message", send), \
                 patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
             # First attempt: claim gets saved, then the send fails.
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
             self.assertNotIn("_buttons_posted", state.pending_luck_decisions.get("123", {}))
 
             # A later, independent call (its own fresh before_pending) must
             # still be able to post it — not permanently skipped.
-            await discord_bot._post_luck_buttons(channel, "discord-channel-1", state, {})
+            await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
 
         self.assertEqual(send.await_count, 2)
         self.assertTrue(state.pending_luck_decisions["123"].get("_buttons_posted"))

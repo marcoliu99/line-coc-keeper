@@ -110,6 +110,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Historical post-v1.0 integration ledger](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) | historical | [繁體中文](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) |
 | [Turn safety, recoverable results and measured latency](specs/refactor/turn_safety_and_latency_design_spec.md) | partial; S0/S1/S3 implemented, S2 reverted | [繁體中文](specs/refactor/turn_safety_and_latency_design_spec_zh.md) |
 | [Splitting app/keeper.py by responsibility](specs/refactor/keeper_module_split_design_spec.md) | implemented | [繁體中文](specs/refactor/keeper_module_split_design_spec_zh.md) |
+| [Splitting app/discord_bot.py](specs/refactor/discord_transport_split_design_spec.md) | implemented | [繁體中文](specs/refactor/discord_transport_split_design_spec_zh.md) |
 
 ## maintenance
 
