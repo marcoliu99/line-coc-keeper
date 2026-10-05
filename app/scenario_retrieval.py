@@ -21,7 +21,12 @@ _tokens: dict[str, tuple[str, int, list[str]]] = {}
 _lock = threading.RLock()
 
 
-def remaining_budget(context: Any, model: str) -> int:
+# What an earlier tool round adds to the provider's live conversation that the caller cannot see: the model's own text
+# and reasoning before the call. The call and its result are already in the context. An allowance, not a measurement.
+PRIOR_ROUND_ALLOWANCE_TOKENS = 1000
+
+
+def remaining_budget(context: Any, model: str, prior_rounds: int = 0) -> int:
     # Deployment ceiling is conservative and configurable; it is not a claim
     # about a provider's advertised context window.
     context_cost = input_budget.estimate(context, model)
@@ -31,7 +36,7 @@ def remaining_budget(context: Any, model: str) -> int:
     # Evidence is what the Keeper decides on; the rest of the prompt does not get to crowd it out entirely.
     floor = min(config.SCENARIO_RETRIEVAL_MIN_TOKENS, config.SCENARIO_RETRIEVAL_TOKEN_BUDGET)
     # The ceiling is a planning number the floor may exceed; the window is not. Nothing here may push the request past it.
-    room = max(0, config.SCENARIO_CONTEXT_WINDOW_TOKENS - context_cost - reserve)
+    room = max(0, config.SCENARIO_CONTEXT_WINDOW_TOKENS - context_cost - reserve - prior_rounds * PRIOR_ROUND_ALLOWANCE_TOKENS)
     budget = min(max(natural, floor), room)
     floor_applied = budget > natural
     observability.event("rag.retrieval.budget", level=logging.WARNING if floor_applied or budget == 0 else logging.INFO,
@@ -43,8 +48,8 @@ def remaining_budget(context: Any, model: str) -> int:
     return budget
 
 
-def request_budget(context: list, history: list[dict], model: str, provider: str) -> int:
-    return remaining_budget([*context, input_budget.provider_history(history, model, provider)], model)
+def request_budget(context: list, history: list[dict], model: str, provider: str, prior_rounds: int = 0) -> int:
+    return remaining_budget([*context, input_budget.provider_history(history, model, provider)], model, prior_rounds)
 
 
 def _cost(text: str) -> int:

@@ -99,6 +99,17 @@ class BudgetFloorTests(unittest.TestCase):
         budget, fields = self.budget(10000, SCENARIO_CONTEXT_TOKEN_CEILING=200000, SCENARIO_CONTEXT_WINDOW_TOKENS=20000)
         self.assertEqual((budget, fields["budget_capped_by_window"]), (3856, True))
 
+    def test_earlier_tool_rounds_use_up_window_the_caller_cannot_see(self):
+        """The provider's live conversation also holds the model's text before each earlier call."""
+        with patch.object(input_budget, "estimate", lambda *_a: 30000), \
+                patch.object(input_budget, "tokenizer_method", lambda _m: "tokenizer_estimate"), \
+                patch.object(config, "SCENARIO_CONTEXT_WINDOW_TOKENS", 40000), \
+                patch.object(scenario_retrieval.observability, "event"):
+            first = scenario_retrieval.remaining_budget("ctx", "m")
+            after_three = scenario_retrieval.remaining_budget("ctx", "m", prior_rounds=3)
+        self.assertEqual(first, 3000)  # 40000 - 30000 - 6144 = 3856 of room
+        self.assertEqual(after_three, 856)  # 3856 - 3 * PRIOR_ROUND_ALLOWANCE_TOKENS
+
     def test_the_default_window_leaves_the_normal_cases_alone(self):
         self.assertEqual(config.SCENARIO_CONTEXT_WINDOW_TOKENS, 128000)
         self.assertEqual(self.budget(60000)[1]["budget_capped_by_window"], False)

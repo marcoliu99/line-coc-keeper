@@ -160,7 +160,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     tool_input = {**tool_input, '_player_action': text}
                 model = session.model or "unknown"
                 remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,
-                        [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], session.history(state.log), model, config.LLM_PROVIDER)
+                        [static_system, dynamic_system, tools, new_message, tool_context, {"name": name, "arguments": tool_input}], session.history(state.log), model, config.LLM_PROVIDER,
+                        len(tool_context))
                     if name == "search_scenario" else scenario_retrieval.BUDGET.get())
                 current_binding = scenario_retrieval.source_binding(state)
                 if current_binding != source_binding:
