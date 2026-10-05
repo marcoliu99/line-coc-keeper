@@ -16,7 +16,6 @@ import discord
 from app import (
     config,
     observability,
-    presentation,
 )
 from app.commands.types import Reply, SendImage
 from app.config import (
@@ -44,19 +43,9 @@ _REPLY_METRIC_KEYS = (
 
 
 def _chunk_text(text: str) -> list[str]:
-    """Split text already in the table's language; aliasing can change its length, so it comes first."""
     text = text.strip() or "（沒有內容）"
     chunks = [text[i : i + MAX_DISCORD_MESSAGE_CHARS] for i in range(0, len(text), MAX_DISCORD_MESSAGE_CHARS)]
     return chunks[:MAX_REPLY_MESSAGES]
-
-
-def shown(text: str) -> str:
-    """What a player reads: character names in the table's language (``CHARACTER_DISPLAY_ALIASES``).
-
-    Every text send in this module passes through here, after the game state, the log and the turn log have kept the
-    registered name, so a rename never reaches anything the engine matches on.
-    """
-    return presentation.character_aliases(text)
 
 
 def _mark_reply_metrics(**touched: int) -> None:
@@ -133,7 +122,6 @@ async def send_direct_message(
     channel: discord.abc.Messageable, text: str, *, view: discord.ui.View | None = None
 ) -> None:
     """Send a non-chunked public message with the same reply span as Reply."""
-    text = shown(text)
     if not config.LOG_ENABLED:
         if view is None:
             await discord_operation(channel.send(text))
@@ -160,7 +148,6 @@ async def send_interaction_message(
     interaction: discord.Interaction, text: str, *, ephemeral: bool = False
 ) -> None:
     """Send an interaction response and include it in request metrics."""
-    text = shown(text)
     # A stale-button check normally runs after the callback has already
     # acknowledged the component with edit_interaction_view.  Discord only
     # permits one initial response, so use a follow-up in that case instead of
@@ -195,7 +182,6 @@ async def edit_interaction_message(
     interaction: discord.Interaction, text: str, *, view: discord.ui.View | None = None
 ) -> None:
     """Edit an existing interaction message without inflating message count."""
-    text = shown(text)
     if not config.LOG_ENABLED:
         await discord_operation(interaction.response.edit_message(content=text, view=view))
         return
@@ -303,7 +289,7 @@ def make_reply(channel: discord.abc.Messageable) -> Reply:
             await discord_operation(channel.send(str(text), view=help_ui.SourceReadyView(interactions.channel_conversation_id(channel_id), text)))
             return
         log_reply_text(text)
-        chunks = _chunk_text(shown(text))
+        chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
                 await send_recorded(chunk)
@@ -337,7 +323,7 @@ async def send_dm(owner_id: str, text: str) -> None:
     user = gateway.client.get_user(int(owner_id)) or await discord_operation(gateway.client.fetch_user(int(owner_id)))
     if user is None:
         raise RuntimeError(f"Discord user {owner_id} could not be resolved")
-    for chunk in _chunk_text(shown(text)):
+    for chunk in _chunk_text(text):
         if not config.LOG_ENABLED:
             await discord_operation(user.send(chunk))
             continue
@@ -398,7 +384,7 @@ def make_interaction_reply(interaction: discord.Interaction) -> Reply:
                 view=help_ui.SourceReadyView(interactions.channel_conversation_id(interaction.channel.id), text)))
             return
         log_reply_text(text)
-        chunks = _chunk_text(shown(text))
+        chunks = _chunk_text(text)
         if not config.LOG_ENABLED:
             for chunk in chunks:
                 await discord_operation(interaction.followup.send(chunk))

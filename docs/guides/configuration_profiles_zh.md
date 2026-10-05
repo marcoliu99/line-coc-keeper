@@ -29,7 +29,6 @@
 | `SPOILER_PROTECTION_ENABLED` | `true` | 守密人專屬的劇本內容不會出現在公開回覆。關閉後旁白可能揭露它。 |
 | `PRIVACY_ISOLATION_ENABLED` | `true` | 私人資訊與秘密目標只給擁有者。關閉時啟動會有明顯警告。 |
 | `DEBUG_SHOW_INTERNAL_IDS` | `false` | 在回覆中顯示內部識別碼（例如 `check_id`），供除錯。原始的結果等級名稱永遠不會顯示。 |
-| `CHARACTER_DISPLAY_ALIASES` | 空 | JSON 物件，例如 `{"The Tough Guy": "硬漢"}`。機器人送到 Discord 的每一則訊息（旁白、系統訊息如「…的背包已確認…」，與指令回覆）送出時都會把登記的角色名寫成別名，同一個角色不會變成兩個名字。存檔、遊玩紀錄、回合日誌與 id 仍用登記的名字。不是「非空白文字對非空白文字的 JSON 物件」的值（含空白的鍵或值）會被忽略並在啟動時回報。 |
 | `SCENARIO_LIFECYCLE_KP_ONLY` | `false` | 只有目前的 KP Assistant 可以使用劇本選擇按鈕（新上傳或修正重傳）與 `/coc scenario` 指令（use、import、merge、reparse、cancel）。**上傳劇本檔案本身不受限制**：任何玩家都可以上傳，而且一個對話的第一次上傳會立即套用。角色還在安排時請保持關閉。 |
 
 ## 看見玩家等了多久

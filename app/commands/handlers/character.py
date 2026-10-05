@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app import creation, pregen_extractor, presentation, spoiler_policy
+from app import creation, pregen_extractor, spoiler_policy
 from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.commands.types import Reply, SendDM
 from app.keeper_tools import resource_bridge
@@ -37,9 +37,8 @@ def _switch(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
         return refuse("用法：/coc switch 角色名（可先用 /coc characters 查看）")
     if user_id in state.pending_pregen_luck:
         return refuse("你還有一位預製角色尚未完成 LUCK 擲骰，請先輸入「/coc luck roll」。")
-    owned = state.characters_for_owner(user_id)
-    name = presentation.registered_name(" ".join(parts[2:]).strip(), [char.name for char in owned])
-    matches = [char for char in owned if char.name == name]
+    name = " ".join(parts[2:]).strip()
+    matches = [char for char in state.characters_for_owner(user_id) if char.name == name]
     if not matches:
         return refuse("找不到你擁有的這個角色，請先用「/coc characters」查看角色名稱。")
     if len(matches) > 1:
@@ -56,9 +55,6 @@ def _retire(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if kp_block:
         return refuse(kp_block)
     requested_name = " ".join(parts[2:]).strip() or None
-    active = state.get_active_character(user_id)
-    if requested_name and active is not None:
-        requested_name = presentation.registered_name(requested_name, [active.name])
     try:
         character = state.retire_active_character(
             user_id, requested_name, finish_turn=combat_engine.finish_retired_turn,
@@ -104,9 +100,8 @@ def _pc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
 def _setskill(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if len(parts) < 5:
         return refuse("用法：/coc setskill 角色名 技能名 數值")
+    name, skill, value_str = parts[2], parts[3], parts[4]
     char = state.get_active_character(user_id)
-    name, rest = presentation.leading_name(parts[2:], [char.name] if char else [], after=2)
-    skill, value_str = rest[0], rest[1]
     if not char or char.name != name:
         return refuse("只能修改你自己建立的角色（角色名稱需完全相符）。")
     try:
@@ -120,9 +115,9 @@ def _setskill(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
 def _setconnection(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if len(parts) < 4:
         return refuse("用法：/coc setconnection 角色名 敘述（例如：/coc setconnection 小明 你失散多年的妹妹）")
+    name = parts[2]
+    description = " ".join(parts[3:])
     char = state.get_active_character(user_id)
-    name, rest = presentation.leading_name(parts[2:], [char.name] if char else [], after=1)
-    description = " ".join(rest)
     if not char or char.name != name:
         return refuse("只能修改你自己建立的角色（角色名稱需完全相符）。")
     char.key_connection = description
