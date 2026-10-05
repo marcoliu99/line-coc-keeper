@@ -159,7 +159,7 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
     """User-requested comprehensive check: a Dodge 20% / Fight Back 45%
     investigator against every possible attacker_tier (fumble through
     critical). For each tier, cross-checks the UI hint's own threshold math
-    (_defense_choice_hint) against what dice.resolve_opposed actually rules
+    (controls.defense_choice_hint) against what dice.resolve_opposed actually rules
     for a roll landing exactly on that threshold — both must agree, since
     the whole point of the fumble-clamp fix (§4.2) was to stop the hint from
     promising a threshold that resolve_opposed wouldn't actually honor."""

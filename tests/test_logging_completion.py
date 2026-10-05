@@ -245,9 +245,9 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("discord.reply.completed" in line for line in captured.output))
 
     async def test_direct_image_has_complete_reply_metrics(self):
-        """Regression guard: _record_reply_binary only ever incremented
+        """Regression guard: delivery.record_reply_binary only ever incremented
         reply_message_count/reply_bytes — same gap as the two tests above
-        had for _record_reply_output/_record_reply_edit, just not covered
+        had for delivery.record_reply_output/delivery.record_reply_edit, just not covered
         by any test until now."""
         from app.discord_transport.delivery import send_direct_image
 
@@ -455,7 +455,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.args[3] for item in view.items], ["regular", "hard", "extreme", "skip"])
 
     async def test_luck_button_posted_only_once_when_two_overlapping_calls_race(self):
-        """Real-incident finding: every caller of _post_pending_buttons
+        """Real-incident finding: every caller of controls.post_pending_buttons
         (CheckButton/LuckSpendButton callbacks, on_message) snapshots its
         own before_pending locally and only diffs against that — with no
         cross-call marker, two overlapping request-handling flows for the
@@ -494,7 +494,7 @@ class DiscordOutputLoggingTests(unittest.IsolatedAsyncioTestCase):
             # Two overlapping callers, each with its own stale before-
             # snapshot captured before the decision existed — exactly what
             # a genuine race between two concurrent request-handling flows
-            # looks like from _post_luck_buttons' point of view.
+            # looks like from controls.post_luck_buttons' point of view.
             await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
             await controls.post_luck_buttons(channel, "discord-channel-1", state, {})
 

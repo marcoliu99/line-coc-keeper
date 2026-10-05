@@ -12,7 +12,7 @@ class FakeChannel:
 
 
 class FakeInteraction:
-    """Minimal stand-in for discord.Interaction — _make_interaction_reply
+    """Minimal stand-in for discord.Interaction — delivery.make_interaction_reply
     only ever touches .followup.send."""
 
     def __init__(self) -> None:
@@ -22,13 +22,13 @@ class FakeInteraction:
 class DiscordReplyTextLogTests(unittest.TestCase):
     """Structured discord.reply metrics only ever capture counts/bytes, never
     what was actually said — "what story text did the Keeper just post to
-    this channel" was previously unanswerable from the logs. _log_reply_text()
+    this channel" was previously unanswerable from the logs. delivery.log_reply_text()
     (gated by LOG_TEXT_ENABLED, same pattern as app/keeper.py's
-    search_scenario query log) fixes that, shared by both _make_reply
-    (public-channel messages) and _make_interaction_reply (button/interaction
+    search_scenario query log) fixes that, shared by both delivery.make_reply
+    (public-channel messages) and delivery.make_interaction_reply (button/interaction
     followups — check and Luck-roll buttons post narrated outcomes through
     this path, which a first pass at this feature missed since it's a
-    separate, near-identical twin of _make_reply)."""
+    separate, near-identical twin of delivery.make_reply)."""
 
     def test_make_reply_logs_full_text_when_log_text_enabled(self):
         channel = FakeChannel()
@@ -84,7 +84,7 @@ class DiscordReplyTextLogTests(unittest.TestCase):
 
     def test_make_interaction_reply_logs_full_text_when_log_text_enabled(self):
         """Coverage-gap fix: check/Luck-roll button callbacks post their
-        narrated outcome through _make_interaction_reply, not _make_reply —
+        narrated outcome through delivery.make_interaction_reply, not delivery.make_reply —
         this path must log the same way or "what did the Keeper say" stays
         unanswerable for every check/luck-roll turn."""
         interaction = FakeInteraction()
