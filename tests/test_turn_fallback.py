@@ -316,3 +316,39 @@ def test_every_generic_reply_site_in_the_supervisor_records_its_reason() -> None
     }
     assert {"unresolved_pending_state", "narration_failure", "safety_block", "state_conflict"} <= recorded
     assert recorded <= set(FALLBACK_REASONS)
+
+
+@aio
+async def test_recovery_does_not_search_when_retrieval_was_switched_off() -> None:
+    """"disabled" means the whole scenario (or the combat state) is already in the prompt; a search would bypass that setting."""
+    state = _state()
+    state.scenario_text = "完整劇本"
+    _, run_executor, searched, _ = await _turn(state, [_result("blocked"), _resolved()], rag_status="disabled")
+    assert run_executor.await_count == 2 and searched.call_count == 0
+
+
+def test_a_disabled_retrieval_with_a_loaded_scenario_is_not_missing_evidence() -> None:
+    state = _state()
+    state.scenario_text = "完整劇本"
+    assert turn_fallback.classify(_result("blocked"), state, "u1", rag_status="disabled") == "unsupported_action"
+    assert turn_fallback.classify(_result("blocked"), _state(), "u1", rag_status="disabled") == "no_scenario_evidence"
+
+
+@aio
+async def test_a_retry_that_stays_blocked_is_not_blamed_on_evidence_the_recovery_found(events) -> None:
+    reply, run_executor, _searched, message = await _turn(
+        _state(), [_result("blocked"), _result("blocked")], rag_status="empty",
+        search=("--- 第 4 頁 ---\n廚房的門鎖著", "success"),
+    )
+    assert run_executor.await_count == 2 and message.payload["recovery_context"]
+    [row] = fallbacks(events)
+    assert row["fallback_reason"] == "unsupported_action" and row["recovery_result"] == "unresolved"
+    assert turn_fallback.guidance("no_scenario_evidence") not in reply
+
+
+@aio
+async def test_the_fallback_event_counts_the_hits_the_recovery_found(events) -> None:
+    await _turn(_state(), [_result("blocked"), _result("blocked")], rag_status="empty",
+                search=("--- 第 4 頁 ---\n廚房的門鎖著", "success"))
+    [row] = fallbacks(events)
+    assert row["retrieval_count"] == 2 and row["retrieval_hit_ids"] == ["page:3", "page:4"]

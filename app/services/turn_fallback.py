@@ -53,8 +53,10 @@ def guidance(reason: str | None) -> str:
     return _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
 
 
-def _has_scenario_evidence(result: MechanicResult, rag_status: str) -> bool:
-    return rag_status == "success" or any(name == "search_scenario" and ok for name, ok in result.tool_calls)
+def _has_scenario_evidence(result: MechanicResult, rag_status: str, state: GroupState) -> bool:
+    # "disabled" means retrieval was off or skipped, not that nothing was found: the whole scenario is in the prompt.
+    return (rag_status == "success" or (rag_status == "disabled" and bool(state.scenario_text))
+            or any(name == "search_scenario" and ok for name, ok in result.tool_calls))
 
 
 def _waiting(state: GroupState, user_id: str) -> bool:
@@ -89,7 +91,7 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     if code == "validated" and resolution.disposition == "blocked":
         if _waiting(state, user_id):
             return "unresolved_pending_state"
-        return "unsupported_action" if _has_scenario_evidence(result, rag_status) else "no_scenario_evidence"
+        return "unsupported_action" if _has_scenario_evidence(result, rag_status, state) else "no_scenario_evidence"
     return "unknown"
 
 
