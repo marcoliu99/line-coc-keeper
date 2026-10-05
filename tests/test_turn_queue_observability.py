@@ -143,11 +143,34 @@ class QueueNoticeTests(unittest.TestCase):
             return replies
 
         with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
-                patch.object(turn_scope, "_QUEUE_ACK_REFRESH_SECONDS", 0.01):
+                patch.object(turn_scope, "_QUEUE_ACK_REFRESH_SECONDS", 0.01), \
+                patch.object(turn_scope, "_QUEUE_ACK_GROWTH", 1.0):
             replies = asyncio.run(scenario())
         self.assertEqual(len(replies), turn_scope._QUEUE_ACK_MAX_NOTICES)
         for message in replies:
             self.assertIn("2", message)
+
+    def test_the_interval_grows_and_the_notices_cover_the_longest_waits_seen(self):
+        """No wall clock: the sleeps are recorded, not waited for."""
+        async def scenario() -> tuple[list[float], list[str]]:
+            slept: list[float] = []
+            replies: list[str] = []
+
+            async def fake_sleep(seconds: float) -> None:
+                slept.append(seconds)
+
+            async def reply(message: str) -> None:
+                replies.append(message)
+
+            with patch.object(turn_scope.asyncio, "sleep", fake_sleep):
+                await turn_scope._delayed_queue_notice(reply, lambda: 3)
+            return slept, replies
+
+        slept, replies = asyncio.run(scenario())
+        self.assertEqual(slept, [10, 20, 30, 45, 60, 60, 60])
+        self.assertEqual(len(replies), turn_scope._QUEUE_ACK_MAX_NOTICES)
+        # A five-player burst waited up to 255 s in a real run; the last notice lands at 285 s.
+        self.assertGreaterEqual(sum(slept), 255)
 
     def test_a_waiter_counts_down_instead_of_recounting_the_queue(self):
         """Recounting after joining the queue would include the waiter itself

@@ -73,7 +73,7 @@ def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str) -> str:
             candidate, ctx.resolved_check_context or {}, new_pending_check=new_pending_check,
         )
     if draft.public_result is not None:
-        candidate = prompt_config.enforce_mechanic_check_consistency(candidate, draft.public_result)
+        candidate = prompt_config.enforce_mechanic_check_consistency(candidate, draft.public_result, state=ctx.state)
     return candidate
 
 

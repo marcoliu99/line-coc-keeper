@@ -5,6 +5,7 @@ import re
 
 from app import presentation
 from app.domain.models import MechanicResult
+from app.models import GroupState
 from app.services import opposed_checks, turn_fallback
 
 # 【提示詞集中管理】
@@ -347,8 +348,11 @@ def enforce_resolved_check_consistency(
 
 
 
-def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str:
-    """Enforce check, Luck, and resolved-result state after model narration."""
+def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
+    """Enforce check, Luck, and resolved-result state after model narration.
+
+    ``state`` lets a turn that could not finish name what the table has already been shown (``turn_fallback.scene_hints``).
+    """
     status = result.check_status
     resolution = result.turn_resolution
     if resolution is not None:
@@ -369,9 +373,11 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            hints = turn_fallback.scene_hints(state) if state is not None else ""
             if status.get("scenario_evidence_blocked"):
-                return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
-            return f"{warning}{turn_fallback.guidance(result.fallback_reason)}"
+                blocked = f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
+                return f"{blocked}\n{hints}" if hints else blocked
+            return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
             return f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"

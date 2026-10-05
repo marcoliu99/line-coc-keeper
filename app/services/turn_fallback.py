@@ -17,12 +17,15 @@ from app.domain.models import FALLBACK_REASONS, FallbackReason, MechanicResult
 from app.models import GroupState
 from app.services import turn_phases
 
-__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record", "recoverable", "recovery_query"]
+__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record", "recoverable", "recovery_query", "scene_hints"]
 
 # What the player is told when the turn has no more specific wording; every reason has one.
 _GUIDANCE: dict[str, str] = {
     "no_scenario_evidence": "目前查不到足以裁決這個行動的劇本依據，系統已暫停相關操作；請換個說法，或說明你想對哪個地點、人物或物件做什麼。",
-    "executor_no_action": "守密人沒有為這個行動找到可以執行的處理；請把行動說得更具體（對象、方式）後再試。",
+    "executor_no_action": (
+        "劇本裡沒有足夠的內容可以據以裁決這個行動，守密人沒有替它編造。"
+        "可以改問劇本中已經出現的人物、物件或地點；如果行動很籠統，也可以補上對象與方式再試一次。"
+    ),
     "unresolved_pending_state": "還有尚未完成的檢定、Luck 決定或他人的行動；請先完成它，再宣告新的行動。",
     "invalid_tool_plan": "守密人的裁決沒有通過核對，這次行動沒有執行；請再說一次你的行動。",
     "tool_failure": "處理這個行動的工具失敗了；已完成的變更會保留，請稍後重試或換個做法。",
@@ -50,8 +53,101 @@ RECOVERABLE: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_ac
 _HEADER = re.compile(r"^--- (?:原稿補查 · )?第 (\d+) 頁 ---$", re.MULTILINE)
 
 
-def guidance(reason: str | None) -> str:
-    return _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
+# Reasons whose message asks the player to try something else, so naming what they can try is the useful part.
+_HINTED: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_action", "unsupported_action"})
+_HINT_LIMIT = 5
+_CLUE_HINT_CHARS = 24
+_RECENT_NARRATION = 60
+
+
+def guidance(reason: str | None, hints: str = "") -> str:
+    """What the player is told; ``hints`` (see ``scene_hints``) is added for reasons that ask them to try something else."""
+    text = _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
+    return f"{text}\n{hints}" if hints and reason in _HINTED else text
+
+
+def _public_narration(state: GroupState) -> list[str]:
+    """What players have actually been told in this timeline, newest first.
+
+    Player lines and anything not public are left out. A new scenario starts a new timeline but keeps the log, so
+    narration and clues stamped with another timeline (or with none: unverified clues are stored unstamped, and a new scenario keeps them) are left out too: it was
+    about a different scenario and must not make a same-named entry of this one look disclosed. Only narration that
+    still stands counts: text an approved correction replaced (``superseded_by``) was withdrawn, and a correction's own
+    wording ("narrative_correction") may name the very thing it denies.
+    """
+    return [str(entry.get("content", "")) for entry in reversed(state.log[-_RECENT_NARRATION:])
+            if entry.get("role") == "assistant" and entry.get("audience", "public") == "public"
+            and entry.get("timeline_id", "") == (state.timeline_id or "")
+            and entry.get("record_kind") == "narrative" and not entry.get("superseded_by")]
+
+
+def _names(entry: dict[str, Any]) -> list[str]:
+    """An index entry's canonical name and aliases, the ones long enough to match on."""
+    return [n for n in (str(entry.get("name") or "").strip(), *(str(a).strip() for a in entry.get("aliases") or []))
+            if len(n) >= 2]
+
+
+_ASCII_WORD = "A-Za-z0-9"
+
+
+def _occurs(name: str, text: str, longer: list[str]) -> bool:
+    """Whether ``name`` is used in ``text`` rather than only as part of a longer name the scenario also has.
+
+    A name is not looked for inside a longer index name that contains it (a "房東" must not be found in the
+    narration's "房東太太" when she is an entry of her own). Names written in ASCII also must not touch other
+    ASCII letters or digits. A longer phrase that no index lists cannot be told apart, so a short name can still
+    match inside it; the line then names a character the narration did mention in some form, never one it did not.
+    """
+    for other in longer:
+        text = text.replace(other, " ")
+    if name.isascii():
+        return re.search(rf"(?<![{_ASCII_WORD}]){re.escape(name)}(?![{_ASCII_WORD}])", text) is not None
+    return name in text
+
+
+def _already_shown(index: list[dict[str, Any]], narration: list[str], every_name: list[str]) -> list[str]:
+    """Names from a scenario index that the narration has already used, the most recently mentioned first.
+
+    Each entry appears once, written the way the narration wrote it (the most recently narrated spelling if it used several): an entry whose alias was narrated is listed under that alias, never
+    under its canonical name, which the narration may not have said and which may itself give something away.
+    """
+    found: list[tuple[int, int, str]] = []
+    for entry in index:
+        spellings = []
+        for name in _names(entry):
+            longer = [other for other in every_name if len(other) > len(name) and name in other]
+            position = next((i for i, text in enumerate(narration) if _occurs(name, text, longer)), None)
+            if position is not None:
+                spellings.append((position, -len(name), name))
+        if spellings:
+            found.append(min(spellings))  # one spelling per entry: the one narrated most recently
+    return list(dict.fromkeys(name for _, _, name in sorted(found)))[:_HINT_LIMIT]
+
+
+def scene_hints(state: GroupState) -> str:
+    """The places, people and clues the players have already been shown, as one line; empty when there are none.
+
+    Built only from what the narration has already said to the table (a scenario index entry counts once its name or an
+    alias has appeared in public narration, and it is listed under the spelling that appeared) and from public clues, so
+    it can only repeat what players know and never names an unvisited location or an undisclosed character. A name the
+    narration translated differently from the index will not match, in which case the line is simply shorter.
+    """
+    narration = _public_narration(state)
+    every_name = [n for entry in (*state.scenario_location_index, *state.scenario_npc_index) for n in _names(entry)]
+    parts: list[str] = []
+    places = _already_shown(state.scenario_location_index, narration, every_name)
+    if places:
+        parts.append("地點：" + "、".join(places))
+    people = _already_shown(state.scenario_npc_index, narration, every_name)
+    if people:
+        parts.append("人物：" + "、".join(people))
+    clues = [str(c.get("text", "")).strip() for c in reversed(state.known_clues)
+             if c.get("visibility", "public") == "public" and str(c.get("text", "")).strip()
+             and c.get("timeline_id", "") == (state.timeline_id or "")]
+    clues = [c if len(c) <= _CLUE_HINT_CHARS else c[:_CLUE_HINT_CHARS] + "…" for c in clues[:3]]
+    if clues:
+        parts.append("已記錄的線索：" + "；".join(clues))
+    return ("目前已在劇情中出現、可以接著問或查看的有——" + "　".join(parts) + "。") if parts else ""
 
 
 def _has_scenario_evidence(result: MechanicResult, rag_status: str, state: GroupState) -> bool:

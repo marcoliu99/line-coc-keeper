@@ -2140,6 +2140,22 @@
       ],
       "path": "docs/specs/enhancement/retrieval_budget_headroom_design_spec.md",
       "zh_path": "docs/specs/enhancement/retrieval_budget_headroom_design_spec_zh.md",
+      "source_revision": "1fd3ccbcb53422f578995e87b493b900c1c6eec7"
+    },
+    {
+      "title": "What a player reads when a turn cannot finish and how long a queue is acknowledged",
+      "zh": "回合無法完成時玩家讀到什麼、排隊通知持續多久",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/commands/turn_scope.py",
+        "tests/test_fallback_wording.py",
+        "tests/test_scene_hints.py",
+        "tests/test_turn_queue_observability.py"
+      ],
+      "path": "docs/specs/enhancement/player_facing_wording_design_spec.md",
+      "zh_path": "docs/specs/enhancement/player_facing_wording_design_spec_zh.md",
       "source_revision": "f03a110ed9ee1bbb637c30c67938bf08d9543aee"
     }
   ]

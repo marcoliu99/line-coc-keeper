@@ -77,6 +77,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [One summary line per turn, whatever the logging settings](specs/enhancement/turn_summary_log_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_log_design_spec_zh.md) |
 | [Counting the turns that did not finish, from the turn summary line](specs/enhancement/turn_summary_report_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_report_design_spec_zh.md) |
 | [Keeping the scenario search from being starved, and counting Chinese text honestly without a tokenizer](specs/enhancement/retrieval_budget_headroom_design_spec.md) | implemented | [繁體中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) |
+| [What a player reads when a turn cannot finish and how long a queue is acknowledged](specs/enhancement/player_facing_wording_design_spec.md) | implemented | [繁體中文](specs/enhancement/player_facing_wording_design_spec_zh.md) |
 
 ## feature
 

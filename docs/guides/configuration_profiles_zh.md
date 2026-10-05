@@ -36,6 +36,7 @@
 | 設定 | 預設 | 影響 |
 | --- | --- | --- |
 | `LOG_TEXT_ENABLED` | `true` | 純文字日誌，包含每個玩家回合一行 `turn.summary`（只有時間與識別碼，沒有玩家文字）。 |
+| `LOCK_HELD_WARNING_SECONDS` | `LLM_TURN_DEADLINE_SECONDS` + 60 | 對話鎖、Keeper turn 鎖或旁白鎖被持有超過這個時間，會在 logger `app.locks` 以 WARNING 報告一次（`lock.held_too_long`），最後釋放時再報告一次；它不會釋放任何東西。`0` 關閉。 |
 | `LOG_ENABLED` | `false` | 結構化事件，帶計時器、計數器與 JSON 內容（`turn.phases`、`llm.turn` 等）。每次呼叫有額外開銷，用來調查問題，不建議預設開啟。 |
 
 ## 測了什麼

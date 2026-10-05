@@ -36,6 +36,7 @@ An unrecognised value for a boolean setting (`ture`) keeps the default and is re
 | Setting | Default | What it changes |
 | --- | --- | --- |
 | `LOG_TEXT_ENABLED` | `true` | Plain text logs, including one `turn.summary` line per player turn (timings and ids only, no player text). |
+| `LOCK_HELD_WARNING_SECONDS` | `LLM_TURN_DEADLINE_SECONDS` + 60 | A conversation, Keeper-turn or narration lock still held this long is reported once as a WARNING on logger `app.locks` (`lock.held_too_long`) and again when it is finally released. It never releases anything. `0` turns it off. |
 | `LOG_ENABLED` | `false` | Structured events with timers, counters and JSON payloads (`turn.phases`, `llm.turn`, …). Adds per-call overhead; turn it on to investigate, not by default. |
 
 ## What is tested
