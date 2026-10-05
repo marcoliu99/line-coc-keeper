@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app import db, dice
-from app.agents import obligation_gate, supervisor
+from app.agents import obligation_gate, reply_pipeline, supervisor
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.repositories import group_state
@@ -231,7 +231,7 @@ async def _turn(state, narration, rag_context):
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=(narration, [], []))), \
-            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
         reply, _, _ = await supervisor.run_turn(
             state=state, user_id="a", display_name="Marco", text="我掀開水桶", resolved_location=None,
             speaker_role="player", conversation_id=state.group_id,
@@ -307,7 +307,7 @@ async def test_a_trigger_the_guard_removed_charges_nothing(state) -> None:
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=(REVEAL, [], []))), \
-            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(return_value="你掀開蓋子，什麼也沒看清。")):
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(return_value="你掀開蓋子，什麼也沒看清。")):
         reply, _, _ = await supervisor.run_turn(
             state=state, user_id="a", display_name="Marco", text="我掀開水桶", resolved_location=None,
             speaker_role="player", conversation_id=state.group_id)
@@ -335,7 +335,7 @@ async def test_the_mutation_phase_is_kept_when_the_evidence_states_an_obligation
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("你掀開水桶。", [], []))), \
-            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
         await supervisor.run_turn(
             state=state, user_id="a", display_name="Marco", text="我掀開水桶", resolved_location=None,
             speaker_role="player", conversation_id=state.group_id, handoff=handoff)

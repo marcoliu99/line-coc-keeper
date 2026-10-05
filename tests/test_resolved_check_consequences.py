@@ -214,7 +214,7 @@ def test_autoroll_plan_runs_restricted_narrator_without_releasing_mutation_lock(
     import asyncio
     from unittest.mock import AsyncMock
 
-    from app.agents import supervisor
+    from app.agents import reply_pipeline, supervisor
     from app.domain.models import AgentMessage, MechanicResult, StateDelta
 
     game.autoroll_checks = True
@@ -243,7 +243,7 @@ def test_autoroll_plan_runs_restricted_narrator_without_releasing_mutation_lock(
     with (patch.object(supervisor.context_builder, 'build_context', AsyncMock(return_value=context)),
           patch.object(supervisor.executor, 'run_executor', side_effect=execute),
           patch.object(supervisor.narrator, 'run_narrator', side_effect=narrate),
-          patch.object(supervisor.guard, 'enforce_narrative_safety', AsyncMock(side_effect=lambda _, text: text)),
+          patch.object(reply_pipeline.guard, 'enforce_narrative_safety', AsyncMock(side_effect=lambda _, text: text)),
           patch('app.dice.random.randint', side_effect=[9, 9, 2])):
         asyncio.run(supervisor.run_turn(game, 'u1', 'Alicia', '我要閃避', None, 'player', game.group_id, handoff=handoff))
     assert group_state.load_state(game.group_id).characters['u1'].hp == 6

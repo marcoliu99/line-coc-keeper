@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app import config, observability
-from app.agents import context_builder, supervisor, tool_gateway
+from app.agents import context_builder, reply_pipeline, supervisor, tool_gateway
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.services import turn_phases as phases
@@ -283,7 +283,7 @@ async def _supervised(state, turn_kind, *, prefetched=None, reuse=True):
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("敘事", [], []))), \
-            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
             patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         kwargs: dict[str, Any] = {"turn_kind": turn_kind}
         if turn_kind == "resolved_check_followup":

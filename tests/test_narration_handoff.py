@@ -246,7 +246,7 @@ class SupervisorGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, *, turn_kind, enabled=True):
         from app import config
-        from app.agents import context_builder, narrator, supervisor
+        from app.agents import context_builder, narrator, reply_pipeline, supervisor
         from app.domain.models import AgentMessage
         from app.models import Character, GroupState
 
@@ -268,7 +268,7 @@ class SupervisorGateTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.context_builder, "build_context", context), \
                 patch.object(supervisor.narrator, "run_narrator", narrate), \
                 patch.object(supervisor.turn_commit, "commit_turn_result", lambda *a, **k: True), \
-                patch.object(supervisor.guard, "enforce_narrative_safety",
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety",
                              lambda _m, text: _coro(text)):
             await supervisor.run_turn(
                 state, "u1", "Marco", "我推開門", None, "player", "g",
