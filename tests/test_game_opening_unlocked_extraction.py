@@ -29,6 +29,12 @@ class UnlockedOpeningRaces(unittest.IsolatedAsyncioTestCase):
         db_patch.start()
         self.addCleanup(db_patch.stop)
         db._ensure_tables()
+        # A fallback opening delivers its reply through run_post_turn_maintenance_after_output, which
+        # spawns the memory maintenance as a background task. Left running, it writes into the temporary
+        # database directory while the test removes it ("Directory not empty").
+        spawn_patch = patch("app.services.post_turn.spawn_post_turn_maintenance")
+        spawn_patch.start()
+        self.addCleanup(spawn_patch.stop)
         self.group = self.id().replace(".", "-")
         self.seed()
 
