@@ -159,20 +159,21 @@ def mark_superseded_receipt(group_id: str, timeline_id: str, *, turn_id: str, ex
     """Annotate only chunks provably containing a corrected message receipt."""
     if not turn_id or not excerpt or not correction_id:
         return 0
-    raw_chunks = _load_raw_chunks(group_id)
-    changed = 0
-    for row in raw_chunks:
-        if (row.get("timeline_id") != timeline_id or excerpt not in str(row.get("text", ""))
-                or not any(item.get("turn_id") == turn_id
-                           for item in row.get("source_messages", []) if isinstance(item, dict))):
-            continue
-        refs = row.setdefault("superseded_by", [])
-        if correction_id not in refs:
-            refs.append(correction_id)
-            changed += 1
-    if changed:
-        _save_raw_chunks(group_id, raw_chunks)
-        _index_cache.pop((group_id, timeline_id), None)
+    with locks.get_state_lock(group_id):  # the same lock as every other writer of this blob (backfill, a trim)
+        raw_chunks = _load_raw_chunks(group_id)
+        changed = 0
+        for row in raw_chunks:
+            if (row.get("timeline_id") != timeline_id or excerpt not in str(row.get("text", ""))
+                    or not any(item.get("turn_id") == turn_id
+                               for item in row.get("source_messages", []) if isinstance(item, dict))):
+                continue
+            refs = row.setdefault("superseded_by", [])
+            if correction_id not in refs:
+                refs.append(correction_id)
+                changed += 1
+        if changed:
+            _save_raw_chunks(group_id, raw_chunks)
+            _index_cache.pop((group_id, timeline_id), None)
     return changed
 
 
@@ -195,7 +196,8 @@ def _pending_embedding(failure: embedding_execution.EmbeddingFailure | None) -> 
     """Mark a chunk stored without a vector, and say whether trying again can help."""
     return {
         "embedding_status": "pending" if failure is None or failure.retryable else "failed_permanent",
-        "embedding_attempts": 1,
+        # No key configured is not an attempt the provider refused: it is not counted against the chunk.
+        "embedding_attempts": 0 if failure is not None and failure.reason == "missing_api_key" else 1,
         **({"embedding_failure": {
             "reason": failure.reason, "status_class": failure.status_class, "status_code": failure.status_code,
             "error_code": failure.error_code, "retryable": failure.retryable,
@@ -293,18 +295,19 @@ def append_memory(
         return False
     if embedding is _EMBEDDING_NOT_PROVIDED:
         embedding = prepare_memory_embedding(text)
-    raw_chunks = _load_raw_chunks(group_id)
-    raw_chunks, appended = _append_memory_payload(
-        raw_chunks,
-        text=text,
-        timeline_id=timeline_id,
-        idempotency_key=idempotency_key,
-        source_revision=source_revision,
-        embedding=cast(list[float] | None, embedding),
-        source_messages=source_messages,
-    )
-    if appended:
-        _save_raw_chunks(group_id, raw_chunks)
+    with locks.get_state_lock(group_id):
+        raw_chunks = _load_raw_chunks(group_id)
+        raw_chunks, appended = _append_memory_payload(
+            raw_chunks,
+            text=text,
+            timeline_id=timeline_id,
+            idempotency_key=idempotency_key,
+            source_revision=source_revision,
+            embedding=cast(list[float] | None, embedding),
+            source_messages=source_messages,
+        )
+        if appended:
+            _save_raw_chunks(group_id, raw_chunks)
     return appended
 
 
@@ -498,10 +501,12 @@ def _result(chunk: _Chunk, score: float) -> dict:
 def _collapse(pairs: list[tuple[float, _Chunk]], top_k: int) -> list[dict]:
     """Rank rows, folding the parts of one split memory into a single row so they are not read as separate facts.
 
-    The row takes the best part's score; it carries the matching parts in their original order.
+    The row takes the best part's score and carries the matching parts in their original order. Every part folded
+    in contributes its provenance and its corrections, so a corrected part cannot be shown as current memory just
+    because a better-scoring sibling was not corrected.
     """
     rows: list[dict] = []
-    folded: dict[str, tuple[dict, list[tuple[int, str]]]] = {}
+    folded: dict[str, tuple[dict, dict[int, _Chunk]]] = {}
     for score, chunk in pairs:
         if not chunk.parent_id:
             rows.append(_result(chunk, score))
@@ -509,15 +514,20 @@ def _collapse(pairs: list[tuple[float, _Chunk]], top_k: int) -> list[dict]:
         if chunk.parent_id not in folded:
             row = _result(chunk, score)
             row["parent_id"] = chunk.parent_id
-            folded[chunk.parent_id] = (row, [])
+            folded[chunk.parent_id] = (row, {})
             rows.append(row)
-        row, texts = folded[chunk.parent_id]
-        texts.append((chunk.part_index, chunk.text))
+        row, parts = folded[chunk.parent_id]
+        parts[chunk.part_index] = chunk
         row["part_count"] = chunk.part_count
-    for row, texts in folded.values():
-        ordered = sorted(set(texts))
-        row["text"] = "\n…\n".join(text for _, text in ordered)
-        row["parts"] = [index for index, _ in ordered]
+    for row, parts in folded.values():
+        ordered = [parts[index] for index in sorted(parts)]
+        row["text"] = "\n…\n".join(part.text for part in ordered)
+        row["parts"] = [part.part_index for part in ordered]
+        row["superseded_by"] = list(dict.fromkeys(ref for part in ordered for ref in part.superseded_by))
+        sources: list[dict[str, str]] = []
+        for part in ordered:
+            sources.extend(m for m in part.source_messages if m not in sources)
+        row["source_messages"] = sources
     return rows[:top_k]
 
 
@@ -676,6 +686,9 @@ def backfill_embeddings(group_id: str, *, limit: int = MEMORY_EMBEDDING_BACKFILL
                 rebuilt.append(row)
                 continue
             texts, vectors, failure = outcome
+            if vectors is None and failure is not None and failure.reason == "missing_api_key":
+                rebuilt.append(row)  # nothing was asked of the provider: not an attempt, and not a reason to give up
+                continue
             if vectors is None:
                 attempts = int(row.get("embedding_attempts", 0)) + 1
                 permanent = (failure is not None and not failure.retryable) or attempts >= MEMORY_EMBEDDING_MAX_ATTEMPTS

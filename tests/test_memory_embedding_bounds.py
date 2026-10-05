@@ -327,3 +327,90 @@ def test_maintenance_gives_earlier_gaps_another_chance_before_it_trims() -> None
     with patch.object(keeper, "run_scene_digest_maintenance"), patch.object(memory_rag, "_embed_texts", vectors):
         keeper.run_post_turn_maintenance("g13")
     assert all(c["embedding"] is not None for c in db.get_json("memory_chunks", "g13"))
+
+
+# --- review: configuration is not a refusal; folded parts keep every correction; one writer at a time ---------
+
+def test_a_missing_key_is_never_held_against_a_chunk() -> None:
+    stored_without_vector("g14", count=2)
+
+    def no_key(texts: list[str], rag_kind: str = "memory") -> None:
+        embedding_execution._local.failure = embedding_execution.EmbeddingFailure("missing_api_key", "none", True)
+
+    with patch.object(memory_rag, "_embed_texts", no_key):
+        for _ in range(6):
+            memory_rag.backfill_embeddings("g14")
+    rows = db.get_json("memory_chunks", "g14")
+    assert all(r.get("embedding_status", "pending") == "pending" and r.get("embedding_attempts", 0) == 0 for r in rows)
+    with patch.object(memory_rag, "_embed_texts", vectors):  # a key is configured later
+        assert memory_rag.backfill_embeddings("g14")["embedded"] == 2
+
+
+def test_a_chunk_stored_while_no_key_was_configured_stays_eligible_once_one_is() -> None:
+    rows = messages(2, size=10)
+    def no_key(texts: list[str], rag_kind: str = "memory") -> None:
+        embedding_execution._local.failure = embedding_execution.EmbeddingFailure("missing_api_key", "none", True)
+
+    with patch.object(memory_rag, "_embed_texts", no_key):
+        prepared = memory_rag.prepare_memory(rows, sources(rows))
+    assert prepared.failure is not None and prepared.failure.retryable
+    commit("g15", rows, prepared)
+    [chunk] = db.get_json("memory_chunks", "g15")
+    assert chunk["embedding_status"] == "pending" and chunk["embedding_attempts"] == 0
+    with patch.object(memory_rag, "_embed_texts", vectors):
+        assert memory_rag.backfill_embeddings("g15")["embedded"] == 1
+
+
+def test_folded_parts_keep_every_parts_correction_and_provenance() -> None:
+    rows = messages(12)
+    with patch.object(memory_rag, "_embed_texts", vectors):
+        prepared = memory_rag.prepare_memory(rows, sources(rows))
+    commit("g16", rows, prepared)
+    # A correction lands on a part that is not the best-scoring one.
+    stored = db.get_json("memory_chunks", "g16")
+    stored[-1]["superseded_by"] = ["fix-9"]
+    db.set_json("memory_chunks", "g16", stored)
+    memory_rag._index_cache.clear()
+    with patch.object(memory_rag, "_embed_texts", vectors):
+        [result] = memory_rag.search_memory("g16", "事件0 字", top_k=3, timeline_id="timeline-a")
+    assert result["parts"] == sorted(result["parts"]) and len(result["parts"]) > 1
+    assert result["superseded_by"] == ["fix-9"]
+    assert [m["turn_id"] for m in result["source_messages"]] == [f"turn-{n}" for n in range(12)]
+    assert "fix-9" in memory_rag.format_results([result])
+
+
+def test_a_correction_annotation_waits_for_a_backfill_in_progress() -> None:
+    import threading
+
+    stored_without_vector("g17")
+    rows = db.get_json("memory_chunks", "g17")
+    rows[0]["source_messages"] = [{"turn_id": "turn-0"}]
+    db.set_json("memory_chunks", "g17", rows)
+    release, started, results = threading.Event(), threading.Event(), {}
+
+    def slow_embed(texts: list[str], rag_kind: str = "memory") -> list[list[float]]:
+        started.set()
+        release.wait(5)
+        return vectors(texts)
+
+    def backfill() -> None:
+        with patch.object(memory_rag, "_embed_texts", slow_embed):
+            memory_rag.backfill_embeddings("g17")
+
+    worker = threading.Thread(target=backfill)
+    worker.start()
+    started.wait(5)
+    # The embedding is in flight (outside the lock); the annotation lands now, and the apply phase must keep it.
+    results["changed"] = memory_rag.mark_superseded_receipt(
+        "g17", "timeline-a", turn_id="turn-0", excerpt="事件0", correction_id="fix-1")
+    release.set()
+    worker.join(10)
+    [row] = db.get_json("memory_chunks", "g17")
+    assert results["changed"] == 1 and row["superseded_by"] == ["fix-1"] and row["embedding"] is not None
+
+
+def test_every_writer_of_the_memory_blob_takes_the_same_lock() -> None:
+    import inspect
+
+    for function in (memory_rag.mark_superseded_receipt, memory_rag.append_memory, memory_rag.backfill_embeddings):
+        assert "locks.get_state_lock(group_id)" in inspect.getsource(function), function.__name__

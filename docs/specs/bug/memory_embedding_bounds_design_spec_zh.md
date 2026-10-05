@@ -11,9 +11,9 @@
 ## 契約
 
 1. **送出前先有界。** 一次裁切的內容依序打包成多個 part，每個 part 不超過 `MEMORY_EMBEDDING_MAX_TOKENS`（預設 6000；預設模型約可接受 8k），以 embedding 模型的 tokenizer 計量而非字元數（`app/memory_chunking.py`）。比一個 part 還長的訊息先在句尾切，再依量測長度切。放得下的裁切仍是一個 chunk，儲存方式與以前完全相同。
-2. **語意保留。** 同一次裁切的各 part 以有序子項儲存、掛在同一個 parent 下（`parent_id`、`part_index`、`part_count`），與 log 裁切在同一個交易內，各有自己的向量、時間線與 revision，以及各自所含訊息的來源資訊。重播提交會找到 parent 而不再儲存。搜尋時，同一則記憶的各 part 會合併成一筆結果，依序排列，分數取最佳 part，不會被當成彼此獨立的事實。
+2. **語意保留。** 同一次裁切的各 part 以有序子項儲存、掛在同一個 parent 下（`parent_id`、`part_index`、`part_count`），與 log 裁切在同一個交易內，各有自己的向量、時間線與 revision，以及各自所含訊息的來源資訊。重播提交會找到 parent 而不再儲存。搜尋時，同一則記憶的各 part 會合併成一筆結果，依序排列，分數取最佳 part，不會被當成彼此獨立的事實；合併後的結果帶有被併入的每個 part 的更正（`superseded_by`）與訊息來源。
 3. **失敗會被診斷，但不引用原文。** `rag.embedding_fallback` 現在帶有 provider、操作、輸入數量與大小（bytes，是 token 的上界）、狀態類別與代碼、provider 的錯誤代碼與類型、重試是否可能有用，以及選用的 fallback。provider 的訊息文字（可能回顯憑證）不會被記錄。同樣的診斷也存在該 chunk 上。
-4. **只剩詞彙檢索不是穩定狀態。** 每次搜尋遇到缺向量的 chunk 都記錄 `memory.embedding_gap`。每次維護先給最多 `MEMORY_EMBEDDING_BACKFILL_LIMIT`（4）個這類 chunk 再一次機會，每個最多 `MEMORY_EMBEDDING_MAX_ATTEMPTS`（3）次，被重試也無法改變的拒絕（408／409／429 以外的 4xx，或額度用盡）之後不再嘗試。在 part 出現之前就存下的、太長無法 embedding 的 chunk，會在這次重試中就地切開。工作在狀態鎖之外進行，結果在鎖內套用到當時的 chunk，所以不會蓋掉同時發生的裁切。
+4. **只剩詞彙檢索不是穩定狀態。** 每次搜尋遇到缺向量的 chunk 都記錄 `memory.embedding_gap`。每次維護先給最多 `MEMORY_EMBEDDING_BACKFILL_LIMIT`（4）個這類 chunk 再一次機會，每個最多 `MEMORY_EMBEDDING_MAX_ATTEMPTS`（3）次，被重試也無法改變的拒絕（408／409／429 以外的 4xx，或額度用盡）之後不再嘗試。沒有設定 embedding 金鑰是設定問題而不是拒絕：不算一次嘗試，所以金鑰設定好之前存下的記憶，在金鑰設好之後會被補上向量。在 part 出現之前就存下的、太長無法 embedding 的 chunk，會在這次重試中就地切開。工作在狀態鎖之外進行，結果在鎖內套用到當時的 chunk，更正註記與附加記憶也取同一把鎖，所以彼此不會蓋掉對方。
 5. **BM25 保留。** 沒有向量的 chunk 仍可用關鍵字找到，之後成功一次就恢復向量檢索。
 
 ## 保持不變的契約

@@ -73,7 +73,7 @@ def embed_texts(
     if not texts:
         return None
     if not api_key:
-        _fallback(rag_kind, model, EmbeddingFailure('missing_api_key', 'none', False), texts)
+        _fallback(rag_kind, model, EmbeddingFailure('missing_api_key', 'none', True), texts)  # configuration, not a refusal
         return None
     client = None
     try:
