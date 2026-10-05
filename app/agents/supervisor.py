@@ -231,6 +231,7 @@ async def run_turn(
     )
     message.payload["intent"] = intent
     observability.event("turn.route", route=intent.lower(), turn_kind=turn_kind)
+    turn_phases.note(route=intent.lower())
     
     _logger.info(f"Intent classified as: {intent}")
 
