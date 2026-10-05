@@ -9,6 +9,7 @@ has kept the registered name.
 """
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Collection
 
@@ -44,13 +45,23 @@ def outcome_label(text: str) -> str:
     return _OUTCOME.sub(replace, text)
 
 
-_AFTER_COC = re.compile(r"/coc\s+$", re.IGNORECASE)
+_COMMAND_SPAN = re.compile(r"/coc(?:[ \t]+[A-Za-z0-9_|\[\]-]+)*", re.IGNORECASE)
+_COMMAND_WORD = re.compile(r"[a-z][a-z0-9_]*")
 
 
-def _is_command_token(text: str, start: int) -> bool:
-    """Whether the text at ``start`` is the command itself ("/coc", or the word right after it), which must stay typeable."""
-    tail = text[max(0, start - 16):start]
-    return tail.endswith("/") or _AFTER_COC.search(tail) is not None
+@functools.lru_cache(maxsize=1)
+def command_words() -> frozenset[str]:
+    """Every word of ``/coc`` syntax the help pages tell a player to type ("check", "luck", "roll", "status", ...)."""
+    from app import (
+        help_registration,  # imported when first needed: help pages sit above this module
+    )
+
+    words = {"coc"}
+    for entry in help_registration.entries_for_policy():
+        for line in (*entry.usage, *entry.examples):
+            if "/coc" in line:
+                words.update(_COMMAND_WORD.findall(re.sub(r"[|\[\]]", " ", line).lower()))
+    return frozenset(words)
 
 
 def character_aliases(text: str) -> str:
@@ -58,8 +69,8 @@ def character_aliases(text: str) -> str:
 
     One pass over the text with the longest name first, so a name inside a longer configured one is left to the longer
     one and a replacement is never searched again. A name written in ASCII does not match inside other ASCII letters
-    or digits. A name that is also a command word is left alone where it is the command ("/coc", or the word right
-    after "/coc"), because the command a player is told to type has to keep working. Chinese has no word boundary to check: a registered name that is part of a longer name nobody
+    or digits. A name that is also a word of ``/coc`` syntax ("coc", "check", "roll", ...; see ``command_words``) is left alone
+    inside a ``/coc ...`` command, because the command a player is told to type has to keep working. Chinese has no word boundary to check: a registered name that is part of a longer name nobody
     configured ("馬可" inside "馬可波羅") is replaced; list the longer name too, mapped to itself, to keep it.
     """
     aliases = config.CHARACTER_DISPLAY_ALIASES
@@ -70,8 +81,14 @@ def character_aliases(text: str) -> str:
         before = rf"(?<![{_ASCII_WORD}])" if name[0].isascii() and name[0].isalnum() else ""
         after = rf"(?![{_ASCII_WORD}])" if name[-1].isascii() and name[-1].isalnum() else ""
         alternatives.append(f"{before}{re.escape(name)}{after}")
+    spans = [(m.start(), m.end()) for m in _COMMAND_SPAN.finditer(text)]
+    reserved = command_words() if spans else frozenset()
+
     def replace(match: re.Match[str]) -> str:
-        return match.group(0) if _is_command_token(text, match.start()) else aliases[match.group(0)]
+        name = match.group(0)
+        if name.lower() in reserved and any(start <= match.start() < end for start, end in spans):
+            return name  # the command the player is told to type keeps working
+        return aliases[name]
 
     return re.compile("|".join(alternatives)).sub(replace, text)
 

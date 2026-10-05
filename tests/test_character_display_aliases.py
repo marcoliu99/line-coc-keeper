@@ -63,6 +63,18 @@ class CharacterAliasTests(unittest.TestCase):
             self.assertEqual(presentation.character_aliases("coc 與 check 都來了"), "庫克 與 偵探 都來了")
             self.assertEqual(presentation.character_aliases("/COC  check"), "/COC  check")
 
+    def test_words_deeper_in_a_command_are_kept_too(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"status": "狀態", "roll": "擲", "occ": "職", "coc": "庫克"}):
+            for command in ("/coc create status", "/coc luck roll", "/coc alloc occ|int 技能名 點數", "/coc combat status"):
+                with self.subTest(command=command):
+                    self.assertEqual(presentation.character_aliases(command), command)
+            self.assertEqual(presentation.character_aliases("status 與 roll"), "狀態 與 擲")
+
+    def test_the_command_words_come_from_the_help_pages(self):
+        words = presentation.command_words()
+        self.assertLessEqual({"coc", "check", "luck", "roll", "status", "occ", "switch"}, words)
+        self.assertNotIn("硬漢", words)
+
     def test_the_name_argument_of_a_command_is_still_mapped(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
             self.assertEqual(presentation.character_aliases("/coc switch The Tough Guy"), "/coc switch 硬漢")
