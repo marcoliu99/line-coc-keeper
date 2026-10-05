@@ -19,13 +19,15 @@
 | P2 拆 `keeper.py`：工具分派、`keeper_tools/support`、import 閘門；刪除 `keeper.py` | F9 | **已合併** | [#193](https://github.com/marcoliu99/line-coc-keeper/pull/193) |
 | P3 釘住持久化按鈕的 `custom_id` | F11 | **已合併** | [#190](https://github.com/marcoliu99/line-coc-keeper/pull/190) |
 | P3 拆 `discord_bot.py`（1,862 → 311 行） | F11 | **已合併** | [#194](https://github.com/marcoliu99/line-coc-keeper/pull/194) |
-| P1 `reply_pipeline`、`run_turn` 拆六段、`TurnScope`＋鎖序測試＋watchdog | F4、F5 | 未開始 | — |
-| P3 `handle_system_command` 對照表化 | F10（冷路徑）| 未開始 | — |
+| P1 `reply_pipeline`、`run_turn` 拆五段（送出仍由 router 負責） | F4 | **已合併** | [#198](https://github.com/marcoliu99/line-coc-keeper/pull/198) |
+| P1 回合的鎖集中到 `turn_scope`、鎖序測試、掛在鎖本身的持鎖過久報告；一個不依賴牆鐘的時間測試 | F5、F16 | **已合併** | [#199](https://github.com/marcoliu99/line-coc-keeper/pull/199) |
+| P3 `handle_system_command` 對照表化 | F10（冷路徑）| **已合併** | [#200](https://github.com/marcoliu99/line-coc-keeper/pull/200) |
 | P4 延遲槓桿（旁白出鎖、工具面、舊版戰鬥退役、provider 迴圈核心、同步 SQLite）| F1、F3、F6、F10、F13 | 未開始；需要先用 #195 的摘要與一次五人真實執行取得數據 | — |
 | P5 冷路徑套件化、`GroupState` 子狀態 | F12、F14 | 未開始 | — |
 
 已完成的結果：
 
+- `supervisor.run_turn` 讀起來是 `prepare → mechanics → narrate → 回覆步驟 → commit`，回覆步驟是 `app/agents/reply_pipeline.py` 裡的有序清單，違反順序規則的清單在 import 時就會被拒絕。`/coc` 系統子指令是處理函式的對照表。回合的鎖有了一個家（`app/commands/turn_scope.py`）；`tests/test_lock_order.py` 記錄真實取鎖並在順序顛倒時失敗；鎖被持有超過 `LOCK_HELD_WARNING_SECONDS` 會在 logger `app.locks`（永遠輸出）報告 `lock.held_too_long`，且絕不會被自動釋放。
 - `app/keeper.py`（1,532 行、扇出 31）**已刪除**，改為 `prompt_builder`、`turn_commit`、`memory_maintenance`、`tool_dispatch` 與 `keeper_tools/support`；`keeper_tools` 與 `keeper` 之間 12 個模組的環消失，`tests/test_architecture_keeper_tools.py` 擋住它回來。`app/` 內持有 `SLF001` 豁免的檔案從 16 個降為 7 個。
 - `app/discord_bot.py` 從 1,862 行降到 311 行，其餘在 `app/discord_transport/`（`gateway`、`delivery`、`interactions`、`lifecycle`、`controls`、`help_ui`），並由 `tests/test_architecture_discord_transport.py` 檢查分層與逐一獨立 import。審查中 Codex 找出第一版的傳輸層 import 環（單獨 import 其中一個模組會失敗，被正常啟動順序掩蓋）與測試 patch 的是錯的模組綁定，兩者都已修正並各有測試擋住。
 - 上面各項都是純搬移或只新增輸出；**沒有任何延遲改善的宣稱**。
@@ -47,7 +49,7 @@
 | # | 不變量 | 現在由什麼保證 |
 | --- | --- | --- |
 | U1 | 收到訊息立刻顯示「輸入中」 | `discord_bot.on_message` 在取鎖前進入 `_best_effort_typing` |
-| U2 | 排隊超過 10 秒會被告知，並隨佇列前進更新位置（最多 3 次） | `router._delayed_queue_notice`、`_QUEUE_ACK_*` |
+| U2 | 排隊超過 10 秒會被告知，並隨佇列前進更新位置（最多 3 次） | `turn_scope._delayed_queue_notice`、`_QUEUE_ACK_*`（#199 從 `router` 搬出） |
 | U3 | 先送出回覆，維護工作在其後背景執行，不擋下一位玩家 | `post_turn.run_post_turn_maintenance_after_output` → `spawn_post_turn_maintenance` |
 | U4 | 檢定／Luck 按鈕重啟後仍可用；重複點擊被擋下而不是排隊重擲 | `DynamicItem` 按鈕（`timeout=None`）、`locks.try_acquire_check`、`state_actions` 帳本 |
 | U5 | 模型失敗時，已提交的變更保留，玩家得到明確、可行動的說明，而不是靜默或重擲 | `turn_fallback`（12 種原因）、`narrator` 失敗路徑、`LLM_TURN_DEADLINE_SECONDS=180` |
@@ -192,7 +194,7 @@ Discord ──► discord_bot ──► commands/router ──► handlers/*  (�
 
 ### F1（高，熱路徑）整個機械階段一次只服務一位玩家，且序列的模型往返很多
 
-- **證據**：`router._handle_text_message_impl`→`_conversation_lock_with_notice`；`supervisor.run_turn`；實測見 §2.2。`NARRATION_OUTSIDE_MUTATION_LOCK` 預設 `false`（`config.py:306`、`.env.example:160`），規格估計開啟可把持鎖中位從約 21.7 秒降到約 15.7 秒。`TurnHandoff`／narration lock／`narrating_turn` 的複雜度已經付了，好處卻沒收。
+- **證據**：`router._handle_text_message_impl`→`turn_scope.conversation_turn`（基準時是 `router._conversation_lock_with_notice`）；`supervisor.run_turn`；實測見 §2.2。`NARRATION_OUTSIDE_MUTATION_LOCK` 預設 `false`（`config.py:306`、`.env.example:160`），規格估計開啟可把持鎖中位從約 21.7 秒降到約 15.7 秒。`TurnHandoff`／narration lock／`narrating_turn` 的複雜度已經付了，好處卻沒收。
 - **玩家影響**：五人同時發言時，最後一位等的是前面所有人的 Executor。
 - **建議**：不要盲目翻旗標。順序：(1) 先做 F2（看得見）；(2) 在一次五人真實執行中同時記錄 `turn.queue`、`turn.phases`；(3) 補 F5 的持鎖 watchdog；(4) 之後在測試頻道開啟 `NARRATION_OUTSIDE_MUTATION_LOCK`，比較 `queue_wait` 的 p50／p95 與是否出現順序錯亂；(5) 通過才改預設。注意 `supervisor` 在「劇本證據可能寫明機制」時（`obligation_candidates`）會保留 mutation phase，開啟後的實際收益取決於這類回合的占比，要看數據。
 - **不要做**：把 Executor 與 Narrator 並行（Narrator 需要 Executor 的確定性結果）；以「不同玩家可並行」切鎖（會引入 `state_revision` 衝突與回合順序問題，沒有量測支持）。
@@ -219,7 +221,7 @@ Discord ──► discord_bot ──► commands/router ──► handlers/*  (�
 
 ### F5（中，熱路徑）鎖編排的失敗型態是頻道卡死，且只靠文件維持
 
-- **證據**：`locks.py` 的 `TurnHandoff` docstring 明寫「一次未釋放的 conversation lock 會讓頻道死鎖到重啟」；`router` 內有 10 處 `async with _conversation_lock_with_notice(...)`／優先閘門各自重複；規格 WP3.5 記錄了多次審查才修好的鎖順序問題。
+- **證據**：`locks.py` 的 `TurnHandoff` docstring 明寫「一次未釋放的 conversation lock 會讓頻道死鎖到重啟」；基準時 `router` 內有 10 處 `async with _conversation_lock_with_notice(...)`／優先閘門各自重複（現在是 `turn_scope.conversation_turn`／`keeper_turn`，剩下的直接取鎖由 `tests/test_architecture_turn_scope.py` 釘住）；規格 WP3.5 記錄了多次審查才修好的鎖順序問題。
 - **已有的緩解**：`LLM_TURN_DEADLINE_SECONDS=180`、`DISCORD_REQUEST_TIMEOUT_SECONDS`、`finally` 釋放。
 - **建議**：(1) 把「取鎖→交接→釋放→執行後處理」收成單一 `TurnScope`（router 只用它，不直接碰鎖）；(2) 加鎖順序測試（conversation → keeper turn → narration，違反即失敗）；(3) 加**只記錄不自動釋放**的持鎖 watchdog：持有超過期限（例如 deadline＋60 秒）輸出 `lock.held_too_long` 與持有者回合 id。不要自動強制釋放——那會把「卡住」變成「兩個回合同時改狀態」。
 
