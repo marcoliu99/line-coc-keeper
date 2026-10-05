@@ -120,7 +120,7 @@ def prepared(tmp_path, monkeypatch):
     variant_id = templates.import_markdown('sample', exported.name)
     state = SimpleNamespace(scenario_library_id='sample', scenario_variant_id=variant_id,
                             context_chapter_ids=['c1'], group_id='sample-group', scenario_text=SOURCE)
-    yield state, root, templates._variant_dir('sample', MANIFEST['content_hash'], variant_id)
+    yield state, root, scenario_library._variant_path('sample', MANIFEST['content_hash'], 'zh-TW', variant_id)
     templates._selection_cache.clear()
 
 

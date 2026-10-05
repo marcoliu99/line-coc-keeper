@@ -14,6 +14,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -23,7 +24,7 @@ from app.config import SCENARIO_LIBRARY_DIR
 
 _ASSET_RE = re.compile(r"front cover|title page|table of contents|credits|handout|character sheet|pre-generated|appendix", re.IGNORECASE)
 _SAFE_RE = re.compile(r"[^a-z0-9]+")
-_PAGE_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
+PAGE_MARKER_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _LIBRARY_LOCK = threading.RLock()
 
 
@@ -82,8 +83,129 @@ def _read_json(path: Path, fallback: Any) -> Any:
         return fallback
 
 
+# --- Source and variant records -------------------------------------------------
+# The files of a scenario source and of its translated variants stay inside this
+# module; callers ask for validated records and never build a path or a filename.
+
+_SOURCE_HASH = re.compile(r"[a-f0-9]{64}")
+_PATH_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
+_VARIANTS_DIR = ".variants"
+
+
+@dataclass(frozen=True)
+class VariantDocuments:
+    """What a variant directory holds; ``template_markdown`` is the editable export."""
+    manifest: dict[str, Any]
+    records: list[dict[str, Any]]
+    coverage: dict[str, Any]
+    glossary: list[dict[str, Any]]
+    template_markdown: str
+
+
+def read_source(scenario_id: str) -> tuple[dict[str, Any], str]:
+    """The library manifest and text of a scenario, checked against the manifest's content hash."""
+    root = _path(scenario_id)
+    manifest = _read_json(root / "manifest.json", None)
+    if not isinstance(manifest, dict):
+        raise FileNotFoundError(scenario_id)
+    text = (root / "scenario.txt").read_text(encoding="utf-8")
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != manifest.get("content_hash"):
+        raise ValueError("劇本來源與 manifest 不一致")
+    return manifest, text
+
+
+def source_manifest(scenario_id: str) -> dict[str, Any]:
+    """The library manifest without reading the text; ``{}`` when the scenario has none."""
+    manifest = _read_json(_path(scenario_id) / "manifest.json", {})
+    if not isinstance(manifest, dict):
+        raise ValueError("劇本 manifest 格式錯誤")  # noqa: TRY004 - invalid persisted document
+    return manifest
+
+
+def exports_dir(scenario_id: str) -> Path:
+    """Where the external-preparation packages of a scenario live."""
+    return _variants_root(scenario_id) / "exports"
+
+
+def _variants_root(scenario_id: str) -> Path:
+    return SCENARIO_LIBRARY_DIR / _VARIANTS_DIR / _path(scenario_id).name
+
+
+def _variant_path(scenario_id: str, source_hash: str, locale: str, variant_id: str) -> Path:
+    if not _SOURCE_HASH.fullmatch(source_hash) or not _PATH_PART.fullmatch(locale) or not _PATH_PART.fullmatch(variant_id):
+        raise ValueError("無效的模板版本")
+    return _variants_root(scenario_id) / source_hash / locale / variant_id
+
+
+def variant_manifests(scenario_id: str) -> list[dict[str, Any]]:
+    """Every readable variant manifest of a scenario, whatever its source version."""
+    _path(scenario_id)
+    root = _variants_root(scenario_id)
+    return [data for path in root.glob("*/zh-TW/zh-TW-*/manifest.json")
+            if isinstance((data := _read_json(path, None)), dict)]
+
+
+def read_variant(scenario_id: str, source_hash: str, locale: str, variant_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """A variant's manifest and records; ``FileNotFoundError`` when either is missing or malformed."""
+    path = _variant_path(scenario_id, source_hash, locale, variant_id)
+    manifest = _read_json(path / "manifest.json", None)
+    records = _read_json(path / "records.json", None)
+    if not isinstance(manifest, dict) or not isinstance(records, list):
+        raise FileNotFoundError(variant_id)
+    return manifest, records
+
+
+def variant_exists(scenario_id: str, source_hash: str, locale: str, variant_id: str) -> bool:
+    return _variant_path(scenario_id, source_hash, locale, variant_id).exists()
+
+
+def write_variant_manifest(scenario_id: str, source_hash: str, locale: str, variant_id: str, manifest: dict[str, Any]) -> None:
+    """Replace one variant's manifest atomically (review status, approval)."""
+    path = _variant_path(scenario_id, source_hash, locale, variant_id) / "manifest.json"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def publish_variant(
+    scenario_id: str, source_hash: str, locale: str, variant_id: str,
+    documents: VariantDocuments, *, still_current: Callable[[], bool],
+) -> None:
+    """Create a variant directory in one step. ``still_current`` is asked after the files are
+    written and before they appear, so a source re-parse in between leaves nothing behind."""
+    target = _variant_path(scenario_id, source_hash, locale, variant_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".building-", dir=target.parent))
+    try:
+        for name, payload in (("manifest.json", documents.manifest), ("records.json", documents.records),
+                              ("coverage.json", documents.coverage), ("glossary.json", documents.glossary)):
+            (temporary / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        (temporary / "template.md").write_text(documents.template_markdown, encoding="utf-8")
+        if not still_current():
+            raise ValueError("劇本已重新解析，模板已過期")
+        temporary.replace(target)
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+
+def variant_stamp(scenario_id: str, source_hash: str, locale: str, variant_id: str) -> tuple:
+    """Identity of the source and variant files that a cached index was built from."""
+    root = _path(scenario_id)
+    variant = _variant_path(scenario_id, source_hash, locale, variant_id)
+    paths = [root / "manifest.json", root / "scenario.txt", variant / "manifest.json", variant / "records.json"]
+    return tuple((str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+                 for path in paths for stat in [path.stat()])
+
+
+def remove_variants(scenario_id: str) -> None:
+    """Drop every variant and export package of a scenario."""
+    _path(scenario_id)
+    shutil.rmtree(_variants_root(scenario_id), ignore_errors=True)
+
+
 def _pages_in_range(text: str, start: int, end: int) -> str:
-    pieces = _PAGE_RE.split(text)
+    pieces = PAGE_MARKER_RE.split(text)
     selected: list[str] = []
     for i in range(1, len(pieces), 2):
         page = int(pieces[i])
@@ -113,7 +235,7 @@ def build_chapters(pdf_bytes: bytes, scenario_text: str) -> list[dict[str, Any]]
         toc = [(int(level), title.strip(), int(page)) for level, title, page in doc.get_toc(simple=True) if title.strip() and page > 0]
         page_count = doc.page_count
     except Exception:  # noqa: BLE001 - malformed optional PDF outline falls back to page markers.
-        toc, page_count = [], max((int(p) for p in _PAGE_RE.findall(scenario_text)), default=1)
+        toc, page_count = [], max((int(p) for p in PAGE_MARKER_RE.findall(scenario_text)), default=1)
     non_assets = [(level, title, page) for level, title, page in toc if not _ASSET_RE.search(title)]
     if not non_assets:
         return [{"id": "chapter-01", "title": "主劇本", "kind": "playable", "start_page": 1, "end_page": page_count}]
@@ -269,7 +391,7 @@ def _save_scenario_source(
                 "updated_at": _now(),
                 "preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(),
                 "content_hash": content_hash,
-                "page_count": max((int(p) for p in _PAGE_RE.findall(text)), default=1),
+                "page_count": max((int(p) for p in PAGE_MARKER_RE.findall(text)), default=1),
                 "chapters": chapters,
                 "image_assets": assets,
             }

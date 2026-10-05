@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,19 +32,8 @@ _SAFE_VARIANT = re.compile(r"zh-TW-[a-f0-9]{12}")
 _NEGATIVE = re.compile(r"\b(?:not|never|without|cannot|no)\b", re.IGNORECASE)
 
 
-def _root() -> Path:
-    return scenario_library.SCENARIO_LIBRARY_DIR / ".variants"
-
-
 def _source(scenario_id: str) -> tuple[dict[str, Any], str]:
-    root = scenario_library._path(scenario_id)
-    manifest = scenario_library._read_json(root / "manifest.json", None)
-    if not isinstance(manifest, dict):
-        raise FileNotFoundError(scenario_id)
-    text = (root / "scenario.txt").read_text(encoding="utf-8")
-    if hashlib.sha256(text.encode("utf-8")).hexdigest() != manifest.get("content_hash"):
-        raise ValueError("劇本來源與 manifest 不一致")
-    return manifest, text
+    return scenario_library.read_source(scenario_id)
 
 
 def _chapter_hash(manifest: dict[str, Any]) -> str:
@@ -101,18 +89,10 @@ def _blocks(manifest: dict[str, Any], text: str) -> list[dict[str, Any]]:
     return result
 
 
-def _variant_dir(scenario_id: str, source_hash: str, variant_id: str) -> Path:
-    scenario_library._path(scenario_id)
-    if not re.fullmatch(r"[a-f0-9]{64}", source_hash) or not _SAFE_VARIANT.fullmatch(variant_id):
+def _check_variant_id(variant_id: str) -> str:
+    if not _SAFE_VARIANT.fullmatch(variant_id):
         raise ValueError("無效的模板版本")
-    return _root() / scenario_id / source_hash / _LOCALE / variant_id
-
-
-def _all_variants(scenario_id: str) -> list[dict[str, Any]]:
-    scenario_library._path(scenario_id)
-    root = _root() / scenario_id
-    return [data for path in root.glob("*/zh-TW/zh-TW-*/manifest.json")
-            if isinstance((data := scenario_library._read_json(path, None)), dict)]
+    return variant_id
 
 
 def _records_text(records: list[dict[str, Any]], source_hash: str, chapter_hash: str, *, version: int = 3) -> str:
@@ -125,45 +105,38 @@ def _records_text(records: list[dict[str, Any]], source_hash: str, chapter_hash:
 
 def _save_variant(scenario_id: str, source_hash: str, chapter_hash: str,
                   records: list[dict[str, Any]], issues: list[str], *, origin: str, version: int = 3, variant_id: str | None = None) -> str:
-    variant_id = variant_id or f"zh-TW-{uuid4().hex[:12]}"
-    target = _variant_dir(scenario_id, source_hash, variant_id)
-    if target.exists():
-        previous = scenario_library._read_json(target / "manifest.json", {})
-        saved = scenario_library._read_json(target / "records.json", None)
+    variant_id = _check_variant_id(variant_id or f"zh-TW-{uuid4().hex[:12]}")
+    if scenario_library.variant_exists(scenario_id, source_hash, _LOCALE, variant_id):
+        try:
+            previous, saved = scenario_library.read_variant(scenario_id, source_hash, _LOCALE, variant_id)
+        except FileNotFoundError:
+            previous, saved = {}, None
         if (saved == records and previous.get("records_hash") == scenario_authoring.digest(records)
                 and previous.get("source_hash") == source_hash and previous.get("chapter_hash") == chapter_hash
                 and previous.get("schema_version") == version):
             return variant_id
         raise ValueError("候選版本識別衝突或已被修改，請重新匯出校閱")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix=".building-", dir=target.parent))
-    try:
-        manifest = {"scenario_id": scenario_id, "variant_id": variant_id,
-                    "source_hash": source_hash, "chapter_hash": chapter_hash,
-                    "locale": _LOCALE, "schema_version": version,
-                    "compiler_version": _V4_COMPILER if version == 4 else _COMPILER_VERSION,
-                    "origin": origin, "review_status": "review_required",
-                    "record_count": len(records), "issues": issues,
-                    "records_hash": hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
-        (temporary / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        (temporary / "records.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-        source_ids = sorted({str(record["source_id"]) for record in records})
-        (temporary / "coverage.json").write_text(json.dumps({
-            "source_block_count": len(_blocks(*_source(scenario_id))),
-            "covered_source_ids": source_ids, "unresolved": issues,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-        glossary = [{"record_id": record["id"], "name": record["name"],
-                     "aliases": record["aliases"]} for record in records]
-        (temporary / "glossary.json").write_text(json.dumps(glossary, ensure_ascii=False, indent=2), encoding="utf-8")
-        (temporary / "template.md").write_text(
-            _records_text(records, source_hash, chapter_hash, version=version), encoding="utf-8")
+    manifest = {"scenario_id": scenario_id, "variant_id": variant_id,
+                "source_hash": source_hash, "chapter_hash": chapter_hash,
+                "locale": _LOCALE, "schema_version": version,
+                "compiler_version": _V4_COMPILER if version == 4 else _COMPILER_VERSION,
+                "origin": origin, "review_status": "review_required",
+                "record_count": len(records), "issues": issues,
+                "records_hash": hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
+    documents = scenario_library.VariantDocuments(
+        manifest=manifest,
+        records=records,
+        coverage={"source_block_count": len(_blocks(*_source(scenario_id))),
+                  "covered_source_ids": sorted({str(record["source_id"]) for record in records}), "unresolved": issues},
+        glossary=[{"record_id": record["id"], "name": record["name"], "aliases": record["aliases"]} for record in records],
+        template_markdown=_records_text(records, source_hash, chapter_hash, version=version),
+    )
+
+    def still_current() -> bool:
         current, _ = _source(scenario_id)
-        if current["content_hash"] != source_hash or _chapter_hash(current) != chapter_hash:
-            raise ValueError("劇本已重新解析，模板已過期")
-        temporary.replace(target)
-    except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
+        return current["content_hash"] == source_hash and _chapter_hash(current) == chapter_hash
+
+    scenario_library.publish_variant(scenario_id, source_hash, _LOCALE, variant_id, documents, still_current=still_current)
     return variant_id
 
 
@@ -378,14 +351,14 @@ def export_legacy_template(scenario_id: str) -> Path:
 
 def export_template(scenario_id: str) -> Path:
     manifest, text = _source(scenario_id)
-    return scenario_authoring.export(_root() / scenario_id / "exports", IMPORT_DIR.resolve(),
+    return scenario_authoring.export(scenario_library.exports_dir(scenario_id), IMPORT_DIR.resolve(),
                                      manifest["content_hash"], _chapter_hash(manifest), _blocks(manifest, text),
                                      title=manifest.get("title") or scenario_id)
 
 
 def export_message(scenario_id: str, exported: Path) -> str:
     payload = scenario_authoring.parse_markdown(exported.read_text(encoding="utf-8"))
-    directory = _root() / scenario_id / "exports" / payload["export_id"]
+    directory = scenario_library.exports_dir(scenario_id) / payload["export_id"]
     files = scenario_authoring.read_json(directory / "files.json")
     registry = scenario_authoring.read_json(directory / "registry.json")
     prefix = registry.get('filename_prefix', 'scenario')
@@ -450,7 +423,7 @@ def import_matches(scenario_id: str, payload: dict, *, manifest: dict | None = N
         manifest, _ = _source(scenario_id)
     if 'authoring_version' in payload:
         try:
-            _, registry = scenario_authoring.registry_for(_root() / scenario_id / 'exports', payload,
+            _, registry = scenario_authoring.registry_for(scenario_library.exports_dir(scenario_id), payload,
                                                           manifest['content_hash'], _chapter_hash(manifest))
             return type(payload['authoring_version']) is int and payload['authoring_version'] == registry.get('authoring_version', 1)
         except (OSError, ValueError):
@@ -464,7 +437,7 @@ def import_progress(scenario_id: str, filename: str) -> str:
     if 'authoring_version' not in payload:
         return ''
     manifest, _ = _source(scenario_id)
-    return scenario_authoring.progress(_root() / scenario_id / 'exports', payload,
+    return scenario_authoring.progress(scenario_library.exports_dir(scenario_id), payload,
                                        manifest['content_hash'], _chapter_hash(manifest), IMPORT_DIR)
 
 
@@ -527,16 +500,13 @@ def status(scenario_id: str) -> dict[str, Any]:
             "variants": [{**v, "current": v.get("source_hash") == manifest["content_hash"]
                           and v.get("chapter_hash") == _chapter_hash(manifest)
                           and (v.get("schema_version"), v.get("compiler_version")) in {(3, _COMPILER_VERSION), (4, _V4_COMPILER)}}
-                         for v in _all_variants(scenario_id)]}
+                         for v in scenario_library.variant_manifests(scenario_id)]}
 
 
 def _read_variant(scenario_id: str, variant_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest, _ = _source(scenario_id)
-    path = _variant_dir(scenario_id, manifest["content_hash"], variant_id)
-    variant = scenario_library._read_json(path / "manifest.json", None)
-    records = scenario_library._read_json(path / "records.json", None)
-    if not isinstance(variant, dict) or not isinstance(records, list):
-        raise FileNotFoundError(variant_id)
+    variant, records = scenario_library.read_variant(
+        scenario_id, manifest["content_hash"], _LOCALE, _check_variant_id(variant_id))
     if (variant.get("schema_version"), variant.get("compiler_version")) not in {(3, _COMPILER_VERSION), (4, _V4_COMPILER)}:
         raise ValueError("模板結構版本已過期，請重新產生或匯入校對")
     if variant.get("records_hash") != hashlib.sha256(json.dumps(records, sort_keys=True, ensure_ascii=False).encode()).hexdigest():
@@ -622,10 +592,7 @@ def approve(scenario_id: str, variant_id: str, *, reviewer_id: str) -> None:
     variant["review_status"] = "approved"
     variant["reviewed_by"] = reviewer_id
     variant["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-    path = _variant_dir(scenario_id, variant["source_hash"], variant_id) / "manifest.json"
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(variant, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    scenario_library.write_variant_manifest(scenario_id, variant["source_hash"], _LOCALE, _check_variant_id(variant_id), variant)
 
 
 def import_markdown(scenario_id: str, filename: str) -> str:
@@ -646,7 +613,7 @@ def import_markdown(scenario_id: str, filename: str) -> str:
                 return _save_variant(scenario_id, source_hash, chapter_hash, records, issues,
                                      origin="external-authoring", version=4,
                                      variant_id="zh-TW-" + scenario_authoring.digest([payload["export_id"], records])[:12])
-            return scenario_authoring.import_batch(_root() / scenario_id / "exports", payload,
+            return scenario_authoring.import_batch(scenario_library.exports_dir(scenario_id), payload,
                                                    source_hash, chapter_hash, validate, save)
         if payload.get("schema_version") != 3:
             raise ValueError("模板版本不支援；請重新匯出整備工作檔")
@@ -738,14 +705,9 @@ _selection_cache: dict[tuple, tuple[tuple, scenario_rag.ScenarioIndex]] = {}
 
 
 def _selection_stamp(scenario_id: str, variant_id: str) -> tuple:
-    root = scenario_library._path(scenario_id)
-    manifest = scenario_library._read_json(root / "manifest.json", {})
-    if not isinstance(manifest, dict):
-        raise ValueError("劇本 manifest 格式錯誤")  # noqa: TRY004 - invalid persisted document
-    variant = _variant_dir(scenario_id, manifest.get("content_hash", ""), variant_id)
-    paths = [root / "manifest.json", root / "scenario.txt", variant / "manifest.json", variant / "records.json"]
-    return tuple((str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
-                 for path in paths for stat in [path.stat()])
+    manifest = scenario_library.source_manifest(scenario_id)
+    return scenario_library.variant_stamp(
+        scenario_id, manifest.get("content_hash", ""), _LOCALE, _check_variant_id(variant_id))
 
 
 def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenario_rag.ScenarioIndex:
@@ -808,11 +770,10 @@ def schedule_index_prewarm(state: Any) -> asyncio.Task[None] | None:
 
 
 def clean_scenario(scenario_id: str) -> None:
-    scenario_library._path(scenario_id)
     for selection_key in list(_selection_cache):
         if selection_key[0] == scenario_id:
             _selection_cache.pop(selection_key, None)
-    shutil.rmtree(_root() / scenario_id, ignore_errors=True)
+    scenario_library.remove_variants(scenario_id)
     db.delete_json("scenario_template_jobs", scenario_id)
     for key in db.list_keys("scenario_template_checkpoints"):
         if json.loads(key)[0] == scenario_id:

@@ -95,6 +95,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Retiring legacy_commands](specs/refactor/legacy_commands_retirement_design_spec.md) | implemented | [繁體中文](specs/refactor/legacy_commands_retirement_design_spec_zh.md) |
 | [Turn payload contract](specs/refactor/turn_payload_contract_design_spec.md) | implemented | [繁體中文](specs/refactor/turn_payload_contract_design_spec_zh.md) |
 | [Correction lifecycle](specs/refactor/correction_lifecycle_design_spec.md) | implemented | [繁體中文](specs/refactor/correction_lifecycle_design_spec_zh.md) |
+| [Scenario source and variant store](specs/refactor/scenario_source_store_design_spec.md) | implemented | [繁體中文](specs/refactor/scenario_source_store_design_spec_zh.md) |
 | [Single dispatch branch for each combat tool](specs/refactor/dead_combat_tool_branches_design_spec.md) | implemented | [繁體中文](specs/refactor/dead_combat_tool_branches_design_spec_zh.md) |
 | [Remove the unused legacy command dispatcher](specs/refactor/bug-remove-dead-legacy-coc-command-handler.md) | implemented | [繁體中文](specs/refactor/bug-remove-dead-legacy-coc-command-handler_zh.md) |
 | [Unified player-turn flow and independent KP Assistant](specs/refactor/unified_keeper_turn_flow_design_spec.md) | implemented | [繁體中文](specs/refactor/unified_keeper_turn_flow_design_spec_zh.md) |
