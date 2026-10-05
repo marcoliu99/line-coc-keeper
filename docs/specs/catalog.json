@@ -2174,8 +2174,8 @@
       "source_revision": "7782690ba47ac651576814983512f868fa152def"
     },
     {
-      "title": "Handing an item to another investigator is one committed step, and an item has one holder",
-      "zh": "把物品交給另一位調查員是一個不可分割的步驟，而且一樣物品只有一個持有者",
+      "title": "Handing an item to another investigator is one committed step",
+      "zh": "把物品交給另一位調查員是一個不可分割的步驟",
       "category": "bug",
       "status": "backlog",
       "evidence": [

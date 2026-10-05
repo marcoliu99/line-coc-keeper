@@ -44,6 +44,7 @@
 | [回合 fallback 原因與有界復原](specs/bug/turn_fallback_reasons_design_spec_zh.md) | 已實作 | [English](specs/bug/turn_fallback_reasons_design_spec.md) |
 | [劇本事件在同一回合的機械義務](specs/bug/event_obligations_design_spec_zh.md) | 已實作 | [English](specs/bug/event_obligations_design_spec.md) |
 | [相鄰劇本觸發的檢索](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) | 已實作 | [English](specs/bug/adjacent_scenario_trigger_design_spec.md) |
+| [把物品交給另一位調查員是一個不可分割的步驟](specs/bug/inventory_transfer_design_spec_zh.md) | 待辦 | [English](specs/bug/inventory_transfer_design_spec.md) |
 
 ## 功能強化
 
@@ -79,7 +80,6 @@
 | [不讓劇本搜尋被擠到沒有預算，以及沒有 tokenizer 時誠實地估算中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) | 已實作 | [English](specs/enhancement/retrieval_budget_headroom_design_spec.md) |
 | [回合無法完成時玩家讀到什麼、排隊通知持續多久、角色叫什麼名字](specs/enhancement/player_facing_wording_design_spec_zh.md) | 已實作 | [English](specs/enhancement/player_facing_wording_design_spec.md) |
 | [空的內部 id 標籤不能露給玩家，移除標籤時也不能吃掉後面的句子](specs/enhancement/internal_id_display_design_spec_zh.md) | 已實作 | [English](specs/enhancement/internal_id_display_design_spec.md) |
-| [把物品交給另一位調查員是一個不可分割的步驟，而且一樣物品只有一個持有者](specs/bug/inventory_transfer_design_spec_zh.md) | 待辦 | [English](specs/bug/inventory_transfer_design_spec.md) |
 
 ## 功能
 
