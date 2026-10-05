@@ -128,3 +128,16 @@ class StopProcessTests(unittest.IsolatedAsyncioTestCase):
                 raise TimeoutError
             finally:
                 await process.close()
+
+    async def test_a_child_that_cannot_be_signalled_does_not_hang_cleanup(self):
+        from app.providers import codex_transport
+        proc = self.process()
+        proc.send_signal.side_effect = PermissionError(1, 'Operation not permitted')
+
+        async def never_exits():
+            await asyncio.sleep(3600)
+
+        proc.wait = never_exits
+        with patch.object(codex_transport.os, 'killpg', side_effect=PermissionError(1, 'Operation not permitted')), \
+                patch.object(codex_transport, '_EXIT_WAIT_SECONDS', 0.05):
+            await asyncio.wait_for(codex_transport.stop_process(proc), 5)

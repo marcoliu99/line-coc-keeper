@@ -17,9 +17,9 @@
 
 ## 規則
 
-1. **清理不蓋掉失敗。** `stop_process` 對行程群組發訊號；遇到 `ProcessLookupError` 或 `PermissionError` 就改對子行程本身發訊號，並同樣忽略這兩種錯誤。其後的等待不變。
+1. **清理不蓋掉失敗。** `stop_process` 對行程群組發訊號；遇到 `ProcessLookupError` 或 `PermissionError` 就改對子行程本身發訊號，並同樣忽略這兩種錯誤。最後等待子行程結束有上限（5 秒）；完全無法對它發訊號的子行程會記為 `codex.process.unkillable` 後放著不管，所以清理既不會讓回合卡住，也不會掩蓋導致它的失敗。
 2. **沒執行任何東西的請求重試一次。** 原因為 `internal_error` 的回合，**同時**滿足以下條件才可復原：`execution_health == "failed"`（Executor 只有在遊戲狀態也沒變時才會設成這個值）、沒有任何工具呼叫紀錄、沒有觀察到的結果，且既有守門都通過（狀態未變、沒擲骰、沒有事件、待處理檢定與 Luck 不變）。任何工具呼叫之後的失敗仍是 fallback，因為那份狀態不能重做。
-3. **剩餘時間夠才重試。** 重試與原請求共用回合期限（`LLM_TURN_DEADLINE_SECONDS`，180 秒）。剩餘不足 `TURN_RETRY_MIN_REMAINING_SECONDS`（預設 45）就跳過；跑不完的重試只會讓玩家對同樣的失敗等更久。因此 120 秒的 Codex 逾時通常不重試（剩 60 秒、需要 45 秒），52 秒的失敗會重試。
+3. **剩餘時間夠才重試。** 重試與原請求共用回合期限（`LLM_TURN_DEADLINE_SECONDS`，180 秒）。剩餘不足 `TURN_RETRY_MIN_REMAINING_SECONDS`（預設 45）就跳過；跑不完的重試只會讓玩家對同樣的失敗等更久。重試啟動前會再檢查一次，因為復原搜尋可能已經用掉這段餘裕。因此 120 秒的 Codex 逾時通常不重試（剩 60 秒、需要 45 秒），52 秒的失敗會重試。
 4. **同一個開關、同一個上限。** `TURN_FALLBACK_RECOVERY_ENABLED` 可關閉；沿用「每回合最多重試一次、不重複」的上限。`turn.fallback` 列和其他復原一樣記錄 `recovery_attempted` 與 `recovery_result`。
 
 ## 工具額度的發現（本次不改）

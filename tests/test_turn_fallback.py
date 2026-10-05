@@ -403,3 +403,12 @@ async def test_the_failure_retry_follows_the_recovery_switch(monkeypatch) -> Non
     monkeypatch.setattr(config, "TURN_FALLBACK_RECOVERY_ENABLED", False)
     _, run_executor, _, _ = await _turn(_state(), [_crashed()])
     assert run_executor.await_count == 1
+
+
+@aio
+async def test_the_retry_time_is_checked_again_after_the_recovery_search(monkeypatch) -> None:
+    answers = iter([True, False])  # enough time before the search, not after it
+    monkeypatch.setattr(supervisor, "_time_for_retry", lambda: next(answers))
+    _, run_executor, searched, _ = await _turn(
+        _state(), [_crashed()], rag_status="empty", search=("找到的內容", "success"))
+    assert searched.call_count == 1 and run_executor.await_count == 1

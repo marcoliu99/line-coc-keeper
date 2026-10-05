@@ -142,6 +142,8 @@ async def _recover_blocked_turn(
             context = ""
         if context:
             message.payload["recovery_context"] = context
+    if reason == "internal_error" and not _time_for_retry():  # the recovery search above may have spent the margin
+        return result, reason, "not_attempted"
     retry = await executor.run_executor(message)
     if turn_fallback.classify(retry, state, user_id, rag_status=_evidence_status(message)) is None:
         return retry, reason, "recovered"
