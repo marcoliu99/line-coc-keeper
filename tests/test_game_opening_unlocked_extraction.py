@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app import config, db, keeper, locks, scenario_intro
+from app import config, db, locks, scenario_intro, turn_commit
 from app.commands import router
 from app.models import BASE_SKILLS, Character, GroupState
 from app.providers import registry
@@ -547,8 +547,8 @@ class UnlockedOpeningRaces(unittest.IsolatedAsyncioTestCase):
     def test_fallback_commit_guard_checks_source_in_sqlite_transaction(self) -> None:
         old = load_state(self.group)
         self.change(lambda ctx: setattr(ctx.state, "active_scenario_source_hash", "source-v2"))
-        with self.assertRaises(keeper.OpeningStartRejected) as caught:
-            keeper._commit_turn_result(
+        with self.assertRaises(turn_commit.OpeningStartRejected) as caught:
+            turn_commit.commit_turn_result(
                 old, [{"role": "assistant", "content": "OLD OPENING"}],
                 timeline_id="timeline-v1", start_game=True,
                 expected_source_hash="full-source-hash-v1",
@@ -559,13 +559,13 @@ class UnlockedOpeningRaces(unittest.IsolatedAsyncioTestCase):
     def test_fallback_guard_precedes_action_ledger_duplicate_replay(self) -> None:
         old = load_state(self.group)
         entries = [{"role": "assistant", "content": "OLD OPENING"}]
-        self.assertTrue(keeper._commit_turn_result(
+        self.assertTrue(turn_commit.commit_turn_result(
             old, entries, timeline_id="timeline-v1", start_game=True,
             expected_source_hash="full-source-hash-v1", turn_id="same-turn",
         ))
         self.external_source_write("source-v2")
-        with self.assertRaises(keeper.OpeningStartRejected) as caught:
-            keeper._commit_turn_result(
+        with self.assertRaises(turn_commit.OpeningStartRejected) as caught:
+            turn_commit.commit_turn_result(
                 old, entries, timeline_id="timeline-v1", start_game=True,
                 expected_source_hash="full-source-hash-v1", turn_id="same-turn",
             )

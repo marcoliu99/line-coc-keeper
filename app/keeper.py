@@ -25,36 +25,25 @@ from app import (
     combat,
     combat_resources,
     dice,
-    locks,
     luck,
-    memory_rag,
     observability,
-    opening_identity,
     scenario_library,
-    scene_digest,
     spoiler_policy,
 )
 from app.checks.skills import resolve_skill_value
 from app.config import (
-    KP_OOC_LOG_MAX_MESSAGES,
-    MAX_LOG_TURNS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
     SCENARIO_RAG_ENABLED,
-    SCENE_DIGEST_TURN_INTERVAL,
 )
 from app.keeper_tools import registry as tool_registry
 from app.keeper_tools import resource_bridge
 from app.keeper_tools.registry import ToolCall
 from app.models import Character, GroupState
-from app.providers.registry import conversation_provider
 from app.repositories import state_transaction
-from app.repositories.group_state import load_state
 from app.services import combat_actions as combat_act
 from app.services import (
     combat_engine,
-    history_authority,
     mutation_admission,
-    turn_phases,
 )
 
 _logger = logging.getLogger(__name__)
@@ -75,7 +64,6 @@ class _StateMutation(Generic[_T]):
 
 TOOLS = tool_registry.TOOLS
 _SEARCH_SCENARIO_TOOL = tool_registry.SEARCH_SCENARIO_TOOL
-_SUMMARY_TOOL = tool_registry.SUMMARY_TOOL
 READ_ONLY_TOOL_NAMES = tool_registry.READ_ONLY_TOOL_NAMES
 RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES = tool_registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
 _KP_ASSISTANT_ALLOWED_TOOL_NAMES = tool_registry.KP_ASSISTANT_ALLOWED_TOOL_NAMES
@@ -117,7 +105,6 @@ _KP_ROLL_DICE_CONTEXT_PROPERTY = {
         "'ooc_randomizer' 表示只供 KP 幕後隨機決策使用。"
     ),
 }
-
 
 
 def find_character(state: GroupState, name: str) -> Character | None:
@@ -257,28 +244,6 @@ def _find_npc_index_entry(state: GroupState, name: str) -> dict | None:
                 best_ratio = ratio
                 best_entry = entry
     return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
-
-
-def _ensure_turn_timeline(state: GroupState) -> str:
-    """Ensure a turn captures one authoritative timeline before any await.
-
-    Older persisted states may have no timeline at all. If a tool creates a
-    timeline only after the provider call starts, the turn would capture the
-    fallback ``legacy-*`` value and its final log commit could be rejected as
-    a false timeline mismatch. Initialize it before prompt construction and
-    refresh the caller's snapshot from the committed row.
-    """
-    if state.timeline_id:
-        return state.timeline_id
-
-    def initialize(ctx: state_transaction.TxContext) -> None:
-        # The first write assigns the timeline; if another path already did,
-        # there is nothing left to save.
-        if ctx.state.timeline_id:
-            ctx.skip_save()
-
-    state_transaction.run_snapshot(state, initialize, reason="timeline_init")
-    return state.timeline_id
 
 
 def _refresh_state_snapshot(state: GroupState) -> GroupState:
@@ -486,145 +451,6 @@ async def record_tool_recovery_marker_bounded(
         raise
 
 
-class OpeningStartRejected(Exception):
-    """A source-bound opening lost its final authoritative start race."""
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
-
-
-def _commit_turn_result(
-    state: GroupState,
-    log_entries: list[dict[str, Any]],
-    openai_response_id: str | None = None,
-    *,
-    timeline_id: str | None = None,
-    invalidate_openai_response_chain: bool = False,
-    start_game: bool = False,
-    turn_id: str | None = None,
-    expected_source_hash: str | None = None,
-    expected_opening_context: opening_identity.OpeningContext | None = None,
-    expected_opening_participants: opening_identity.OpeningParticipants | None = None,
-) -> bool:
-    """Append a turn's log entries to the latest committed state.
-
-    The action id is the turn id plus a digest of what is being committed, so a
-    delivery or narration retry that reaches this call again with the same
-    turn is answered from the action ledger instead of logging it twice, while
-    a separate turn (new turn id) or different content is a new action. The
-    turn id comes from the caller that owns the turn (``run_turn``), falling
-    back to the request context, and is only random when neither exists.
-    """
-    expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
-    turn_id = str(turn_id or observability.current_context().get("turn_id") or uuid4().hex)
-    fingerprint = state_transaction.request_fingerprint({
-        "entries": log_entries, "openai_response_id": openai_response_id,
-        "invalidate": invalidate_openai_response_chain, "start_game": start_game,
-    })
-
-    def opening_guard(latest_state: GroupState) -> str | None:
-        if latest_state.game_started:
-            return "already_started"
-        if latest_state.active_scenario_source_hash != expected_source_hash:
-            return "source_changed"
-        if (expected_opening_context is not None
-                and opening_identity.context_identity(latest_state) != expected_opening_context):
-            return "source_changed"
-        if (expected_opening_participants is not None
-                and opening_identity.participant_identity(latest_state) != expected_opening_participants):
-            return "character_set_changed"
-        if not latest_state.active or not latest_state.scenario_text:
-            return "no_scenario"
-        if not latest_state.characters:
-            return "no_characters"
-        if latest_state.pending_pregen_luck:
-            return "pending_pregen_luck"
-        if resource_bridge.guard_replacement(latest_state):
-            return "combat_unsettled"
-        return None
-
-    def append_entries(ctx: state_transaction.TxContext) -> bool:
-        latest_state = ctx.state
-        if start_game and latest_state.game_started:
-            ctx.skip_save()
-            return False
-        latest_state.log.extend(
-            history_authority.annotate_entry(entry, turn_id=turn_id, timeline_id=ctx.timeline_id)
-            for entry in log_entries
-        )
-        if start_game:
-            latest_state.game_started = True
-        if invalidate_openai_response_chain:
-            latest_state.openai_previous_response_id = ""
-            latest_state.openai_previous_response_timeline_id = ""
-        elif openai_response_id is not None:
-            latest_state.openai_previous_response_id = openai_response_id
-            latest_state.openai_previous_response_timeline_id = (
-                latest_state.timeline_id or f"legacy-{latest_state.group_id}"
-            )
-        ctx.stage_event("turn_committed", event_id=f"turn:{turn_id}", entries=len(log_entries))
-        return True
-
-    result = state_transaction.commit_for_snapshot(
-        state, append_entries, reason="turn", expected_timeline=expected_timeline_id,
-        action_id=f"turn:{turn_id}:{fingerprint[:16]}", request_fingerprint=fingerprint,
-        latest_state_guard=opening_guard if start_game and expected_source_hash is not None else None,
-    )
-    if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
-        if start_game and expected_source_hash is not None:
-            raise OpeningStartRejected("timeline_changed")
-        observability.event(
-            "state.turn_commit_skipped",
-            level=logging.WARNING,
-            reason="timeline_mismatch",
-            expected_timeline_id=expected_timeline_id,
-            current_timeline_id=result.timeline_id,
-        )
-        return False
-    if result.outcome is state_transaction.Outcome.REJECTED and start_game and expected_source_hash is not None:
-        raise OpeningStartRejected(result.reason)
-    if result.outcome is state_transaction.Outcome.CONFLICT:
-        raise state_transaction.StateTransactionFailed(result)
-    return result.outcome is state_transaction.Outcome.DUPLICATE or bool(result.value)
-
-
-def _commit_kp_ooc_turn_result(
-    state: GroupState, message_text: str, final_text: str, *, timeline_id: str | None = None
-) -> bool:
-    """Persist KP Assistant OOC working memory without touching public history.
-
-    Appends to the latest committed state so this ephemeral OOC write cannot
-    overwrite deterministic tool updates that happened earlier in the same
-    Keeper turn.
-    """
-    expected_timeline_id = timeline_id or state.timeline_id or f"legacy-{state.group_id}"
-
-    def append_ooc(ctx: state_transaction.TxContext) -> None:
-        latest_state = ctx.state
-        latest_state.kp_ooc_log.extend(
-            [
-                {"role": "kp_assistant", "content": message_text},
-                {"role": "assistant", "content": final_text},
-            ]
-        )
-        latest_state.kp_ooc_log = latest_state.kp_ooc_log[-KP_OOC_LOG_MAX_MESSAGES:]
-
-    result = state_transaction.commit_for_snapshot(
-        state, append_ooc, reason="kp_ooc", expected_timeline=expected_timeline_id,
-    )
-    if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
-        observability.event(
-            "state.kp_ooc_commit_skipped",
-            level=logging.WARNING,
-            reason="timeline_mismatch",
-            expected_timeline_id=expected_timeline_id,
-            current_timeline_id=result.timeline_id,
-        )
-        return False
-    return True
-
-
 def _parse_kp_manual_canon_trigger(speaker_role: str, message_text: str) -> tuple[bool, str]:
     """Recognize only a leading !/！ on KP Assistant messages."""
     if speaker_role != "kp_assistant" or not message_text:
@@ -688,279 +514,6 @@ skip_save_if_blocked = _skip_save_if_blocked
 filter_public_combat_damage_result = _filter_public_combat_damage_result
 
 
-def _persist_memory_maintenance_state(
-    group_id: str,
-    campaign_summary: str,
-    dropped_chunk: list[dict[str, Any]],
-    *,
-    timeline_id: str,
-    base_summary: str,
-    source_revision: int,
-    idempotency_key: str,
-    embedding: list[float] | None,
-    prepared: memory_rag.PreparedMemory | None = None,
-) -> str:
-    """Commit the maintenance trim and memory chunk atomically.
-
-    ``prepared`` is the trim split into parts that each fit one embedding (``memory_rag.prepare_memory``); without
-    it the whole trim is one chunk carrying ``embedding``."""
-    idempotency_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()[:12]
-    observability.event(
-        "maintenance.commit.started",
-        timeline_id=timeline_id,
-        source_revision=source_revision,
-        idempotency_key_hash=idempotency_hash,
-    )
-    def commit_trim(ctx: state_transaction.TxContext) -> str:
-        latest_state = ctx.state
-        latest_timeline_id = ctx.timeline_id
-        if latest_state.campaign_summary != base_summary:
-            observability.event(
-                "maintenance.commit_skipped", level=logging.WARNING,
-                reason="summary_changed", source_revision=source_revision,
-                current_revision=latest_state.state_revision,
-                requested_timeline_id=timeline_id,
-                current_timeline_id=latest_timeline_id,
-                idempotency_key_hash=idempotency_hash,
-            )
-            ctx.skip_save()
-            return "stale_summary"
-        memory_row = ctx.conn.execute("SELECT data FROM memory_chunks WHERE key = ?", (group_id,)).fetchone()
-        if memory_row is not None:
-            try:
-                existing_chunks = json.loads(memory_row[0])
-            except (TypeError, json.JSONDecodeError):
-                existing_chunks = []
-            if not isinstance(existing_chunks, list):
-                existing_chunks = []
-            if any(
-                isinstance(item, dict) and idempotency_key in {item.get("idempotency_key"), item.get("parent_id")}
-                for item in existing_chunks
-            ):
-                observability.event(
-                    "maintenance.commit_skipped", level=logging.INFO,
-                    reason="duplicate_idempotency_key", source_revision=source_revision,
-                    current_revision=latest_state.state_revision,
-                    requested_timeline_id=timeline_id,
-                    current_timeline_id=latest_timeline_id,
-                    idempotency_key_hash=idempotency_hash,
-                )
-                ctx.skip_save()
-                return "duplicate"
-        # Only apply anything if the front of the freshly-reloaded log still
-        # matches what was actually dropped — guards against e.g. a
-        # concurrent /coc newgame reset, or another maintenance pass having
-        # already trimmed this exact chunk. On a mismatch, skip BOTH the log
-        # trim and the campaign_summary update (not just the trim): the
-        # summary was derived from `dropped_chunk`, which no longer reflects
-        # what's actually at the front of the current log, so applying it
-        # anyway would bleed a stale/unrelated summary into whatever state
-        # is live now (e.g. a brand-new campaign after /coc newgame
-        # inheriting leftover summary text from the campaign it replaced).
-        # Skipping entirely costs nothing but retrying this trim on a later
-        # turn — never a correctness problem, and never a partial write.
-        n = len(dropped_chunk)
-        if not dropped_chunk or latest_state.log[:n] != dropped_chunk:
-            observability.event(
-                "maintenance.commit_skipped", level=logging.WARNING,
-                reason="log_prefix_changed", source_revision=source_revision,
-                current_revision=latest_state.state_revision,
-                requested_timeline_id=timeline_id,
-                current_timeline_id=latest_timeline_id,
-                idempotency_key_hash=idempotency_hash,
-            )
-            ctx.skip_save()
-            return "stale_log_prefix"
-        latest_state.log = latest_state.log[n:]
-        latest_state.campaign_summary = campaign_summary
-        if prepared is not None:
-            memory_appended = memory_rag.append_memory_parts_tx(
-                ctx.conn, group_id, prepared, timeline_id=timeline_id,
-                idempotency_key=idempotency_key, source_revision=source_revision,
-            )
-        else:
-            memory_appended = memory_rag.append_memory_tx(
-                ctx.conn,
-                group_id,
-                "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk),
-                timeline_id=timeline_id,
-                idempotency_key=idempotency_key,
-                source_revision=source_revision,
-                embedding=embedding,
-                source_messages=history_authority.memory_source_messages(dropped_chunk),
-            )
-        ctx.set_result({"memory_appended": bool(memory_appended)})
-        return "committed"
-
-    try:
-        with turn_phases.phase("memory_write"):
-            result = state_transaction.mutate(
-                group_id, commit_trim, reason="maintenance", expected_timeline=timeline_id,
-            )
-    except state_transaction.CorruptStateError as exc:
-        observability.event(
-            "maintenance.commit_skipped",
-            level=logging.WARNING,
-            reason="corrupt_group_state",
-            source_revision=source_revision,
-            requested_timeline_id=timeline_id,
-            idempotency_key_hash=idempotency_hash,
-            error_type=type(exc.__cause__ or exc).__name__,
-        )
-        return "corrupt_group_state"
-    if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
-        observability.event(
-            "maintenance.commit_skipped", level=logging.WARNING,
-            reason="timeline_mismatch", source_revision=source_revision,
-            requested_timeline_id=timeline_id,
-            current_timeline_id=result.timeline_id,
-            idempotency_key_hash=idempotency_hash,
-        )
-        return "stale_timeline"
-    if result.value != "committed":
-        return str(result.value)
-    observability.event(
-        "maintenance.commit_completed", source_revision=source_revision,
-        committed_revision=result.revision,
-        memory_appended=result.result.get("memory_appended"),
-        requested_timeline_id=timeline_id,
-        current_timeline_id=result.timeline_id,
-        idempotency_key_hash=idempotency_hash,
-    )
-    return "committed"
-
-
-# Guards against more than one run_post_turn_maintenance pass running
-# concurrently for the same group_id — see that function's own docstring.
-_maintenance_in_flight: set[str] = set()
-
-
-def run_scene_digest_maintenance(group_id: str) -> None:
-    with locks.get_state_lock(group_id):
-        mutation_admission.assert_admitted(group_id)
-        state = load_state(group_id)
-        latest = scene_digest.latest_digest(group_id, state.timeline_id)
-        chapter_changed = latest is None or latest.get("scene_label") != (state.active_chapter_id or state.scenario_title or "目前場景")
-        current_log_length = len(state.log)
-        previous_log_length = latest.get("log_length", 0) if latest else 0
-        # Log maintenance can intentionally shrink the in-memory log. Treat
-        # that as a new baseline; otherwise the old larger watermark would
-        # make this subtraction negative and periodic digests would stop.
-        log_was_trimmed = latest is not None and current_log_length < previous_log_length
-        log_interval_reached = (
-            latest is None
-            or log_was_trimmed
-            or current_log_length - previous_log_length >= SCENE_DIGEST_TURN_INTERVAL
-        )
-        if not (chapter_changed or log_interval_reached):
-            return
-        scene_digest.create_digest(state)
-
-
-def _run_post_turn_maintenance(group_id: str) -> dict[str, object]:
-    """Called after every turn (see app/services/post_turn.py's
-    spawn_post_turn_maintenance, which now fires this as an independent
-    background task rather than awaiting it inline). Only does real work
-    once the log actually crosses the trim threshold — every other call is a
-    cheap no-op. `_maintenance_in_flight` skips a call outright if a pass is
-    already running for this group_id: without it, several turns landing
-    back-to-back while the log is still above threshold would each spawn
-    their own full pass (duplicate LLM summarization + embedding API costs),
-    racing on the same log/memory-chunk data. The worker prepares the summary
-    and embedding outside the commit gate, then appends the prepared chunk
-    through memory_rag.append_memory_tx inside the same SQLite transaction as
-    the state trim. The in-flight guard avoids duplicate slow work; atomicity
-    comes from the commit gate, not from this guard alone.
-
-    The check-then-add on `_maintenance_in_flight` below is itself wrapped in
-    `locks.get_state_lock(group_id)` — this function runs via
-    `asyncio.to_thread` (see post_turn.spawn_post_turn_maintenance), i.e. on real OS
-    worker threads, not just concurrent asyncio tasks, so the GIL making each
-    individual `in`/`.add()` call atomic does NOT make the pair atomic: two
-    threads could otherwise both observe `group_id not in
-    _maintenance_in_flight` before either adds it, both proceed, and run two
-    overlapping passes anyway — exactly the failure mode this guard exists
-    to prevent."""
-    with locks.get_state_lock(group_id):
-        if group_id in _maintenance_in_flight:
-            return {"skipped": True}
-        _maintenance_in_flight.add(group_id)
-    result: dict[str, object] = {
-        "summary_updated": False,
-        "embedding_updated": False,
-        "state_saved": False,
-        "commit_status": "not_started",
-    }
-    try:
-        run_scene_digest_maintenance(group_id)
-        try:
-            memory_rag.backfill_embeddings(group_id)
-        except Exception:  # an optional index must never stop the trim below
-            _logger.exception("Memory embedding backfill failed for %s", group_id)
-        with locks.get_state_lock(group_id):
-            latest_state = load_state(group_id)
-            if len(latest_state.log) <= MAX_LOG_TURNS * 4:
-                return result
-            keep_from = -MAX_LOG_TURNS * 2
-            base_summary = latest_state.campaign_summary
-            timeline_id = latest_state.timeline_id or f"legacy-{group_id}"
-            source_revision = latest_state.state_revision
-            log_snapshot = [dict(message) for message in latest_state.log]
-            dropped_chunk = log_snapshot[:keep_from]
-
-        # Rolling summarization (see summarize_log_chunk above): fold the
-        # chunk about to be dropped into campaign_summary *before* dropping
-        # it, instead of just discarding it — this is the one rare turn every
-        # ~MAX_LOG_TURNS*2 turns that pays for an extra (cheap) LLM call, so
-        # early plot points survive past what the verbatim log can hold.
-        campaign_summary = summarize_log_chunk(base_summary, dropped_chunk)
-        # Also persist the chunk's *original* wording into the searchable
-        # memory index (app/memory_rag.py) — campaign_summary alone would
-        # keep recompressing an already-compressed summary on every future
-        # trim, eroding fine detail a little more each pass; this keeps the
-        # verbatim text retrievable via search_memory even after that.
-        formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
-        prepared = memory_rag.prepare_memory(dropped_chunk, history_authority.memory_source_messages(dropped_chunk))
-        embedding = prepared.embeddings[0] if len(prepared.embeddings) == 1 else None
-        chunk_digest = hashlib.sha256(formatted_chunk.encode("utf-8")).hexdigest()[:24]
-        commit_status = _persist_memory_maintenance_state(
-            group_id,
-            campaign_summary,
-            dropped_chunk,
-            timeline_id=timeline_id,
-            base_summary=base_summary,
-            source_revision=source_revision,
-            idempotency_key=f"{timeline_id}:{source_revision}:{chunk_digest}",
-            embedding=embedding,
-            prepared=prepared,
-        )
-        observability.event(
-            "maintenance.result.completed",
-            source_revision=source_revision,
-            requested_timeline_id=timeline_id,
-            commit_status=commit_status,
-            summary_changed=campaign_summary != base_summary,
-            embedding_prepared=all(vector is not None for vector in prepared.embeddings),
-            embedding_parts=len(prepared.parts),
-            embedding_failure=prepared.failure.reason if prepared.failure else None,
-        )
-        result["commit_status"] = commit_status
-        result["summary_updated"] = commit_status in {"committed", "duplicate"} and campaign_summary != base_summary
-        result["embedding_updated"] = commit_status in {"committed", "duplicate"} and all(
-            vector is not None for vector in prepared.embeddings)
-        result["state_saved"] = commit_status in {"committed", "duplicate"}
-        return result
-    finally:
-        with locks.get_state_lock(group_id):
-            _maintenance_in_flight.discard(group_id)
-
-
-def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
-    """``_run_post_turn_maintenance`` with its own phase timeline (embedding, memory search and write)."""
-    with turn_phases.timeline("maintenance", turn_id=observability.new_id("maint"), player_id="", campaign_id=group_id):
-        return _run_post_turn_maintenance(group_id)
-
-
 def _scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:
     """§3.4 mechanism #4: chapter gating is spoiler protection, not privacy —
     disabled means any chapter's images are searchable. Shared by
@@ -1015,42 +568,6 @@ def _execute_tool(
         ))
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}
-
-
-def summarize_log_chunk(current_summary: str, old_messages: list[dict[str, Any]]) -> str:
-    """Rolling summarization — called only on the rare maintenance
-    turn where state.log is about to be trimmed past MAX_LOG_TURNS*4. Folds
-    old_messages (the chunk about to be dropped) into current_summary via one
-    forced tool call, dispatched through whichever LLM_PROVIDER is configured
-    (same analyze_text pattern as app/pregen_extractor.py/scenario_compare.py
-    — never hard-coded to one vendor's client, since this project's whole
-    point is LLM_PROVIDER being freely switchable).
-
-    Degrades gracefully: no provider configured, the call raises, or it
-    returns nothing usable all fall back to returning current_summary
-    unchanged (logged, not raised) — a failed summarization should never
-    crash the turn or lose the existing summary, only leave it stale."""
-    provider = conversation_provider()
-    if provider is None:
-        return current_summary
-    try:
-        formatted_history = history_authority.summary_input(old_messages)
-        result = provider.analyze_text(
-            formatted_history,
-            _SUMMARY_TOOL,
-            "你是一個 TRPG 遊戲紀錄員。請將「待整合的舊對話」融合進「現有摘要」，"
-            "更新成一份精煉的對話與敘事摘要，用 report_summary 工具回報。"
-            "已送出敘事只證明當時如此描述；玩家聲明只證明曾如此聲稱。"
-            "不得把無來源的物品、數量、位置、線索或 NPC 身分寫成確定世界事實。"
-            "僅明確 KP 正典與可核對的已提交事件能作權威；與當前狀態或劇本衝突時以後者為準。\n\n"
-            "若有【敘事更正】或 superseded 標記，應移除被取代的舊描述；更正仍是呈現修復，不能自動創造劇本事實。\n\n"
-            f"【現有摘要（同樣未經驗證）】\n{current_summary or '（目前尚無摘要）'}",
-        )
-        summary = (result or {}).get("summary", "").strip()
-        return summary or current_summary
-    except Exception:
-        _logger.exception("summarize_log_chunk failed, keeping previous summary unchanged")
-        return current_summary
 
 
 def _tool_definition_for_kp_assistant(tool: dict) -> dict:

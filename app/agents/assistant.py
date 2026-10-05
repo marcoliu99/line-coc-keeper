@@ -3,7 +3,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app import config, keeper, observability, prompt_builder, spoiler_policy
+from app import (
+    config,
+    keeper,
+    observability,
+    prompt_builder,
+    spoiler_policy,
+    turn_commit,
+)
 from app.agents import guard, tool_gateway
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
@@ -66,7 +73,7 @@ async def _run_assistant_turn(
     resolved_location: dict | None,
     session: ConversationSession,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
-    turn_timeline_id = keeper._ensure_turn_timeline(state)
+    turn_timeline_id = turn_commit.ensure_turn_timeline(state)
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
     static_prompt = prompt_builder.build_static_prompt(state)
     dynamic_prompt = prompt_builder.build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
@@ -125,7 +132,7 @@ async def _run_assistant_turn(
         canonical_message = prompt_builder.format_kp_canonical_history_message(
             effective_text, canonical_tool_events
         )
-        committed = keeper._commit_turn_result(
+        committed = turn_commit.commit_turn_result(
             state,
             [
                 {"role": "user", "content": canonical_message,
@@ -142,7 +149,7 @@ async def _run_assistant_turn(
         if not committed:
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
     else:
-        committed = keeper._commit_kp_ooc_turn_result(
+        committed = turn_commit.commit_kp_ooc_turn_result(
             state, effective_text, final_text, timeline_id=turn_timeline_id
         )
         if not committed:

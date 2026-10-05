@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app import keeper, locks
+from app import locks, memory_maintenance
 from app.repositories import state_transaction
 from app.repositories.group_state import load_state
 
@@ -40,7 +40,7 @@ async def rebuild(conversation_id: str) -> None:
                 and report.get("status") in {"approved", "superseded"}
             )
             history = correction_history + state.log[-40:]
-            summary = await asyncio.to_thread(keeper.summarize_log_chunk, state.campaign_summary, history)
+            summary = await asyncio.to_thread(memory_maintenance.summarize_log_chunk, state.campaign_summary, history)
             async with locks.get_conversation_lock(conversation_id):
                 latest = load_state(conversation_id)
                 if latest.timeline_id != state.timeline_id:

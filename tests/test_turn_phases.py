@@ -278,13 +278,13 @@ async def _supervised(state, turn_kind, *, prefetched=None, reuse=True):
                               turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
     with patch.object(config, "RETRIEVAL_REUSE_FOR_FOLLOWUPS", reuse), \
             patch.object(supervisor.context_builder, "build_context", build), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("敘事", [], []))), \
             patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
-            patch.object(supervisor.keeper, "_commit_turn_result", return_value=True):
+            patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         kwargs: dict[str, Any] = {"turn_kind": turn_kind}
         if turn_kind == "resolved_check_followup":
             kwargs["resolved_check_context"] = {"check_id": "c1", "owner_id": "a"}

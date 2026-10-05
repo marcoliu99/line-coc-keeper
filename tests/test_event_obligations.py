@@ -226,7 +226,7 @@ async def _turn(state, narration, rag_context):
         turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"),
     )
     with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -302,7 +302,7 @@ async def test_a_trigger_the_guard_removed_charges_nothing(state) -> None:
     executed = MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
                               turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
     with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -330,7 +330,7 @@ async def test_the_mutation_phase_is_kept_when_the_evidence_states_an_obligation
     executed = MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
                               turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
     with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \

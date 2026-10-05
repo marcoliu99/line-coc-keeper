@@ -37,7 +37,7 @@ def _run(state, user_id="u1", text="我往樓梯走過去", speaker_role="player
     async def explode_narrator(_message):
         raise AssertionError("narrator ran")
 
-    with patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+    with patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
             patch.object(supervisor.context_builder, "build_context", explode_context), \
             patch.object(supervisor.narrator, "run_narrator", explode_narrator), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(

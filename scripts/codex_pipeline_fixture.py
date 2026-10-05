@@ -5,6 +5,8 @@ import asyncio
 import uuid
 from unittest.mock import patch
 
+from app import turn_commit
+
 
 async def run_pipeline(kind='check_success'):
     from app import keeper
@@ -23,7 +25,7 @@ async def run_pipeline(kind='check_success'):
     )
     state.narrative_locations['player'] = '書房'
     group_state.save_state(state)  # the first save assigns the timeline
-    keeper._ensure_turn_timeline(state)
+    turn_commit.ensure_turn_timeline(state)
     rolls = []
 
     def roll(*_args, **_kwargs):

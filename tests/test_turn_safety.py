@@ -7,7 +7,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import checkpoints, config, db, keeper, locks, spoiler_policy
+from app import (
+    checkpoints,
+    config,
+    db,
+    keeper,
+    locks,
+    memory_maintenance,
+    spoiler_policy,
+)
 from app.agents import executor, guard, narrator, supervisor, tool_gateway
 from app.commands import router
 from app.commands.handlers import (
@@ -360,13 +368,13 @@ def test_cancelled_task_does_not_release_live_worker_or_replay_dice(state):
 
 def test_background_maintenance_consumes_hold(state, held):
     with pytest.raises(admission.MutationHeld):
-        keeper._persist_memory_maintenance_state(
+        memory_maintenance._persist_memory_maintenance_state(
             state.group_id, "new", [{"role": "user", "content": "old"}],
             timeline_id=state.timeline_id, base_summary="", source_revision=state.state_revision,
             idempotency_key="maintenance", embedding=[],
         )
     with pytest.raises(admission.MutationHeld):
-        keeper.run_scene_digest_maintenance(state.group_id)
+        memory_maintenance.run_scene_digest_maintenance(state.group_id)
 
 
 def test_private_button_preserves_original_identity_and_recipient(state):
