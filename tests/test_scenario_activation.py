@@ -219,7 +219,8 @@ def test_unrelated_write_during_image_copy_still_publishes_active_scenario_image
 
 def _context() -> dict:
     return {
-        "manifest": {"title": "New scenario"}, "text": "New text", "active_chapter_id": "second",
+        "manifest": {"title": "New scenario", "content_hash": "2" * 64},
+        "text": "New text", "active_chapter_id": "second",
         "context_chapter_ids": ["second"], "indexes": {"npcs": [], "locations": []},
         "pregens": [], "scene_maps": {}, "page_numbers": {2},
     }
@@ -264,7 +265,8 @@ def test_scenario_use_commit_failure_does_not_touch_images(storage: Path, monkey
 
 
 def test_chapter_advance_image_failure_does_not_undo_commit(storage: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    state = GroupState(group_id="group", scenario_library_id="scenario", active_chapter_id="first")
+    state = GroupState(group_id="group", scenario_library_id="scenario", active_chapter_id="first",
+                       active_scenario_source_hash="1" * 64)
     group_state.save_state(state)
     monkeypatch.setattr(scenario_activation.scenario_library, "next_chapter_id", lambda *_: "second")
     monkeypatch.setattr(scenario_activation.scenario_library, "load_context", lambda *_: _context())
@@ -276,10 +278,12 @@ def test_chapter_advance_image_failure_does_not_undo_commit(storage: Path, monke
     assert result["ok"]
     assert "圖片快取刷新失敗" in result["notice"]
     assert group_state.load_state("group").active_chapter_id == "second"
+    assert group_state.load_state("group").active_scenario_source_hash == "2" * 64
 
 
 def test_chapter_advance_commit_failure_preserves_images(storage: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    state = GroupState(group_id="group", scenario_library_id="scenario", active_chapter_id="first")
+    state = GroupState(group_id="group", scenario_library_id="scenario", active_chapter_id="first",
+                       active_scenario_source_hash="1" * 64)
     group_state.save_state(state)
     group_state.save_page_image("group", 1, b"old")
     monkeypatch.setattr(scenario_activation.scenario_library, "next_chapter_id", lambda *_: "second")
@@ -291,6 +295,7 @@ def test_chapter_advance_commit_failure_preserves_images(storage: Path, monkeypa
 
     assert not result["ok"]
     assert group_state.load_state("group").active_chapter_id == "first"
+    assert group_state.load_state("group").active_scenario_source_hash == "1" * 64
     assert group_state.load_page_image("group", 1) == b"old"
 
 
