@@ -1818,7 +1818,7 @@
       "title": "Stable active scenario source identity",
       "zh": "穩定的啟用中劇本來源身分",
       "category": "refactor",
-      "status": "backlog",
+      "status": "implemented",
       "evidence": [
         "app/models.py",
         "app/scenario_library.py",
