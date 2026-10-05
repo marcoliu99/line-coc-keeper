@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app import config, presentation
+from app.commands.handlers import character
 from app.discord_transport import delivery
+from app.models import Character, GroupState
 from app.services import turn_delivery, turn_fallback
 
 ALIASES = {"The Tough Guy": "硬漢", "Nosy Neighbor": "鄰居"}
@@ -145,6 +147,58 @@ class TransportAliasTests(unittest.IsolatedAsyncioTestCase):
                 patch("app.services.narrative_corrections.record_message", lambda st, mid, text: saved.append((mid, text))):
             await delivery.make_reply(channel)("The Tough Guy 到了")
         self.assertEqual(saved, [("7", "硬漢 到了")])
+
+
+class TypedAliasTests(unittest.TestCase):
+    """A player copies what they were shown, so a command that names a character accepts the alias."""
+
+    def setUp(self):
+        patcher = patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def state(self):
+        state = GroupState(group_id="g", timeline_id="t")
+        first = Character(name="The Tough Guy", owner_id="u1", character_id="c1")
+        second = Character(name="Nosy Neighbor", owner_id="u1", character_id="c2", active=False)
+        state.characters_by_id.update({"c1": first, "c2": second})
+        state.characters["u1"] = first
+        state.set_active_character("u1", "c1")
+        return state
+
+    def test_the_alias_resolves_to_the_registered_name(self):
+        known = ["The Tough Guy", "Nosy Neighbor"]
+        self.assertEqual(presentation.registered_name("硬漢", known), "The Tough Guy")
+        self.assertEqual(presentation.registered_name("The Tough Guy", known), "The Tough Guy")
+        self.assertEqual(presentation.registered_name("路人", known), "路人")
+
+    def test_a_registered_name_wins_over_an_alias_and_an_ambiguous_alias_is_not_guessed(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"A": "B", "B": "C"}):
+            self.assertEqual(presentation.registered_name("B", ["A", "B"]), "B")
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"A": "X", "B": "X"}):
+            self.assertEqual(presentation.registered_name("X", ["A", "B"]), "X")
+
+    def test_switch_accepts_the_name_the_player_was_shown(self):
+        state = self.state()
+        outcome = character._switch(state, "u1", ["/coc", "switch", "鄰居"])
+        self.assertTrue(outcome.ok, outcome.text)
+        self.assertEqual(state.get_active_character("u1").name, "Nosy Neighbor")
+
+    def test_retire_names_a_character_the_player_can_type_back(self):
+        state = self.state()
+        outcome = character._retire(state, "u1", ["/coc", "retire", "硬漢"])
+        self.assertTrue(outcome.ok, outcome.text)
+        self.assertIn("The Tough Guy", outcome.text)  # delivery writes the alias; the command resolves it back
+        self.assertTrue(character._switch(state, "u1", ["/coc", "switch", "硬漢"]).ok)
+
+    def test_setskill_and_setconnection_accept_the_alias(self):
+        state = self.state()
+        self.assertTrue(character._setskill(state, "u1", ["/coc", "setskill", "硬漢", "偵查", "60"]).ok)
+        self.assertTrue(character._setconnection(state, "u1", ["/coc", "setconnection", "硬漢", "舊識"]).ok)
+        self.assertEqual(state.get_active_character("u1").skills["偵查"], 60)
+
+    def test_a_wrong_name_is_still_refused(self):
+        self.assertFalse(character._switch(self.state(), "u1", ["/coc", "switch", "路人"]).ok)
 
 
 class AliasSettingTests(unittest.TestCase):

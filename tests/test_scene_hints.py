@@ -58,6 +58,18 @@ class SceneHintTests(unittest.TestCase):
         self.assertIn("蒙面人", hint)
         self.assertNotIn("兇手的真名", hint)
 
+    def test_an_entry_is_listed_once_under_the_spelling_narrated_most_recently(self):
+        """One NPC must not read as two people, nor use up two of the five slots."""
+        npcs = [{"name": "兇手的真名", "aliases": ["蒙面人"]}]
+        later_reveal = state_with(narration=("走廊盡頭站著一個蒙面人。", "原來他就是兇手的真名。"), npcs=npcs)
+        hint = turn_fallback.scene_hints(later_reveal)
+        self.assertIn("兇手的真名", hint)
+        self.assertNotIn("蒙面人", hint)
+        earlier_reveal = state_with(narration=("原來他就是兇手的真名。", "走廊盡頭站著一個蒙面人。"), npcs=npcs)
+        hint = turn_fallback.scene_hints(earlier_reveal)
+        self.assertIn("蒙面人", hint)
+        self.assertNotIn("兇手的真名", hint)
+
     def test_the_canonical_name_is_listed_when_it_was_the_one_narrated(self):
         npcs = [{"name": "房東", "aliases": ["Gardiner 的房東"]}]
         hint = turn_fallback.scene_hints(state_with(narration=("房東低聲說話。",), npcs=npcs))

@@ -63,6 +63,18 @@ def character_aliases(text: str) -> str:
     return re.compile("|".join(alternatives)).sub(lambda match: aliases[match.group(0)], text)
 
 
+def registered_name(typed: str, known: Collection[str]) -> str:
+    """The registered name a player means by ``typed``, which may be the alias they were shown.
+
+    Players copy what they read ("/coc switch 硬漢"), so a command that looks a character up by name accepts the alias
+    too. A registered name always wins; an alias is used only when exactly one of ``known`` is shown under it.
+    """
+    if typed in known:
+        return typed
+    matches = [name for name in known if config.CHARACTER_DISPLAY_ALIASES.get(name) == typed]
+    return matches[0] if len(matches) == 1 else typed
+
+
 def player_text(text: str) -> str:
     """``text`` with raw tier names mapped and internal ids removed, unless debugging asks to see them.
 

@@ -99,16 +99,19 @@ def _occurs(name: str, text: str, longer: list[str]) -> bool:
 def _already_shown(index: list[dict[str, Any]], narration: list[str], every_name: list[str]) -> list[str]:
     """Names from a scenario index that the narration has already used, the most recently mentioned first.
 
-    Each is written the way the narration wrote it: an entry whose alias was narrated is listed under that alias, never
+    Each entry appears once, written the way the narration wrote it (the most recently narrated spelling if it used several): an entry whose alias was narrated is listed under that alias, never
     under its canonical name, which the narration may not have said and which may itself give something away.
     """
     found: list[tuple[int, int, str]] = []
     for entry in index:
+        spellings = []
         for name in _names(entry):
             longer = [other for other in every_name if len(other) > len(name) and name in other]
             position = next((i for i, text in enumerate(narration) if _occurs(name, text, longer)), None)
             if position is not None:
-                found.append((position, -len(name), name))
+                spellings.append((position, -len(name), name))
+        if spellings:
+            found.append(min(spellings))  # one spelling per entry: the one narrated most recently
     return list(dict.fromkeys(name for _, _, name in sorted(found)))[:_HINT_LIMIT]
 
 
