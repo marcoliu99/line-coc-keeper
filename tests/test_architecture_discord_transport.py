@@ -45,6 +45,6 @@ def test_a_module_imports_only_layers_below_it_at_module_level(name):
 @pytest.mark.parametrize("module", [f"{PACKAGE}.{name}" for name in LAYERS] + ["app.discord_bot"])
 def test_each_module_imports_in_a_fresh_interpreter(module):
     result = subprocess.run(
-        [sys.executable, "-c", f"import {module}"], cwd=ROOT, capture_output=True, text=True, timeout=120,
+        [sys.executable, "-c", f"import {module}"], cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
     )
     assert result.returncode == 0, result.stderr[-800:]
