@@ -2068,6 +2068,21 @@
       "path": "docs/specs/maintenance/boolean_settings_design_spec.md",
       "zh_path": "docs/specs/maintenance/boolean_settings_design_spec_zh.md",
       "source_revision": "70aea2143ba22a4b9886c7a35be5383c32880d93"
+    },
+    {
+      "title": "Splitting supervisor.run_turn and ordering the reply steps",
+      "zh": "拆分 supervisor.run_turn 並讓回覆步驟的順序可被檢查",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/supervisor.py",
+        "app/agents/reply_pipeline.py",
+        "tests/test_turn_stage_sequence.py",
+        "tests/test_reply_pipeline.py"
+      ],
+      "path": "docs/specs/refactor/reply_pipeline_design_spec.md",
+      "zh_path": "docs/specs/refactor/reply_pipeline_design_spec_zh.md",
+      "source_revision": "e4c6044ea20ca1a119405d8a27cfbbeb85367d85"
     }
   ]
 }
