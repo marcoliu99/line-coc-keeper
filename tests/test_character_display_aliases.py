@@ -70,6 +70,13 @@ class CharacterAliasTests(unittest.TestCase):
                     self.assertEqual(presentation.character_aliases(command), command)
             self.assertEqual(presentation.character_aliases("status 與 roll"), "狀態 與 擲")
 
+    def test_a_command_with_placeholders_and_mentions_is_kept_whole(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"retire": "退場", "switch": "切換"}):
+            usage = "/coc sudo <@玩家> retire [角色名]"
+            self.assertEqual(presentation.character_aliases(usage), usage)
+            self.assertEqual(presentation.character_aliases("/coc sudo <@玩家> switch 小明"), "/coc sudo <@玩家> switch 小明")
+            self.assertEqual(presentation.character_aliases("可用 /coc check。retire 之後再說"), "可用 /coc check。退場 之後再說")
+
     def test_the_command_words_come_from_the_help_pages(self):
         words = presentation.command_words()
         self.assertLessEqual({"coc", "check", "luck", "roll", "status", "occ", "switch"}, words)

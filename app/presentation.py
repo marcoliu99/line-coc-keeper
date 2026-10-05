@@ -45,7 +45,8 @@ def outcome_label(text: str) -> str:
     return _OUTCOME.sub(replace, text)
 
 
-_COMMAND_SPAN = re.compile(r"/coc(?:[ \t]+[A-Za-z0-9_|\[\]-]+)*", re.IGNORECASE)
+# A command runs to the end of its sentence: placeholders and mentions ("<@玩家>", "[角色名]") sit between its words.
+_COMMAND_SPAN = re.compile(r"/coc\b[^\n。！？；]*", re.IGNORECASE)
 _COMMAND_WORD = re.compile(r"[a-z][a-z0-9_]*")
 
 
