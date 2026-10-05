@@ -6,6 +6,30 @@ Baseline: `main_v2` at `d6f13c3` (after #179–#187). Scope: all of `app/` (47,0
 
 > **Stance: player experience comes first.** A tidy architecture is never a reason to add to a player's wait, remove feedback they can see, or make it possible for a channel to hang. When code can be made easier to maintain **without touching the player path**, do it. When it touches the player path, measure first, change second, and make the before/after visible.
 
+## Implementation status
+
+The numbers in this document (line counts, function lengths, cycle counts) describe the review baseline `d6f13c3`. Since then:
+
+| Roadmap item | Finding | Status | PR |
+| --- | --- | --- | --- |
+| P0 one summary line per turn (independent of `LOG_ENABLED`), a short code on internal errors | F2, F7 | **merged** | [#195](https://github.com/marcoliu99/line-coc-keeper/pull/195) |
+| P0 one boolean parser, configuration guide, README lists the new modules | F8 (part), F15 | in review | [#196](https://github.com/marcoliu99/line-coc-keeper/pull/196) |
+| P2 split `keeper.py`: prompt construction | F9 | **merged** | [#189](https://github.com/marcoliu99/line-coc-keeper/pull/189) |
+| P2 split `keeper.py`: turn commit, memory maintenance | F9 | **merged** | [#192](https://github.com/marcoliu99/line-coc-keeper/pull/192) |
+| P2 split `keeper.py`: tool dispatch, `keeper_tools/support`, import gate; delete `keeper.py` | F9 | **merged** | [#193](https://github.com/marcoliu99/line-coc-keeper/pull/193) |
+| P3 pin the persistent buttons' `custom_id` | F11 | **merged** | [#190](https://github.com/marcoliu99/line-coc-keeper/pull/190) |
+| P3 split `discord_bot.py` (1,862 → 311 lines) | F11 | **merged** | [#194](https://github.com/marcoliu99/line-coc-keeper/pull/194) |
+| P1 `reply_pipeline`, `run_turn` in six stages, `TurnScope` + lock-order test + watchdog | F4, F5 | not started | — |
+| P3 `handle_system_command` as a table | F10 (cold path) | not started | — |
+| P4 latency levers (narration outside the lock, tool surface, retiring legacy combat, provider loop core, synchronous SQLite) | F1, F3, F6, F10, F13 | not started; needs data from #195's summary and one real five-player run first | — |
+| P5 cold-path packaging, `GroupState` sub-states | F12, F14 | not started | — |
+
+What the finished items achieved:
+
+- `app/keeper.py` (1,532 lines, fan-out 31) is **deleted**, replaced by `prompt_builder`, `turn_commit`, `memory_maintenance`, `tool_dispatch` and `keeper_tools/support`; the 12-module cycle between `keeper_tools` and `keeper` is gone and `tests/test_architecture_keeper_tools.py` keeps it from coming back. The number of `app/` files carrying an `SLF001` exemption fell from 16 to 7.
+- `app/discord_bot.py` went from 1,862 to 311 lines, the rest living in `app/discord_transport/` (`gateway`, `delivery`, `interactions`, `lifecycle`, `controls`, `help_ui`), with `tests/test_architecture_discord_transport.py` checking the layering and importing each module alone. In review, Codex found two real problems in the first version — an import cycle inside the transport package (importing one module alone failed, masked by the normal start-up order) and tests that patched the wrong module binding — both fixed and each now guarded by a test.
+- Everything above is a pure move or added output; **no latency improvement is claimed.**
+
 ## 0. One-page summary
 
 1. **The architectural backbone is healthy.** Game-state writes have one door (`state_transaction`); checks and combat each have an engine; stage hand-offs have a typed "who may write which key" contract (`TurnPayload`/`CheckStatus`); deterministic last-line safety exists; and 6 "architecture gate" tests reject regressions through the import graph. No rewrite, storage change or framework swap is warranted.
@@ -217,7 +241,7 @@ Severity = impact on players; each item says whether it touches the hot path.
 ### F9 (medium, maintenance) `keeper.py` is a hub
 
 - **Evidence**: 1,532 lines, fan-out 31; it holds static/dynamic prompt construction (~300 lines of prompt text), state-mutation wrappers (`_mutate_and_save_state`), a check-result cache, turn commit (`_commit_turn_result`), memory maintenance (~300 lines), KP canon trigger parsing, tool dispatch (`_execute_tool`, already down to 33 lines) and the combat-status gate. 9 `keeper_tools/*` files call back into `keeper` through lazy imports, forming a 12-module cycle; `keeper._*` is referenced from 9 files in 35 places (17 files carry `SLF001` exemptions).
-- **Recommendation (mechanical moves, behaviour unchanged)**: `prompt_builder.py` (prompts), `turn_commit.py` (`_commit_turn_result`, `_commit_kp_ooc_turn_result`, timeline guarantees), `memory_maintenance.py` (maintenance and summaries), `tool_dispatch.py` (`_execute_tool` and role filtering). With each group moved, rename the `_` names to public and delete that file's `SLF001` exemption. **No long-lived shims** (a transitional shim gets a deletion date). Hot-path protection: function bodies and call order are untouched; the existing tests plus a new import-graph gate (`keeper_tools` must not import `keeper`) verify it.
+- **Recommendation (mechanical moves, behaviour unchanged; implemented, see Implementation status)**: `prompt_builder.py` (prompts), `turn_commit.py` (`_commit_turn_result`, `_commit_kp_ooc_turn_result`, timeline guarantees), `memory_maintenance.py` (maintenance and summaries), `tool_dispatch.py` (`_execute_tool` and role filtering), `keeper_tools/support.py` (what the handlers share). With each group moved, rename the `_` names to public and delete that file's `SLF001` exemption. **No long-lived shims** (a transitional shim gets a deletion date). Hot-path protection: function bodies and call order are untouched; the existing tests plus a new import-graph gate (`keeper_tools` must not import `keeper`) verify it.
 
 ### F10 (medium, maintenance) Over-long functions
 
@@ -227,7 +251,7 @@ Severity = impact on players; each item says whether it touches the hot path.
 ### F11 (medium, maintenance) `discord_bot.py` mixes four responsibilities
 
 - **Evidence**: 1,862 lines: event entry (`on_message`), delivery (`_make_reply` etc.), persistent buttons (Check/Luck/PDF/Help, ~400 lines), and Help/sudo/PDF `View`/`Modal`/`Select` classes (~500 lines).
-- **Recommendation**: split into `discord/events.py`, `discord/delivery.py`, `discord/buttons.py`, `discord/views_help.py`, `discord/views_sudo.py`, `discord/views_pdf.py`. **Note**: persistent buttons are matched by `custom_id` regex, so **the formats must not change** (already-posted buttons must keep working, U4). A pure move, plus a test that pins every `custom_id` template.
+- **Recommendation (implemented as `app/discord_transport/{gateway,delivery,interactions,lifecycle,controls,help_ui}.py`, see Implementation status)**: the original proposal was `discord/events.py`, `discord/delivery.py`, `discord/buttons.py`, `discord/views_help.py`, `discord/views_sudo.py`, `discord/views_pdf.py`. **Note**: persistent buttons are matched by `custom_id` regex, so **the formats must not change** (already-posted buttons must keep working, U4). A pure move, plus a test that pins every `custom_id` template.
 
 ### F12 (low-medium, maintenance) `GroupState` is a 55-field object
 
@@ -261,7 +285,7 @@ Not a rewrite: make the existing boundaries explicit and guard them with tests.
 ### 5.1 Target layers (arrows = allowed dependency direction)
 
 ```text
- L5  transport   discord/{events,delivery,buttons,views_*}        ← no game rules
+ L5  transport   discord_bot (entry) + discord_transport/{gateway,interactions,delivery,lifecycle,controls,help_ui}  ← no game rules
  L4  routing     commands/router (+ TurnScope)  commands/handlers/*  ← parse, permissions, reply
  L3  turn runtime agents/*  (prepare → mechanics → narrate → gate → commit → deliver)
                  reply_pipeline (ordered, pure)   turn_fallback   turn_phases
@@ -299,7 +323,7 @@ The number and order of `await`s at each step is identical to today's: this is "
 | `keeper.py` commit / timeline | `turn_commit.py` | |
 | `keeper.py` memory maintenance | `memory_maintenance.py` | background; unrelated to the hot path |
 | `keeper.py` tool dispatch | `tool_dispatch.py` | same layer as `registry` |
-| `discord_bot.py` | `discord/*` | `custom_id` formats unchanged |
+| `discord_bot.py` | `discord_bot.py` (entry and events) + `discord_transport/*` | done; `custom_id` formats unchanged |
 | the 641-line function in `commands/handlers/system.py` | subcommand table | cold path |
 | `scenario_*`, `pdf_*` | `app/scenario/`, `app/pdf/` | cold path, last |
 | `combat.py` + `combat_flow.py` | kept; trimmed once legacy retires | F13 |

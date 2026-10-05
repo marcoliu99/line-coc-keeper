@@ -6,6 +6,30 @@
 
 > **這份文件的立場：玩家體驗優先。** 架構漂亮不是理由去增加玩家的等待、拿掉玩家看得到的回饋、或讓一個頻道有可能卡死。能在**不碰玩家路徑**的前提下讓程式好維護，就做；會碰到玩家路徑的，先量測、再動、動完要能看出前後差異。
 
+## 實施進度
+
+本文件的數字（行數、函式長度、環的數量）描述的是審查基準 `d6f13c3`。之後的進展：
+
+| 路線圖項目 | 對應發現 | 狀態 | PR |
+| --- | --- | --- | --- |
+| P0 每回合一行摘要（不依賴 `LOG_ENABLED`）、內部錯誤附短碼 | F2、F7 | **已合併** | [#195](https://github.com/marcoliu99/line-coc-keeper/pull/195) |
+| P0 布林設定統一、設定指南、README 補上新模組 | F8（部分）、F15 | 審查中 | [#196](https://github.com/marcoliu99/line-coc-keeper/pull/196) |
+| P2 拆 `keeper.py`：提示建構 | F9 | **已合併** | [#189](https://github.com/marcoliu99/line-coc-keeper/pull/189) |
+| P2 拆 `keeper.py`：回合提交、記憶維護 | F9 | **已合併** | [#192](https://github.com/marcoliu99/line-coc-keeper/pull/192) |
+| P2 拆 `keeper.py`：工具分派、`keeper_tools/support`、import 閘門；刪除 `keeper.py` | F9 | **已合併** | [#193](https://github.com/marcoliu99/line-coc-keeper/pull/193) |
+| P3 釘住持久化按鈕的 `custom_id` | F11 | **已合併** | [#190](https://github.com/marcoliu99/line-coc-keeper/pull/190) |
+| P3 拆 `discord_bot.py`（1,862 → 311 行） | F11 | **已合併** | [#194](https://github.com/marcoliu99/line-coc-keeper/pull/194) |
+| P1 `reply_pipeline`、`run_turn` 拆六段、`TurnScope`＋鎖序測試＋watchdog | F4、F5 | 未開始 | — |
+| P3 `handle_system_command` 對照表化 | F10（冷路徑）| 未開始 | — |
+| P4 延遲槓桿（旁白出鎖、工具面、舊版戰鬥退役、provider 迴圈核心、同步 SQLite）| F1、F3、F6、F10、F13 | 未開始；需要先用 #195 的摘要與一次五人真實執行取得數據 | — |
+| P5 冷路徑套件化、`GroupState` 子狀態 | F12、F14 | 未開始 | — |
+
+已完成的結果：
+
+- `app/keeper.py`（1,532 行、扇出 31）**已刪除**，改為 `prompt_builder`、`turn_commit`、`memory_maintenance`、`tool_dispatch` 與 `keeper_tools/support`；`keeper_tools` 與 `keeper` 之間 12 個模組的環消失，`tests/test_architecture_keeper_tools.py` 擋住它回來。`app/` 內持有 `SLF001` 豁免的檔案從 16 個降為 7 個。
+- `app/discord_bot.py` 從 1,862 行降到 311 行，其餘在 `app/discord_transport/`（`gateway`、`delivery`、`interactions`、`lifecycle`、`controls`、`help_ui`），並由 `tests/test_architecture_discord_transport.py` 檢查分層與逐一獨立 import。審查中 Codex 找出第一版的傳輸層 import 環（單獨 import 其中一個模組會失敗，被正常啟動順序掩蓋）與測試 patch 的是錯的模組綁定，兩者都已修正並各有測試擋住。
+- 上面各項都是純搬移或只新增輸出；**沒有任何延遲改善的宣稱**。
+
 ## 0. 一頁結論
 
 1. **這個系統的架構骨幹是健康的。** 狀態寫入只有一扇門（`state_transaction`）、檢定／戰鬥各有引擎、回合階段有明確的「誰能寫哪個鍵」契約（`TurnPayload`／`CheckStatus`）、安全邊界有確定性的最後防線，而且已有 6 個「架構閘門」測試用 import 圖擋住退化。不需要重寫，更不需要換儲存或換框架。
@@ -217,7 +241,7 @@ Discord ──► discord_bot ──► commands/router ──► handlers/*  (�
 ### F9（中，維護）`keeper.py` 是樞紐
 
 - **證據**：1,532 行、扇出 31；內容包含靜態／動態提示建構（約 300 行提示文字）、狀態變更包裝（`_mutate_and_save_state`）、檢定結果快取、回合提交（`_commit_turn_result`）、記憶維護（約 300 行）、KP 正典觸發解析、工具分派（`_execute_tool` 已降到 33 行）、戰鬥狀態閘。`keeper_tools/*` 有 9 個檔案以延遲 import 回呼 `keeper`，形成 12 模組的環；`keeper._*` 被 9 個檔案引用共 35 處（17 個檔案持有 `SLF001` 豁免）。
-- **建議（機械搬移，行為不變）**：`prompt_builder.py`（提示）、`turn_commit.py`（`_commit_turn_result`、`_commit_kp_ooc_turn_result`、時間線保證）、`memory_maintenance.py`（維護與摘要）、`tool_dispatch.py`（`_execute_tool` 與角色過濾）；每搬一組就把對應的 `_` 名稱改成公開名稱並刪掉該檔的 `SLF001` 豁免。**不留長期轉接層**（過渡期的轉接要有刪除日期）。熱路徑保護：函式本體不改、呼叫順序不改，由現有測試＋新增一個 import 圖閘門（`keeper_tools` 不得 import `keeper`）驗證。
+- **建議（機械搬移，行為不變；已實施，見〈實施進度〉）**：`prompt_builder.py`（提示）、`turn_commit.py`（`_commit_turn_result`、`_commit_kp_ooc_turn_result`、時間線保證）、`memory_maintenance.py`（維護與摘要）、`tool_dispatch.py`（`_execute_tool` 與角色過濾）、`keeper_tools/support.py`（各 handler 共用的部分）；每搬一組就把對應的 `_` 名稱改成公開名稱並刪掉該檔的 `SLF001` 豁免。**不留長期轉接層**（過渡期的轉接要有刪除日期）。熱路徑保護：函式本體不改、呼叫順序不改，由現有測試＋新增一個 import 圖閘門（`keeper_tools` 不得 import `keeper`）驗證。
 
 ### F10（中，維護）超長函式
 
@@ -227,7 +251,7 @@ Discord ──► discord_bot ──► commands/router ──► handlers/*  (�
 ### F11（中，維護）`discord_bot.py` 混了四種責任
 
 - **證據**：1,862 行：事件入口（`on_message`）、遞送（`_make_reply` 等）、持久化按鈕（Check／Luck／PDF／Help，約 400 行）、以及 Help／sudo／PDF 的 `View`／`Modal`／`Select`（約 500 行）。
-- **建議**：拆成 `discord/events.py`、`discord/delivery.py`、`discord/buttons.py`、`discord/views_help.py`、`discord/views_sudo.py`、`discord/views_pdf.py`。**注意**：持久化按鈕以 `custom_id` 正規表示式比對，**格式不得改**（已發出的舊按鈕必須繼續有效，U4）。這是純搬移，加一個測試鎖住各 `custom_id` 模板。
+- **建議（已實施為 `app/discord_transport/{gateway,delivery,interactions,lifecycle,controls,help_ui}.py`，見〈實施進度〉）**：原本的提案是拆成 `discord/events.py`、`discord/delivery.py`、`discord/buttons.py`、`discord/views_help.py`、`discord/views_sudo.py`、`discord/views_pdf.py`。**注意**：持久化按鈕以 `custom_id` 正規表示式比對，**格式不得改**（已發出的舊按鈕必須繼續有效，U4）。這是純搬移，加一個測試鎖住各 `custom_id` 模板。
 
 ### F12（低中，維護）`GroupState` 是 55 欄位的大物件
 
@@ -261,7 +285,7 @@ Discord ──► discord_bot ──► commands/router ──► handlers/*  (�
 ### 5.1 目標分層（箭頭＝允許的依賴方向）
 
 ```text
- L5  傳輸       discord/{events,delivery,buttons,views_*}        ← 不含任何遊戲規則
+ L5  傳輸       discord_bot (入口) + discord_transport/{gateway,interactions,delivery,lifecycle,controls,help_ui}  ← 不含任何遊戲規則
  L4  入口路由   commands/router (+ TurnScope)  commands/handlers/*  ← 解析、權限、回覆
  L3  回合執行   agents/*  (prepare → mechanics → narrate → gate → commit → deliver)
                 reply_pipeline (有序、純函式)   turn_fallback   turn_phases
@@ -299,7 +323,7 @@ run_turn(...) =
 | `keeper.py` 提交／時間線 | `turn_commit.py` | |
 | `keeper.py` 記憶維護 | `memory_maintenance.py` | 背景執行，與熱路徑無關 |
 | `keeper.py` 工具分派 | `tool_dispatch.py` | 與 `registry` 同層 |
-| `discord_bot.py` | `discord/*` | `custom_id` 格式不變 |
+| `discord_bot.py` | `discord_bot.py`（入口與事件）＋`discord_transport/*` | 已完成；`custom_id` 格式不變 |
 | `commands/handlers/system.py` 的 641 行函式 | 子指令對照表 | 冷路徑 |
 | `scenario_*`、`pdf_*` | `app/scenario/`、`app/pdf/` | 冷路徑，最後做 |
 | `combat.py`＋`combat_flow.py` | 保留，legacy 退役後刪減 | F13 |
