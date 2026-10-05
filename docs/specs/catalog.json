@@ -1831,6 +1831,23 @@
       "source_revision": "c5a19912c2f1faf5454eb262693ddbc7dc3d0e4d"
     },
     {
+      "title": "Game Opening Phase 2 unlocked extraction",
+      "zh": "遊戲開場第二階段：解鎖抽取",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/services/game_opening.py",
+        "app/commands/router.py",
+        "app/services/scenario_lifecycle.py",
+        "app/scenario_library.py",
+        "app/repositories/state_transaction.py",
+        "tests/test_game_opening_characterization.py"
+      ],
+      "path": "docs/specs/refactor/game_opening_unlocked_extraction_design_spec.md",
+      "zh_path": "docs/specs/refactor/game_opening_unlocked_extraction_design_spec_zh.md",
+      "source_revision": "066667812289e2128322cd17bd49c5d0646300dd"
+    },
+    {
       "title": "Correction lifecycle",
       "zh": "更正生命週期",
       "category": "refactor",
