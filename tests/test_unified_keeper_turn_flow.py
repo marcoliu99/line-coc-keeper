@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from app import config, db, keeper
+from app import config, db, keeper, scenario_intro
 from app.agents import assistant, narrator, supervisor
 from app.checks.models import CheckOutcome
 from app.commands.handlers import checks as check_commands
@@ -222,19 +222,18 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             replies.append(text)
 
         pipeline = AsyncMock(return_value=("你站在書房門前。", [], []))
-        with (
-            patch.object(system, "load_state", return_value=state),
-            patch.object(system, "heal_character", return_value=[]),
-            patch.object(system, "build_readiness_roster", return_value="名冊"),
-            patch.object(system.scenario_intro, "extract_opening_narration", return_value={"found": False}),
-            patch.object(system.keeper, "_refresh_state_snapshot", return_value=state),
-            patch.object(system.supervisor, "run_turn", pipeline),
-            patch.object(system, "run_post_turn_maintenance_after_output", new_callable=AsyncMock),
-        ):
-            await system.handle_system_command(
-                "start-entry", "player", reply, AsyncMock(), AsyncMock(), AsyncMock(),
-                ["/coc", "start"],
-            )
+        with StateStorePatch() as store:
+            store.put(state)
+            with (
+                patch.object(system, "build_readiness_roster", return_value="名冊"),
+                patch.object(scenario_intro, "extract_opening_narration", return_value={"found": False}),
+                patch.object(supervisor, "run_turn", pipeline),
+                patch.object(system, "run_post_turn_maintenance_after_output", new_callable=AsyncMock),
+            ):
+                await system.handle_system_command(
+                    "start-entry", "player", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                    ["/coc", "start"],
+                )
         self.assertEqual(pipeline.await_args.kwargs["turn_kind"], "opening_fallback")
         self.assertEqual(replies, ["名冊"])
 
@@ -249,26 +248,25 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         async def reply(text: str) -> None:
             replies.append(text)
 
-        with (
-            patch.object(system, "load_state", return_value=state),
-            patch("app.repositories.state_transaction.commit_snapshot") as save,
-            patch.object(system, "heal_character", return_value=[]),
-            patch.object(system, "build_readiness_roster", return_value="名冊"),
-            patch.object(system.scenario_intro, "extract_opening_narration", return_value={
-                "found": True, "text": "開場白", "opening_check": {
-                    "type": "skill", "skill": "偵查", "reason": "環顧四周",
-                },
-            }),
-        ):
-            await system.handle_system_command(
-                "opening-team", "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
-                ["/coc", "start"],
-            )
-        assert state.game_started
-        assert state.pending_checks["first"]["check_id"] != state.pending_checks["second"]["check_id"]
-        assert all(check["timeline_id"] == state.timeline_id for check in state.pending_checks.values())
+        with StateStorePatch() as store:
+            store.put(state)
+            with (
+                patch.object(system, "build_readiness_roster", return_value="名冊"),
+                patch.object(scenario_intro, "extract_opening_narration", return_value={
+                    "found": True, "text": "開場白", "opening_check": {
+                        "type": "skill", "skill": "偵查", "reason": "環顧四周",
+                    },
+                }),
+            ):
+                await system.handle_system_command(
+                    "opening-team", "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                    ["/coc", "start"],
+                )
+            saved = load_state("opening-team")
+        assert saved.game_started
+        assert saved.pending_checks["first"]["check_id"] != saved.pending_checks["second"]["check_id"]
+        assert all(check["timeline_id"] == saved.timeline_id for check in saved.pending_checks.values())
         assert "開場白" in replies
-        save.assert_called_once_with(state)
 
     async def test_extracted_opening_does_not_overwrite_one_players_luck(self):
         state = GroupState(group_id="opening-luck", active=True, scenario_text="開場",
@@ -282,25 +280,24 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         async def reply(text: str) -> None:
             replies.append(text)
 
-        with (
-            patch.object(system, "load_state", return_value=state),
-            patch("app.repositories.state_transaction.commit_snapshot") as save,
-            patch.object(system, "heal_character", return_value=[]),
-            patch.object(system, "build_readiness_roster", return_value="名冊"),
-            patch.object(system.scenario_intro, "extract_opening_narration", return_value={
-                "found": True, "text": "開場白", "opening_check": {"type": "skill", "skill": "自訂古語"},
-            }),
-        ):
-            await system.handle_system_command(
-                "opening-luck", "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
-                ["/coc", "start"],
-            )
-        assert not state.game_started
-        assert state.pending_checks == {}
-        assert all("自訂古語" not in char.skills for char in state.characters.values())
-        assert state.pending_luck_decisions["second"]["decision_id"] == "old"
+        with StateStorePatch() as store:
+            store.put(state)
+            with (
+                patch.object(system, "build_readiness_roster", return_value="名冊"),
+                patch.object(scenario_intro, "extract_opening_narration", return_value={
+                    "found": True, "text": "開場白", "opening_check": {"type": "skill", "skill": "自訂古語"},
+                }),
+            ):
+                await system.handle_system_command(
+                    "opening-luck", "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                    ["/coc", "start"],
+                )
+            saved = load_state("opening-luck")
+        assert not saved.game_started
+        assert saved.pending_checks == {}
+        assert all("自訂古語" not in char.skills for char in saved.characters.values())
+        assert saved.pending_luck_decisions["second"]["decision_id"] == "old"
         assert any("Luck" in text for text in replies)
-        save.assert_not_called()
 
     async def test_resolved_check_uses_one_narrative_conversation_and_cannot_reroll(self):
         state = GroupState(group_id="unified-check", game_started=True,

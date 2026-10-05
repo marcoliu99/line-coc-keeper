@@ -990,6 +990,7 @@ class GroupState:
     scenario_title: str = ""
     scenario_text: str = ""
     scenario_library_id: str = ""
+    active_scenario_source_hash: str = ""
     scenario_variant_id: str = "original"
     active_chapter_id: str = ""
     context_chapter_ids: list[str] = field(default_factory=list)
@@ -1283,6 +1284,7 @@ class GroupState:
             "scenario_title": self.scenario_title,
             "scenario_text": self.scenario_text,
             "scenario_library_id": self.scenario_library_id,
+            "active_scenario_source_hash": self.active_scenario_source_hash,
             "scenario_variant_id": self.scenario_variant_id,
             "active_chapter_id": self.active_chapter_id,
             "context_chapter_ids": self.context_chapter_ids,
@@ -1373,6 +1375,7 @@ class GroupState:
             scenario_title=data.get("scenario_title", ""),
             scenario_text=data.get("scenario_text", ""),
             scenario_library_id=data.get("scenario_library_id", ""),
+            active_scenario_source_hash=data.get("active_scenario_source_hash", ""),
             scenario_variant_id=data.get("scenario_variant_id", "original"),
             active_chapter_id=data.get("active_chapter_id", ""),
             context_chapter_ids=data.get("context_chapter_ids", []),

@@ -52,7 +52,12 @@ from app.providers.registry import conversation_provider
 from app.repositories import state_transaction
 from app.repositories.group_state import load_state
 from app.services import combat_actions as combat_act
-from app.services import combat_engine, history_authority, mutation_admission
+from app.services import (
+    combat_engine,
+    history_authority,
+    mutation_admission,
+    turn_phases,
+)
 
 _logger = logging.getLogger(__name__)
 # Existing callers patch scenario_library through keeper. Retain the module
@@ -686,8 +691,12 @@ def _persist_memory_maintenance_state(
     source_revision: int,
     idempotency_key: str,
     embedding: list[float] | None,
+    prepared: memory_rag.PreparedMemory | None = None,
 ) -> str:
-    """Commit the maintenance trim and memory chunk atomically."""
+    """Commit the maintenance trim and memory chunk atomically.
+
+    ``prepared`` is the trim split into parts that each fit one embedding (``memory_rag.prepare_memory``); without
+    it the whole trim is one chunk carrying ``embedding``."""
     idempotency_hash = hashlib.sha256(idempotency_key.encode()).hexdigest()[:12]
     observability.event(
         "maintenance.commit.started",
@@ -718,7 +727,7 @@ def _persist_memory_maintenance_state(
             if not isinstance(existing_chunks, list):
                 existing_chunks = []
             if any(
-                isinstance(item, dict) and item.get("idempotency_key") == idempotency_key
+                isinstance(item, dict) and idempotency_key in {item.get("idempotency_key"), item.get("parent_id")}
                 for item in existing_chunks
             ):
                 observability.event(
@@ -757,23 +766,30 @@ def _persist_memory_maintenance_state(
             return "stale_log_prefix"
         latest_state.log = latest_state.log[n:]
         latest_state.campaign_summary = campaign_summary
-        memory_appended = memory_rag.append_memory_tx(
-            ctx.conn,
-            group_id,
-            "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk),
-            timeline_id=timeline_id,
-            idempotency_key=idempotency_key,
-            source_revision=source_revision,
-            embedding=embedding,
-            source_messages=history_authority.memory_source_messages(dropped_chunk),
-        )
+        if prepared is not None:
+            memory_appended = memory_rag.append_memory_parts_tx(
+                ctx.conn, group_id, prepared, timeline_id=timeline_id,
+                idempotency_key=idempotency_key, source_revision=source_revision,
+            )
+        else:
+            memory_appended = memory_rag.append_memory_tx(
+                ctx.conn,
+                group_id,
+                "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk),
+                timeline_id=timeline_id,
+                idempotency_key=idempotency_key,
+                source_revision=source_revision,
+                embedding=embedding,
+                source_messages=history_authority.memory_source_messages(dropped_chunk),
+            )
         ctx.set_result({"memory_appended": bool(memory_appended)})
         return "committed"
 
     try:
-        result = state_transaction.mutate(
-            group_id, commit_trim, reason="maintenance", expected_timeline=timeline_id,
-        )
+        with turn_phases.phase("memory_write"):
+            result = state_transaction.mutate(
+                group_id, commit_trim, reason="maintenance", expected_timeline=timeline_id,
+            )
     except state_transaction.CorruptStateError as exc:
         observability.event(
             "maintenance.commit_skipped",
@@ -834,7 +850,7 @@ def run_scene_digest_maintenance(group_id: str) -> None:
         scene_digest.create_digest(state)
 
 
-def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
+def _run_post_turn_maintenance(group_id: str) -> dict[str, object]:
     """Called after every turn (see app/services/post_turn.py's
     spawn_post_turn_maintenance, which now fires this as an independent
     background task rather than awaiting it inline). Only does real work
@@ -870,6 +886,10 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
     }
     try:
         run_scene_digest_maintenance(group_id)
+        try:
+            memory_rag.backfill_embeddings(group_id)
+        except Exception:  # an optional index must never stop the trim below
+            _logger.exception("Memory embedding backfill failed for %s", group_id)
         with locks.get_state_lock(group_id):
             latest_state = load_state(group_id)
             if len(latest_state.log) <= MAX_LOG_TURNS * 4:
@@ -893,7 +913,8 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
         # trim, eroding fine detail a little more each pass; this keeps the
         # verbatim text retrievable via search_memory even after that.
         formatted_chunk = "\n".join(f"{m['role']}: {m['content']}" for m in dropped_chunk)
-        embedding = memory_rag.prepare_memory_embedding(formatted_chunk)
+        prepared = memory_rag.prepare_memory(dropped_chunk, history_authority.memory_source_messages(dropped_chunk))
+        embedding = prepared.embeddings[0] if len(prepared.embeddings) == 1 else None
         chunk_digest = hashlib.sha256(formatted_chunk.encode("utf-8")).hexdigest()[:24]
         commit_status = _persist_memory_maintenance_state(
             group_id,
@@ -904,6 +925,7 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
             source_revision=source_revision,
             idempotency_key=f"{timeline_id}:{source_revision}:{chunk_digest}",
             embedding=embedding,
+            prepared=prepared,
         )
         observability.event(
             "maintenance.result.completed",
@@ -911,16 +933,25 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
             requested_timeline_id=timeline_id,
             commit_status=commit_status,
             summary_changed=campaign_summary != base_summary,
-            embedding_prepared=embedding is not None,
+            embedding_prepared=all(vector is not None for vector in prepared.embeddings),
+            embedding_parts=len(prepared.parts),
+            embedding_failure=prepared.failure.reason if prepared.failure else None,
         )
         result["commit_status"] = commit_status
         result["summary_updated"] = commit_status in {"committed", "duplicate"} and campaign_summary != base_summary
-        result["embedding_updated"] = commit_status in {"committed", "duplicate"} and embedding is not None
+        result["embedding_updated"] = commit_status in {"committed", "duplicate"} and all(
+            vector is not None for vector in prepared.embeddings)
         result["state_saved"] = commit_status in {"committed", "duplicate"}
         return result
     finally:
         with locks.get_state_lock(group_id):
             _maintenance_in_flight.discard(group_id)
+
+
+def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
+    """``_run_post_turn_maintenance`` with its own phase timeline (embedding, memory search and write)."""
+    with turn_phases.timeline("maintenance", turn_id=observability.new_id("maint"), player_id="", campaign_id=group_id):
+        return _run_post_turn_maintenance(group_id)
 
 
 def _scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:

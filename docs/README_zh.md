@@ -39,6 +39,11 @@
 | [原子敘事購買與取得來源](specs/bug/purchase_turn_provenance_design_spec_zh.md) | 已實作 | [English](specs/bug/purchase_turn_provenance_design_spec.md) |
 | [Codex OAuth 對話 Provider](specs/enhancement/codex_oauth_provider_design_spec_zh.md) | 實驗分支已實作 | [English](specs/enhancement/codex_oauth_provider_design_spec.md) |
 | [劇本整備最多匯出三個檔案](specs/enhancement/three_file_scenario_export_design_spec_zh.md) | 已實作 | [English](specs/enhancement/three_file_scenario_export_design_spec.md) |
+| [面向玩家的呈現：等級、內部識別碼、隊伍人數](specs/bug/player_facing_presentation_design_spec_zh.md) | 已實作 | [English](specs/bug/player_facing_presentation_design_spec.md) |
+| [有界的長期記憶 embedding](specs/bug/memory_embedding_bounds_design_spec_zh.md) | 已實作 | [English](specs/bug/memory_embedding_bounds_design_spec.md) |
+| [回合 fallback 原因與有界復原](specs/bug/turn_fallback_reasons_design_spec_zh.md) | 已實作 | [English](specs/bug/turn_fallback_reasons_design_spec.md) |
+| [劇本事件在同一回合的機械義務](specs/bug/event_obligations_design_spec_zh.md) | 已實作 | [English](specs/bug/event_obligations_design_spec.md) |
+| [相鄰劇本觸發的檢索](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) | 已實作 | [English](specs/bug/adjacent_scenario_trigger_design_spec.md) |
 
 ## 功能強化
 
@@ -68,6 +73,7 @@
 | [批次戰鬥初始化提案](specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-macro-combat-initialization-tool.md) |
 | [持續戰鬥效果的推理設定提案](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) |
 | [外部 AI 中文模板整備與匯入診斷](specs/enhancement/external_template_authoring_design_spec_zh.md) | 已實作；實測待完成 | [English](specs/enhancement/external_template_authoring_design_spec.md) |
+| [回合階段計時與檢索放大](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_latency_instrumentation_design_spec.md) |
 
 ## 功能
 

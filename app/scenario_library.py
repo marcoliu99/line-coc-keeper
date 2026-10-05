@@ -500,12 +500,17 @@ def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any
     manifest = _read_json(root / "manifest.json", None)
     if not isinstance(manifest, dict):
         raise FileNotFoundError(scenario_id)
+    if manifest.get("content_hash"):
+        # Bind an active context only to a verified full source version. Legacy
+        # entries without a hash remain loadable but cannot claim a binding.
+        manifest, text = read_source(scenario_id)
+    else:
+        text = (root / "scenario.txt").read_text(encoding="utf-8")
     chapters = [c for c in manifest.get("chapters", []) if c.get("kind") == "playable"]
     if not chapters:
         raise ValueError("劇本沒有可遊玩的章節")
     current_index = next((i for i, c in enumerate(chapters) if c["id"] == active_chapter_id), 0)
     window = chapters[current_index:current_index + 2]
-    text = (root / "scenario.txt").read_text(encoding="utf-8")
     context_text = "\n\n".join(_pages_in_range(text, c["start_page"], c["end_page"]) for c in window)
     # Old/imported scenarios can predate page markers; preserve their text rather
     # than silently activating an empty context.

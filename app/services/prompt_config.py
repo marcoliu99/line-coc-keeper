@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import re
 
+from app import presentation
 from app.domain.models import MechanicResult
-from app.services import opposed_checks
+from app.services import opposed_checks, turn_fallback
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -110,6 +111,7 @@ complete_for_action=true 只代表已知依賴已帶入，仍須檢查未知的�
 中文有命中不代表依據完整。加入敵人前須核對攻擊、護甲、特殊能力、觸發條件、代價、每輪/每戰使用限制；缺少裁決必要依據時，使用 search_scenario 的 source="original"，以原文名稱/別名和缺少的規則合併補查原稿。未查到不等於沒有護甲或能力，不得自行填零或省略；仍無法確認時暫緩受影響的裁決，保留已結算骰子與狀態。
 只有在缺少一項會影響本次判定或眼前後果的具體事實時，才呼叫 search_scenario 補查。工具回傳已回答問題後，採用該結果繼續處理；只有另一項不同且會影響本次判定的事實仍未解答時，才再查一次。
 若本回合沒有可用的【劇本相關內容】，遇到必須依劇本決定的事實時仍可照常搜尋。若上下文與搜尋結果都沒有說明該事實，保留未知，不要自行補造。
+玩家的行動若在劇本依據裡已有明寫的直接後果（按鈴、開門、移動物件、進入房間、說出觸發語、觸碰或揭露物件、跨越場景邊界），照該後果處理；劇本沒有要求檢定時，不得改以偵查、聆聽、幸運等臨時檢定取代。依據只寫了觸發物件、沒寫後果時，用「目前場景＋玩家動作＋被互動的物件或 NPC」做一次聚焦的 search_scenario；不要問「接下來會發生什麼」這類寬泛問題。
 這些規則只決定如何重用劇本資訊，不會自行建立檢定、擲骰、改變角色狀態或推進場景；仍須依玩家實際行動與完整規則決定必要機制。"""
 
 
@@ -148,7 +150,7 @@ def build_resolved_check_history_block(
         lines.append(
             f"- {event.get('investigator', '調查員')}：{event.get('skill', '檢定')} "
             f"{event.get('skill_value', '?')}%，擲出 {event.get('roll', '?')}，"
-            f"難度 {event.get('difficulty', 'regular')}，結果 {event.get('outcome', '未知')}。"
+            f"難度 {presentation.difficulty_label(event.get('difficulty', 'regular'))}，結果 {presentation.outcome_label(str(event.get('outcome', '未知')))}。"
         )
         if event.get('provisional'):
             lines.append('  此戰鬥紀錄是暫定機械結果；擲骰保留，但不能獨立建立已提交的世界後果。')
@@ -275,7 +277,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         skill = pending_luck.get("skill_name", "檢定")
         lines.extend([
             "【待處理 Luck 決定：骰已擲出，最終結果尚未定案】",
-            f"調查員：{investigator}；檢定：{skill}；原始骰值：{pending_luck.get('roll', '未知')}；原始等級：{pending_luck.get('original_tier', '未知')}。",
+            f"調查員：{investigator}；檢定：{skill}；原始骰值：{pending_luck.get('roll', '未知')}；原始等級：{presentation.tier_label(str(pending_luck.get('original_tier', '未知')))}。",
             f"可用選項：{options_text or '依待處理 Luck 按鈕選擇'}；輸入 /coc luck skip 可保留原骰結果。",
             "必須請玩家完成這筆既有 Luck 決定；禁止要求重新擲骰、建立另一筆檢定，或把骰值說成已定案的成敗。暫停同一行動的後續結果敘述。",
         ])
@@ -285,7 +287,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         opposed_winner = resolved.get('opposed_winner')
         lines.extend([
             "【已結算檢定：結果權威且不得重擲】",
-            f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {resolved.get('difficulty', 'regular')}，等級 {resolved.get('tier', '未知')}，結果 {outcome}。",
+            f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {presentation.difficulty_label(resolved.get('difficulty', 'regular'))}，等級 {presentation.tier_label(str(resolved.get('tier', '未知')))}，結果 {outcome}。",
             "這筆檢定已結算。不得改成尚未結算、因先攻延後同一擲骰結果、要求再擲一次，或從檢定結果自行推導未提供的傷害、破壞或戰鬥。",
         ])
         if opposed_winner:
@@ -300,7 +302,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
 
 def build_resolved_check_outcome_block(result: dict) -> str:
     """Build a bounded, structured authority block for post-roll narration."""
-    outcome = str(result.get("outcome", "結果未知"))
+    outcome = presentation.outcome_label(str(result.get("outcome", "結果未知")))
     skill = result.get("skill", "檢定")
     consequence_plans = result.get("consequences") or []
     consequence_note = (
@@ -312,7 +314,7 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         "【已結算檢定：權威機制結果】\n"
         f"調查員：{result.get('investigator', '未知')}；檢定：{skill}；"
         f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
-        f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
+        f"難度：{presentation.difficulty_label(result.get('difficulty', 'regular'))}；最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
         '【行動及對抗交接；來源與對手數值不得公開】\n'
         f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"
@@ -336,10 +338,10 @@ def enforce_resolved_check_consistency(
         contradictions.extend(("結果尚未結算", "檢定尚未結算"))
     if not any(phrase in text for phrase in contradictions):
         return text
-    outcome = str(result.get("outcome", "結果未知"))
+    outcome = presentation.outcome_label(str(result.get("outcome", "結果未知")))
     return (
         f"{result.get('investigator', '調查員')} 的 {result.get('skill', '檢定')} 已結算："
-        f"擲出 {result.get('roll', '未知')}，難度 {result.get('difficulty', 'regular')}，"
+        f"擲出 {result.get('roll', '未知')}，難度 {presentation.difficulty_label(result.get('difficulty', 'regular'))}，"
         f"結果為「{outcome}」。這次結果不得重擲或改判；未由機制結果確認的額外後果尚未發生。"
     )
 
@@ -369,7 +371,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
             if status.get("scenario_evidence_blocked"):
                 return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
-            return f"{warning}請先確認目前狀態或更正原本的行動。"
+            return f"{warning}{turn_fallback.guidance(result.fallback_reason)}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
             return f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"
@@ -409,7 +411,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
         outcome = "成功" if resolved.get("success") else "失敗"
         return (
             f"{investigator} 的 {skill} 檢定已結算：擲出 {resolved.get('roll', '未知')}，"
-            f"難度 {resolved.get('difficulty', 'regular')}，結果為{outcome}。"
+            f"難度 {presentation.difficulty_label(resolved.get('difficulty', 'regular'))}，結果為{outcome}。"
             "此結果不會重擲或改判；尚未由機制結果確認的額外後果仍未發生。"
         )
 

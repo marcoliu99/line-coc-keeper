@@ -67,6 +67,18 @@ class StatePersistenceTests(unittest.TestCase):
         restored = GroupState.from_dict(state.to_dict())
         self.assertEqual(restored.tool_recovery_markers, state.tool_recovery_markers)
 
+    def test_active_source_hash_round_trips_without_guessing_for_legacy_state(self):
+        source_hash = "b" * 64
+        state = GroupState("source-bound", scenario_library_id="same-id",
+                           scenario_text="已啟用章節", active_scenario_source_hash=source_hash)
+        group_state.save_state(state)
+        self.assertEqual(group_state.load_state(state.group_id).active_scenario_source_hash, source_hash)
+        self.assertEqual(GroupState.from_dict(state.to_dict()).active_scenario_source_hash, source_hash)
+
+        old_payload = state.to_dict()
+        old_payload.pop("active_scenario_source_hash")
+        self.assertEqual(GroupState.from_dict(old_payload).active_scenario_source_hash, "")
+
     def test_cancelled_mutation_recovery_marker_is_durable(self):
         state = GroupState("recovery-persist")
         group_state.save_state(state)
