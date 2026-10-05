@@ -24,30 +24,54 @@ from pathlib import Path
 from typing import Any
 
 _MARKER = "turn.summary "
+_LOGGER = "app.turn"
 _FIELD = re.compile(r"(\w+)=(\S*)")
 _TIMING_FIELDS = ("wall_ms", "queue_wait_ms", "retrieval_ms", "memory_ms", "executor_ms", "tool_ms",
                   "continuation_ms", "narrator_ms", "other_ms")
-_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T?[\d:.]*")
+# `LOG_FORMAT=text`: "<timestamp> <LEVEL> <logger> <message>[ context key=value ...]" (app/logging_config.py).
+_TEXT_LINE = re.compile(r"^(?P<stamp>\S+)\s+[A-Z]+\s+" + re.escape(_LOGGER) + r"\s+(?P<message>" + re.escape(_MARKER) + r".*)$")
+
+
+def _envelope(line: str) -> tuple[str, str] | None:
+    """The timestamp and message of a line that the `app.turn` logger wrote, in either log format.
+
+    The default `LOG_FORMAT=json` wraps the message in an object; matching the marker anywhere in a line would also accept
+    another logger's text that happens to contain it (a logged Keeper reply, for instance), so the logger is checked.
+    """
+    text = line.strip()
+    if text.startswith("{"):
+        try:
+            record = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(record, dict) or record.get("logger") != _LOGGER:
+            return None
+        message = record.get("message")
+        if not isinstance(message, str) or not message.startswith(_MARKER):
+            return None
+        return str(record.get("timestamp", "")), message
+    match = _TEXT_LINE.match(text)
+    return (match["stamp"], match["message"]) if match else None
 
 
 def parse_line(line: str) -> dict[str, Any] | None:
-    """The fields of one `turn.summary` line, or None for any other line."""
-    at = line.find(_MARKER)
-    if at < 0:
+    """The fields of one `turn.summary` line written by the `app.turn` logger, or None for any other line."""
+    found = _envelope(line)
+    if found is None:
         return None
+    stamp, message = found
     fields: dict[str, Any] = {}
-    for key, value in _FIELD.findall(line[at + len(_MARKER):]):
+    for key, value in _FIELD.findall(message[len(_MARKER):]):
         if key in _TIMING_FIELDS:
             try:
                 fields[key] = float(value)
             except ValueError:
                 return None
         else:
-            fields[key] = value
+            fields.setdefault(key, value)  # a text log appends context keys (turn_id, request_id) after the message
     if "turn_id" not in fields or "wall_ms" not in fields:
         return None
-    stamp = _STAMP.match(line.strip())
-    fields["_stamp"] = stamp.group(0) if stamp else ""
+    fields["_stamp"] = stamp
     return fields
 
 

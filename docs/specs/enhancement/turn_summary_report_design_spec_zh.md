@@ -22,6 +22,8 @@ Dead Boarder 五人驗證報告寫「Per-turn errors: 0」，但 102 回合中�
 
 唯讀、不依賴 `LOG_ENABLED`，而且看不到玩家文字，因為那一行本來就沒有。
 
+兩種日誌格式都讀：預設的 `LOG_FORMAT=json`（訊息包在帶 `timestamp` 與 `logger` 的物件裡）與 `LOG_FORMAT=text`（`<timestamp> <LEVEL> app.turn <message> <context>`）。只有 logger 是 `app.turn` 且訊息以標記開頭的行才算，所以別的 logger 剛好含有 `turn.summary` 的文字（例如被記錄下來的 Keeper 回覆）無法憑空造出一個回合。
+
 ## 驗證
 
-`tests/test_summarize_turn_log.py` 解析的是 runtime 實際寫出的那一行（經由真正的 logger），所以那一行的格式一變，測試就會失敗；另外涵蓋日誌前綴與雜訊、依原因的計數、百分位只算一般回合、目錄與 `--json`、`--since`、空的或不存在的日誌。還沒有用真實部署的日誌跑過。
+`tests/test_summarize_turn_log.py` 解析的是 runtime 實際寫出的那一行，經由真正的 logger 與兩種真正的格式器（`StructuredFormatter`、`TextFormatter`），所以那一行或外層格式一變，測試就會失敗；別的 logger 的相似行會被拒絕；另外涵蓋日誌前綴與雜訊、依原因的計數、百分位只算一般回合、目錄與 `--json`、`--since`、空的或不存在的日誌。還沒有用真實部署的日誌跑過。
