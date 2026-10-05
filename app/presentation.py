@@ -4,6 +4,8 @@ The engine keeps English enums and opaque ids (a result tier is ``hard``, a chec
 saved events and tests depend on them. They must not reach a player. Display sites call the label functions; the
 supervisor also runs ``player_text`` over every reply as a last line, so a raw value that a model copied out of its
 context is mapped or removed rather than shown. Everything here is idempotent and leaves ordinary prose alone.
+Character display aliases are the exception: they are written when text is sent (``delivery.shown``), after the log
+has kept the registered name.
 """
 from __future__ import annotations
 
