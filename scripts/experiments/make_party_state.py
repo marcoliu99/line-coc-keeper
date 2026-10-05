@@ -18,6 +18,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from app import prompt_builder
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
@@ -68,7 +70,7 @@ def main() -> int:
     os.environ.setdefault("DB_PATH", str(args.out))
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env", override=False)
-    from app import config, keeper
+    from app import config
     from app.agents.tool_gateway import tools_for_speaker_role
     from app.models import GroupState
     from app.services import input_budget, prompt_config
@@ -82,9 +84,9 @@ def main() -> int:
     for label, data in (("solo", json.loads(row[0])), ("party", payload)):
         state = GroupState.from_dict(data)
         owner = next(iter(state.active_characters())).owner_id
-        static = est(prompt_config.build_executor_static_prompt(keeper._build_static_prompt(state)))
+        static = est(prompt_config.build_executor_static_prompt(prompt_builder.build_static_prompt(state)))
         dynamic = est(prompt_config.build_executor_dynamic_prompt_with_context(
-            keeper._build_dynamic_prompt(state, owner, None, "player"), "", ""))
+            prompt_builder.build_dynamic_prompt(state, owner, None, "player"), "", ""))
         print(f"  {label:<6} characters={len(state.active_characters()):<2} "
               f"static={static:>6,}  dynamic={dynamic:>5,}  tools={tools:>6,}  "
               f"cacheable_prefix={static + tools:>6,}")

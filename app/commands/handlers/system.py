@@ -8,12 +8,12 @@ from typing import Any, Literal
 from app import (
     character_matcher,
     checkpoints,
-    keeper,
     observability,
+    prompt_builder,
     scenario_authoring,
     scenario_index,
     scenario_library,
-    scenario_rag,  # noqa: F401 - retained for existing command integration mocks
+    scenario_rag,  # noqa: F401 - retained for existing command integration mocks,
     scenario_source_authoring,
     scenario_templates,
     scene_digest,
@@ -669,7 +669,7 @@ async def handle_system_command(
     if sub == "setpersona":
         state = load_state(conversation_id)
         if len(parts) < 3:
-            current = state.keeper_persona or f"（目前使用預設風格）\n{keeper.DEFAULT_PERSONA}"
+            current = state.keeper_persona or f"（目前使用預設風格）\n{prompt_builder.DEFAULT_PERSONA}"
             await reply(
                 "用法：/coc setpersona <描述守密人語氣風格的文字> → 設定這個群組專屬的守密人語氣\n"
                 "/coc setpersona reset → 重設回預設的冷酷旁觀者風格\n\n"

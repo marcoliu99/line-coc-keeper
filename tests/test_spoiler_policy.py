@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import combat, discord_bot, keeper, spoiler_policy
+from app import combat, discord_bot, keeper, prompt_builder, spoiler_policy
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import system as system_handler
 from app.models import Character, GroupState
@@ -99,7 +99,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
     def test_static_prompt_omits_spoiler_rules_when_disabled(self):
         state = GroupState("group-spoiler-off")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False):
-            prompt = keeper._build_static_prompt(state)
+            prompt = prompt_builder.build_static_prompt(state)
         self.assertNotIn("conditional asides in a public reply", prompt)
         self.assertNotIn("scenario text is Keeper-only confidential material", prompt)
         self.assertNotIn("Never use an NPC ally to reveal Keeper-only truths", prompt)
@@ -107,7 +107,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
     def test_static_prompt_includes_spoiler_rules_when_enabled(self):
         state = GroupState("group-spoiler-on")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True):
-            prompt = keeper._build_static_prompt(state)
+            prompt = prompt_builder.build_static_prompt(state)
         self.assertIn("conditional asides in a public reply", prompt)
         self.assertIn("scenario text is Keeper-only confidential material", prompt)
         self.assertIn("Never use an NPC ally to reveal Keeper-only truths", prompt)
@@ -116,10 +116,10 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         state = GroupState("group-policy-language")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
-            prompt = keeper._build_static_prompt(state)
+            prompt = prompt_builder.build_static_prompt(state)
             entries = {
-                **keeper._spoiler_protection_prompt_rules(),
-                **keeper._privacy_isolation_prompt_rules(),
+                **prompt_builder._spoiler_protection_prompt_rules(),
+                **prompt_builder._privacy_isolation_prompt_rules(),
             }
         self.assertEqual(len(entries), 4)
         for name, entry in entries.items():
@@ -142,7 +142,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         state = GroupState("group-independent-switches")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", False), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
-            prompt = keeper._build_static_prompt(state)
+            prompt = prompt_builder.build_static_prompt(state)
         self.assertIn("private motivation known to the Keeper", prompt)
         self.assertIn("infer the private information from the wording", prompt)
         self.assertNotIn("conditional asides in a public reply", prompt)
@@ -151,7 +151,7 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         state = GroupState("group-privacy-off")
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
-            prompt = keeper._build_static_prompt(state)
+            prompt = prompt_builder.build_static_prompt(state)
         self.assertNotIn("private motivation known to the Keeper", prompt)
         self.assertNotIn("infer the private information from the wording", prompt)
         self.assertIn("conditional asides in a public reply", prompt)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
-from app import config, keeper, observability, presentation
+from app import config, keeper, observability, presentation, prompt_builder
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
@@ -46,11 +46,11 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
 
     static_system = (
         prompt_config.build_tool_enabled_narrator_static_prompt(
-            keeper._build_static_prompt(state), turn_kind
-        ) if tool_enabled else prompt_config.build_narrator_static_prompt(keeper._build_static_prompt(state))
+            prompt_builder.build_static_prompt(state), turn_kind
+        ) if tool_enabled else prompt_config.build_narrator_static_prompt(prompt_builder.build_static_prompt(state))
     )
     dynamic_system = prompt_config.build_dynamic_prompt_with_context(
-        keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role,
+        prompt_builder.build_dynamic_prompt(state, user_id, resolved_location, speaker_role,
                                      include_private_checks=False), rag_context, memory_context
     )
     narration_requirements = canonical_facts.requirements(
@@ -86,7 +86,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     else:
         dynamic_system += "\n\n" + prompt_config.PURE_ROLEPLAY_BLOCK
 
-    new_message = f"{display_name}：{text}" + message.payload.get("correction_context", keeper._correction_context_message(state))
+    new_message = f"{display_name}：{text}" + message.payload.get("correction_context", prompt_builder.correction_context_message(state))
     history = session.history(state.log)
 
     async def _no_tools(_name: str, _tool_input: dict) -> dict:

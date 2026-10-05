@@ -15,6 +15,7 @@ from app import (
     db,
     memory_rag,
     observability,
+    prompt_builder,
     scenario_rag,
     scenario_templates,
 )
@@ -196,7 +197,7 @@ def search_scenario_context(
             from app import config, keeper, scenario_retrieval
             model = getattr(config, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
             budget = scenario_retrieval.request_budget(
-                [keeper._build_static_prompt(state), keeper._build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
+                [prompt_builder.build_static_prompt(state), prompt_builder.build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
                  keeper._tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
             budget_token = scenario_retrieval.BUDGET.set(min(budget, config.SCENARIO_PROACTIVE_TOKEN_BUDGET))
             model_token = scenario_retrieval.MODEL.set(model)
@@ -257,7 +258,7 @@ async def build_context(
     # the payload for anything downstream that wants it.
     #
     # Gated on SCENARIO_RAG_ENABLED (default off) the same way
-    # keeper._build_static_prompt is: when it's off, the full scenario text
+    # prompt_builder.build_static_prompt is: when it's off, the full scenario text
     # (or the current chapter window's text, via the scenario library) is
     # already embedded directly in the static prompt, making this proactive
     # search redundant — and, depending on the configured embeddings

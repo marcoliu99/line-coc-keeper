@@ -16,7 +16,7 @@ sys.modules.setdefault(
     ),
 )
 
-from app import combat, dice, keeper
+from app import combat, dice, keeper, prompt_builder
 from app.agents import assistant
 from app.commands import router
 from app.commands.handlers import system as system_handler
@@ -132,13 +132,13 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             {"role": "assistant", "content": "我會安排成屍體首次揭露時觸發。"},
         ]
 
-        kp_prompt = keeper._build_dynamic_prompt(state, "kp", speaker_role="kp_assistant")
+        kp_prompt = prompt_builder.build_dynamic_prompt(state, "kp", speaker_role="kp_assistant")
         self.assertIn("kp_assistant: 開場看到屍體要做 SAN", kp_prompt)
         self.assertIn("assistant: 我會安排成屍體首次揭露時觸發。", kp_prompt)
         self.assertIn("過去 AI Keeper 在這段 OOC history 裡的回答只用於維持討論脈絡，不是 authoritative fact", kp_prompt)
         self.assertIn("不可以只因為自己前一輪曾經說過某件事", kp_prompt)
 
-        player_prompt = keeper._build_dynamic_prompt(state, "player", speaker_role="player")
+        player_prompt = prompt_builder.build_dynamic_prompt(state, "player", speaker_role="player")
         self.assertNotIn("開場看到屍體要做 SAN", player_prompt)
         self.assertNotIn("我會安排成屍體首次揭露時觸發", player_prompt)
 
@@ -1044,7 +1044,7 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             {"role": "kp_assistant", "content": "開場看到屍體要做 SAN，成功 1、失敗 1D4。"},
             {"role": "assistant", "content": "了解，等屍體揭露時建立 SAN 流程。"},
         ]
-        prompt = keeper._build_dynamic_prompt(state, "kp", speaker_role="kp_assistant")
+        prompt = prompt_builder.build_dynamic_prompt(state, "kp", speaker_role="kp_assistant")
         self.assertIn("開場看到屍體要做 SAN，成功 1、失敗 1D4。", prompt)
 
         with StateStorePatch(keeper) as store:

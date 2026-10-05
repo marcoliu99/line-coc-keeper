@@ -203,9 +203,9 @@ async def test_the_narrator_prompt_carries_the_real_party(monkeypatch) -> None:
         "stage_options": lambda self, stage, **kw: {},
     })()
     with patch.object(narrator.ConversationSession, "current", return_value=session), \
-            patch.object(narrator.keeper, "_build_static_prompt", return_value=""), \
-            patch.object(narrator.keeper, "_build_dynamic_prompt", return_value=""), \
-            patch.object(narrator.keeper, "_correction_context_message", return_value=""):
+            patch.object(narrator.prompt_builder, "build_static_prompt", return_value=""), \
+            patch.object(narrator.prompt_builder, "build_dynamic_prompt", return_value=""), \
+            patch.object(narrator.prompt_builder, "correction_context_message", return_value=""):
         await narrator.run_narrator(message)
     assert "共 5 位調查員" in seen[0] and "調查員4" in seen[0]
 

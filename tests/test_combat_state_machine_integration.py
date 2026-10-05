@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import combat_resources, config, db, dice
+from app import combat_resources, config, db, dice, prompt_builder
 from app.agents import supervisor
 from app.commands import router
 from app.commands.handlers.buttons import ButtonIO
@@ -759,12 +759,11 @@ def test_owned_defense_choice_button_replays_saved_delivery_without_new_roll(bat
 
 
 def test_active_keeper_prompts_follow_managed_source_runner_and_settlement(battle):
-    from app import keeper
     battle.start()
     current = battle.load()
-    static = keeper._build_static_prompt(current)
-    dynamic = keeper._build_dynamic_prompt(current, 'player')
-    assistant = keeper._build_dynamic_prompt(current, 'player', speaker_role='kp_assistant')
+    static = prompt_builder.build_static_prompt(current)
+    dynamic = prompt_builder.build_dynamic_prompt(current, 'player')
+    assistant = prompt_builder.build_dynamic_prompt(current, 'player', speaker_role='kp_assistant')
     for prompt in (static, dynamic, assistant):
         assert 'plan_enemy_turn' in prompt
         assert 'run_enemy_combat_plan' in prompt
