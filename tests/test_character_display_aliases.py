@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from app import config, presentation
+from app.discord_transport import delivery
 from app.services import turn_delivery, turn_fallback
 
 ALIASES = {"The Tough Guy": "硬漢", "Nosy Neighbor": "鄰居"}
@@ -15,58 +17,134 @@ class CharacterAliasTests(unittest.TestCase):
     def test_the_default_changes_nothing(self):
         self.assertEqual(config.CHARACTER_DISPLAY_ALIASES, {})
         line = "The Tough Guy 的背包已確認包含「染血紙片」。"
-        self.assertEqual(presentation.player_text(line), line)
+        self.assertEqual(presentation.character_aliases(line), line)
 
     def test_a_system_line_uses_the_name_the_narration_uses(self):
         outcome = turn_delivery.observe_tool(
             "add_carried_item", {"ok": True, "investigator": "The Tough Guy", "carried_items": ["染血紙片"]}, 1,
             {"item": "染血紙片"})
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
-            self.assertEqual(presentation.player_text(outcome.public_text), "硬漢 的背包已確認包含「染血紙片」。")
-            self.assertEqual(presentation.player_text("Nosy Neighbor 的檢定已建立。"), "鄰居 的檢定已建立。")
+            self.assertEqual(presentation.character_aliases(outcome.public_text), "硬漢 的背包已確認包含「染血紙片」。")
+            self.assertEqual(presentation.character_aliases("Nosy Neighbor 的檢定已建立。"), "鄰居 的檢定已建立。")
 
     def test_only_whole_names_are_replaced(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
             for text in ("The Tough Guys", "xThe Tough Guy", "The Tough Guy2"):
-                self.assertEqual(presentation.player_text(text), text)
+                self.assertEqual(presentation.character_aliases(text), text)
 
     def test_the_longest_name_wins_and_the_mapping_is_idempotent(self):
         aliases = {"Marco": "馬可", "Marco Polo": "馬可波羅"}
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", aliases):
-            once = presentation.player_text("Marco Polo 與 Marco")
+            once = presentation.character_aliases("Marco Polo 與 Marco")
             self.assertEqual(once, "馬可波羅 與 馬可")
-            self.assertEqual(presentation.player_text(once), once)
+            self.assertEqual(presentation.character_aliases(once), once)
 
     def test_a_replacement_is_never_searched_again(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"Ann": "Bob", "Bob": "Cy"}):
-            self.assertEqual(presentation.player_text("Ann 與 Bob"), "Bob 與 Cy")
+            self.assertEqual(presentation.character_aliases("Ann 與 Bob"), "Bob 與 Cy")
 
     def test_a_chinese_name_inside_a_longer_one_is_kept_by_listing_the_longer_name(self):
         """Chinese has no word boundary: the longer name has to be configured to be told apart."""
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"馬可": "Marco"}):
-            self.assertEqual(presentation.player_text("馬可波羅與馬可"), "Marco波羅與Marco")
+            self.assertEqual(presentation.character_aliases("馬可波羅與馬可"), "Marco波羅與Marco")
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"馬可": "Marco", "馬可波羅": "馬可波羅"}):
-            self.assertEqual(presentation.player_text("馬可波羅與馬可"), "馬可波羅與Marco")
+            self.assertEqual(presentation.character_aliases("馬可波羅與馬可"), "馬可波羅與Marco")
 
     def test_an_ascii_name_next_to_chinese_text_still_matches(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
-            self.assertEqual(presentation.player_text("The Tough Guy沿門邊走進房內"), "硬漢沿門邊走進房內")
+            self.assertEqual(presentation.character_aliases("The Tough Guy沿門邊走進房內"), "硬漢沿門邊走進房內")
 
     def test_an_alias_is_inserted_literally(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"Ann": r"安\1\g<0>"}):
-            self.assertEqual(presentation.player_text("Ann 到了"), r"安\1\g<0> 到了")
+            self.assertEqual(presentation.character_aliases("Ann 到了"), r"安\1\g<0> 到了")
 
-    def test_the_stored_name_is_untouched(self):
-        """Only what a player reads is mapped; ids, logs and saved state keep the registered name."""
-        result = {"ok": True, "investigator": "The Tough Guy", "carried_items": []}
+    def test_player_text_leaves_names_to_the_transport(self):
+        """The reply pipeline's last step runs before the log is saved, so it must not rename anything."""
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
-            presentation.player_text("The Tough Guy")
-        self.assertEqual(result["investigator"], "The Tough Guy")
+            self.assertEqual(presentation.player_text("The Tough Guy 的檢定已建立。"), "The Tough Guy 的檢定已建立。")
 
-    def test_a_fallback_message_is_mapped_like_any_other_line(self):
-        text = f"The Tough Guy 這次行動尚未完整處理。{turn_fallback.guidance('executor_no_action')}"
-        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
-            self.assertTrue(presentation.player_text(text).startswith("硬漢 這次行動"))
+
+class FakeChannel:
+    def __init__(self) -> None:
+        self.send = AsyncMock(return_value=SimpleNamespace(id=7))
+
+
+def interaction(done: bool = False):
+    return SimpleNamespace(
+        followup=SimpleNamespace(send=AsyncMock()),
+        response=SimpleNamespace(is_done=lambda: done, send_message=AsyncMock(), edit_message=AsyncMock()),
+    )
+
+
+class TransportAliasTests(unittest.IsolatedAsyncioTestCase):
+    """Every text a player reads is written with the table's name at the one place that sends it."""
+
+    def setUp(self):
+        patcher = patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def test_a_public_reply(self):
+        channel = FakeChannel()
+        await delivery.make_reply(channel)("The Tough Guy 的背包已確認包含「染血紙片」。")
+        channel.send.assert_awaited_once_with("硬漢 的背包已確認包含「染血紙片」。")
+
+    async def test_a_reply_is_chunked_after_the_names_are_mapped(self):
+        channel = FakeChannel()
+        await delivery.make_reply(channel)("The Tough Guy。" * 140)  # 1960 characters, 420 after mapping
+        self.assertEqual([call.args[0] for call in channel.send.await_args_list], ["硬漢。" * 140])
+
+    async def test_the_text_log_keeps_the_registered_name(self):
+        """The log is for the operator, who matches it against the saved game."""
+        channel = FakeChannel()
+        with patch.object(delivery, "_logger") as logger, patch.object(config, "LOG_TEXT_ENABLED", True):
+            await delivery.make_reply(channel)("The Tough Guy 到了")
+        logger.info.assert_called_once_with("discord_reply text=%r", "The Tough Guy 到了")
+
+    async def test_an_interaction_reply(self):
+        inter = interaction()
+        await delivery.make_interaction_reply(inter)("Nosy Neighbor 的檢定已建立。")
+        inter.followup.send.assert_awaited_once_with("鄰居 的檢定已建立。")
+
+    async def test_the_first_and_later_interaction_messages(self):
+        for done, target in ((False, "response"), (True, "followup")):
+            with self.subTest(done=done):
+                inter = interaction(done)
+                await delivery.send_interaction_message(inter, "The Tough Guy 不是這個操作的使用者", ephemeral=True)
+                sender = getattr(inter, target).send_message if target == "response" else inter.followup.send
+                sender.assert_awaited_once_with("硬漢 不是這個操作的使用者", ephemeral=True)
+
+    async def test_an_edited_interaction_message(self):
+        inter = interaction()
+        await delivery.edit_interaction_message(inter, "輪到 The Tough Guy")
+        inter.response.edit_message.assert_awaited_once_with(content="輪到 硬漢", view=None)
+
+    async def test_a_direct_public_message(self):
+        channel = FakeChannel()
+        await delivery.send_direct_message(channel, "The Tough Guy，請選擇")
+        channel.send.assert_awaited_once_with("硬漢，請選擇")
+
+    async def test_a_private_message(self):
+        user = SimpleNamespace(send=AsyncMock())
+        with patch.object(delivery.gateway, "client", SimpleNamespace(get_user=lambda _id: user)):
+            await delivery.send_dm("1", "The Tough Guy 的手卡")
+        user.send.assert_awaited_once_with("硬漢 的手卡")
+
+    async def test_nothing_changes_without_aliases(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {}):
+            channel = FakeChannel()
+            await delivery.make_reply(channel)("The Tough Guy 到了")
+        channel.send.assert_awaited_once_with("The Tough Guy 到了")
+
+    async def test_the_receipt_holds_what_the_player_read(self):
+        channel = FakeChannel()
+        channel.id = 5
+        state = SimpleNamespace(group_id="g")
+        saved = []
+        with patch.object(delivery, "load_group_state", return_value=state), \
+                patch("app.services.narrative_corrections.record_message", lambda st, mid, text: saved.append((mid, text))):
+            await delivery.make_reply(channel)("The Tough Guy 到了")
+        self.assertEqual(saved, [("7", "硬漢 到了")])
 
 
 class AliasSettingTests(unittest.TestCase):

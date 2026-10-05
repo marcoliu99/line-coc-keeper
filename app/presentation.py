@@ -43,7 +43,7 @@ def outcome_label(text: str) -> str:
 
 
 def character_aliases(text: str) -> str:
-    """Registered character names written the way the table says them (``CHARACTER_DISPLAY_ALIASES``).
+    """Registered character names written the way the table says them (``CHARACTER_DISPLAY_ALIASES``); applied by the transport on send.
 
     One pass over the text with the longest name first, so a name inside a longer configured one is left to the longer
     one and a replacement is never searched again. A name written in ASCII does not match inside other ASCII letters
@@ -64,10 +64,10 @@ def character_aliases(text: str) -> str:
 def player_text(text: str) -> str:
     """``text`` with raw tier names mapped and internal ids removed, unless debugging asks to see them.
 
-    Character names get their configured table-language alias last, so every line a player reads, the Narrator's and
-    the system's, calls a character the same thing.
+    Character names are not touched here: the saved log keeps the registered name, and the transport writes the table's
+    alias on the way out (``app.discord_transport.delivery.shown``).
     """
-    return character_aliases(_map_internal_terms(text))
+    return _map_internal_terms(text)
 
 
 def _map_internal_terms(text: str) -> str:
