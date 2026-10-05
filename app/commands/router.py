@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from app import help_service, locks, observability
+from app import help_service, locks, observability, presentation
 from app.agents import context_builder, supervisor
 from app.checks.narration import skill_names_match
 from app.commands import permissions, turn_scope
@@ -100,7 +100,8 @@ def sudo_public_marker(state, parsed: sudo_policy.ParsedSudoCommand) -> str:
     """
     character = None
     if parsed.command == "switch":
-        requested_name = " ".join(parsed.args).strip()
+        owned = state.characters_for_owner(parsed.subject_user_id)
+        requested_name = presentation.registered_name(" ".join(parsed.args).strip(), [c.name for c in owned])
         matches = [
             candidate
             for candidate in state.characters_for_owner(parsed.subject_user_id)
