@@ -160,6 +160,9 @@ HIGH_ITERATION_WATERMARK = _env_int("HIGH_ITERATION_WATERMARK", 4, minimum=1)
 # would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
 SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", "5"))
+# How many contiguous chunks on each side of a text-index hit may be attached when the hit visibly
+# continues into them (see scenario_rag.attach_adjacent). 0 turns the expansion off.
+SCENARIO_RAG_ADJACENT_CHUNKS = _env_int("SCENARIO_RAG_ADJACENT_CHUNKS", 1, minimum=0)
 
 # Scenario lifecycle authorization. Keep this off during the initial lobby so
 # a player who is also helping as KP can upload/reparse/cancel a scenario while
