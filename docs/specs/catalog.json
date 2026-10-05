@@ -2083,6 +2083,19 @@
       "path": "docs/specs/refactor/reply_pipeline_design_spec.md",
       "zh_path": "docs/specs/refactor/reply_pipeline_design_spec_zh.md",
       "source_revision": "e4c6044ea20ca1a119405d8a27cfbbeb85367d85"
+    },
+    {
+      "title": "/coc system subcommands as a table of handlers",
+      "zh": "/coc 系統子指令改為處理函式的對照表",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/commands/handlers/system.py",
+        "tests/test_system_command_table.py"
+      ],
+      "path": "docs/specs/refactor/system_command_table_design_spec.md",
+      "zh_path": "docs/specs/refactor/system_command_table_design_spec_zh.md",
+      "source_revision": "e4c6044ea20ca1a119405d8a27cfbbeb85367d85"
     }
   ]
 }
