@@ -37,6 +37,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [State revision and timeline isolation](specs/bug/state-loss-amnesia-hardening_design_spec.md) | implemented | [繁體中文](specs/bug/state-loss-amnesia-hardening_design_spec_zh.md) |
 | [Authoritative turn-state handoffs](specs/bug/log_backed_turn_consistency_design_spec.md) | implemented | [繁體中文](specs/bug/log_backed_turn_consistency_design_spec_zh.md) |
 | [Atomic narrative purchases and acquisition provenance](specs/bug/purchase_turn_provenance_design_spec.md) | implemented | [繁體中文](specs/bug/purchase_turn_provenance_design_spec_zh.md) |
+| [Bounded long-term memory embeddings](specs/bug/memory_embedding_bounds_design_spec.md) | implemented | [繁體中文](specs/bug/memory_embedding_bounds_design_spec_zh.md) |
 
 ## enhancement
 
