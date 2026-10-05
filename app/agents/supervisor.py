@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any
 
 from app import (
@@ -10,7 +11,6 @@ from app import (
     locks,
     observability,
     opening_identity,
-    presentation,
     spoiler_policy,
     turn_commit,
 )
@@ -18,10 +18,10 @@ from app.agents import (
     assistant,
     context_builder,
     executor,
-    guard,
     intent_router,
     narrator,
     obligation_gate,
+    reply_pipeline,
     state_reducer,
     tool_gateway,
 )
@@ -31,7 +31,6 @@ from app.domain.models import (
     MechanicResult,
     PlayerTurnKind,
     SpeakerRole,
-    StateDelta,
 )
 from app.models import GroupState
 from app.providers.codex_provider import with_codex_turn
@@ -79,11 +78,6 @@ async def prefetch_retrieval(
         observability.event("rag.prefetch.failed", level=logging.WARNING)
         _logger.exception("Retrieval prefetch failed; the turn will search under the lock")
         return None
-
-
-def _no_mechanics() -> MechanicResult:
-    """The mechanics of a turn that ran no Executor, for work that needs somewhere to record them."""
-    return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
 
 # A retrieval that came back without usable evidence. "disabled" is not one of these: the full scenario (or the
@@ -143,6 +137,299 @@ async def _recover_blocked_turn(
     return retry, reason, "unresolved"
 
 
+TurnReply = tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]
+
+
+@dataclass
+class _Turn:
+    """One run of a turn: what it was asked, and what each stage learned for the next.
+
+    The stages below are the turn in the order it happens. A stage that can end the turn early returns the reply;
+    otherwise it returns None and the next stage runs.
+    """
+
+    state: GroupState
+    user_id: str
+    display_name: str
+    text: str
+    resolved_location: dict[str, Any] | None
+    speaker_role: SpeakerRole
+    conversation_id: str
+    turn_kind: PlayerTurnKind
+    resolved_check_context: dict[str, Any] | None
+    prefetched_retrieval: context_builder.RetrievalPrefetch | None
+    handoff: locks.TurnHandoff | None
+    expected_opening_source_hash: str | None
+    expected_opening_context: opening_identity.OpeningContext | None
+    expected_opening_participants: opening_identity.OpeningParticipants | None
+    turn_timeline_id: str
+    turn_id: str
+    message: AgentMessage = field(init=False)
+    intent: str = ""
+    mechanic_result: MechanicResult | None = None
+    pending_reply: str = ""
+    autoroll_followups: list[dict[str, Any]] = field(default_factory=list)
+    pending_before: tuple[dict, dict] | None = None  # pending checks and Luck decisions as the Executor found them
+    obligation_evidence: list[str] = field(default_factory=list)
+    obligation_candidates: bool = False
+    handoff_before: tuple[dict, dict] = field(default_factory=lambda: ({}, {}))
+    narration: tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]] = ("", [], [])
+
+
+async def _prepare(turn: _Turn) -> TurnReply | None:
+    """Answer from state where a model call would add nothing, otherwise build the context and route the intent."""
+    from app.services.narrative_corrections import blocking_reply
+    correction_block = blocking_reply(turn.state, [turn.text, turn.resolved_location])
+    if correction_block:
+        turn_phases.note(route="correction_block")
+        return correction_block, [], []
+
+    # Preserve the later state-only Luck shortcut without S2's route model.
+    held_luck = turn.state.pending_luck_decisions.get(turn.user_id)
+    others_waiting = any(
+        owner != turn.user_id
+        for owner in (*turn.state.pending_checks, *turn.state.pending_luck_decisions)
+    )
+    if (turn.turn_kind == "player_action" and held_luck and not others_waiting
+            and intent_router.classify_intent(
+                AgentMessage({"text": turn.text, "speaker_role": turn.speaker_role})) == "GAMEPLAY_ACTION"):
+        actor = turn.state.get_active_character(turn.user_id)
+        turn_phases.note(route="gameplay_action", short_circuit="pending_luck")
+        observability.event("turn.short_circuit", reason="pending_luck",
+                            model_requests_avoided=True)
+        _logger.info("Supervisor answered %s from state: Luck decision outstanding", turn.display_name)
+        return prompt_config.pending_luck_reply(
+            held_luck, actor.name if actor else ""), [], []
+    # 1. Build Context. The continuation of a roll reuses the evidence its action turn gathered when nothing it
+    # depended on has moved, instead of searching the same scene again.
+    prefetched_retrieval = turn.prefetched_retrieval
+    if (prefetched_retrieval is None and turn.turn_kind == "resolved_check_followup"
+            and config.RETRIEVAL_REUSE_FOR_FOLLOWUPS):
+        reused_grounding = context_builder.reusable_grounding(turn.state, turn.user_id)
+        observability.event("rag.followup_grounding", reused=reused_grounding is not None)
+        prefetched_retrieval = reused_grounding
+    turn.message = await context_builder.build_context(
+        state=turn.state,
+        user_id=turn.user_id,
+        display_name=turn.display_name,
+        text=turn.text,
+        resolved_location=turn.resolved_location,
+        speaker_role=turn.speaker_role,
+        conversation_id=turn.conversation_id,
+        prefetched=prefetched_retrieval,
+    )
+    message = turn.message
+    message.payload["turn_kind"] = turn.turn_kind
+    if turn.turn_kind == "player_action":
+        context_builder.remember_grounding(turn.state, turn.user_id, message)
+    if turn.turn_kind == "resolved_check_followup":
+        if not turn.resolved_check_context:
+            raise ValueError("resolved_check_followup requires an authoritative result")
+        message.payload["resolved_check_context"] = turn.resolved_check_context
+
+    # 2. Intent Routing (Fast Path vs Slow Path)
+    turn.intent = (
+        intent_router.classify_intent(message)
+        if turn.turn_kind == "player_action" else turn.turn_kind.upper()
+    )
+    message.payload["intent"] = turn.intent
+    observability.event("turn.route", route=turn.intent.lower(), turn_kind=turn.turn_kind)
+    turn_phases.note(route=turn.intent.lower())
+
+    _logger.info(f"Intent classified as: {turn.intent}")
+
+    # KP Assistant uses its own provider/tool/Guard/commit path. Its OOC
+    # replies enter kp_ooc_log; explicit or tool-created canon enters log.
+    # Neither case goes through the player Executor/Narrator pipeline.
+    if turn.intent == "OOC_ASSISTANT":
+        _logger.info("Routing to AssistantAgent (OOC Path)")
+        return await assistant.run_assistant(message)
+    return None
+
+
+async def _mechanics(turn: _Turn) -> None:
+    """Run the Executor (with its one recovery) and the reducer, then hand the mutation lock on when narration may not mutate."""
+    state, user_id, message = turn.state, turn.user_id, turn.message
+    # 3. Route to Executor (Slow Path) or Skip to Narrator (Fast Path)
+    mechanic_result: MechanicResult | None = None
+    if turn.intent == "GAMEPLAY_ACTION":
+        _logger.info("Routing to ExecutorAgent (Slow Path)")
+        pending_checks_before = deepcopy(state.pending_checks)
+        pending_luck_before = deepcopy(state.pending_luck_decisions)
+        turn.pending_before = (pending_checks_before, pending_luck_before)
+        origins_before = set(state.check_consequence_origins)
+        mechanic_result = await executor.run_executor(message)
+        mechanic_result, first_reason, recovery = await _recover_blocked_turn(
+            message, mechanic_result, state=state, user_id=user_id, text=turn.text,
+            speaker_role=turn.speaker_role,
+            before_pending=pending_checks_before, before_luck=pending_luck_before,
+        )
+        fallback_reason = turn_fallback.classify(
+            mechanic_result, state, user_id, rag_status=_evidence_status(message))
+        mechanic_result.fallback_reason = fallback_reason
+        if fallback_reason or recovery == "recovered":
+            turn_fallback.record(
+                fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn.turn_id,
+                rag_context=_evidence_text(message), result=mechanic_result,
+                resolved_location=turn.resolved_location, recovery_attempted=recovery != "not_attempted",
+                recovery_result=recovery, initial_reason=first_reason if first_reason != fallback_reason else None,
+            )
+        turn.autoroll_followups = [event for event in state.resolved_check_events
+            if event.get("event_id") not in origins_before
+            and event.get("event_id") in state.check_consequence_origins
+            and event.get("owner_id") == user_id
+            and event.get("timeline_id") == state.timeline_id]
+        if turn.autoroll_followups:
+            turn.turn_kind = "resolved_check_followup"
+            message.payload["turn_kind"] = turn.turn_kind
+            turn.resolved_check_context = turn.autoroll_followups[0]
+            message.payload["resolved_check_context"] = turn.resolved_check_context
+        turn.pending_reply = turn_handoff.prepare_narrator_handoff(
+            state, user_id, mechanic_result, pending_checks_before, pending_luck_before,
+            message.payload,
+        )
+        message.payload["mechanic_result"] = mechanic_result
+
+        # 4. State Reducer (Pure Python)
+        state_reducer.apply_mechanic_result(message, mechanic_result)
+    else:
+        _logger.info("Routing directly to NarratorAgent (Fast Path)")
+    turn.mechanic_result = mechanic_result
+
+    # Every mutation this turn will make is committed by now: the Executor's
+    # tools persist through their own locked path and the reducer is pure. An
+    # ordinary turn's Narrator runs with tools=[], so from here the turn needs
+    # ordering, not exclusion — hand the mutation lock to the next player and
+    # queue for narration instead.
+    #
+    # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
+    # and opening_fallback a restricted tool set, and #99 commits arrivals
+    # inside that loop, so those turns keep the mutation lock to the end.
+    #
+    # Nor when the evidence states a mechanic the narration may make due: that gate changes state, so it needs the
+    # mutation phase.
+    turn.obligation_evidence = [
+        _evidence_text(message), *(mechanic_result.scenario_evidence if mechanic_result else ())]
+    turn.obligation_candidates = (
+        turn.turn_kind in {"player_action", "resolved_check_followup"}
+        and not (turn.pending_reply and not turn.autoroll_followups)
+        and obligation_gate.possible(turn.obligation_evidence, mechanic_result)
+    )
+    if (turn.handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
+            and turn.turn_kind == "player_action" and not turn.obligation_candidates):
+        await turn.handoff.to_narration()
+        observability.event("turn.handoff", phase="narration")
+
+
+async def _narrate(turn: _Turn) -> TurnReply | None:
+    """Have the Narrator speak (once per auto-rolled consequence), or reuse the pending-state reply."""
+    state, user_id, message = turn.state, turn.user_id, turn.message
+    # 5. Narrator Agent generates the final text. What the obligation gate compares against is taken before the
+    # Narrator runs: a tool-enabled Narrator can move this state.
+    turn.handoff_before = (
+        turn.pending_before if turn.pending_before is not None
+        else (deepcopy(state.pending_checks), deepcopy(state.pending_luck_decisions))
+    )
+    if turn.pending_reply and not turn.autoroll_followups:
+        reply_text = turn.pending_reply
+        turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn.turn_id,
+                             rag_context=_evidence_text(message), result=turn.mechanic_result,
+                             resolved_location=turn.resolved_location)
+        private_messages: list[tuple[str, str]] = []
+        image_requests: list[tuple[str | None, int]] = []
+        observability.event('narrator.pending_reused', status='skipped')
+    else:
+        if turn.autoroll_followups:
+            replies = []
+            private_messages = []
+            image_requests = []
+            for result_context in turn.autoroll_followups:
+                message.payload["resolved_check_context"] = result_context
+                part, private, images = await narrator.run_narrator(message)
+                replies.append(part)
+                private_messages.extend(private)
+                image_requests.extend(images)
+            reply_text = "\n\n".join(replies)
+            turn.resolved_check_context = turn.autoroll_followups[-1]
+        else:
+            reply_text, private_messages, image_requests = await narrator.run_narrator(message)
+    if message.payload.get("narration_failed"):
+        turn_fallback.record("narration_failure", state=state, user_id=user_id, turn_id=turn.turn_id,
+                             rag_context=_evidence_text(message), result=turn.mechanic_result,
+                             resolved_location=turn.resolved_location)
+    if turn.turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
+        # A failed opening produced no scene. Leave /coc start retryable.
+        return reply_text, [], []
+    turn.narration = (reply_text, private_messages, image_requests)
+    return None
+
+
+def _gate(turn: _Turn) -> tuple[reply_pipeline.ReplyContext, reply_pipeline.ReplyDraft]:
+    """The reply's context and first draft, for the ordered steps that decide what a player may read."""
+    state, message = turn.state, turn.message
+    reply_text, private_messages, image_requests = turn.narration
+    ctx = reply_pipeline.ReplyContext(
+        state=state, message=message, user_id=turn.user_id, speaker_role=turn.speaker_role,
+        turn_kind=turn.turn_kind, resolved_check_context=turn.resolved_check_context, turn_id=turn.turn_id,
+        obligation_candidates=turn.obligation_candidates, obligation_evidence=turn.obligation_evidence,
+        handoff_before=turn.handoff_before,
+    )
+    draft = reply_pipeline.ReplyDraft(
+        text=reply_text, private_messages=private_messages, image_requests=image_requests,
+        mechanic_result=turn.mechanic_result,
+        public_result=turn_delivery.public_mechanic(turn.mechanic_result, state),
+    )
+    return ctx, draft
+
+
+def _record_safety_block(turn: _Turn, draft: reply_pipeline.ReplyDraft) -> None:
+    message = turn.message
+    safety_blocked = draft.text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
+        getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
+        or (getattr(message.payload.get("delivery_envelope"), "status", "passed") == "projected_fallback"
+            and not message.payload.get("narration_failed")))
+    if safety_blocked:
+        turn_fallback.record("safety_block", state=turn.state, user_id=turn.user_id, turn_id=turn.turn_id,
+                             rag_context=_evidence_text(message), result=draft.mechanic_result,
+                             resolved_location=turn.resolved_location)
+    draft.private_messages.extend(item for item in draft.private_controls if item not in draft.private_messages)
+
+
+def _commit(turn: _Turn, draft: reply_pipeline.ReplyDraft) -> TurnReply:
+    """Append the turn to the log in one transaction; a stale timeline delivers nothing."""
+    state = turn.state
+    # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
+    # pending_checks/combat/etc.) already happened inside the Executor's
+    # tool calls, via tool_dispatch.execute_tool's own locked
+    # (mutate_tool_state) path — see state_reducer.py's docstring.
+    # What's left here is just committing this turn's log entries: reload
+    # the latest state under the state lock (so this can't clobber
+    # whatever the tool calls above already saved), append, save, then sync
+    # this function's own `state` object so a caller that keeps using it
+    # afterward sees the up-to-date snapshot.
+    if state.game_started or turn.turn_kind != "player_action":
+        committed = turn_commit.commit_turn_result(
+            state,
+            [
+                {"role": "user", "content": f"{turn.speaker_role} {turn.display_name}: {turn.text}"},
+                {"role": "assistant", "content": draft.text},
+            ],
+            timeline_id=turn.turn_timeline_id,
+            start_game=(turn.turn_kind == "opening_fallback"),
+            expected_source_hash=turn.expected_opening_source_hash,
+            expected_opening_context=turn.expected_opening_context,
+            expected_opening_participants=turn.expected_opening_participants,
+            invalidate_openai_response_chain=True,
+            turn_id=turn.turn_id,
+        )
+        if not committed:
+            turn_fallback.record("state_conflict", state=state, user_id=turn.user_id, turn_id=turn.turn_id,
+                                 result=draft.mechanic_result, resolved_location=turn.resolved_location)
+            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
+
+    return draft.text, draft.private_messages, draft.image_requests
+
+
 @with_turn_deadline
 @with_codex_turn
 @turn_phases.timed_turn
@@ -162,11 +449,14 @@ async def run_turn(
     expected_opening_source_hash: str | None = None,
     expected_opening_context: opening_identity.OpeningContext | None = None,
     expected_opening_participants: opening_identity.OpeningParticipants | None = None,
-) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
+) -> TurnReply:
     """
     The main entry point for the Agentic Keeper Supervisor.
     Orchestrates the asynchronous pipeline of Agents to produce a response.
     Returns: (reply_text, private_messages, image_requests)
+
+    prepare -> mechanics -> narrate -> reply steps -> commit. Delivery to Discord, then the background
+    maintenance, is the caller's.
     """
     mutation_admission.assert_admitted(state.group_id)
     _logger.info(f"Supervisor starting turn for {display_name} ({user_id})")
@@ -179,256 +469,23 @@ async def run_turn(
     # action, a later turn is not.
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
 
-    from app.services.narrative_corrections import blocking_reply
-    correction_block = blocking_reply(state, [text, resolved_location])
-    if correction_block:
-        turn_phases.note(route="correction_block")
-        return correction_block, [], []
-
-    # Preserve the later state-only Luck shortcut without S2's route model.
-    held_luck = state.pending_luck_decisions.get(user_id)
-    others_waiting = any(
-        owner != user_id
-        for owner in (*state.pending_checks, *state.pending_luck_decisions)
+    turn = _Turn(
+        state=state, user_id=user_id, display_name=display_name, text=text, resolved_location=resolved_location,
+        speaker_role=speaker_role, conversation_id=conversation_id, turn_kind=turn_kind,
+        resolved_check_context=resolved_check_context, prefetched_retrieval=prefetched_retrieval, handoff=handoff,
+        expected_opening_source_hash=expected_opening_source_hash,
+        expected_opening_context=expected_opening_context,
+        expected_opening_participants=expected_opening_participants,
+        turn_timeline_id=turn_timeline_id, turn_id=turn_id,
     )
-    if (turn_kind == "player_action" and held_luck and not others_waiting
-            and intent_router.classify_intent(AgentMessage({"text": text, "speaker_role": speaker_role})) == "GAMEPLAY_ACTION"):
-        actor = state.get_active_character(user_id)
-        turn_phases.note(route="gameplay_action", short_circuit="pending_luck")
-        observability.event("turn.short_circuit", reason="pending_luck",
-                            model_requests_avoided=True)
-        _logger.info("Supervisor answered %s from state: Luck decision outstanding", display_name)
-        return prompt_config.pending_luck_reply(
-            held_luck, actor.name if actor else ""), [], []
-    # 1. Build Context. The continuation of a roll reuses the evidence its action turn gathered when nothing it
-    # depended on has moved, instead of searching the same scene again.
-    reused_grounding = None
-    if (prefetched_retrieval is None and turn_kind == "resolved_check_followup"
-            and config.RETRIEVAL_REUSE_FOR_FOLLOWUPS):
-        reused_grounding = context_builder.reusable_grounding(state, user_id)
-        observability.event("rag.followup_grounding", reused=reused_grounding is not None)
-        prefetched_retrieval = reused_grounding
-    message = await context_builder.build_context(
-        state=state,
-        user_id=user_id,
-        display_name=display_name,
-        text=text,
-        resolved_location=resolved_location,
-        speaker_role=speaker_role,
-        conversation_id=conversation_id,
-        prefetched=prefetched_retrieval,
-    )
-    message.payload["turn_kind"] = turn_kind
-    if turn_kind == "player_action":
-        context_builder.remember_grounding(state, user_id, message)
-    if turn_kind == "resolved_check_followup":
-        if not resolved_check_context:
-            raise ValueError("resolved_check_followup requires an authoritative result")
-        message.payload["resolved_check_context"] = resolved_check_context
-
-    # 2. Intent Routing (Fast Path vs Slow Path)
-    intent = (
-        intent_router.classify_intent(message)
-        if turn_kind == "player_action" else turn_kind.upper()
-    )
-    message.payload["intent"] = intent
-    observability.event("turn.route", route=intent.lower(), turn_kind=turn_kind)
-    turn_phases.note(route=intent.lower())
-    
-    _logger.info(f"Intent classified as: {intent}")
-
-    # KP Assistant uses its own provider/tool/Guard/commit path. Its OOC
-    # replies enter kp_ooc_log; explicit or tool-created canon enters log.
-    # Neither case goes through the player Executor/Narrator pipeline.
-    if intent == "OOC_ASSISTANT":
-        _logger.info("Routing to AssistantAgent (OOC Path)")
-        return await assistant.run_assistant(message)
-
-    # 3. Route to Executor (Slow Path) or Skip to Narrator (Fast Path)
-    mechanic_result: MechanicResult | None = None
-    pending_reply = ''
-    autoroll_followups: list[dict[str, Any]] = []
-    if intent == "GAMEPLAY_ACTION":
-        _logger.info("Routing to ExecutorAgent (Slow Path)")
-        pending_checks_before = deepcopy(state.pending_checks)
-        pending_luck_before = deepcopy(state.pending_luck_decisions)
-        origins_before = set(state.check_consequence_origins)
-        mechanic_result = await executor.run_executor(message)
-        mechanic_result, first_reason, recovery = await _recover_blocked_turn(
-            message, mechanic_result, state=state, user_id=user_id, text=text, speaker_role=speaker_role,
-            before_pending=pending_checks_before, before_luck=pending_luck_before,
-        )
-        fallback_reason = turn_fallback.classify(
-            mechanic_result, state, user_id, rag_status=_evidence_status(message))
-        mechanic_result.fallback_reason = fallback_reason
-        if fallback_reason or recovery == "recovered":
-            turn_fallback.record(
-                fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn_id,
-                rag_context=_evidence_text(message), result=mechanic_result,
-                resolved_location=resolved_location, recovery_attempted=recovery != "not_attempted",
-                recovery_result=recovery, initial_reason=first_reason if first_reason != fallback_reason else None,
-            )
-        autoroll_followups = [event for event in state.resolved_check_events
-            if event.get("event_id") not in origins_before
-            and event.get("event_id") in state.check_consequence_origins
-            and event.get("owner_id") == user_id
-            and event.get("timeline_id") == state.timeline_id]
-        if autoroll_followups:
-            turn_kind = "resolved_check_followup"
-            message.payload["turn_kind"] = turn_kind
-            resolved_check_context = autoroll_followups[0]
-            message.payload["resolved_check_context"] = resolved_check_context
-        pending_reply = turn_handoff.prepare_narrator_handoff(
-            state, user_id, mechanic_result, pending_checks_before, pending_luck_before,
-            message.payload,
-        )
-        message.payload["mechanic_result"] = mechanic_result
-
-        # 4. State Reducer (Pure Python)
-        state_reducer.apply_mechanic_result(message, mechanic_result)
-    else:
-        _logger.info("Routing directly to NarratorAgent (Fast Path)")
-
-    # Every mutation this turn will make is committed by now: the Executor's
-    # tools persist through their own locked path and the reducer is pure. An
-    # ordinary turn's Narrator runs with tools=[], so from here the turn needs
-    # ordering, not exclusion — hand the mutation lock to the next player and
-    # queue for narration instead.
-    #
-    # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
-    # and opening_fallback a restricted tool set, and #99 commits arrivals
-    # inside that loop, so those turns keep the mutation lock to the end.
-    #
-    # Nor when the evidence states a mechanic the narration may make due: that gate changes state, so it needs the
-    # mutation phase.
-    obligation_evidence = [
-        _evidence_text(message), *(mechanic_result.scenario_evidence if mechanic_result else ())]
-    obligation_candidates = (
-        turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups)
-        and obligation_gate.possible(obligation_evidence, mechanic_result)
-    )
-    if (handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
-            and turn_kind == "player_action" and not obligation_candidates):
-        await handoff.to_narration()
-        observability.event("turn.handoff", phase="narration")
-
-    # 5. Narrator Agent generates the final text
-    handoff_before = (
-        (pending_checks_before, pending_luck_before) if intent == "GAMEPLAY_ACTION"
-        else (deepcopy(state.pending_checks), deepcopy(state.pending_luck_decisions))
-    )
-    if pending_reply and not autoroll_followups:
-        reply_text = pending_reply
-        turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=_evidence_text(message), result=mechanic_result,
-                             resolved_location=resolved_location)
-        private_messages: list[tuple[str, str]] = []
-        image_requests: list[tuple[str | None, int]] = []
-        observability.event('narrator.pending_reused', status='skipped')
-    else:
-        if autoroll_followups:
-            replies = []
-            private_messages = []
-            image_requests = []
-            for result_context in autoroll_followups:
-                message.payload["resolved_check_context"] = result_context
-                part, private, images = await narrator.run_narrator(message)
-                replies.append(part)
-                private_messages.extend(private)
-                image_requests.extend(images)
-            reply_text = "\n\n".join(replies)
-            resolved_check_context = autoroll_followups[-1]
-        else:
-            reply_text, private_messages, image_requests = await narrator.run_narrator(message)
-    if message.payload.get("narration_failed"):
-        turn_fallback.record("narration_failure", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=_evidence_text(message), result=mechanic_result,
-                             resolved_location=resolved_location)
-    if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
-        # A failed opening produced no scene. Leave /coc start retryable.
-        return reply_text, [], []
-
-    # Consistency precedes Guard; any Guard rewrite is checked again. The
-    # deterministic delivery contract is the final writer and safety boundary.
-    public_result = turn_delivery.public_mechanic(mechanic_result, state)
-
-    def consistent(candidate: str) -> str:
-        if turn_kind == "resolved_check_followup":
-            origin_check_id = (resolved_check_context or {}).get("check_id")
-            new_pending_check = any(
-                isinstance(entry, dict) and entry.get("source_check_id") == origin_check_id
-                for entry in state.pending_checks.values()
-            )
-            candidate = prompt_config.enforce_resolved_check_consistency(
-                candidate, resolved_check_context or {}, new_pending_check=new_pending_check,
-            )
-        if public_result is not None:
-            candidate = prompt_config.enforce_mechanic_check_consistency(candidate, public_result)
-        return candidate
-
-    reply_text = consistent(reply_text)
-    reply_text = await guard.enforce_narrative_safety(message, reply_text)
-    reply_text = consistent(reply_text)
-
-    # What the scenario attaches to an event is owed now, not when a player later says they are frightened (CS-007).
-    # Decided on the narration that survived consistency repair and the Guard, so a trigger they removed charges nothing.
-    if obligation_candidates:
-        owed = await obligation_gate.enforce(
-            state, user_id, reply_text, obligation_evidence,
-            mechanic_result or _no_mechanics(),
-            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
-            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
-        )
-        if owed:
-            if mechanic_result is None:
-                mechanic_result = _no_mechanics()
-            turn_handoff.prepare_narrator_handoff(
-                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
-            public_result = turn_delivery.public_mechanic(mechanic_result, state)
-            reply_text = consistent(reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed))
-
-    # The party's size is corrected before delivery validates the reply, so what is validated is what is sent.
-    reply_text = presentation.enforce_party_size(reply_text, len(state.active_characters()))
-    reply_text, private_controls = turn_delivery.finalize(message, reply_text)
-    reply_text = presentation.player_text(reply_text)
-    private_messages = [(owner, presentation.player_text(text)) for owner, text in private_messages]
-    safety_blocked = reply_text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
-        getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
-        or (getattr(message.payload.get("delivery_envelope"), "status", "passed") == "projected_fallback"
-            and not message.payload.get("narration_failed")))
-    if safety_blocked:
-        turn_fallback.record("safety_block", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=_evidence_text(message), result=mechanic_result,
-                             resolved_location=resolved_location)
-    private_messages.extend(item for item in private_controls if item not in private_messages)
-
-    # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
-    # pending_checks/combat/etc.) already happened inside the Executor's
-    # tool calls, via tool_dispatch.execute_tool's own locked
-    # (mutate_tool_state) path — see state_reducer.py's docstring.
-    # What's left here is just committing this turn's log entries: reload
-    # the latest state under the state lock (so this can't clobber
-    # whatever the tool calls above already saved), append, save, then sync
-    # this function's own `state` object so a caller that keeps using it
-    # afterward sees the up-to-date snapshot.
-    if state.game_started or turn_kind != "player_action":
-        committed = turn_commit.commit_turn_result(
-            state,
-            [
-                {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},
-                {"role": "assistant", "content": reply_text},
-            ],
-            timeline_id=turn_timeline_id,
-            start_game=(turn_kind == "opening_fallback"),
-            expected_source_hash=expected_opening_source_hash,
-            expected_opening_context=expected_opening_context,
-            expected_opening_participants=expected_opening_participants,
-            invalidate_openai_response_chain=True,
-            turn_id=turn_id,
-        )
-        if not committed:
-            turn_fallback.record("state_conflict", state=state, user_id=user_id, turn_id=turn_id,
-                                 result=mechanic_result, resolved_location=resolved_location)
-            return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
-
-    return reply_text, private_messages, image_requests
+    early = await _prepare(turn)
+    if early is not None:
+        return early
+    await _mechanics(turn)
+    early = await _narrate(turn)
+    if early is not None:
+        return early
+    ctx, draft = _gate(turn)
+    await reply_pipeline.run(ctx, draft)
+    _record_safety_block(turn, draft)
+    return _commit(turn, draft)

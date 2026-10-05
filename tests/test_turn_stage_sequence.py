@@ -11,7 +11,15 @@ import unittest
 from unittest.mock import patch
 
 from app import config, presentation
-from app.agents import assistant, context_builder, executor, guard, narrator, obligation_gate, supervisor
+from app.agents import (
+    assistant,
+    context_builder,
+    executor,
+    guard,
+    narrator,
+    obligation_gate,
+    supervisor,
+)
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.models import Character, GroupState
 from app.services import prompt_config, turn_delivery

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app import config, observability
-from app.agents import supervisor
+from app.agents import reply_pipeline, supervisor
 from app.domain.models import (
     FALLBACK_REASONS,
     AgentMessage,
@@ -73,7 +73,7 @@ async def _turn(state, executor_results, *, narration="敘事", rag_status="succ
             patch.object(supervisor.context_builder, "search_scenario_context", searched), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", narrator or AsyncMock(return_value=(narration, [], []))), \
-            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
             patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         reply, _, _ = await supervisor.run_turn(
             state=state, user_id="u1", display_name="P1", text=text, resolved_location={"name": "大廳"},
@@ -283,7 +283,7 @@ async def test_a_refused_commit_is_logged_as_a_state_conflict(events) -> None:
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=_resolved())), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("敘事", [], []))), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
             await supervisor.run_turn(state=state, user_id="u1", display_name="P1", text="x", resolved_location=None,
                                       speaker_role="player", conversation_id="g")
     assert [row["fallback_reason"] for row in fallbacks(events)] == ["state_conflict"]

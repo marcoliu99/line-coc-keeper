@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app import config, presentation
-from app.agents import narrator, supervisor, tool_gateway
+from app.agents import narrator, reply_pipeline, supervisor, tool_gateway
 from app.domain.models import (
     AgentMessage,
     MechanicResult,
@@ -135,7 +135,7 @@ async def _reply(state: GroupState, narration: str, *, private=()) -> tuple[str,
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=(narration, list(private), []))), \
-            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
             patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         reply, private_messages, _ = await supervisor.run_turn(
             state=state, user_id="u0", display_name="調查員0", text="x", resolved_location=None,
@@ -225,6 +225,6 @@ async def test_the_party_is_corrected_before_delivery_validates_the_reply() -> N
         seen.append(narrative)
         return original(message, narrative)
 
-    with patch.object(supervisor.turn_delivery, "finalize", spy):
+    with patch.object(reply_pipeline.turn_delivery, "finalize", spy):
         reply, _ = await _reply(_state(5), "你們六位調查員站在營地入口。")
     assert seen == ["你們五位調查員站在營地入口。"] and "五位" in reply

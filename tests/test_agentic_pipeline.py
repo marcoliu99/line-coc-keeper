@@ -369,7 +369,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
     was silently narrating as if nothing mechanical had happened."""
 
     async def test_mechanic_result_is_written_to_payload_for_gameplay_action(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
@@ -400,7 +400,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", fake_run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="attack",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -409,7 +409,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(captured_payload.get("mechanic_result"), fake_result)
 
     async def test_supervisor_corrects_narration_that_requests_roll_without_pending_check(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
@@ -435,7 +435,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             reply, _, _ = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="嘗試撬門",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -445,7 +445,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("請使用 /coc check 擲骰", reply)
 
     async def test_supervisor_replaces_denial_of_registered_pending_check(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
@@ -473,7 +473,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             reply, _, _ = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="嘗試撬門",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -490,7 +490,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
 
         Keeping the pre-existing variant would have passed on the reply text
         while never entering run_narrator at all."""
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
@@ -529,7 +529,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             reply, _, _ = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="Mick", text="再用大槌敲牆",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -541,7 +541,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/coc check", reply)
 
     async def test_supervisor_uses_new_pending_check_owned_by_another_player(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
@@ -574,7 +574,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", fake_run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             reply, _, _ = await supervisor.run_turn(
                 state=state, user_id="speaker", display_name="Speaker", text="攻擊者造成重傷",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -584,7 +584,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已建立", reply)
 
     async def test_speaker_luck_takes_priority_over_other_players_new_check(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g")
@@ -622,7 +622,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.executor, "run_executor", run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
                 patch.object(supervisor.narrator, "run_narrator", run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             reply, _, _ = await supervisor.run_turn(
                 state=state, user_id="speaker", display_name="Speaker", text="繼續",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -630,7 +630,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Luck", reply)
 
     async def test_supervisor_passes_captured_timeline_to_canonical_commit(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g", game_started=True)
@@ -656,7 +656,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.context_builder, "build_context", fake_build_context), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             result = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="attack",
                 resolved_location=None, speaker_role="player", conversation_id="g",
@@ -666,7 +666,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commit_kwargs["timeline_id"], "timeline-captured")
 
     async def test_supervisor_suppresses_stale_reply_when_canonical_commit_is_rejected(self):
-        from app.agents import supervisor
+        from app.agents import reply_pipeline, supervisor
         from app.domain.models import AgentMessage
 
         state = GroupState(group_id="g", game_started=True)
@@ -687,7 +687,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(supervisor.context_builder, "build_context", fake_build_context), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
-                patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
+                patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _msg, text: text)):
             result = await supervisor.run_turn(
                 state=state, user_id="u1", display_name="P1", text="attack",
                 resolved_location=None, speaker_role="player", conversation_id="g",
