@@ -149,3 +149,24 @@ def test_no_runtime_module_hard_codes_a_scenario_or_one_of_its_triggers() -> Non
         for word in banned if word in path.read_text(encoding="utf-8").lower()
     }
     assert offenders == {}
+
+
+def test_a_neighbour_already_emitted_as_a_hit_is_not_attached_to_another_hit() -> None:
+    """The following chunk outranks the open-ended one, so it is emitted first; the open-ended hit must not repeat it."""
+    page = [
+        _pad("The inscription says", " wind moves the lamp"),  # no full stop: the hit ends mid-sentence
+        _pad("DANGER inscription: the hatch is trapped and the inscription glows.", " Chains rattle."),
+    ]
+    index = _index(page)
+    first, second = index.chunks
+    rows = scenario_rag._result_rows([(0.9, second), (0.5, first)], 5, index.chunks, index=index,
+                                     query_tokens=["inscription"])
+    assert [row["page"] for row in rows] == [1, 1] and "adjacent_chunks" not in rows[0]
+    assert sum("hatch is trapped" in row["text"] for row in rows) == 1
+
+
+def test_an_overlap_that_crosses_a_paragraph_break_is_still_removed() -> None:
+    previous = "第一段結尾。\n\n第二段很短。"
+    following = "第一段結尾。\n\n第二段很短。\n\n如果有人按鈴，經理出現。"
+    assert adjacency.new_text(previous, following) == "如果有人按鈴，經理出現。"
+    assert adjacency.new_text("沒有重疊。", "完全不同的新段落。") == "完全不同的新段落。"

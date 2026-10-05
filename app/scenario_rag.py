@@ -585,6 +585,7 @@ def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int,
         if identity in seen:
             continue
         seen.add(identity)
+        absorbed.add(id(chunk))  # a chunk already emitted as a hit cannot also be attached to another
         siblings = [c for c in candidates if chunk.record_id and c.record_id == chunk.record_id] or [chunk]
         contents = list(dict.fromkeys(c.result_text or c.text for c in siblings))
         content = "\n\n".join(contents)

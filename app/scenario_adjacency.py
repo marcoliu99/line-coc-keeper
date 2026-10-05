@@ -18,6 +18,8 @@ _CONSEQUENCE = re.compile(
     r"if\b|when\b|whenever\b|once\b|should\b|upon\b|after\b|as soon as\b)",
     re.IGNORECASE,
 )
+# The chunker repeats at most this many characters of one chunk at the start of the next (scenario_rag).
+_MAX_OVERLAP = 120
 # A chunk that does not end a sentence was cut in the middle of one.
 _SENTENCE_END = tuple("。！？!?.」』）)\"”’…;；:：")
 # A chunk that opens with these continues the sentence before it.
@@ -25,10 +27,14 @@ _CONTINUATION = re.compile(r"^\s*(?:[，、；,;]|[a-z]|then\b|and\b|but\b|否�
 
 
 def new_text(previous: str, following: str) -> str:
-    """``following`` without the tail of ``previous`` that the chunker repeats at its start."""
-    head, separator, rest = following.partition("\n\n")
-    if separator and head.strip() and previous.rstrip().endswith(head.strip()):
-        return rest.strip()
+    """``following`` without the tail of ``previous`` that the chunker repeats at its start.
+
+    The repeated tail can itself contain a blank line, so it is found as the longest suffix of ``previous`` that
+    ``following`` begins with and that is followed by the chunker's own paragraph break.
+    """
+    for size in range(min(len(previous), len(following), _MAX_OVERLAP), 0, -1):
+        if following[size:size + 2] == "\n\n" and previous.endswith(following[:size]):
+            return following[size + 2:].strip()
     return following.strip()
 
 
