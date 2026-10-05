@@ -45,9 +45,41 @@ class SceneHintTests(unittest.TestCase):
         state.log.append({"role": "assistant", "content": "只有你看見了地下室的暗門。", "audience": "player_private"})
         self.assertEqual(turn_fallback.scene_hints(state), "")
 
-    def test_an_alias_counts_and_is_listed_by_its_name(self):
+    def test_an_alias_counts_and_is_listed_as_the_narration_wrote_it(self):
         state = state_with(narration=("門後是陰涼的酒窖。",), locations=LOCATIONS)
-        self.assertIn("地下室", turn_fallback.scene_hints(state))
+        hint = turn_fallback.scene_hints(state)
+        self.assertIn("酒窖", hint)
+        self.assertNotIn("地下室", hint)
+
+    def test_an_alias_that_was_narrated_is_listed_under_that_alias_not_the_canonical_name(self):
+        """The canonical name may be the secret: only the spelling the table was actually told may appear."""
+        npcs = [{"name": "兇手的真名", "aliases": ["蒙面人"]}]
+        hint = turn_fallback.scene_hints(state_with(narration=("走廊盡頭站著一個蒙面人。",), npcs=npcs))
+        self.assertIn("蒙面人", hint)
+        self.assertNotIn("兇手的真名", hint)
+
+    def test_the_canonical_name_is_listed_when_it_was_the_one_narrated(self):
+        npcs = [{"name": "房東", "aliases": ["Gardiner 的房東"]}]
+        hint = turn_fallback.scene_hints(state_with(narration=("房東低聲說話。",), npcs=npcs))
+        self.assertIn("房東", hint)
+        self.assertNotIn("Gardiner", hint)
+
+    def test_a_name_inside_a_longer_name_of_another_entry_does_not_count(self):
+        npcs = [{"name": "房東"}, {"name": "房東太太"}]
+        hint = turn_fallback.scene_hints(state_with(narration=("房東太太端來了茶。",), npcs=npcs))
+        self.assertIn("房東太太", hint)
+        self.assertNotIn("人物：房東　", hint + "　")
+        self.assertEqual(hint.count("房東"), 1, "the landlord is not listed because his wife was mentioned")
+
+    def test_it_still_counts_when_the_short_name_appears_on_its_own_as_well(self):
+        npcs = [{"name": "房東"}, {"name": "房東太太"}]
+        hint = turn_fallback.scene_hints(state_with(narration=("房東太太端來了茶。", "房東接過杯子。"), npcs=npcs))
+        self.assertIn("房東、房東太太", hint.replace("人物：", ""))
+
+    def test_ascii_names_do_not_match_inside_other_words(self):
+        npcs = [{"name": "Ann"}]
+        self.assertEqual(turn_fallback.scene_hints(state_with(narration=("Annette 走了進來。",), npcs=npcs)), "")
+        self.assertIn("Ann", turn_fallback.scene_hints(state_with(narration=("Ann 走了進來。",), npcs=npcs)))
 
     def test_the_most_recent_come_first_and_the_list_is_bounded(self):
         names = [f"地點{n}號" for n in range(1, 9)]

@@ -37,6 +37,21 @@ class CharacterAliasTests(unittest.TestCase):
             self.assertEqual(once, "馬可波羅 與 馬可")
             self.assertEqual(presentation.player_text(once), once)
 
+    def test_a_replacement_is_never_searched_again(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"Ann": "Bob", "Bob": "Cy"}):
+            self.assertEqual(presentation.player_text("Ann 與 Bob"), "Bob 與 Cy")
+
+    def test_a_chinese_name_inside_a_longer_one_is_kept_by_listing_the_longer_name(self):
+        """Chinese has no word boundary: the longer name has to be configured to be told apart."""
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"馬可": "Marco"}):
+            self.assertEqual(presentation.player_text("馬可波羅與馬可"), "Marco波羅與Marco")
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"馬可": "Marco", "馬可波羅": "馬可波羅"}):
+            self.assertEqual(presentation.player_text("馬可波羅與馬可"), "馬可波羅與Marco")
+
+    def test_an_ascii_name_next_to_chinese_text_still_matches(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
+            self.assertEqual(presentation.player_text("The Tough Guy沿門邊走進房內"), "硬漢沿門邊走進房內")
+
     def test_an_alias_is_inserted_literally(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"Ann": r"安\1\g<0>"}):
             self.assertEqual(presentation.player_text("Ann 到了"), r"安\1\g<0> 到了")

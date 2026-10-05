@@ -8,11 +8,12 @@ context is mapped or removed rather than shown. Everything here is idempotent an
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 
 from app import config, dice
 
 DIFFICULTY_ZH = {"regular": "一般", "hard": "困難", "extreme": "極難"}
+_ASCII_WORD = "A-Za-z0-9"
 _TIER_ENUM = "fumble|fail|regular|hard|extreme|critical"
 _OUTCOME = re.compile(rf"(?<![A-Za-z])({_TIER_ENUM})(?![A-Za-z])\s*(成功|失敗)")
 _LABELLED = re.compile(rf"(?P<label>(?:原始|所需|最終|實際)?(?:難度|等級)\s*[:：=]?\s*[「『\"]?)(?P<value>{_TIER_ENUM})(?![A-Za-z])")
@@ -41,16 +42,23 @@ def outcome_label(text: str) -> str:
     return _OUTCOME.sub(replace, text)
 
 
-def _literal(replacement: str) -> Callable[[re.Match[str]], str]:
-    return lambda _match: replacement
-
-
 def character_aliases(text: str) -> str:
-    """Registered character names written the way the table says them (``CHARACTER_DISPLAY_ALIASES``)."""
+    """Registered character names written the way the table says them (``CHARACTER_DISPLAY_ALIASES``).
+
+    One pass over the text with the longest name first, so a name inside a longer configured one is left to the longer
+    one and a replacement is never searched again. A name written in ASCII does not match inside other ASCII letters
+    or digits. Chinese has no word boundary to check: a registered name that is part of a longer name nobody
+    configured ("馬可" inside "馬可波羅") is replaced; list the longer name too, mapped to itself, to keep it.
+    """
     aliases = config.CHARACTER_DISPLAY_ALIASES
+    if not aliases:
+        return text
+    alternatives = []
     for name in sorted(aliases, key=len, reverse=True):
-        text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", _literal(aliases[name]), text)
-    return text
+        before = rf"(?<![{_ASCII_WORD}])" if name[0].isascii() and name[0].isalnum() else ""
+        after = rf"(?![{_ASCII_WORD}])" if name[-1].isascii() and name[-1].isalnum() else ""
+        alternatives.append(f"{before}{re.escape(name)}{after}")
+    return re.compile("|".join(alternatives)).sub(lambda match: aliases[match.group(0)], text)
 
 
 def player_text(text: str) -> str:

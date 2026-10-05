@@ -72,32 +72,61 @@ def _public_narration(state: GroupState) -> list[str]:
             if entry.get("role") == "assistant" and entry.get("audience", "public") == "public"]
 
 
-def _already_shown(index: list[dict[str, Any]], narration: list[str]) -> list[str]:
-    """Names from a scenario index that the narration has already used, the most recently mentioned first."""
-    found: list[tuple[int, str]] = []
+def _names(entry: dict[str, Any]) -> list[str]:
+    """An index entry's canonical name and aliases, the ones long enough to match on."""
+    return [n for n in (str(entry.get("name") or "").strip(), *(str(a).strip() for a in entry.get("aliases") or []))
+            if len(n) >= 2]
+
+
+_ASCII_WORD = "A-Za-z0-9"
+
+
+def _occurs(name: str, text: str, longer: list[str]) -> bool:
+    """Whether ``name`` is used in ``text`` rather than only as part of a longer name the scenario also has.
+
+    A name is not looked for inside a longer index name that contains it (a "房東" must not be found in the
+    narration's "房東太太" when she is an entry of her own). Names written in ASCII also must not touch other
+    ASCII letters or digits. A longer phrase that no index lists cannot be told apart, so a short name can still
+    match inside it; the line then names a character the narration did mention in some form, never one it did not.
+    """
+    for other in longer:
+        text = text.replace(other, " ")
+    if name.isascii():
+        return re.search(rf"(?<![{_ASCII_WORD}]){re.escape(name)}(?![{_ASCII_WORD}])", text) is not None
+    return name in text
+
+
+def _already_shown(index: list[dict[str, Any]], narration: list[str], every_name: list[str]) -> list[str]:
+    """Names from a scenario index that the narration has already used, the most recently mentioned first.
+
+    Each is written the way the narration wrote it: an entry whose alias was narrated is listed under that alias, never
+    under its canonical name, which the narration may not have said and which may itself give something away.
+    """
+    found: list[tuple[int, int, str]] = []
     for entry in index:
-        name = str(entry.get("name") or "").strip()
-        names = [n for n in (name, *map(str, entry.get("aliases") or [])) if len(n.strip()) >= 2]
-        position = next((i for i, text in enumerate(narration) if any(n in text for n in names)), None)
-        if name and position is not None:
-            found.append((position, name))
-    return list(dict.fromkeys(name for _, name in sorted(found)))[:_HINT_LIMIT]
+        for name in _names(entry):
+            longer = [other for other in every_name if len(other) > len(name) and name in other]
+            position = next((i for i, text in enumerate(narration) if _occurs(name, text, longer)), None)
+            if position is not None:
+                found.append((position, -len(name), name))
+    return list(dict.fromkeys(name for _, _, name in sorted(found)))[:_HINT_LIMIT]
 
 
 def scene_hints(state: GroupState) -> str:
     """The places, people and clues the players have already been shown, as one line; empty when there are none.
 
-    Built only from what the narration has already said to the table (a scenario index entry counts once its name has
-    appeared in public narration) and from public clues, so it can only repeat what players know and never names an
-    unvisited location or an undisclosed character. A name the narration translated differently from the index will
-    not match, in which case the line is simply shorter.
+    Built only from what the narration has already said to the table (a scenario index entry counts once its name or an
+    alias has appeared in public narration, and it is listed under the spelling that appeared) and from public clues, so
+    it can only repeat what players know and never names an unvisited location or an undisclosed character. A name the
+    narration translated differently from the index will not match, in which case the line is simply shorter.
     """
     narration = _public_narration(state)
+    every_name = [n for entry in (*state.scenario_location_index, *state.scenario_npc_index) for n in _names(entry)]
     parts: list[str] = []
-    places = _already_shown(state.scenario_location_index, narration)
+    places = _already_shown(state.scenario_location_index, narration, every_name)
     if places:
         parts.append("地點：" + "、".join(places))
-    people = _already_shown(state.scenario_npc_index, narration)
+    people = _already_shown(state.scenario_npc_index, narration, every_name)
     if people:
         parts.append("人物：" + "、".join(people))
     clues = [str(c.get("text", "")).strip() for c in reversed(state.known_clues)
