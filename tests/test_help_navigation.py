@@ -148,13 +148,17 @@ class HelpNavigationTests(unittest.TestCase):
 
     @unittest.skipUnless(DISCORD_AVAILABLE, "discord.py is not installed")
     def test_discord_help_button_path_round_trip_and_scope_guard(self):
-        from app.discord_bot import HelpButton, _help_path_from_token, _help_path_token
+        from app.discord_transport.help_ui import (
+            HelpButton,
+            help_path_from_token,
+            help_path_token,
+        )
         from app.help_registry import HelpAction
 
         action = HelpAction("戰鬥傷害", ("combat", "damage"), "entry")
         button = HelpButton("discord-channel-123", action)
-        self.assertEqual(_help_path_token(action.path), "combat/damage")
-        self.assertEqual(_help_path_from_token("combat/damage"), action.path)
+        self.assertEqual(help_path_token(action.path), "combat/damage")
+        self.assertEqual(help_path_from_token("combat/damage"), action.path)
         self.assertEqual(button.item.custom_id, "coc_help:discord-channel-123:combat/damage")
 
         interaction = SimpleNamespace(
@@ -169,7 +173,7 @@ class HelpNavigationTests(unittest.TestCase):
 
     @unittest.skipUnless(DISCORD_AVAILABLE, "discord.py is not installed")
     def test_discord_help_button_reloads_page_and_edits_original_message(self):
-        from app.discord_bot import HelpButton
+        from app.discord_transport.help_ui import HelpButton
         from app.help_registry import HelpAction, HelpPage
 
         action = HelpAction("戰鬥", ("combat",), "category")
@@ -180,9 +184,9 @@ class HelpNavigationTests(unittest.TestCase):
             response=SimpleNamespace(edit_message=AsyncMock()),
         )
         page = HelpPage(("combat",), "戰鬥", "戰鬥 Help", ())
-        with patch("app.discord_bot.load_group_state", return_value=GroupState(group_id="discord-channel-123")) as load_state, \
-             patch("app.discord_bot.help_service.get_page", return_value=page) as get_page, \
-             patch("app.discord_bot._help_view", return_value="view"):
+        with patch("app.discord_transport.help_ui.load_group_state", return_value=GroupState(group_id="discord-channel-123")) as load_state, \
+             patch("app.help_service.get_page", return_value=page) as get_page, \
+             patch("app.discord_transport.help_ui.help_view", return_value="view"):
             asyncio.run(button.callback(interaction))
 
         load_state.assert_called_once_with("discord-channel-123")
@@ -210,7 +214,7 @@ class HelpPaginationRegressionTests(unittest.TestCase):
     def test_every_visible_command_is_reachable_in_all_contexts(self):
         from itertools import product
 
-        from app.discord_bot import _help_view
+        from app.discord_transport.help_ui import help_view
         from app.help_registry import all_entries, lookup_help
 
         for policy in (False, True):
@@ -226,7 +230,7 @@ class HelpPaginationRegressionTests(unittest.TestCase):
                         visited.add(path)
                         page = get_help_page(path, context)
                         self.assertNotEqual(page.title, '找不到 Help 頁面', (policy, flags, path))
-                        view = _help_view('discord-channel-123', page)
+                        view = help_view('discord-channel-123', page)
                         self.assertLessEqual(len(view.children), 25, (policy, flags, path))
                         self.assertLessEqual(len(page.text), 2000)
                         self.assertTrue(all(len(item.item.custom_id) <= 100 for item in view.children))
@@ -238,7 +242,7 @@ class HelpPaginationRegressionTests(unittest.TestCase):
                     self.assertEqual(commands, expected, (policy, flags))
 
     def test_middle_page_reserves_navigation_and_detail_returns_to_its_page(self):
-        from app.discord_bot import _help_view
+        from app.discord_transport.help_ui import help_view
 
         get_help_page()
         register_help_category(HelpCategory('large', 'Large'))
@@ -247,7 +251,7 @@ class HelpPaginationRegressionTests(unittest.TestCase):
         first = get_help_page(('large',))
         next_action = next(a for a in first.actions if a.label == '下一頁 ▶')
         middle = get_help_page(next_action.path)
-        self.assertEqual(len(_help_view('discord-channel-123', middle).children), 25)
+        self.assertEqual(len(help_view('discord-channel-123', middle).children), 25)
         self.assertIn('2/4', middle.text)
         previous = next(a for a in middle.actions if a.label == '◀ 上一頁')
         self.assertEqual(previous.path, ('large',))
@@ -263,18 +267,18 @@ class HelpPaginationRegressionTests(unittest.TestCase):
     def test_actual_scenario_button_and_persistent_next_page_callback(self):
         import re
 
-        from app.discord_bot import _HELP_BUTTON_ID_TEMPLATE, HelpButton
+        from app.discord_transport.help_ui import HELP_BUTTON_ID_TEMPLATE, HelpButton
         from app.help_registry import HelpAction
 
         state = GroupState(group_id='discord-channel-123', scenario_title='Loaded scenario')
         interaction = SimpleNamespace(channel=SimpleNamespace(id=123), user=SimpleNamespace(id=42),
                                       response=SimpleNamespace(edit_message=AsyncMock()))
         button = HelpButton(state.group_id, HelpAction('劇本', ('scenario',), 'category'))
-        with patch('app.discord_bot.load_group_state', return_value=state):
+        with patch('app.discord_transport.help_ui.load_group_state', return_value=state):
             asyncio.run(button.callback(interaction))
             view = interaction.response.edit_message.call_args.kwargs['view']
             next_button = next(item for item in view.children if item.item.label == '下一頁 ▶')
-            match = re.fullmatch(_HELP_BUTTON_ID_TEMPLATE, next_button.item.custom_id)
+            match = re.fullmatch(HELP_BUTTON_ID_TEMPLATE, next_button.item.custom_id)
             restored = asyncio.run(HelpButton.from_custom_id(interaction, next_button.item, match))
             asyncio.run(restored.callback(interaction))
         content = interaction.response.edit_message.call_args.kwargs['content']
