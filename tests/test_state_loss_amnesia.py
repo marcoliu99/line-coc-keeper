@@ -8,7 +8,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import db, dice, keeper, memory_maintenance, memory_rag, turn_commit
+from app import (
+    db,
+    dice,
+    memory_maintenance,
+    memory_rag,
+    observability,
+    tool_dispatch,
+    turn_commit,
+)
 from app.models import Character, GroupState
 from app.repositories import group_state
 
@@ -69,7 +77,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         group_state.save_state(state)
 
         with patch.object(group_state, "write_state_tx", side_effect=OSError("disk full")), \
-                patch.object(keeper.observability, "event") as event, \
+                patch.object(observability, "event") as event, \
                 self.assertRaises(OSError):
             turn_commit.commit_turn_result(
                 state,
@@ -154,7 +162,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         state.characters["p1"] = Character(name="P1", owner_id="p1")
         group_state.save_state(state)
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state,
             "skill_check",
             {"investigator": "P1", "skill": "偵查", "action_context": "在醫院地下室檢查血跡"},
@@ -332,10 +340,10 @@ class MultiUserDeterministicCheckStressTests(unittest.IsolatedAsyncioTestCase):
                     skill_value=60, roll=99, bonus_dice=0, penalty_dice=0,
                     tier="fail", success=False, required_tier="regular",
                 )
-                with patch.object(keeper.dice, "skill_check", return_value=roll) as roll_mock:
+                with patch.object(dice, "skill_check", return_value=roll) as roll_mock:
                     results = await asyncio.gather(*(
                         asyncio.to_thread(
-                            keeper._execute_tool,
+                            tool_dispatch.execute_tool,
                             GroupState.from_dict(state.to_dict()),
                             "skill_check",
                             {

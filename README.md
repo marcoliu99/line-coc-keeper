@@ -59,7 +59,10 @@ Discord channel
              -> independent provider/tool/guard/commit path
 
 Shared services:
-  app/keeper.py                  Prompts, admission gates, state transactions
+  app/prompt_builder.py          Static and dynamic Keeper prompts
+  app/tool_dispatch.py           Tool dispatch, shared gates, per-speaker tool lists
+  app/turn_commit.py             The one transaction that commits a turn's log entries
+  app/memory_maintenance.py      After-reply rolling summary, scene digest, memory chunks
   app/keeper_tools/registry.py    Ordered tool schemas, capabilities, handlers
   app/services/turn_context.py   Current-state and historical projections
   app/services/turn_resolution.py  Deterministic handoff validation
@@ -85,7 +88,7 @@ Persistence:
 - **`app/agents/supervisor.py`** coordinates player turns in Python. It handles ordinary actions, resolved-check follow-ups, and opening fallback through explicit entry modes, reconciles authoritative state, and commits the resulting narration.
 - **`app/agents/context_builder.py`** gathers scenario and memory context. Scenario retrieval is gated by `SCENARIO_RAG_ENABLED`; proactive scenario and memory retrieval are skipped during active combat. Retrieval can use embeddings, so it is not necessarily an entirely local operation.
 - **`app/agents/intent_router.py`** uses rules rather than an LLM call to classify ordinary messages as `OOC_ASSISTANT`, `PURE_ROLEPLAY`, or `GAMEPLAY_ACTION`.
-- **`app/agents/executor.py`** and **`tool_gateway.py`** handle gameplay mechanics using `keeper.TOOLS` and `keeper._execute_tool`. Tools perform real calculations and persist real changes. The existing final completion carries a structured decision to the validation layer.
+- **`app/agents/executor.py`** and **`tool_gateway.py`** handle gameplay mechanics using `keeper_tools.registry.TOOLS` and `tool_dispatch.execute_tool`. Tools perform real calculations and persist real changes. The existing final completion carries a structured decision to the validation layer.
 - **`app/services/turn_resolution.py`** checks that decision against current state and observed tool effects. An Executor claim alone does not prove completion. Deferred and cancelled decisions cannot hide unrelated committed mutations; unvalidated free-form reasons are excluded from Narrator authority.
 - **`app/agents/assistant.py`** is the independent KP Assistant agent for out-of-character discussion. It owns its provider, tool, guard, and history path while preserving the rules for explicitly established canonical events.
 - **`app/agents/narrator.py`** produces player-facing narration. Ordinary gameplay narration has no tools. Resolved-check follow-ups and opening fallback receive restricted tool sets suitable for those entry modes.
@@ -99,7 +102,7 @@ See the [unified Keeper turn-flow specification](docs/specs/refactor/unified_kee
 ### Shared game logic and infrastructure
 
 - **`app/keeper_tools/registry.py`** declares every Keeper tool once — its JSON schema and its capability flags (read-only, KP-assistant-allowed, creates a check, ...) — as one `ToolSpec` each in `REGISTRY`, in the order sent to providers. Consumers derive their name sets from it (`docs/specs/refactor/keeper_tool_registry_design_spec.md`) instead of keeping their own literal copies.
-- **`app/keeper.py`** provides provider-independent system-prompt assembly, shared tool admission gates, and authoritative state transactions. Every registered tool has an explicit `ToolSpec.handler` in `app/keeper_tools/<family>.py`; `keeper._execute_tool` dispatches to that handler after the shared gates.
+- **`app/prompt_builder.py`**, **`app/tool_dispatch.py`**, **`app/turn_commit.py`** and **`app/memory_maintenance.py`** replace the former `app/keeper.py` hub (see the [split specification](docs/specs/refactor/keeper_module_split_design_spec.md)): provider-independent prompt assembly, the shared tool admission gates and dispatch, the authoritative turn commit, and the after-reply log maintenance. Every registered tool has an explicit `ToolSpec.handler` in `app/keeper_tools/<family>.py`, which share `app/keeper_tools/support.py` and may not import the dispatcher; `tool_dispatch.execute_tool` dispatches to the handler after the shared gates.
 - **`app/providers/anthropic_provider.py`** adapts the Anthropic Messages API, including prompt caching. **`gemini_provider.py`** and **`openai_provider.py`** provide the Google GenAI and OpenAI integrations; **`codex_provider.py`** uses the authenticated Codex CLI for conversation and general text analysis. `ANALYSIS_PROVIDER` selects PDF/image/OCR and pre-generated character-card analysis from API providers; Codex is intentionally excluded because measured extraction accuracy was insufficient.
 - **`app/locks.py`** provides per-conversation locking to prevent overlapping messages from overwriting saved state, with priority handling for KP Assistant messages.
 - **`app/combat.py`** manages initiative, rounds, combatant HP, effects, and enemy mechanics; **`app/combat_flow.py`** is the receipt-backed managed pipeline built on it, and **`app/services/combat_engine.py`** (`CombatEngine.handle(state, action)`) is the one entry point for commands, Keeper tools and the check engine: it reads a battle's mode (idle, legacy, managed) once and runs the matching implementation. `tests/test_architecture_combat.py` keeps `combat` free of any path to `combat_flow` ([spec](docs/specs/refactor/combat_engine_design_spec.md)).

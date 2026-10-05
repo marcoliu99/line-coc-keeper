@@ -5,10 +5,11 @@ from unittest.mock import patch
 
 import pytest
 
-from app import db, keeper, resolved_check_consequences
+from app import db, resolved_check_consequences, tool_dispatch
 from app.checks import events as check_events
 from app.commands.handlers import checks as check_commands
 from app.keeper_tools import registry
+from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
 from app.repositories import group_state
 from app.services import prompt_config
@@ -44,11 +45,11 @@ def _origin(state: GroupState, *, success: bool, authorization: dict) -> None:
 
 
 def _invoke(state: GroupState, name: str, arguments: dict, *, actor_id: str = "u1") -> dict:
-    return keeper._execute_tool(state, name, arguments, [], [], actor_id=actor_id)
+    return tool_dispatch.execute_tool(state, name, arguments, [], [], actor_id=actor_id)
 
 
 def test_consequence_tools_are_only_offered_to_resolved_followup():
-    names = {tool["name"] for tool in keeper.TOOLS}
+    names = {tool["name"] for tool in tool_registry.TOOLS}
     assert "apply_resolved_check_damage" not in names
     assert "create_triggered_check" not in names
     assert {"apply_resolved_check_damage", "create_triggered_check"} <= registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES

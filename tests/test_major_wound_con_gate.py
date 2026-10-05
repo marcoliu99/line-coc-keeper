@@ -9,7 +9,7 @@ import unittest
 from copy import deepcopy
 from unittest.mock import patch
 
-from app import combat, combat_resources, db, dice, keeper
+from app import combat, combat_resources, db, dice, tool_dispatch
 from app.models import Character, GroupState
 from app.repositories import group_state
 from tests import combat_calls as calls
@@ -214,7 +214,7 @@ class TurnAdvancementTests(unittest.TestCase):
 
 
 class KeeperToolTests(unittest.TestCase):
-    """Keeper tools run against the reloaded state inside _mutate_and_save_state."""
+    """Keeper tools run against the reloaded state inside mutate_tool_state."""
 
     def _run(self, stored: GroupState, tool: str, tool_input: dict, *, caller: GroupState | None = None):
         """Seed real storage with ``stored``, run the tool, return the states it committed."""
@@ -228,7 +228,7 @@ class KeeperToolTests(unittest.TestCase):
         state_store.replace_state(stored)
         try:
             with patch.object(group_state, "write_state_tx", capture):
-                result = keeper._execute_tool(
+                result = tool_dispatch.execute_tool(
                     caller or GroupState.from_dict(stored.to_dict()), tool, tool_input, [], [],
                 )
         finally:

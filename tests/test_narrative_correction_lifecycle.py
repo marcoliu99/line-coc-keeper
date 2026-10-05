@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import config, db, keeper, turn_commit
+from app import config, db, tool_dispatch, turn_commit
 from app.agents import (
     assistant,
     context_builder,
@@ -82,7 +82,7 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(corrections.blocking_reply(state, '地下室'))
         report['hold_scope'] = ['地下室', 'basement']
         execute = tool_gateway.make_tool_executor(state, [], [], 'player', [])
-        with patch.object(keeper, '_execute_tool', return_value={'ok': True}) as mutate:
+        with patch.object(tool_dispatch, 'execute_tool', return_value={'ok': True}) as mutate:
             result = await execute('record_established_fact', {'fact': 'basement has enemies'})
             self.assertFalse(result['ok'])
             mutate.assert_not_called()

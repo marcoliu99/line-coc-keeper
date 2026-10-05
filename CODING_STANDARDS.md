@@ -9,11 +9,11 @@ Each rule gives the target behaviour and the reason for it. When existing code b
 **Discord events enter through the command router.** `discord_bot.py` translates Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
 _Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls a service such as `scenario_ingestion` directly skips them.
 
-**Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `keeper.py` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
+**Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `app/keeper_tools/` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.
 _Why:_ a copied guard drifts. The pre-combat checkpoint and the duplicate-enemy guard were once copied into the `/coc combat` handler, and the copies built the checkpoint `event_id` from a different field; both now live in `combat.py` (`begin_combat`, `add_combatant`).
 
 **Private stays private.** A leading underscore means the name is used only inside its own module. When another module needs it, give it a public name in the owning module first, then call it. Ruff SLF001 enforces this; `pyproject.toml` lists the existing violations as debt.
-_Why:_ `keeper._build_static_prompt`, `_mutate_and_save_state` and others are called from other modules, so any refactor of `keeper.py` has impact across the whole repo.
+_Why:_ the old `keeper.py` exposed `_build_static_prompt`, `_mutate_and_save_state` and others to other modules, so any refactor of it had impact across the whole repo; they are now public in `prompt_builder` and `keeper_tools/support`.
 
 **One provider lookup.** Get the active LLM provider through a single function in `app/providers/`. Keep provider-specific branches inside the provider classes.
 _Why:_ the `anthropic`/`gemini`/`openai` map is currently copied into 9 modules. Every provider change has to touch all of them.

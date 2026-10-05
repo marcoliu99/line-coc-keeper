@@ -6,6 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app import tool_dispatch
 from app.providers import (
     anthropic_provider,
     gemini_provider,
@@ -87,7 +88,6 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
         execute_tool.assert_not_awaited()
 
     async def test_openai_refreshes_tool_list_after_successful_combat_mutation(self):
-        from app import keeper
         from app.models import Combatant, CombatState, GroupState
 
         first = SimpleNamespace(
@@ -107,7 +107,7 @@ class AsyncProviderContractTests(unittest.IsolatedAsyncioTestCase):
             round_number=2,
             order=[Combatant(name="Investigator", dex=70, hp=10, hp_max=10, is_pc=True)],
         )
-        gate = keeper._CombatStatusToolGate(state)
+        gate = tool_dispatch.CombatStatusToolGate(state)
         tools = [
             {"name": "advance_combat_turn", "description": "advance", "input_schema": {"type": "object"}},
             {"name": "get_combat_status", "description": "status", "input_schema": {"type": "object"}},

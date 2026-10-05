@@ -7,7 +7,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app import async_utils, keeper, observability
+from app import async_utils, observability, tool_dispatch
 from app.config import (
     LOG_SLOW_OPERATION_MS,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
@@ -15,6 +15,7 @@ from app.config import (
 )
 from app.domain.models import CheckStatus, ObservedOutcome
 from app.keeper_tools import registry as tool_registry
+from app.keeper_tools import support
 from app.models import GroupState
 from app.services import mutation_admission, turn_delivery, turn_phases
 
@@ -30,8 +31,8 @@ BOUNDED_QUERY_TOOLS = tool_registry.BOUNDED_QUERY_TOOLS
 # app/keeper.py's 24 granular tools. Implementing that condensed schema for
 # real means re-deriving every one of keeper.py's already-verified behaviors
 # (dice rolls, pending_checks registration, ammo/weapon safety checks,
-# combat state transitions, the _mutate_and_save_state locking discipline —
-# see app/keeper.py's _execute_tool and this project's changelog for the
+# combat state transitions, the mutate_tool_state locking discipline —
+# see app/keeper.py's execute_tool and this project's changelog for the
 # bugs that discipline was built to prevent) a second time, with every
 # chance of silently reintroducing bugs already found and fixed there. The
 # previous version of this file took a shortcut instead: each "high-level"
@@ -41,14 +42,14 @@ BOUNDED_QUERY_TOOLS = tool_registry.BOUNDED_QUERY_TOOLS
 # ever really adjusted.
 #
 # This version drops the condensed schema and exposes keeper.py's real
-# TOOLS/_execute_tool directly instead — the Executor Agent gets the exact
+# TOOLS/execute_tool directly instead — the Executor Agent gets the exact
 # same tool set and behavior the original single-LLM Keeper had, just called
 # from a different orchestration layer. Token-count reduction from
 # condensing the tool list is a real, separate optimization that can be
 # revisited later without re-touching correctness.
 def tools_for_speaker_role(speaker_role: str) -> list[dict[str, Any]]:
-    """The tool list for one turn, delegated to keeper._tools_for_speaker_
-    role — NOT a bare `keeper.TOOLS` constant, and deliberately computed
+    """The tool list for one turn, delegated to tool_dispatch.tools_for_speaker_role
+    role — NOT a bare `tool_registry.TOOLS` constant, and deliberately computed
     fresh per call rather than cached at import time, because the correct
     list genuinely varies per turn in two ways keeper.py's own callers
     (app/keeper.py:3423, the legacy run_turn path) already account for but
@@ -65,7 +66,7 @@ def tools_for_speaker_role(speaker_role: str) -> list[dict[str, Any]]:
     A bare module-level constant can't reflect either of these, since
     SCENARIO_RAG_ENABLED can differ per deployment and speaker_role
     genuinely differs per turn."""
-    return keeper._tools_for_speaker_role(speaker_role)
+    return tool_dispatch.tools_for_speaker_role(speaker_role)
 
 
 def make_tool_executor(
@@ -85,10 +86,10 @@ def make_tool_executor(
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
 
-    Delegates every call straight to keeper._execute_tool — the same
+    Delegates every call straight to tool_dispatch.execute_tool — the same
     function the Keeper turn uses — so dice rolls,
     pending_checks registration, and all state mutation go through the
-    identical, already-locked (_mutate_and_save_state) path. `facts`
+    identical, already-locked (mutate_tool_state) path. `facts`
     collects one human-readable line per call for MechanicResult.
     narrative_facts, so the Narrator agent has something concrete to
     narrate from without re-deriving what happened itself.
@@ -125,7 +126,7 @@ def make_tool_executor(
             return rejection(tool_name, "required_scenario_evidence_missing",
                              "必要劇本依據未齊；請續取完整依據，或暫緩並聚焦行動。不得以截短摘要執行機制。")
         from app.services.narrative_corrections import blocking_reply
-        if tool_name not in keeper.READ_ONLY_TOOL_NAMES:
+        if tool_name not in tool_registry.READ_ONLY_TOOL_NAMES:
             blocked = blocking_reply(state, tool_input)
             if blocked:
                 return rejection(tool_name, "narrative_correction_hold", blocked)
@@ -135,7 +136,7 @@ def make_tool_executor(
             tool_name=observability.tool_name(tool_name),
             slow_threshold_ms=LOG_SLOW_OPERATION_MS,
         ):
-            # _execute_tool contains synchronous SQLite/state-lock mutation.
+            # execute_tool contains synchronous SQLite/state-lock mutation.
             # Keep it off the event loop, but do not abandon the worker thread
             # if the awaiting provider request is cancelled: a mutation must
             # finish before the caller releases the conversation lifecycle.
@@ -148,12 +149,12 @@ def make_tool_executor(
                     result = None
                     try:
                         if tool_name in {"apply_resolved_check_damage", "create_triggered_check", "declare_combat_action", "submit_combat_choice", "request_stabilization_check"}:
-                            result = keeper._execute_tool(
+                            result = tool_dispatch.execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests,
                                 speaker_role, actor_id=actor_id,
                             )
                         else:
-                            result = keeper._execute_tool(
+                            result = tool_dispatch.execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests, speaker_role
                             )
                         observability.event("turn.observed", tool_name=tool_name,
@@ -182,7 +183,7 @@ def make_tool_executor(
                                         "public_result": outcome.public_text,
                                     })
                                     del latest.tool_recovery_markers[:-100]
-                                keeper._mutate_and_save_state(state, record_settlement)
+                                support.mutate_tool_state(state, record_settlement)
                         except Exception:
                             _logger.exception("Could not persist stopped worker evidence")
                         finally:

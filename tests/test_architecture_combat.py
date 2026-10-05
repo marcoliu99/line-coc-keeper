@@ -90,7 +90,7 @@ def test_the_managed_pipeline_builds_on_combat_and_never_on_the_engine_or_a_tran
     reached = reachable(graph, FLOW)
     assert CORE in reached
     assert ENGINE not in reached
-    for forbidden in ("app.discord_bot", "app.keeper", "app.commands", "app.agents", "app.providers"):
+    for forbidden in ("app.discord_bot", "app.tool_dispatch", "app.prompt_builder", "app.turn_commit", "app.memory_maintenance", "app.commands", "app.agents", "app.providers"):
         assert not {m for m in reached if m == forbidden or m.startswith(forbidden + ".")}, forbidden
 
 
@@ -179,7 +179,7 @@ def test_the_gate_catches_a_lazy_import_cycle():
 
 
 @pytest.mark.parametrize("module", [
-    CORE, FLOW, RESOURCES, RULES, ENGINE, "app.keeper", "app.commands.router", "app.keeper_tools.registry",
+    CORE, FLOW, RESOURCES, RULES, ENGINE, "app.tool_dispatch", "app.prompt_builder", "app.turn_commit", "app.memory_maintenance", "app.commands.router", "app.keeper_tools.registry",
 ])
 def test_each_module_imports_in_a_fresh_process_in_either_order(module):
     """No cycle is hidden by import order: the module must load first, in a new interpreter."""

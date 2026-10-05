@@ -25,7 +25,7 @@ sys.modules.setdefault(
     ),
 )
 
-from app import dice, keeper, observability
+from app import dice, observability, tool_dispatch
 from app.commands.handlers import checks as check_commands
 from app.models import Character, GroupState
 from tests.state_store import StateStorePatch, clone_state
@@ -42,11 +42,11 @@ def _state_with_investigator() -> GroupState:
 class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
     def test_registers_pending_choice_with_system_rolled_attacker_tier(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             fake_roll = MagicMock(roll=42, tier="hard")
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll) as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll) as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "offer_npc_attack_defense_choice",
                     {
@@ -83,10 +83,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
     def test_unknown_investigator_returns_error_without_rolling(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "offer_npc_attack_defense_choice",
                     {
@@ -103,10 +103,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
     def test_zero_options_returns_error_without_rolling(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "offer_npc_attack_defense_choice",
                     {"investigator": "小明", "options": [], "attacker_skill_value": 50},
@@ -122,11 +122,11 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         attack's defense choice legitimately only has "Dodge" — one option,
         not two. Regression guard for the P2 Codex finding on PR #43."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             fake_roll = MagicMock(roll=10, tier="regular")
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll) as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll) as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "offer_npc_attack_defense_choice",
                     {
@@ -153,10 +153,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         Regression guard for the bug this rebuild fixed: ranged attacks used
         to be pre-rolled exactly like melee."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -190,10 +190,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         explicitly guarded against for the melee-critical case but missed
         here."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -214,10 +214,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
     def test_ranged_attack_with_only_a_fight_back_option_errors_without_saving(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -244,11 +244,11 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         retry actually switching to the ranged dive-for-cover mechanic.
         Must now fall through to the "already pending" rejection instead."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             fake_roll = MagicMock(roll=10, tier="regular")
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
-                first = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll):
+                first = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -261,8 +261,8 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
             self.assertTrue(first["ok"])
             self.assertEqual(first["attacker_tier"], "regular")
 
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                retry = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                retry = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -279,11 +279,11 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
     def test_melee_defaults_is_ranged_to_false_and_still_pre_rolls(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             fake_roll = MagicMock(roll=10, tier="regular")
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll):
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -304,10 +304,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         hidden in the Discord button), since a Dodge tie still favors the
         defender (§1) and remains winnable."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -334,21 +334,21 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         whole point of the dedup branch specifically for the one case
         (critical attacker) it's most likely to be hit for."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             raw_call = {
                 "investigator": "小明",
                 "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
                 "attacker_skill_value": 70,
             }
-            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
-                first = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                first = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice", raw_call, [], [], speaker_role="player",
                 )
             self.assertTrue(first["ok"])
 
-            with patch("app.keeper.dice.skill_check") as skill_check_mock:
-                retry = keeper._execute_tool(
+            with patch("app.dice.skill_check") as skill_check_mock:
+                retry = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice", raw_call, [], [], speaker_role="player",
                 )
 
@@ -360,10 +360,10 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
     def test_critical_attacker_with_only_a_fight_back_option_errors_without_saving(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=MagicMock(roll=1, tier="critical")):
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -382,14 +382,14 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         """Regression: both original tools must keep behaving exactly as
         before — this is an additive change, not a replacement."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             fake_roll = MagicMock(roll=10, tier="regular")
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
-                npc_result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll):
+                npc_result = tool_dispatch.execute_tool(
                     state, "npc_skill_check", {"skill_value": 50}, [], [], speaker_role="player"
                 )
-                choice_result = keeper._execute_tool(
+                choice_result = tool_dispatch.execute_tool(
                     state,
                     "offer_check_choice",
                     {"investigator": "小明", "options": [{"label": "A", "skill": "閃避"}, {"label": "B", "skill": "格鬥"}]},
@@ -411,9 +411,9 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         offer a player a Fight Back option that's mathematically guaranteed
         to lose."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "offer_check_choice",
                 {
                     "investigator": "小明",
@@ -432,9 +432,9 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
 
     def test_offer_check_choice_with_only_fight_back_and_critical_tier_errors_without_saving(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "offer_check_choice",
                 {
                     "investigator": "小明",
@@ -454,9 +454,9 @@ class OfferNpcAttackDefenseChoiceTests(unittest.TestCase):
         "反擊" so this is what triggers it — not achievable with a single
         option, which the tool rejects before the filter ever runs)."""
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "offer_check_choice",
                 {
                     "investigator": "小明",
@@ -490,9 +490,9 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         # offered.md — can't trigger and interrupt what this test actually
         # means to exercise: the ranged attacker's penalty-die carry-through.
         state.characters["u1"].luck = 0
-        with StateStorePatch(keeper, check_commands) as store:
+        with StateStorePatch(check_commands) as store:
             store.put(state)
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 state, "offer_npc_attack_defense_choice",
                 {
                     "investigator": "小明",
@@ -532,9 +532,9 @@ class RangedDefenseEndToEndTests(unittest.TestCase):
         # See test_successful_dive_gives_attacker_a_penalty_die above for why
         # luck=0 (leaving no affordable buyable_options for real) is set here.
         state.characters["u1"].luck = 0
-        with StateStorePatch(keeper, check_commands) as store:
+        with StateStorePatch(check_commands) as store:
             store.put(state)
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 state, "offer_npc_attack_defense_choice",
                 {
                     "investigator": "小明",
@@ -629,10 +629,10 @@ class OfferNpcAttackDefenseChoiceEndToEndTests(unittest.TestCase):
         # comparison, not the (now much more frequently offered) Luck
         # buy-up decision.
         state.characters["u1"].luck = 0
-        with StateStorePatch(keeper, check_commands) as store:
+        with StateStorePatch(check_commands) as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=1, tier="extreme")):
-                tool_result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=MagicMock(roll=1, tier="extreme")):
+                tool_result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {
                         "investigator": "小明",
@@ -672,14 +672,14 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_skill_check_autoroll_is_immediate_and_does_not_create_pending(self):
         state = _state_with_investigator()
         state.autoroll_checks = True
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             fake_roll = MagicMock(roll=99, tier="fumble", required_tier="regular", success=False)
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
-                first = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll):
+                first = tool_dispatch.execute_tool(
                     state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
                 )
-                second = keeper._execute_tool(
+                second = tool_dispatch.execute_tool(
                     state, "skill_check", {"investigator": "小明", "skill": "格鬥"}, [], [], speaker_role="player"
                 )
             saved_state = store.store["g"]
@@ -693,13 +693,13 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_sanity_check_autoroll_is_immediate_and_does_not_create_pending(self):
         state = _state_with_investigator()
         state.autoroll_checks = True
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            first = keeper._execute_tool(
+            first = tool_dispatch.execute_tool(
                 state, "sanity_check", {"investigator": "小明", "loss_success": "0", "loss_failure": "1d4"},
                 [], [], speaker_role="player",
             )
-            second = keeper._execute_tool(
+            second = tool_dispatch.execute_tool(
                 state, "sanity_check", {"investigator": "小明", "loss_success": "1", "loss_failure": "1d6"},
                 [], [], speaker_role="player",
             )
@@ -714,10 +714,10 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
 
     def test_character_checks_default_to_player_pending(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as roll_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as roll_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "skill_check",
                     {"investigator": "小明", "skill": "射擊"},
@@ -734,10 +734,10 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
 
     def test_sanity_check_defaults_to_player_pending(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.sanity_check") as roll_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.sanity_check") as roll_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "sanity_check",
                     {"investigator": "小明", "loss_success": "0", "loss_failure": "1d4"},
@@ -761,9 +761,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         guard the autoroll branch already has."""
         state = _state_with_investigator()
         state.pending_luck_decisions["u1"] = {"options": []}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state,
                 "sanity_check",
                 {"investigator": "小明", "loss_success": "0", "loss_failure": "1d4"},
@@ -778,10 +778,10 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         state = _state_with_investigator()
         state.characters["u1"].hp = 10
         state.characters["u1"].hp_max = 10
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as roll_mock:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as roll_mock:
+                result = tool_dispatch.execute_tool(
                     state,
                     "adjust_character",
                     {"investigator": "小明", "field": "hp", "delta": -5},
@@ -807,9 +807,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             "type": "skill", "skill": "偵查", "skill_value": 50,
             "bonus_dice": 0, "penalty_dice": 0, "difficulty": "regular", "pushed": False,
         }
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state,
                 "adjust_character",
                 {"investigator": "小明", "field": "hp", "delta": -5},
@@ -852,14 +852,14 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
             tier="hard",
             success=True,
         )
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.sanity_check", return_value=san_result), \
-                    patch("app.keeper.dice.skill_check", return_value=int_result), \
-                    patch("app.keeper.dice.roll_madness", return_value={
+            with patch("app.dice.sanity_check", return_value=san_result), \
+                    patch("app.dice.skill_check", return_value=int_result), \
+                    patch("app.dice.roll_madness", return_value={
                         "roll": 3, "symptom": "暴力衝動", "duration": "3 輪", "guidance": "",
                     }):
-                result = keeper._execute_tool(
+                result = tool_dispatch.execute_tool(
                     state,
                     "sanity_check",
                     {"investigator": "小明", "loss_success": "0", "loss_failure": "1d6"},
@@ -879,10 +879,10 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         state = _state_with_investigator()
         state.autoroll_checks = True
         fake_roll = MagicMock(roll=22, tier="hard", required_tier="regular", success=True)
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check", return_value=fake_roll):
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check", return_value=fake_roll):
+                result = tool_dispatch.execute_tool(
                     state,
                     "skill_check",
                     {"investigator": "小明", "skill": "射擊", "action_context": "小明瞄準怪物"},
@@ -901,13 +901,13 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         state.autoroll_checks = True
         fake_roll = MagicMock(roll=37, tier="regular", required_tier="regular", success=True)
         tool_input = {"investigator": "小明", "skill": "射擊", "action_context": "瞄準"}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             with observability.context(turn_id="turn-retry"), patch(
-                "app.keeper.dice.skill_check", return_value=fake_roll
+                "app.dice.skill_check", return_value=fake_roll
             ) as roll_mock:
-                first = keeper._execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
-                second = keeper._execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
+                first = tool_dispatch.execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
+                second = tool_dispatch.execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
         self.assertEqual(first["roll"], second["roll"])
         self.assertEqual(first["check_id"], second["check_id"])
         roll_mock.assert_called_once()
@@ -917,18 +917,18 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         state.autoroll_checks = True
         fake_roll = MagicMock(roll=67, tier="failure", required_tier="regular", success=False)
         tool_input = {"investigator": "小明", "skill": "射擊", "action_context": "瞄準"}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             with observability.context(turn_id="turn-luck-complete"), patch(
-                "app.keeper.dice.skill_check", return_value=fake_roll
+                "app.dice.skill_check", return_value=fake_roll
             ) as roll_mock, patch(
-                "app.keeper.luck.buyable_options", return_value=[MagicMock(tier="regular", cost=12)]
+                "app.luck.buyable_options", return_value=[MagicMock(tier="regular", cost=12)]
             ):
-                first = keeper._execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
+                first = tool_dispatch.execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
                 settled = clone_state(store.store["g"])
                 settled.pending_luck_decisions.clear()
                 store.put(settled)
-                second = keeper._execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
+                second = tool_dispatch.execute_tool(state, "skill_check", tool_input, [], [], speaker_role="player")
         assert first["pending_luck"]
         assert not second["ok"]
         roll_mock.assert_called_once()
@@ -942,9 +942,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         Luck decision) at once."""
         state = _state_with_investigator()
         state.pending_luck_decisions["u1"] = {"options": []}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player",
             )
         self.assertFalse(result["ok"])
@@ -953,7 +953,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_check_command_does_not_start_a_new_skill_roll(self):
         state = _state_with_investigator()
         state.active = True
-        with StateStorePatch(keeper, check_commands) as store:
+        with StateStorePatch(check_commands) as store:
             store.put(state)
             resolution = check_commands.resolve_check("g", "u1", "/coc check 射擊")
         self.assertFalse(resolution.should_finalize)
@@ -962,9 +962,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_offer_check_choice_preserves_unresolved_luck(self):
         state = _state_with_investigator()
         state.pending_luck_decisions["u1"] = {"decision_id": "old-luck", "options": []}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
                 [], [], speaker_role="player",
             )
@@ -976,13 +976,13 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
 
     def test_offer_check_choice_reuses_identical_pending_request(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            first = keeper._execute_tool(
+            first = tool_dispatch.execute_tool(
                 state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
                 [], [], speaker_role="player",
             )
-            second = keeper._execute_tool(
+            second = tool_dispatch.execute_tool(
                 state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
                 [], [], speaker_role="player",
             )
@@ -992,13 +992,13 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
 
     def test_offer_check_choice_rejects_different_pending_request(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            first = keeper._execute_tool(
+            first = tool_dispatch.execute_tool(
                 state, "offer_check_choice", {"investigator": "小明", "options": self._options()},
                 [], [], speaker_role="player",
             )
-            second = keeper._execute_tool(
+            second = tool_dispatch.execute_tool(
                 state,
                 "offer_check_choice",
                 {"investigator": "小明", "options": [{"label": "閃避", "skill": "閃避"}, {"label": "射擊", "skill": "射擊"}]},
@@ -1010,10 +1010,10 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_npc_attack_choice_does_not_roll_while_luck_is_pending(self):
         state = _state_with_investigator()
         state.pending_luck_decisions["u1"] = {"decision_id": "old", "options": []}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check") as roll:
-                result = keeper._execute_tool(
+            with patch("app.dice.skill_check") as roll:
+                result = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {"investigator": "小明", "options": self._options(),
                      "attacker_skill_value": 50}, [], [], speaker_role="player",
@@ -1027,13 +1027,13 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         state = _state_with_investigator()
         options = [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}]
         changed = [{"label": "閃避", "skill": "射擊"}, {"label": "反擊", "skill": "格鬥"}]
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            with patch("app.keeper.dice.skill_check", return_value=MagicMock(roll=42, tier="hard")) as roll:
-                first = keeper._execute_tool(state, "offer_npc_attack_defense_choice", {
+            with patch("app.dice.skill_check", return_value=MagicMock(roll=42, tier="hard")) as roll:
+                first = tool_dispatch.execute_tool(state, "offer_npc_attack_defense_choice", {
                     "investigator": "小明", "options": options, "attacker_skill_value": 50,
                 }, [], [], speaker_role="player")
-                second = keeper._execute_tool(state, "offer_npc_attack_defense_choice", {
+                second = tool_dispatch.execute_tool(state, "offer_npc_attack_defense_choice", {
                     "investigator": "小明", "options": changed, "attacker_skill_value": 50,
                 }, [], [], speaker_role="player")
         assert first["ok"] and not second["ok"]
@@ -1042,9 +1042,9 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
     def test_blocked_unknown_skill_does_not_change_character_card(self):
         state = _state_with_investigator()
         state.pending_luck_decisions["u1"] = {"decision_id": "old", "options": []}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(state, "skill_check", {
+            result = tool_dispatch.execute_tool(state, "skill_check", {
                 "investigator": "小明", "skill": "自訂古語",
             }, [], [], speaker_role="player")
         assert not result["ok"]
@@ -1053,7 +1053,7 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
 
     def test_offer_npc_attack_defense_choice_rejects_and_does_not_reroll(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
             roll_calls = []
 
@@ -1061,13 +1061,13 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
                 roll_calls.append(skill_value)
                 return MagicMock(roll=1, tier="critical")
 
-            with patch("app.keeper.dice.skill_check", side_effect=fake_skill_check):
-                first = keeper._execute_tool(
+            with patch("app.dice.skill_check", side_effect=fake_skill_check):
+                first = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {"investigator": "小明", "options": self._options(), "attacker_skill_value": 50},
                     [], [], speaker_role="player",
                 )
-                second = keeper._execute_tool(
+                second = tool_dispatch.execute_tool(
                     state, "offer_npc_attack_defense_choice",
                     {"investigator": "小明", "options": self._options(), "attacker_skill_value": 99},
                     [], [], speaker_role="player",
@@ -1085,12 +1085,12 @@ class AlreadyPendingCheckGuardTests(unittest.TestCase):
         player's pending check must not block a different player's."""
         state = _state_with_investigator()
         state.characters["u2"] = Character(name="小華", owner_id="u2", skills={"閃避": 40, "格鬥": 50})
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            first = keeper._execute_tool(
+            first = tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
             )
-            second = keeper._execute_tool(
+            second = tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小華", "skill": "格鬥"}, [], [], speaker_role="player"
             )
         self.assertTrue(first["ok"])
@@ -1103,12 +1103,12 @@ class ClearPendingCheckTests(unittest.TestCase):
     def test_clears_an_existing_pending_check(self):
         state = _state_with_investigator()
         state.pending_checks["u1"] = {"type": "skill", "skill": "閃避", "skill_value": 45}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
             )
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "clear_pending_check", {"investigator": "小明"}, [], [], speaker_role="player"
             )
             saved_state = store.store["g"]
@@ -1119,9 +1119,9 @@ class ClearPendingCheckTests(unittest.TestCase):
 
     def test_no_pending_check_is_a_safe_noop(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "clear_pending_check", {"investigator": "小明"}, [], [], speaker_role="player"
             )
         self.assertTrue(result["ok"])
@@ -1129,9 +1129,9 @@ class ClearPendingCheckTests(unittest.TestCase):
 
     def test_unknown_investigator_returns_error(self):
         state = _state_with_investigator()
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            result = keeper._execute_tool(
+            result = tool_dispatch.execute_tool(
                 state, "clear_pending_check", {"investigator": "不存在的人"}, [], [], speaker_role="player"
             )
         self.assertFalse(result["ok"])
@@ -1140,18 +1140,18 @@ class ClearPendingCheckTests(unittest.TestCase):
         """The escape hatch remains for pending checks from old snapshots."""
         state = _state_with_investigator()
         state.pending_checks["u1"] = {"type": "skill", "skill": "閃避", "skill_value": 45}
-        with StateStorePatch(keeper) as store:
+        with StateStorePatch() as store:
             store.put(state)
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小明", "skill": "閃避"}, [], [], speaker_role="player"
             )
-            blocked = keeper._execute_tool(
+            blocked = tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小明", "skill": "格鬥"}, [], [], speaker_role="player"
             )
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 state, "clear_pending_check", {"investigator": "小明"}, [], [], speaker_role="player"
             )
-            after_clear = keeper._execute_tool(
+            after_clear = tool_dispatch.execute_tool(
                 state, "skill_check", {"investigator": "小明", "skill": "格鬥"}, [], [], speaker_role="player"
             )
         self.assertFalse(blocked["ok"])

@@ -6,12 +6,13 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat_resources, db, dice, keeper
+from app import combat_resources, db, dice, tool_dispatch
 from app.checks import rules as check_rules
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import checks as check_commands
 from app.commands.handlers import combat as combat_handler
 from app.keeper_tools import registry
+from app.keeper_tools import registry as tool_registry
 from app.models import Character, Combatant, GroupState
 from app.repositories import group_state, state_transaction
 from app.services import canonical_facts, turn_delivery
@@ -108,7 +109,7 @@ def run_async(store, coroutine):
 
 def tool(store, name, args=None, actor='player'):
     store.push()
-    return keeper._execute_tool(store['state'], name, args or {}, [], [], actor_id=actor)
+    return tool_dispatch.execute_tool(store['state'], name, args or {}, [], [], actor_id=actor)
 
 
 def effective(store):
@@ -210,7 +211,7 @@ def test_controller_tools_available_without_human_kp_registration():
     for name in ('preview_combat_settlement', 'confirm_combat_settlement', 'rollback_combat',
                  'correct_combat_event', 'reconcile_combat_baseline', 'change_combat_initiative',
                  'declare_combat_effect', 'process_postcombat_obligations'):
-        assert name in {schema['name'] for schema in keeper._tools_for_speaker_role('player')}
+        assert name in {schema['name'] for schema in tool_dispatch.tools_for_speaker_role('player')}
         assert not registry.REGISTRY[name].kp_assistant
 
 
@@ -573,7 +574,7 @@ def test_runner_controls_remain_advertised_and_narrator_wait_tracks_actual_owned
     from app.agents import tool_gateway
     from app.services import turn_context
     store['state'].pending_checks['player'] = {'type': 'skill', 'skill': '急救'}
-    names = {schema['name'] for schema in turn_context.check_creation_tools(store['state'], keeper.TOOLS)}
+    names = {schema['name'] for schema in turn_context.check_creation_tools(store['state'], tool_registry.TOOLS)}
     assert {'run_combat_action', 'submit_combat_choice', 'run_enemy_combat_plan'} <= names
     status = {}
     tool_gateway._record_check_status(status, 'run_enemy_combat_plan', {

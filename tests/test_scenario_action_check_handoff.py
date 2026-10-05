@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import keeper, prompt_builder, scenario_authoring
+from app import prompt_builder, scenario_authoring, tool_dispatch
 from app.agents.tool_gateway import _describe_tool_call
 from app.commands.handlers import checks as check_commands
 from app.domain.models import MechanicResult, StateDelta, TurnResolution
@@ -55,11 +55,11 @@ def test_manual_check_persists_one_opponent_roll_and_its_final_outcome():
     tool_input = {'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
                   'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀'}
     with patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]) as dice_roll:
-        result = keeper._execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
+        result = tool_dispatch.execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
         assert result['ok'] and not result.get('resolved')
         first_receipt = deepcopy(group_state.load_state('scenario-check-test').pending_checks['u1']['opposed'])
         assert first_receipt['opponent_roll'] == 30
-        duplicate = keeper._execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
+        duplicate = tool_dispatch.execute_tool(state, 'skill_check', tool_input, [], [], speaker_role='player')
         assert duplicate['ok'] and duplicate['opposed_pending'] is True
         assert 'opposed' not in duplicate and 'opposed' not in result
         assert group_state.load_state('scenario-check-test').pending_checks['u1']['opposed'] == first_receipt
@@ -79,7 +79,7 @@ def test_autoroll_success_field_reflects_opposed_loss():
     state.autoroll_checks = True
     state_store.replace_state(state)
     with patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]):
-        result = keeper._execute_tool(state, 'skill_check', {
+        result = tool_dispatch.execute_tool(state, 'skill_check', {
             'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
             'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀',
         }, [], [], speaker_role='player')
@@ -96,7 +96,7 @@ def test_luck_resolution_reuses_opponent_receipt(choice, winner):
     state.characters['u1'].luck = 50
     state_store.replace_state(state)
     with patch('app.dice.roll_percentile_with_dice_pool', side_effect=[30, 40]) as dice_roll:
-        keeper._execute_tool(state, 'skill_check', {
+        tool_dispatch.execute_tool(state, 'skill_check', {
             'investigator': 'Marco', 'skill': '格鬥（鬥毆）', 'opposed': REQUEST,
             'action_basis': 'Flying knife; grab it, p. 11', '_player_action': '抓住飛來的刀',
         }, [], [], speaker_role='player')

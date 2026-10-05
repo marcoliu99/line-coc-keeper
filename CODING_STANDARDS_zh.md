@@ -9,11 +9,11 @@
 **Discord 事件一律經過 command router。** `discord_bot.py` 負責轉換 Discord 事件（訊息、上傳、按鈕回呼），交給 `app/commands/router.py`，再由它分派到 `app/commands/handlers/*`。
 _理由：_ KP／sudo 權限檢查和回合路由都在 router 這層；直接呼叫 `scenario_ingestion` 這類 service 的入口會繞過它們。
 
-**Handler 只負責解析和回覆，遊戲規則放在規則模組。** 戰鬥、檢定登記和存檔點分別放在 `combat.py`、`keeper.py`、`checkpoints.py`。Handler 呼叫這些模組，不自己複製一份防護邏輯。
+**Handler 只負責解析和回覆，遊戲規則放在規則模組。** 戰鬥、檢定登記和存檔點分別放在 `combat.py`、`app/keeper_tools/`、`checkpoints.py`。Handler 呼叫這些模組，不自己複製一份防護邏輯。
 _理由：_ 複製出來的防護邏輯會慢慢不一致。開戰存檔點和敵人重複加入的防護，曾經被複製進 `/coc combat` handler，副本組 `event_id` 時用的還是另一個欄位；現在兩者都在 `combat.py`（`begin_combat`、`add_combatant`）。
 
 **私有就是私有。** 底線開頭的名稱只在自己的模組內使用。其他模組需要時，先在原模組提供一個不帶底線的公開名稱再呼叫。由 ruff SLF001 自動檢查，`pyproject.toml` 列出了既有的違規作為待清理項目。
-_理由：_ `keeper._build_static_prompt`、`_mutate_and_save_state` 等函式被其他模組直接呼叫，重構 `keeper.py` 時影響會波及整個 repo。
+_理由：_ 舊的 `keeper.py` 把 `_build_static_prompt`、`_mutate_and_save_state` 等私有函式暴露給其他模組，重構時影響會波及整個 repo；它們現在在 `prompt_builder` 與 `keeper_tools/support` 中是公開名稱。
 
 **LLM 供應商只從一個地方取。** 透過 `app/providers/` 中的單一函式取得目前使用的供應商。供應商特有的分支邏輯放在各自的 provider 類別裡。
 _理由：_ `anthropic`／`gemini`／`openai` 的對照表目前複製在 9 個模組，每次調整供應商都要全部改一遍。

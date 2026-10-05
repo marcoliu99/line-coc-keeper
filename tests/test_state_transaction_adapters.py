@@ -12,8 +12,9 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from app import checkpoints, keeper, observability, turn_commit
+from app import checkpoints, observability, tool_dispatch, turn_commit
 from app.commands.handlers import character as character_handler
+from app.keeper_tools import support
 from app.models import Character, GroupState
 from app.repositories import group_state, state_transaction
 from app.services import pending_buttons
@@ -75,7 +76,7 @@ class TurnCommitTests(unittest.TestCase):
         state_transaction.mutate(
             conversation, lambda ctx: ctx.replace_state(GroupState(group_id=conversation)), reason="newgame",
         )
-        with patch.object(keeper.observability, "event") as event:
+        with patch.object(observability, "event") as event:
             committed = turn_commit.commit_turn_result(
                 state, [dict(e) for e in self.ENTRIES], timeline_id=old_timeline, turn_id="turn-old",
             )
@@ -87,7 +88,7 @@ class TurnCommitTests(unittest.TestCase):
     def test_a_turn_commit_does_not_overwrite_a_tool_change_made_after_the_turn_loaded(self):
         conversation = _conversation()
         state = _seed(conversation, _investigator())
-        keeper._execute_tool(state, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -3}, [], [])
+        tool_dispatch.execute_tool(state, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -3}, [], [])
         stale = group_state.load_state(conversation)
         stale.characters["u1"].hp = 20  # a snapshot that predates the tool call
         stale.state_revision -= 1
@@ -117,7 +118,7 @@ class KeeperToolAdapterTests(unittest.TestCase):
             local = group_state.load_state(conversation)  # each worker holds its own snapshot
             gate.wait()
             for _ in range(6):
-                result = keeper._execute_tool(
+                result = tool_dispatch.execute_tool(
                     local, "adjust_character", {"investigator": "Ada", "field": field, "delta": -1}, [], [],
                 )
                 assert result["ok"], result
@@ -134,7 +135,7 @@ class KeeperToolAdapterTests(unittest.TestCase):
         state_transaction.mutate(
             conversation, lambda ctx: ctx.replace_state(GroupState(group_id=conversation)), reason="newgame",
         )
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -1}, [], [],
         )
         self.assertFalse(result["ok"], result)
@@ -144,10 +145,10 @@ class KeeperToolAdapterTests(unittest.TestCase):
         conversation = _conversation()
         snapshot = _seed(conversation, _investigator())
         revision = snapshot.state_revision
-        value = keeper.mutate_tool_state(snapshot, lambda latest: keeper.ToolStateMutation("nothing", should_save=False))
+        value = support.mutate_tool_state(snapshot, lambda latest: support.ToolStateMutation("nothing", should_save=False))
         self.assertEqual(value, "nothing")
         self.assertEqual(group_state.load_state(conversation).state_revision, revision)
-        keeper.mutate_tool_state(snapshot, lambda latest: setattr(latest, "mechanical_round", 2))
+        support.mutate_tool_state(snapshot, lambda latest: setattr(latest, "mechanical_round", 2))
         self.assertEqual(group_state.load_state(conversation).state_revision, revision + 1)
         self.assertEqual(snapshot.state_revision, revision + 1)
 
@@ -180,7 +181,7 @@ class HandlerAdapterTests(unittest.TestCase):
         def tool_hits() -> None:
             local = group_state.load_state(conversation)
             for _ in range(6):
-                keeper._execute_tool(local, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -1}, [], [])
+                tool_dispatch.execute_tool(local, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -1}, [], [])
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             tool_future = pool.submit(tool_hits)

@@ -5,15 +5,16 @@ from typing import Any
 
 from app import (
     config,
-    keeper,
     observability,
     prompt_builder,
     spoiler_policy,
+    tool_dispatch,
     turn_commit,
 )
 from app.agents import guard, tool_gateway
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
+from app.keeper_tools import registry as tool_registry
 from app.providers.conversation_session import ConversationSession
 
 _logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ async def _run_assistant_turn(
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
     static_prompt = prompt_builder.build_static_prompt(state)
     dynamic_prompt = prompt_builder.build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
-    manual_canon, effective_text = keeper._parse_kp_manual_canon_trigger(_ROLE, message_text)
+    manual_canon, effective_text = tool_dispatch.parse_kp_manual_canon_trigger(_ROLE, message_text)
     turn_message = prompt_builder.format_turn_message(display_name, effective_text, _ROLE)
     correction_context = prompt_builder.correction_context_message(state)
     provider_message = turn_message + correction_context
@@ -91,15 +92,15 @@ async def _run_assistant_turn(
     execute_tool = tool_gateway.make_tool_executor(
         state, private_messages, image_requests, _ROLE, facts
     )
-    combat_status_gate = keeper._CombatStatusToolGate(state)
+    combat_status_gate = tool_dispatch.CombatStatusToolGate(state)
 
     async def execute_assistant_tool(name: str, tool_input: dict) -> dict:
         if name not in allowed_tools:
             return {"ok": False, "error": f"KP Assistant 不允許使用工具：{name}"}
-        if name not in keeper.READ_ONLY_TOOL_NAMES:
+        if name not in tool_registry.READ_ONLY_TOOL_NAMES:
             mutating_tools_ran.append(name)
         result = await execute_tool(name, tool_input)
-        if keeper._kp_tool_result_creates_canon(name, tool_input, result):
+        if tool_dispatch.kp_tool_result_creates_canon(name, tool_input, result):
             canonical_tool_events.append({
                 "tool_name": name,
                 "tool_input": dict(tool_input),

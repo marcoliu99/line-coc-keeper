@@ -177,7 +177,7 @@ def build_static_prompt(state: GroupState) -> str:
     if not state.scenario_text:
         scenario = "（尚未載入劇本，請提醒玩家用 /coc 上傳 PDF 劇本）"
     elif SCENARIO_RAG_ENABLED:
-        # Full text withheld on purpose — see search_scenario in TOOLS/_execute_tool
+        # Full text withheld on purpose — see search_scenario in TOOLS/execute_tool
         # and app/scenario_rag.py. Keeps this (cached) block small regardless of
         # scenario length, at the cost of the Keeper needing to actually remember
         # to search instead of already having everything in view.

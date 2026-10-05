@@ -324,7 +324,7 @@ def find_live_enemy(state: GroupState, name: str) -> Combatant | None:
 
 def find_npc_index_entry_exact(state: GroupState, name: str) -> dict | None:
     """Exact-match-only lookup of `name` against state.scenario_npc_index's
-    entry names/aliases — no fuzzy fallback. keeper._find_npc_index_entry
+    entry names/aliases — no fuzzy fallback. support.find_npc_index_entry
     layers a fuzzy fallback on top of this for its HP-consistency check,
     where a wrong match only ever corrects a number. find_live_enemy_by_any_alias
     needs the exact version: it resolves every known alias of the requested

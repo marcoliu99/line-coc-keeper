@@ -5,15 +5,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app import db, dice, keeper, spoiler_policy
-from app.keeper_tools import registry
+from app import db, dice, spoiler_policy
+from app.keeper_tools import registry, support
 from app.models import GroupState
 from app.repositories import group_state
+from app.services import mutation_admission
 
 
 def _mutate(current: GroupState, callback: Callable[[GroupState], object]) -> object:
     result = callback(current)
-    return result.value if isinstance(result, keeper.ToolStateMutation) else result
+    return result.value if isinstance(result, support.ToolStateMutation) else result
 
 
 
@@ -41,9 +42,9 @@ def test_post_lethal_status_preserves_damage_evidence_without_public_enemy_hp() 
     state = GroupState(group_id="combat-evidence", timeline_id="timeline-a")
 
     with (
-        patch.object(keeper.mutation_admission, "assert_admitted"),
-        patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
-        patch.object(keeper, "refresh_tool_state"),
+        patch.object(mutation_admission, "assert_admitted"),
+        patch.object(support, "mutate_tool_state", side_effect=_mutate),
+        patch.object(support, "refresh_tool_state"),
     ):
         assert _tool(state, "start_combat", {})["ok"]
         assert _tool(
@@ -73,9 +74,9 @@ def test_post_lethal_status_preserves_damage_evidence_without_public_enemy_hp() 
 def test_new_combat_or_timeline_does_not_reuse_previous_evidence() -> None:
     state = GroupState(group_id="combat-evidence-reset", timeline_id="timeline-a")
     with (
-        patch.object(keeper.mutation_admission, "assert_admitted"),
-        patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
-        patch.object(keeper, "refresh_tool_state"),
+        patch.object(mutation_admission, "assert_admitted"),
+        patch.object(support, "mutate_tool_state", side_effect=_mutate),
+        patch.object(support, "refresh_tool_state"),
     ):
         _tool(state, "start_combat", {})
         _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
@@ -91,9 +92,9 @@ def test_new_combat_or_timeline_does_not_reuse_previous_evidence() -> None:
 def test_end_combat_does_not_relabel_damage_from_another_scenario() -> None:
     state = GroupState(group_id="combat-evidence-scenario", timeline_id="timeline-a", scenario_title="Old")
     with (
-        patch.object(keeper.mutation_admission, "assert_admitted"),
-        patch.object(keeper, "mutate_tool_state", side_effect=_mutate),
-        patch.object(keeper, "refresh_tool_state"),
+        patch.object(mutation_admission, "assert_admitted"),
+        patch.object(support, "mutate_tool_state", side_effect=_mutate),
+        patch.object(support, "refresh_tool_state"),
     ):
         _tool(state, "start_combat", {})
         _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
@@ -112,7 +113,7 @@ def test_completed_combat_receipt_survives_real_state_save() -> None:
             db._ensure_tables()
             state = GroupState(group_id="combat-evidence-sqlite", timeline_id="timeline-a")
             group_state.save_state(state)
-            with patch.object(keeper.mutation_admission, "assert_admitted"):
+            with patch.object(mutation_admission, "assert_admitted"):
                 _tool(state, "start_combat", {})
                 _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
                 _reviewed_lethal_hit(state)

@@ -8,7 +8,8 @@ from app import check_lifecycle, dice, resolved_check_consequences
 from app.checks import events as check_events
 from app.checks import service as check_service
 from app.checks.dice_port import DEFAULT_DICE
-from app.keeper_tools import resource_bridge
+from app.checks.skills import resolve_skill_value
+from app.keeper_tools import resource_bridge, support
 from app.models import Character, GroupState
 from app.services import opposed_checks
 
@@ -27,14 +28,13 @@ def _check_registration_error(char: Character, blocker: str | None) -> dict[str,
 
 
 def skill_check(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    services = keeper.check_tool_services
+    services = support.check_tool_services
     state = call.state
     tool_input = call.input
     name = call.name
     speaker_role = call.speaker_role
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     owner_id = char.owner_id
@@ -48,7 +48,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
 
     def _roll_skill_check(target_state: GroupState) -> Any:
         nonlocal resolved_event_seed
-        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
+        target_char = resource_bridge.effective(target_state, support.require_character(target_state, tool_input.get("investigator", "")))
         consequences = resolved_check_consequences.normalize_authorizations(
             target_state, tool_input.get("consequences")
         )
@@ -59,7 +59,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
         if opposed_request and (tool_input.get('pushed') or tool_input.get('difficulty', 'regular') != 'regular'):
             raise ValueError('對抗檢定以雙方等級比較，不可強推或用固定難度替代。')
         if not target_state.autoroll_checks:
-            value = keeper.resolve_skill_value(target_char, tool_input["skill"], register_unknown=False)
+            value = resolve_skill_value(target_char, tool_input["skill"], register_unknown=False)
             bonus = int(tool_input.get("bonus_dice") or 0)
             penalty = int(tool_input.get("penalty_dice") or 0)
             difficulty = tool_input.get("difficulty") or "regular"
@@ -101,7 +101,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
                 )
             registered = registration.pending
             assert registered is not None
-            keeper.resolve_skill_value(target_char, tool_input["skill"])
+            resolve_skill_value(target_char, tool_input["skill"])
             if opposed_request:
                 registered['opposed'] = opposed_checks.roll_opponent(opposed_request)
             new_check = registered
@@ -136,7 +136,7 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
             return services.StateMutation(
                 _check_registration_error(target_char, admission.blocker), should_save=False
             )
-        value = keeper.resolve_skill_value(target_char, tool_input["skill"])
+        value = resolve_skill_value(target_char, tool_input["skill"])
         bonus = int(tool_input.get("bonus_dice") or 0)
         penalty = int(tool_input.get("penalty_dice") or 0)
         difficulty = tool_input.get("difficulty") or "regular"
@@ -160,12 +160,11 @@ def skill_check(call: ToolCall) -> dict[str, Any]:
 
 
 def offer_check_choice(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    services = keeper.check_tool_services
+    services = support.check_tool_services
     state = call.state
     tool_input = call.input
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     raw_options = tool_input.get("options") or []
@@ -173,7 +172,7 @@ def offer_check_choice(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
     attacker_tier = tool_input.get("attacker_tier")
     def _register_pending_choice(target_state: GroupState) -> Any:
-        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
+        target_char = resource_bridge.effective(target_state, support.require_character(target_state, tool_input.get("investigator", "")))
         options = services.resolve_defense_options(target_char, raw_options, register_unknown=False)
         # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
         # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
@@ -226,9 +225,8 @@ def npc_skill_check(call: ToolCall) -> dict[str, Any]:
 
 
 def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    services = keeper.check_tool_services
+    services = support.check_tool_services
     state = call.state
     tool_input = call.input
     # Merges what used to be two sequential tool calls (npc_skill_check
@@ -241,7 +239,7 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
     # picks dodge/counter). Built entirely from the same primitives
     # both original handlers already used below — not new logic, just
     # one fewer LLM round-trip to reach it.
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     raw_options = tool_input.get("options") or []
@@ -255,7 +253,7 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
     def _roll_and_register_defense_choice(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
             return services.StateMutation({"ok": False, "error": "Managed combat uses declare_combat_action and its owned defense interaction"}, should_save=False)
-        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
+        target_char = resource_bridge.effective(target_state, support.require_character(target_state, tool_input.get("investigator", "")))
         # Resolve the existing-pending/reuse decision inside the same
         # freshly-loaded mutator that performs the roll and write. A
         # rejected call therefore never rolls, and there is no gap
@@ -366,19 +364,18 @@ def offer_npc_attack_defense_choice(call: ToolCall) -> dict[str, Any]:
 
 
 def clear_pending_check(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    services = keeper.check_tool_services
+    services = support.check_tool_services
     state = call.state
     tool_input = call.input
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     def _clear_pending_check(target_state: GroupState) -> Any:
         existing = target_state.pending_checks.get(char.owner_id) or {}
         if existing.get('combat_context') or existing.get('postcombat_context') or existing.get('medical_context'):
             return services.StateMutation({"ok": False, "error": "Owned combat wait requires explicit controller correction"}, should_save=False)
-        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
+        target_char = resource_bridge.effective(target_state, support.require_character(target_state, tool_input.get("investigator", "")))
         cleared = target_state.pending_checks.pop(target_char.owner_id, None)
         if cleared is None:
             return services.StateMutation(
@@ -394,14 +391,13 @@ def clear_pending_check(call: ToolCall) -> dict[str, Any]:
 
 
 def sanity_check(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    services = keeper.check_tool_services
+    services = support.check_tool_services
     state = call.state
     tool_input = call.input
     name = call.name
     speaker_role = call.speaker_role
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     loss_success = tool_input.get("loss_success", "0")
@@ -412,7 +408,7 @@ def sanity_check(call: ToolCall) -> dict[str, Any]:
 
     def _roll_sanity_check(target_state: GroupState) -> Any:
         nonlocal sanity_event_seed
-        target_char = resource_bridge.effective(target_state, keeper.require_character(target_state, tool_input.get("investigator", "")))
+        target_char = resource_bridge.effective(target_state, support.require_character(target_state, tool_input.get("investigator", "")))
         if not target_state.autoroll_checks:
             decision = check_lifecycle.register(
                 target_state, target_char.owner_id,

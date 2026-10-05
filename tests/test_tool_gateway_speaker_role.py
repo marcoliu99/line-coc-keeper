@@ -1,15 +1,15 @@
 """Regression tests for docs/specs/bug-executor-tool-list-missing-search-
 scenario.md: app/agents/tool_gateway.py used to export a bare `TOOLS`
-constant (`keeper.TOOLS`, computed once at import time) that never
+constant (`tool_registry.TOOLS`, computed once at import time) that never
 included search_scenario (even when SCENARIO_RAG_ENABLED — the static
 prompt Executor sends explicitly requires the model to use that tool) and
 never applied the kp_assistant-specific filtering/roll_dice patch that
-keeper._tools_for_speaker_role already does for every other caller.
+tool_dispatch.tools_for_speaker_role already does for every other caller.
 """
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import config
+from app import config, tool_dispatch
 from app.domain.models import AgentMessage
 from app.models import GroupState
 from app.providers import registry
@@ -23,7 +23,7 @@ class ToolGatewayDelegatesToSpeakerRoleTests(unittest.TestCase):
     def test_includes_search_scenario_when_rag_enabled(self):
         from app.agents import tool_gateway
 
-        with patch("app.keeper.SCENARIO_RAG_ENABLED", True):
+        with patch("app.tool_dispatch.SCENARIO_RAG_ENABLED", True):
             tools = tool_gateway.tools_for_speaker_role("player")
 
         self.assertIn("search_scenario", _tool_names(tools))
@@ -31,20 +31,19 @@ class ToolGatewayDelegatesToSpeakerRoleTests(unittest.TestCase):
     def test_excludes_search_scenario_when_rag_disabled(self):
         from app.agents import tool_gateway
 
-        with patch("app.keeper.SCENARIO_RAG_ENABLED", False):
+        with patch("app.tool_dispatch.SCENARIO_RAG_ENABLED", False):
             tools = tool_gateway.tools_for_speaker_role("player")
 
         self.assertNotIn("search_scenario", _tool_names(tools))
 
     def test_kp_assistant_role_gets_the_filtered_patched_set(self):
-        from app import keeper
         from app.agents import tool_gateway
 
         gateway_tools = tool_gateway.tools_for_speaker_role("kp_assistant")
-        keeper_tools = keeper._tools_for_speaker_role("kp_assistant")
+        keeper_tools = tool_dispatch.tools_for_speaker_role("kp_assistant")
 
         # This is a thin delegating wrapper, not a re-implementation - it
-        # must produce exactly what keeper._tools_for_speaker_role does
+        # must produce exactly what tool_dispatch.tools_for_speaker_role does
         # (already extensively tested directly in tests/test_kp_assistant_
         # v2.py), including being a strict subset of "player"'s tool list
         # and the roll_dice schema patch.
@@ -105,7 +104,7 @@ class ExecutorComputesToolsPerTurnTests(unittest.IsolatedAsyncioTestCase):
             seen_tools.append(tools)
             return "ignored"
 
-        with patch("app.keeper.SCENARIO_RAG_ENABLED", True):
+        with patch("app.tool_dispatch.SCENARIO_RAG_ENABLED", True):
             await self._run_with_speaker_role("player", AsyncMock(side_effect=fake_run_conversation))
 
         self.assertIn("search_scenario", _tool_names(seen_tools[0]))

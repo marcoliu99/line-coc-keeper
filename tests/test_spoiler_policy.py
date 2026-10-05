@@ -6,9 +6,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import combat, discord_bot, keeper, prompt_builder, spoiler_policy
+from app import (
+    combat,
+    discord_bot,
+    prompt_builder,
+    scenario_library,
+    spoiler_policy,
+    tool_dispatch,
+)
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import system as system_handler
+from app.keeper_tools import support
 from app.models import Character, GroupState
 
 
@@ -160,14 +168,14 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         result = {"ok": True, "side": "enemy", "hp": 3, "armor_absorbed": 2, "final_damage": 5}
         with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
-            filtered = keeper._filter_public_combat_damage_result(result, "player")
+            filtered = support.filter_public_combat_damage_result(result, "player")
         self.assertNotIn("hp", filtered)
         self.assertNotIn("armor_absorbed", filtered)
 
     def test_combat_damage_filter_passes_through_when_privacy_disabled(self):
         result = {"ok": True, "side": "enemy", "hp": 3, "armor_absorbed": 2, "final_damage": 5}
         with patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
-            filtered = keeper._filter_public_combat_damage_result(result, "player")
+            filtered = support.filter_public_combat_damage_result(result, "player")
         self.assertEqual(filtered, result)
 
 
@@ -205,18 +213,18 @@ class PrivacyIsolationSwitchTests(unittest.TestCase):
     def test_scenario_image_visibility_gated_by_privacy_isolation_switch(self):
         """§3.4 mechanism #3: search_scenario_images/show_scenario_image route
         their public/kp_only check through spoiler_policy.filter_public_record
-        (see app/keeper.py's _scenario_allowed_chapter_ids callers) — confirm
+        (see app/keeper.py's scenario_allowed_chapter_ids callers) — confirm
         the switch actually reaches that code path, not just
         filter_public_record in isolation."""
         with tempfile.TemporaryDirectory() as temp:
-            original_library_dir = keeper.scenario_library.SCENARIO_LIBRARY_DIR
-            keeper.scenario_library.SCENARIO_LIBRARY_DIR = Path(temp)
+            original_library_dir = scenario_library.SCENARIO_LIBRARY_DIR
+            scenario_library.SCENARIO_LIBRARY_DIR = Path(temp)
             try:
                 text = (
                     "--- 第 1 頁 ---\n調查員：陳墨\nSTR 65 DEX 75 SAN 55\n"
                     "--- 第 2 頁 ---\n[圖片內容描述：一張地圖]\n"
                 )
-                scenario_id = keeper.scenario_library.save_scenario(
+                scenario_id = scenario_library.save_scenario(
                     b"%PDF-1.4 fake", title="Privacy Switch Test", filename="t.pdf", preview=text[:200],
                     text=text, indexes={}, pregens=[], page_maps={2: {"id": "map-2"}},
                     page_images={1: b"page-1", 2: b"page-2"},
@@ -229,19 +237,19 @@ class PrivacyIsolationSwitchTests(unittest.TestCase):
                 # the `state` argument passed below — no load_state/save_state
                 # mock needed (they never call either).
                 with patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
-                    player_search = keeper._execute_tool(
+                    player_search = tool_dispatch.execute_tool(
                         state, "search_scenario_images", {}, [], [], speaker_role="player"
                     )
                     self.assertEqual(
                         sorted(a["type"] for a in player_search["assets"]), ["character_sheet", "map"]
                     )
 
-                    player_show_sheet = keeper._execute_tool(
+                    player_show_sheet = tool_dispatch.execute_tool(
                         state, "show_scenario_image", {"page_number": 1}, [], [], speaker_role="player"
                     )
                     self.assertTrue(player_show_sheet["ok"])
             finally:
-                keeper.scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
+                scenario_library.SCENARIO_LIBRARY_DIR = original_library_dir
 
 
 class ProtectedTermCollectionTests(unittest.TestCase):

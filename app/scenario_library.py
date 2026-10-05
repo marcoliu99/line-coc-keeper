@@ -617,7 +617,7 @@ def _build_image_assets(page_images: dict[int, bytes], page_maps: dict, text: st
         # the classifier here has no way to tell those apart, and the spoiler
         # risk of showing the wrong one to players outweighs the convenience
         # of never having to think about it. A KP can still reveal a specific
-        # one via the KP-only show_scenario_image call (see keeper._execute_tool).
+        # one via the KP-only show_scenario_image call (see tool_dispatch.execute_tool).
         # This is deliberately not the same channel as /coc pregens'
         # player-facing pregen selection, which never goes through this tool.
         visibility = "kp_only" if kind == "character_sheet" else "public"

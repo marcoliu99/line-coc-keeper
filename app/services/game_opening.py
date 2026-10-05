@@ -17,7 +17,6 @@ from uuid import uuid4
 
 from app import (
     check_lifecycle,
-    keeper,
     locks,
     observability,
     opening_identity,
@@ -26,7 +25,8 @@ from app import (
 )
 from app.agents import supervisor
 from app.check_identity import PendingCheckBlocker
-from app.keeper_tools import resource_bridge
+from app.checks.skills import resolve_skill_value
+from app.keeper_tools import resource_bridge, support
 from app.models import GroupState
 from app.repositories import state_transaction
 from app.repositories.group_state import load_state
@@ -197,7 +197,7 @@ def _apply_scripted_state(state: GroupState, opening_data: dict[str, Any]) -> Op
             if opening_check["type"] == "skill":
                 candidates[owner_id] = {
                     "type": "skill", "skill": opening_check["skill"],
-                    "skill_value": keeper.resolve_skill_value(
+                    "skill_value": resolve_skill_value(
                         char, opening_check["skill"], register_unknown=False,
                     ),
                     "bonus_dice": 0, "penalty_dice": 0,
@@ -224,7 +224,7 @@ def _apply_scripted_state(state: GroupState, opening_data: dict[str, Any]) -> Op
             )
     if opening_check and opening_check["type"] == "skill":
         for char in state.characters.values():
-            keeper.resolve_skill_value(char, opening_check["skill"])
+            resolve_skill_value(char, opening_check["skill"])
     turn_id = str(observability.current_context().get("turn_id") or uuid4().hex)
     state.log.append(history_authority.annotate_entry(
         {"role": "user", "content": "守密人：（遊戲開始，請朗讀開場白）"},
@@ -299,7 +299,7 @@ async def _run_fallback(
     *, token: OpeningExtractionToken | None = None,
 ) -> OpeningResult:
     async with locks.narrating_turn(conversation_id):
-        fresh_state = keeper.refresh_tool_state(state)
+        fresh_state = support.refresh_tool_state(state)
         if fresh_state.game_started:
             return OpeningResult("silent")
         try:

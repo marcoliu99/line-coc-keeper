@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import db, dice, keeper, observability
+from app import db, dice, observability, tool_dispatch
 from app.checks import events as check_events
 from app.checks import luck as luck_policy
 from app.checks.models import CheckOutcome
@@ -113,7 +113,7 @@ def test_c1_command_button_and_tool_settle_the_same_intent_identically():
         script = ScriptedDice([30])
         with module_dice(script):
             if door == "tool":
-                result = keeper._execute_tool(
+                result = tool_dispatch.execute_tool(
                     _load(group), "skill_check", {"investigator": "調查員u1", "skill": "偵查"}, [], [],
                     speaker_role="player",
                 )
@@ -136,7 +136,7 @@ def test_c1_luck_offer_is_the_same_for_every_door():
         _store(state)
         with module_dice(ScriptedDice([55])):
             if door == "tool":
-                result = keeper._execute_tool(
+                result = tool_dispatch.execute_tool(
                     _load(group), "skill_check", {"investigator": "調查員u1", "skill": "偵查"}, [], [],
                     speaker_role="player",
                 )
@@ -205,7 +205,7 @@ def test_c3_autoroll_off_registers_a_pending_check_without_rolling_or_applying_a
     }
     script = ScriptedDice([])  # any roll fails the test
     with module_dice(script):
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             _load("c3"), "skill_check", {"investigator": "調查員u1", "skill": "偵查", "consequences": [plan]},
             [], [], speaker_role="player",
         )
@@ -396,7 +396,7 @@ def test_c7_settled_check_leads_to_a_new_check_and_non_combat_damage_with_the_or
     check_events.persist_resolved_event("c7", spot.resolved_event)
     original_id = spot.resolved_event["event_id"]
 
-    created = keeper._execute_tool(_load("c7"), "create_triggered_check", {
+    created = tool_dispatch.execute_tool(_load("c7"), "create_triggered_check", {
         "investigator": "調查員u1", "skill": "閃避", "difficulty": "regular", "trigger_check_id": original_id,
         "trigger_event_id": original_id, "trigger_condition": "Spot Hidden success reveals the flying bed",
         "consequence_key": "bed:dodge", "action_context": "察覺床架襲來後閃避",
@@ -420,9 +420,9 @@ def test_c7_settled_check_leads_to_a_new_check_and_non_combat_damage_with_the_or
         "consequence_key": "bed:hit", "cause": "The bed throws the investigator",
     }
     with patch("app.dice.random.randint", return_value=2):
-        first = keeper._execute_tool(_load("c7"), "apply_resolved_check_damage", request, [], [], actor_id="u1")
+        first = tool_dispatch.execute_tool(_load("c7"), "apply_resolved_check_damage", request, [], [], actor_id="u1")
     with patch("app.dice.random.randint", side_effect=AssertionError("damage rerolled")):
-        again = keeper._execute_tool(_load("c7"), "apply_resolved_check_damage", request, [], [], actor_id="u1")
+        again = tool_dispatch.execute_tool(_load("c7"), "apply_resolved_check_damage", request, [], [], actor_id="u1")
     assert first["ok"] and again["ok"] and first["damage"] == again["damage"] == 4
     assert _load("c7").characters["u1"].hp == 6, "outside combat, once"
 
@@ -460,7 +460,7 @@ def test_c8_autoroll_sanity_tool_rolls_the_int_check_inline_exactly_once():
     _store(state)
     script = ScriptedDice([90, 20], san_losses=[6], madness=[7])
     with module_dice(script):
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             _load("c8-auto"), "sanity_check",
             {"investigator": "調查員u1", "loss_success": "0", "loss_failure": "1d6"}, [], [],
             speaker_role="player",
@@ -504,7 +504,7 @@ def test_c9_a_second_check_for_one_player_does_not_clear_another_players_pending
     state = _game("c9-keep", "p1", "p2", luck=0)
     state.pending_checks["p2"] = _skill_pending(check_id="check-p2")
     _store(state)
-    registered = keeper._execute_tool(
+    registered = tool_dispatch.execute_tool(
         _load("c9-keep"), "skill_check", {"investigator": "調查員p1", "skill": "偵查"}, [], [],
         speaker_role="player",
     )
@@ -535,7 +535,7 @@ def test_c10_opposed_checks_keep_their_limits():
     }
     base = {"investigator": "調查員u1", "skill": "偵查", "opposed": opposed, "action_basis": "Flying knife; p. 11"}
     for extra in ({"pushed": True}, {"difficulty": "hard"}):
-        refused = keeper._execute_tool(
+        refused = tool_dispatch.execute_tool(
             _load("c10-opposed"), "skill_check", {**base, **extra}, [], [], speaker_role="player",
         )
         assert refused["ok"] is False and "對抗檢定" in refused["error"]
@@ -571,8 +571,8 @@ def test_c11_tool_autoroll_retry_returns_the_cached_result_without_rolling():
     script = ScriptedDice([30])
     request = {"investigator": "調查員u1", "skill": "偵查"}
     with module_dice(script), observability.context(turn_id="turn-retry"):
-        first = keeper._execute_tool(_load("c11-tool"), "skill_check", request, [], [], speaker_role="player")
-        second = keeper._execute_tool(_load("c11-tool"), "skill_check", request, [], [], speaker_role="player")
+        first = tool_dispatch.execute_tool(_load("c11-tool"), "skill_check", request, [], [], speaker_role="player")
+        second = tool_dispatch.execute_tool(_load("c11-tool"), "skill_check", request, [], [], speaker_role="player")
     assert first == second
     assert script.rolls_taken == 1
     assert len(_load("c11-tool").resolved_check_events) == 1

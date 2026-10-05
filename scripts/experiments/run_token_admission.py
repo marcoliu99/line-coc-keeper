@@ -17,6 +17,8 @@ from pathlib import Path
 
 from token_admission_support import InputMeter, WindowBudget, recent_history
 
+from app import tool_dispatch
+
 ROOT = Path(os.environ["COC_TRIAL_ROOT"]).resolve()
 SOURCE = Path(os.environ["COC_TRIAL_SOURCE"]).resolve()
 ENV = Path(os.environ["COC_TRIAL_ENV"]).resolve()
@@ -68,7 +70,7 @@ def worker(pair, arm):
     logging.basicConfig(filename=run / "diagnostic.log", level=logging.INFO)
     import re
 
-    from app import config, db, keeper, observability
+    from app import config, db, observability
     from app.agents import context_builder, executor, guard, narrator, supervisor
     from app.models import GroupState
     from app.providers import openai_provider, retry
@@ -250,7 +252,7 @@ def worker(pair, arm):
             dump(run / "progress.json", row)
 
     openai_provider._create_response_async = request
-    orig_execute = keeper._execute_tool
+    orig_execute = tool_dispatch.execute_tool
 
     def execute(s, name, inp, *args, **kwargs):
         rec = {"name": name, "arguments": inp, "combat_before": s.combat.active}
@@ -265,7 +267,7 @@ def worker(pair, arm):
         finally:
             rec["combat_after"] = s.combat.active
 
-    keeper._execute_tool = execute
+    tool_dispatch.execute_tool = execute
     orig_run = openai_provider.run_conversation
 
     async def conversation(*args, **kwargs):

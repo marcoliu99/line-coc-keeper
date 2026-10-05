@@ -6,7 +6,13 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, observability, prompt_builder, scenario_retrieval
+from app import (
+    config,
+    observability,
+    prompt_builder,
+    scenario_retrieval,
+    tool_dispatch,
+)
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import (
@@ -35,7 +41,7 @@ _logger = logging.getLogger(__name__)
 async def run_executor(message: AgentMessage) -> MechanicResult:
     """Runs the Executor Agent's tool-calling loop for a GAMEPLAY_ACTION turn.
 
-    Delegates actual tool execution to keeper._execute_tool via
+    Delegates actual tool execution to tool_dispatch.execute_tool via
     tool_gateway.make_tool_executor — see that module's docstring for why
     this reuses app/keeper.py's tools directly rather than a separate
     reimplementation. Real state mutation (HP/SAN changes, pending_checks
@@ -83,7 +89,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         actor_id=user_id,
         scenario_search_limit=config.SCENARIO_SEARCH_MAX_PER_TURN,
     )
-    combat_status_gate = keeper._CombatStatusToolGate(state)
+    combat_status_gate = tool_dispatch.CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
     # gateway.tools_for_speaker_role's own docstring for why (RAG-aware
     # search_scenario inclusion, kp_assistant-specific filtering/patching).
@@ -205,7 +211,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     verified = turn_resolution.validate_resolution(
                         candidate, state=state, user_id=user_id, before_pending=before_pending,
                         before_luck=before_luck, tool_events=tool_events,
-                        has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
+                        has_scenario=bool(rag_context or (not tool_dispatch.SCENARIO_RAG_ENABLED and state.scenario_text)),
                         before_actor=before_actor, before_gameplay=before_gameplay,
                     )
                     if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
@@ -245,7 +251,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         resolution = turn_resolution.validate_resolution(
             completion, state=state, user_id=user_id, before_pending=before_pending,
             before_luck=before_luck, tool_events=tool_events,
-            has_scenario=bool(rag_context or (not keeper.SCENARIO_RAG_ENABLED and state.scenario_text)),
+            has_scenario=bool(rag_context or (not tool_dispatch.SCENARIO_RAG_ENABLED and state.scenario_text)),
             before_actor=before_actor, before_gameplay=before_gameplay,
         )
     observability.event("executor.resolution", disposition=resolution.disposition,
@@ -262,7 +268,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         action_type="tool_calls" if facts else "none",
         narrative_facts=facts or ["本回合沒有工具操作；是否完成行動以裁決狀態為準"],
         # Real state changes already happened above via execute_tool's calls
-        # into keeper._execute_tool — this StateDelta is intentionally left
+        # into tool_dispatch.execute_tool — this StateDelta is intentionally left
         # empty (see state_reducer.apply_mechanic_result's docstring for why
         # it must not try to re-apply anything on top of that).
         state_delta=StateDelta(),
