@@ -182,6 +182,7 @@ async def run_turn(
     from app.services.narrative_corrections import blocking_reply
     correction_block = blocking_reply(state, [text, resolved_location])
     if correction_block:
+        turn_phases.note(route="correction_block")
         return correction_block, [], []
 
     # Preserve the later state-only Luck shortcut without S2's route model.
@@ -193,6 +194,7 @@ async def run_turn(
     if (turn_kind == "player_action" and held_luck and not others_waiting
             and intent_router.classify_intent(AgentMessage({"text": text, "speaker_role": speaker_role})) == "GAMEPLAY_ACTION"):
         actor = state.get_active_character(user_id)
+        turn_phases.note(route="gameplay_action", short_circuit="pending_luck")
         observability.event("turn.short_circuit", reason="pending_luck",
                             model_requests_avoided=True)
         _logger.info("Supervisor answered %s from state: Luck decision outstanding", display_name)

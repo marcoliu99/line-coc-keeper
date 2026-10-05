@@ -177,12 +177,13 @@ def _log_summary(line: Timeline, summary: dict[str, Any]) -> None:
 
     ``LOG_ENABLED`` stays off by default because it adds timers, counters and JSON payloads to every call. This line costs
     one string format per turn and carries only timings and ids, never player text, so a deployment can always see how long
-    players wait and where the time goes. every ``*_ms`` is an exclusive time and together they add up to ``wall_ms``: ``retrieval`` and ``memory`` each fold in
-    the phases of that kind, and ``continuation_ms`` is the non-model work of a resolved-check continuation.
+    players wait and where the time goes. Every ``*_ms`` is an exclusive time and together they add up to ``wall_ms``:
+    ``retrieval`` and ``memory`` each fold in the phases of that kind, and ``continuation_ms`` is the non-model work of a resolved-check continuation.
     """
     exclusive = summary["exclusive_ms"]
     fields: dict[str, Any] = {
         "turn_id": line.turn_id, "kind": line.kind, "route": line.notes.get("route", ""),
+        "short_circuit": line.notes.get("short_circuit", ""),
         "campaign": observability.safe_identifier(line.campaign_id) or "",
         "wall_ms": summary["wall_ms"], "queue_wait_ms": exclusive.get("queue_wait", 0),
         "retrieval_ms": _sum(exclusive, "initial_retrieval", "recovery_retrieval"),

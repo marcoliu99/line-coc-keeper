@@ -13,10 +13,10 @@
 - `app/services/turn_phases.py` 在玩家等待的回合結束時（`turn` 與 `continuation`；背景維護不算）對 `app.turn` logger 輸出一行純文字：
 
   ```text
-  turn.summary turn_id=… kind=turn route=gameplay_action campaign=… wall_ms=… queue_wait_ms=… retrieval_ms=… memory_ms=… executor_ms=… tool_ms=… continuation_ms=… narrator_ms=… other_ms=… fallback=…
+  turn.summary turn_id=… kind=turn route=gameplay_action short_circuit=… campaign=… wall_ms=… queue_wait_ms=… retrieval_ms=… memory_ms=… executor_ms=… tool_ms=… continuation_ms=… narrator_ms=… other_ms=… fallback=…
   ```
 
-  各 `*_ms` 是 `turn.phases` 已經算好的「獨占時間」，每個階段都有歸類（`retrieval` 與 `memory` 各自合併同類階段），所以加總等於 `wall_ms`。`route` 來自 supervisor 的路由決定、`fallback` 來自 `turn_fallback.record`，兩者經由 `turn_phases.note` 附上（沒有時間軸時是空操作）。這一行只有時間與識別碼，沒有玩家 id 也沒有任何文字。它以 INFO 寫到文字通道，所以在預設的 `LOG_TEXT_ENABLED=true` 下就會出現，不需要新設定。寫入失敗會與其他時間軸回報一樣被吞掉，不會影響回合。
+  各 `*_ms` 是 `turn.phases` 已經算好的「獨占時間」，每個階段都有歸類（`retrieval` 與 `memory` 各自合併同類階段），所以加總等於 `wall_ms`。`route` 來自 supervisor 的路由決定（兩種在路由之前就返回的回合也會標記：被更正擋下的回合，以及直接從狀態回答持有中 Luck 決定的回合，後者另外帶 `short_circuit=pending_luck`）、`fallback` 來自 `turn_fallback.record`，兩者經由 `turn_phases.note` 附上（沒有時間軸時是空操作）。這一行只有時間與識別碼，沒有玩家 id 也沒有任何文字。它以 INFO 寫到文字通道，所以在預設的 `LOG_TEXT_ENABLED=true` 下就會出現，不需要新設定。寫入失敗會與其他時間軸回報一樣被吞掉，不會影響回合。
 - 通用的內部錯誤回覆結尾加上 `（代碼 xxxxxx）`，是該次請求 id 的最後六個字元（這次請求的每一行日誌都帶有該 id），KP 可以直接搜尋。日誌完全關閉時沒有 id，文字維持不變。
 
 ## 成本與玩家路徑
