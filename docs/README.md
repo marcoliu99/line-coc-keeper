@@ -39,6 +39,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Atomic narrative purchases and acquisition provenance](specs/bug/purchase_turn_provenance_design_spec.md) | implemented | [繁體中文](specs/bug/purchase_turn_provenance_design_spec_zh.md) |
 | [Turn fallback reasons and bounded recovery](specs/bug/turn_fallback_reasons_design_spec.md) | implemented | [繁體中文](specs/bug/turn_fallback_reasons_design_spec_zh.md) |
 | [Same-turn mechanical obligations of a scenario event](specs/bug/event_obligations_design_spec.md) | implemented | [繁體中文](specs/bug/event_obligations_design_spec_zh.md) |
+| [Adjacent scenario trigger retrieval](specs/bug/adjacent_scenario_trigger_design_spec.md) | implemented | [繁體中文](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) |
 
 ## enhancement
 

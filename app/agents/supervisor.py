@@ -77,6 +77,22 @@ def _no_mechanics() -> MechanicResult:
     return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
 
+# A retrieval that came back without usable evidence. "disabled" is not one of these: the full scenario (or the
+# combat state) is already in the prompt, so searching again would only bypass the setting that turned it off.
+_DEGRADED_RAG = frozenset({"empty", "fallback", "timeout", "error"})
+
+
+def _evidence_status(message: AgentMessage) -> str:
+    """The retrieval status as the Executor saw it: a successful recovery search counts as evidence."""
+    return "success" if message.payload.get("recovery_context") else message.payload.get("rag_status", "")
+
+
+def _evidence_text(message: AgentMessage) -> str:
+    """The scenario text the turn had, including what the one recovery search found."""
+    return "\n\n".join(part for part in (message.payload.get("rag_context", ""),
+                                          message.payload.get("recovery_context", "")) if part)
+
+
 async def _recover_blocked_turn(
     message: AgentMessage, result: MechanicResult, *, state: GroupState, user_id: str, text: str,
     speaker_role: SpeakerRole, before_pending: dict, before_luck: dict,
@@ -97,7 +113,7 @@ async def _recover_blocked_turn(
                                              before_luck=before_luck, state=state)
             or message.payload.get("private_messages") or message.payload.get("image_requests")):
         return result, reason, "not_attempted"
-    if rag_status != "success" or reason == "no_scenario_evidence":
+    if rag_status in _DEGRADED_RAG:
         query = turn_fallback.recovery_query(state, text, message.payload.get("resolved_location"))
         try:
             context, _status = await asyncio.to_thread(
@@ -112,7 +128,7 @@ async def _recover_blocked_turn(
         if context:
             message.payload["recovery_context"] = context
     retry = await executor.run_executor(message)
-    if turn_fallback.classify(retry, state, user_id, rag_status=rag_status) is None:
+    if turn_fallback.classify(retry, state, user_id, rag_status=_evidence_status(message)) is None:
         return retry, reason, "recovered"
     return retry, reason, "unresolved"
 
@@ -227,12 +243,12 @@ async def run_turn(
             before_pending=pending_checks_before, before_luck=pending_luck_before,
         )
         fallback_reason = turn_fallback.classify(
-            mechanic_result, state, user_id, rag_status=message.payload.get("rag_status", ""))
+            mechanic_result, state, user_id, rag_status=_evidence_status(message))
         mechanic_result.fallback_reason = fallback_reason
         if fallback_reason or recovery == "recovered":
             turn_fallback.record(
                 fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn_id,
-                rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                rag_context=_evidence_text(message), result=mechanic_result,
                 resolved_location=resolved_location, recovery_attempted=recovery != "not_attempted",
                 recovery_result=recovery, initial_reason=first_reason if first_reason != fallback_reason else None,
             )
@@ -266,8 +282,17 @@ async def run_turn(
     # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
     # and opening_fallback a restricted tool set, and #99 commits arrivals
     # inside that loop, so those turns keep the mutation lock to the end.
+    #
+    # Nor when the evidence states a mechanic the narration may make due: that gate changes state, so it needs the
+    # mutation phase.
+    obligation_evidence = [
+        _evidence_text(message), *(mechanic_result.scenario_evidence if mechanic_result else ())]
+    obligation_candidates = (
+        turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups)
+        and obligation_gate.possible(obligation_evidence, mechanic_result)
+    )
     if (handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
-            and turn_kind == "player_action"):
+            and turn_kind == "player_action" and not obligation_candidates):
         await handoff.to_narration()
         observability.event("turn.handoff", phase="narration")
 
@@ -279,7 +304,7 @@ async def run_turn(
     if pending_reply and not autoroll_followups:
         reply_text = pending_reply
         turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             rag_context=_evidence_text(message), result=mechanic_result,
                              resolved_location=resolved_location)
         private_messages: list[tuple[str, str]] = []
         image_requests: list[tuple[str | None, int]] = []
@@ -301,29 +326,11 @@ async def run_turn(
             reply_text, private_messages, image_requests = await narrator.run_narrator(message)
     if message.payload.get("narration_failed"):
         turn_fallback.record("narration_failure", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             rag_context=_evidence_text(message), result=mechanic_result,
                              resolved_location=resolved_location)
     if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
-
-    # What the scenario attaches to an event the narration has just shown is owed now, not when a player
-    # later says they are frightened (CS-007). The gate applies it through the ordinary tools.
-    if turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups):
-        owed = await obligation_gate.enforce(
-            state, user_id, reply_text,
-            [message.payload.get("rag_context", ""), message.payload.get("recovery_context", ""),
-             *(mechanic_result.scenario_evidence if mechanic_result else ())],
-            mechanic_result or _no_mechanics(),
-            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
-            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
-        )
-        if owed:
-            if mechanic_result is None:
-                mechanic_result = _no_mechanics()
-            turn_handoff.prepare_narrator_handoff(
-                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
-            reply_text = reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed)
 
     # Consistency precedes Guard; any Guard rewrite is checked again. The
     # deterministic delivery contract is the final writer and safety boundary.
@@ -346,6 +353,24 @@ async def run_turn(
     reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     reply_text = consistent(reply_text)
+
+    # What the scenario attaches to an event is owed now, not when a player later says they are frightened (CS-007).
+    # Decided on the narration that survived consistency repair and the Guard, so a trigger they removed charges nothing.
+    if obligation_candidates:
+        owed = await obligation_gate.enforce(
+            state, user_id, reply_text, obligation_evidence,
+            mechanic_result or _no_mechanics(),
+            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
+            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
+        )
+        if owed:
+            if mechanic_result is None:
+                mechanic_result = _no_mechanics()
+            turn_handoff.prepare_narrator_handoff(
+                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
+            public_result = turn_delivery.public_mechanic(mechanic_result, state)
+            reply_text = consistent(reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed))
+
     reply_text, private_controls = turn_delivery.finalize(message, reply_text)
     safety_blocked = reply_text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
         getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
@@ -353,7 +378,7 @@ async def run_turn(
             and not message.payload.get("narration_failed")))
     if safety_blocked:
         turn_fallback.record("safety_block", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             rag_context=_evidence_text(message), result=mechanic_result,
                              resolved_location=resolved_location)
     private_messages.extend(item for item in private_controls if item not in private_messages)
 

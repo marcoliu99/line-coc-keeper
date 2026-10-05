@@ -207,8 +207,50 @@ def heal_character(char: Character) -> list[str]:
     return notes
 
 
+@dataclass(frozen=True)
+class ReadinessInvestigator:
+    owner_id: str
+    name: str
+    occupation: str
+    stats: str
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OpeningReadiness:
+    investigators: tuple[ReadinessInvestigator, ...]
+    unclaimed_pregens: int
+
+
+def snapshot_readiness_roster(
+    state: GroupState, healed_notes: dict[str, list[str]],
+) -> OpeningReadiness:
+    """Materialize the roster before opening work without exposing mutable state."""
+    investigators = []
+    for owner_id, committed in state.characters.items():
+        char = resource_bridge.effective(state, committed)
+        weapon_parts = []
+        for weapon_name, ammo_info in char.weapons.items():
+            if ammo_info.get("ammo_max"):
+                weapon_parts.append(f"{weapon_name} ({ammo_info['ammo']}/{ammo_info['ammo_max']})")
+            else:
+                weapon_parts.append(weapon_name)
+        stats = f"HP {char.hp}/{char.hp_max}, SAN {char.san}/{char.san_max}"
+        if weapon_parts:
+            stats += "，彈藥：" + "、".join(weapon_parts)
+        if char.carried_items:
+            stats += "，物品：" + "、".join(char.carried_items)
+        investigators.append(ReadinessInvestigator(
+            owner_id, char.name, char.occupation, stats, tuple(healed_notes.get(owner_id, ())),
+        ))
+    unclaimed = sum(1 for p in state.pregens if not p.get("claimed_by"))
+    return OpeningReadiness(tuple(investigators), unclaimed)
+
+
 def build_readiness_roster(
-    state: GroupState, healed_notes: dict[str, list[str]], format_mention: FormatMention = lambda owner_id: owner_id
+    state: GroupState | OpeningReadiness,
+    healed_notes: dict[str, list[str]] | None = None,
+    format_mention: FormatMention = lambda owner_id: owner_id,
 ) -> str:
     """The "全團調查員集結就緒名冊" /coc start announces before the opening
     narration — see docs/specs/feature/character_and_dictionary_system_spec.md's Module 7's
@@ -219,25 +261,13 @@ def build_readiness_roster(
     heal_character found for them (empty list if nothing needed fixing).
     `format_mention` renders each owner_id for display (see FormatMention) —
     defaults to the bare id when no Discord mention formatter is supplied."""
+    roster = snapshot_readiness_roster(state, healed_notes or {}) if isinstance(state, GroupState) else state
     lines = ["📋 全團調查員集結就緒名冊", ""]
-    for owner_id, committed in state.characters.items():
-        char = resource_bridge.effective(state, committed)
-        weapon_parts = []
-        for weapon_name, ammo_info in char.weapons.items():
-            if ammo_info.get("ammo_max"):
-                weapon_parts.append(f"{weapon_name} ({ammo_info['ammo']}/{ammo_info['ammo_max']})")
-            else:
-                weapon_parts.append(weapon_name)  # untracked ammo — see app/pregen_extractor.py
-        stats = f"HP {char.hp}/{char.hp_max}, SAN {char.san}/{char.san_max}"
-        if weapon_parts:
-            stats += "，彈藥：" + "、".join(weapon_parts)
-        if char.carried_items:
-            stats += "，物品：" + "、".join(char.carried_items)
-        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{format_mention(owner_id)}）：{stats}")
-        for note in healed_notes.get(owner_id, []):
+    for char in roster.investigators:
+        lines.append(f"・【{char.name}】職業：{char.occupation}（玩家：{format_mention(char.owner_id)}）：{char.stats}")
+        for note in char.notes:
             lines.append(f"　　└ {note}")
-    unclaimed = sum(1 for p in state.pregens if not p.get("claimed_by"))
-    if unclaimed:
+    if roster.unclaimed_pregens:
         lines.append("")
-        lines.append(f"（尚有 {unclaimed} 位預製角色未被認領，本次以此陣容出戰）")
+        lines.append(f"（尚有 {roster.unclaimed_pregens} 位預製角色未被認領，本次以此陣容出戰）")
     return "\n".join(lines)

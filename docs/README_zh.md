@@ -41,6 +41,7 @@
 | [劇本整備最多匯出三個檔案](specs/enhancement/three_file_scenario_export_design_spec_zh.md) | 已實作 | [English](specs/enhancement/three_file_scenario_export_design_spec.md) |
 | [回合 fallback 原因與有界復原](specs/bug/turn_fallback_reasons_design_spec_zh.md) | 已實作 | [English](specs/bug/turn_fallback_reasons_design_spec.md) |
 | [劇本事件在同一回合的機械義務](specs/bug/event_obligations_design_spec_zh.md) | 已實作 | [English](specs/bug/event_obligations_design_spec.md) |
+| [相鄰劇本觸發的檢索](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) | 已實作 | [English](specs/bug/adjacent_scenario_trigger_design_spec.md) |
 
 ## 功能強化
 

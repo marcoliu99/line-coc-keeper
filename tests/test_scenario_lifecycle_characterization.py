@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -109,7 +110,9 @@ def test_first_submission_preserves_investigators_and_history_but_resets_new_sce
     assert state.characters["player"].name == "現有調查員"
     assert [card["name"] for card in state.pregens] == ["新候選"]
     assert group_state.load_page_image("first", 1) == (b"new-image" if source == "pdf" else None)
-    assert scenario_library.load_context(state.scenario_library_id)["manifest"]["source_format"] == source
+    manifest = scenario_library.load_context(state.scenario_library_id)["manifest"]
+    assert manifest["source_format"] == source
+    assert state.active_scenario_source_hash == manifest["content_hash"]
 
 
 @pytest.mark.parametrize("source", ["pdf", "markdown"])
@@ -123,6 +126,7 @@ def test_pending_submission_and_choice_preserve_distinct_transition_policies(
     assert accepted and pending.scenario_title == "舊劇本"
     assert pending.pending_pdf_upload is not None
     assert pending.pending_pdf_upload["scenario_id"]
+    assert pending.active_scenario_source_hash == ""
     assert pending.timeline_id == "before"
     assert group_state.load_page_image("choice", 1) == b"old-image"
 
@@ -135,6 +139,9 @@ def test_pending_submission_and_choice_preserve_distinct_transition_policies(
     state = group_state.load_state("choice")
     assert state.pending_pdf_upload is None
     assert state.scenario_title == ("新劇本" if source == "pdf" else "new")
+    assert state.active_scenario_source_hash == scenario_library.read_source(
+        state.scenario_library_id,
+    )[0]["content_hash"]
     assert state.active and state.characters["player"].name == "現有調查員"
     assert state.log[0]["content"] == "舊敘事"
     assert group_state.load_page_image("choice", 1) == (b"new-image" if source == "pdf" else None)
@@ -193,6 +200,9 @@ def test_scenario_use_keeps_its_own_reset_and_valid_location_policy(
     state = group_state.load_state("switch")
     assert replies[-1].startswith("KP 已選擇《新劇本》")
     assert state.timeline_id != "before" and state.active
+    assert state.active_scenario_source_hash == scenario_library.read_source(
+        scenario_id,
+    )[0]["content_hash"]
     assert state.pending_checks == state.pending_luck_decisions == {}
     assert state.deterministic_check_results == {} and state.resolved_check_events == []
     assert "old" in state.check_consequence_origins and "old" in state.check_consequence_receipts
@@ -205,6 +215,157 @@ def test_scenario_use_keeps_its_own_reset_and_valid_location_policy(
     assert state.current_room_id == {"player": "study"}
     assert state.party_facing == {"player": "E"}
     assert group_state.load_page_image("switch", 1) is None
+
+
+def test_same_id_repair_rebinds_active_source_without_changing_timeline(
+    storage: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def publish(text: str) -> str:
+        return scenario_library.save_markdown_scenario(
+            text.encode(), title="同一劇本", filename="scenario_same.md",
+            preview=text, text=text, indexes={"npcs": [], "locations": []},
+            pregens=[], scenario_id="same-source",
+        )
+
+    scenario_id = publish("--- 第 1 頁 ---\n版本一")
+    first = asyncio.run(scenario_lifecycle.submit_published_scenario(
+        "repair-source", scenario_id, source_format="markdown",
+    ))
+    active_v1 = group_state.load_state("repair-source")
+    hash_v1 = scenario_library.read_source(scenario_id)[0]["content_hash"]
+    assert first.outcome == "activated"
+    assert active_v1.scenario_library_id == scenario_id
+    assert active_v1.active_scenario_source_hash == hash_v1
+
+    publish("--- 第 1 頁 ---\n版本二")
+    hash_v2 = scenario_library.read_source(scenario_id)[0]["content_hash"]
+    assert hash_v1 != hash_v2
+    staged = asyncio.run(scenario_lifecycle.submit_published_scenario(
+        "repair-source", scenario_id, source_format="markdown",
+    ))
+    pending = group_state.load_state("repair-source")
+    assert staged.outcome == "pending"
+    assert pending.active_scenario_source_hash == hash_v1
+
+    stale = asyncio.run(scenario_lifecycle.activate_existing_scenario(
+        "repair-source", scenario_id, authorized=lambda _state: True,
+        expected_revision=pending.state_revision - 1,
+    ))
+    assert stale.outcome == "stale"
+    assert group_state.load_state("repair-source").active_scenario_source_hash == hash_v1
+
+    with monkeypatch.context() as failure:
+        failure.setattr(
+            manual_pregens, "install_pool",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("card install failed")),
+        )
+        with pytest.raises(OSError, match="card install failed"):
+            asyncio.run(scenario_lifecycle.resolve_pending_submission("repair-source", "fix"))
+    failed = group_state.load_state("repair-source")
+    assert failed.active_scenario_source_hash == hash_v1
+    assert failed.pending_pdf_upload is not None
+
+    repaired = asyncio.run(scenario_lifecycle.resolve_pending_submission("repair-source", "fix"))
+    active_v2 = group_state.load_state("repair-source")
+    assert repaired.outcome == "activated"
+    assert active_v2.scenario_library_id == scenario_id
+    assert active_v2.timeline_id == active_v1.timeline_id
+    assert active_v2.active_scenario_source_hash == hash_v2
+    assert active_v2.scenario_text != active_v1.scenario_text
+
+
+def test_reparse_keeps_active_hash_until_pending_choice_is_committed(
+    storage: None, extraction: None,
+) -> None:
+    old_text = "--- 第 1 頁 ---\n新劇本舊"
+    scenario_id = scenario_library.save_scenario(
+        b"%PDF-old", title="新劇本", filename="scenario.pdf", preview=old_text,
+        text=old_text, indexes={"npcs": [], "locations": []}, pregens=[],
+        page_maps={}, page_images={}, scenario_id="reparse-source",
+    )
+    first = asyncio.run(scenario_lifecycle.submit_published_scenario(
+        "reparse-binding", scenario_id, source_format="pdf",
+    ))
+    old_hash = group_state.load_state("reparse-binding").active_scenario_source_hash
+    assert first.outcome == "activated" and old_hash
+    staged = asyncio.run(scenario_lifecycle.stage_similar_pdf(
+        "reparse-binding", b"%PDF-new", "scenario.pdf", "新劇本",
+        [{"id": scenario_id, "title": "新劇本", "score": 1.0}],
+    ))
+    assert staged.outcome == "pending"
+
+    async def send(_text: str) -> None:
+        pass
+
+    parsed = asyncio.run(scenario_lifecycle.reparse_pending_scenario(
+        "reparse-binding", authorized=lambda _state: True,
+        submit_pdf=scenario_ingestion.handle_pdf_upload, reply=send, push=send,
+    ))
+    pending = group_state.load_state("reparse-binding")
+    assert parsed.outcome == "reparsed" and pending.pending_pdf_upload is not None
+    assert pending.scenario_library_id == scenario_id
+    assert pending.active_scenario_source_hash == old_hash
+
+    repaired = asyncio.run(scenario_lifecycle.resolve_pending_submission("reparse-binding", "fix"))
+    active = group_state.load_state("reparse-binding")
+    assert repaired.outcome == "activated"
+    assert active.scenario_library_id == scenario_id
+    assert active.active_scenario_source_hash != old_hash
+    assert active.active_scenario_source_hash == scenario_library.read_source(scenario_id)[0]["content_hash"]
+
+
+def test_new_upload_rebinds_active_hash_with_new_timeline(storage: None) -> None:
+    def publish(title: str, text: str) -> str:
+        return scenario_library.save_markdown_scenario(
+            text.encode(), title=title, filename="scenario_new.md", preview=text,
+            text=text, indexes={"npcs": [], "locations": []}, pregens=[],
+        )
+
+    first_id = publish("第一劇本", "--- 第 1 頁 ---\n第一劇本")
+    assert asyncio.run(scenario_lifecycle.submit_published_scenario(
+        "new-binding", first_id, source_format="markdown",
+    )).outcome == "activated"
+    old = group_state.load_state("new-binding")
+    second_id = publish("第二劇本", "--- 第 1 頁 ---\n第二劇本")
+    assert asyncio.run(scenario_lifecycle.submit_published_scenario(
+        "new-binding", second_id, source_format="markdown",
+    )).outcome == "pending"
+    assert group_state.load_state("new-binding").active_scenario_source_hash == old.active_scenario_source_hash
+
+    assert asyncio.run(scenario_lifecycle.resolve_pending_submission(
+        "new-binding", "new",
+    )).outcome == "activated"
+    new = group_state.load_state("new-binding")
+    assert new.scenario_library_id == second_id and new.timeline_id != old.timeline_id
+    assert new.active_scenario_source_hash != old.active_scenario_source_hash
+    assert new.active_scenario_source_hash == scenario_library.read_source(second_id)[0]["content_hash"]
+
+    assert asyncio.run(scenario_lifecycle.activate_existing_scenario(
+        "new-binding", first_id, authorized=lambda _state: True,
+    )).outcome == "activated"
+    reused = group_state.load_state("new-binding")
+    assert reused.scenario_library_id == first_id and reused.timeline_id != new.timeline_id
+    assert reused.active_scenario_source_hash == old.active_scenario_source_hash
+
+
+def test_legacy_library_without_source_hash_remains_unbound(storage: None) -> None:
+    text = "--- 第 1 頁 ---\n舊格式來源"
+    scenario_id = scenario_library.save_markdown_scenario(
+        text.encode(), title="舊格式", filename="scenario_legacy.md", preview=text,
+        text=text, indexes={"npcs": [], "locations": []}, pregens=[],
+    )
+    manifest_path = scenario_library.scenario_path(scenario_id) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("content_hash")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = asyncio.run(scenario_lifecycle.activate_existing_scenario(
+        "legacy-library", scenario_id, authorized=lambda _state: True,
+    ))
+    state = group_state.load_state("legacy-library")
+    assert result.outcome == "activated"
+    assert state.scenario_text == text
+    assert state.active_scenario_source_hash == ""
 
 
 def test_similar_pdf_stages_raw_source_without_activation(
