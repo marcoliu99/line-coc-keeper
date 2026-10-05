@@ -201,7 +201,7 @@ async def handle_pdf_upload(
     If a scenario is already running, the lifecycle stores a pending choice
     rather than guessing whether the source is new or a correction. An adapter
     posts the actual buttons — see
-    app/discord_bot.py's _post_pdf_upload_buttons, the same diff-and-post
+    app/discord_transport/controls.py's post_pdf_upload_buttons, the same diff-and-post
     pattern as pending_checks/pending_luck_decisions). Guessing wrong here is
     worse than one extra click: a wrongly-preserved position could point at a
     room that doesn't exist in the new scenario's map at all. A

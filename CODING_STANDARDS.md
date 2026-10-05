@@ -6,7 +6,7 @@ Each rule gives the target behaviour and the reason for it. When existing code b
 
 ## Layers
 
-**Discord events enter through the command router.** `discord_bot.py` translates Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
+**Discord events enter through the command router.** `discord_bot.py` and `app/discord_transport/` translate Discord events (messages, uploads, button callbacks) and passes them to `app/commands/router.py`, which dispatches to `app/commands/handlers/*`.
 _Why:_ the router is where KP/sudo permission checks and turn routing live. An entry point that calls a service such as `scenario_ingestion` directly skips them.
 
 **Handlers parse and reply; rule modules own game rules.** Combat, check registration and checkpoints live in `combat.py`, `app/keeper_tools/` and `checkpoints.py`. A handler calls those modules; it does not copy their guards.

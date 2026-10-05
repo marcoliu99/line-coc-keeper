@@ -19,11 +19,16 @@ Check, Luck, PDF-choice, Help and Help-execute buttons are `discord.ui.DynamicIt
 | `app/discord_bot.py` | the entry point: `on_ready`, the backup loop, typing, `on_message`, `_handle_message`, `main` |
 | `app/discord_transport/gateway.py` | the one `discord.Client` and its intents |
 | `app/discord_transport/delivery.py` | message chunking, direct messages, interaction replies, request metrics, `discord_operation` (the bounded Discord call) |
-| `app/discord_transport/interactions.py` | the conversation id of a channel, server facts for permissions, the timing wrapper for interaction callbacks |
+| `app/discord_transport/interactions.py` | the conversation id of a channel and the server facts for permissions (sends nothing, so every other module may import it) |
+| `app/discord_transport/lifecycle.py` | `observed_interaction`, the request-lifecycle wrapper around a button/interaction callback |
 | `app/discord_transport/controls.py` | the Check, Luck and PDF-choice buttons and the code that posts them |
 | `app/discord_transport/help_ui.py` | the Help pages, the Help/sudo/source-ready views, modals and selects |
 
 Names used across modules became public (`_make_reply` → `delivery.make_reply`); `_conversation_id` became `interactions.channel_conversation_id` because `conversation_id` is a local variable everywhere. Tests that patched `discord_bot.<name>` now patch the module the code lives in, and a test that patched `discord_bot.load_group_state` to steer a Help callback patches `help_ui.load_group_state`.
+
+## Layering
+
+`gateway` < `interactions` < `delivery` < `lifecycle` < `controls` < `help_ui`: a module imports only lower ones at module level. The one upward edge is real: `help_ui` dispatches commands through `delivery.make_reply`/`make_interaction_reply`, and those adapters attach `help_ui.SourceReadyView` when a reply is a source-ready message. `delivery` therefore imports `help_ui` inside those two functions, not at load. A first version of this split imported it at module level and made `import app.discord_transport.interactions` fail on its own, masked because the bot happens to import `controls` first; `tests/test_architecture_discord_transport.py` now checks the order and imports every module in a fresh interpreter.
 
 ## Verification
 

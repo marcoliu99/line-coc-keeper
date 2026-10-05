@@ -21,7 +21,7 @@ from app.commands.types import Reply, SendImage
 from app.config import (
     LOG_SLOW_OPERATION_MS,
 )
-from app.discord_transport import gateway, help_ui, interactions
+from app.discord_transport import gateway, interactions
 from app.repositories.group_state import load_state as load_group_state
 from app.scenario_source_authoring import SourceReadyMessage
 
@@ -263,6 +263,10 @@ def log_reply_text(text: str) -> None:
 
 
 def make_reply(channel: discord.abc.Messageable) -> Reply:
+    # help_ui sits above this module (it dispatches commands through these very adapters), so it is imported when a
+    # reply is built rather than when the module loads; see tests/test_architecture_discord_transport.py.
+    from app.discord_transport import help_ui
+
     async def send_recorded(chunk: str) -> None:
         state = None
         channel_id = getattr(channel, "id", None)
@@ -367,6 +371,10 @@ async def send_dm_image(owner_id: str, png_bytes: bytes, conversation_id: str, p
 
 
 def make_interaction_reply(interaction: discord.Interaction) -> Reply:
+    # help_ui sits above this module (it dispatches commands through these very adapters), so it is imported when a
+    # reply is built rather than when the module loads; see tests/test_architecture_discord_transport.py.
+    from app.discord_transport import help_ui
+
     # Used only after the initial interaction response has been consumed
     # (defer/edit_message), so the actual send has to go through followup.
     async def reply(text: str) -> None:

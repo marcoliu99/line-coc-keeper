@@ -333,7 +333,7 @@ def tier_upper_bound(skill_value: int, tier: str) -> int | None:
     least fail").
 
     Single source of truth for the thresholds skill_check() below resolves a
-    roll against — code review flagged that app/discord_bot.py's player-
+    roll against — code review flagged that app/discord_transport/controls.py's player-
     facing "you need <= X%" hint used to hardcode this same skill_value//5,
     skill_value//2, skill_value formula as its own separate copy, so a
     future tweak to these fractions could silently drift between what the

@@ -26,7 +26,7 @@ from app.commands import router as command_router
 from app.commands import sudo as sudo_policy
 from app.commands.handlers.buttons import ButtonIO
 from app.commands.types import PdfChoice
-from app.discord_transport import delivery, gateway, interactions
+from app.discord_transport import delivery, gateway, interactions, lifecycle
 from app.models import GroupState
 from app.repositories.group_state import load_state as load_group_state
 from app.services import pending_buttons, turn_delivery
@@ -196,7 +196,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
             match["option"], groups.get("check_id") or "",
         )
 
-    @interactions.observed_interaction
+    @lifecycle.observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         await command_router.handle_check_button(
             self.conversation_id, str(interaction.user.id), self.owner_id, self.option, self.check_id,
@@ -336,7 +336,7 @@ class LuckSpendButton(discord.ui.DynamicItem[discord.ui.Button], template=_LUCK_
             match["choice"], danger, groups.get("decision_id") or "",
         )
 
-    @interactions.observed_interaction
+    @lifecycle.observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         await command_router.handle_luck_button(
             self.conversation_id, str(interaction.user.id), self.owner_id, self.choice, self.decision_id,
@@ -487,7 +487,7 @@ class PdfUploadChoiceButton(discord.ui.DynamicItem[discord.ui.Button], template=
         # this narrows a plain str to PdfChoice rather than re-validating it.
         return cls(match["conversation_id"], cast(PdfChoice, match["choice"]), item.label or "")
 
-    @interactions.observed_interaction
+    @lifecycle.observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or interactions.channel_conversation_id(channel.id) != self.conversation_id:

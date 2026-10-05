@@ -18,7 +18,7 @@ from app import (
 from app.commands import permissions
 from app.commands import router as command_router
 from app.commands import sudo as sudo_policy
-from app.discord_transport import controls, delivery, interactions
+from app.discord_transport import controls, delivery, interactions, lifecycle
 from app.help_registry import HelpAction, HelpPage
 from app.repositories.group_state import StateRevisionConflict
 from app.repositories.group_state import load_state as load_group_state
@@ -71,7 +71,7 @@ class HelpButton(discord.ui.DynamicItem[discord.ui.Button], template=HELP_BUTTON
         kind = "home" if not path else "entry" if len(path) == 2 else "category"
         return cls(match["conversation_id"], HelpAction(item.label or "Help", path, kind))
 
-    @interactions.observed_interaction
+    @lifecycle.observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         channel = interaction.channel
         if channel is None or interactions.channel_conversation_id(channel.id) != self.conversation_id:
@@ -541,7 +541,7 @@ class HelpExecuteButton(discord.ui.DynamicItem[discord.ui.Button], template=_HEL
             raise ValueError("unknown Help action")
         return cls(match["conversation_id"], action)
 
-    @interactions.observed_interaction
+    @lifecycle.observed_interaction
     async def callback(self, interaction: discord.Interaction) -> None:
         if not await _help_interaction_is_valid(interaction, self.conversation_id):
             return

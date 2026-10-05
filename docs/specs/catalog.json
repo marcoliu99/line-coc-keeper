@@ -2027,9 +2027,11 @@
         "app/discord_transport/gateway.py",
         "app/discord_transport/delivery.py",
         "app/discord_transport/interactions.py",
+        "app/discord_transport/lifecycle.py",
         "app/discord_transport/controls.py",
         "app/discord_transport/help_ui.py",
         "tests/test_discord_custom_id_contract.py",
+        "tests/test_architecture_discord_transport.py",
         "tests/test_button_routing.py"
       ],
       "path": "docs/specs/refactor/discord_transport_split_design_spec.md",

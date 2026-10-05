@@ -27,7 +27,7 @@ from app.commands.handlers import (
     system,
 )
 from app.commands.handlers import checks as check_commands
-from app.discord_transport import controls, delivery, gateway, interactions
+from app.discord_transport import controls, delivery, gateway, lifecycle
 from app.domain.models import (
     AgentMessage,
     MechanicResult,
@@ -403,7 +403,7 @@ def test_observed_button_entry_reports_hold_without_running_callback(state, held
         async with locks.get_conversation_lock(state.group_id):
             raise AssertionError("held callback ran")
 
-    callback = interactions.observed_interaction(raw)
+    callback = lifecycle.observed_interaction(raw)
     interaction = SimpleNamespace(channel=SimpleNamespace(id=123))
     with patch.object(delivery, "send_interaction_message", AsyncMock()) as reply:
         asyncio.run(callback(object(), interaction))

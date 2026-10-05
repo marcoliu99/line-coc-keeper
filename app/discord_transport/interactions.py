@@ -1,75 +1,25 @@
-"""Who is speaking and how an interaction is observed: the conversation id of a channel, the server facts the router
-needs for permissions, and the timing wrapper around a button/interaction callback.
+"""Who is speaking: the conversation id of a channel and the server facts the router needs for permissions.
 
-Split out of app/discord_bot.py unchanged.
+Split out of app/discord_bot.py unchanged. Nothing here sends to Discord, so every other transport module may import it.
 """
 from __future__ import annotations
 
-import functools
 import logging
-import time
 from collections.abc import Sequence
 
 import discord
 
 from app import (
-    config,
     observability,
 )
 from app.commands import permissions
-from app.config import (
-    LOG_SLOW_REQUEST_MS,
-)
-from app.discord_transport import delivery
 from app.models import GroupState
-from app.services import mutation_admission
 
 _logger = logging.getLogger(__name__)
 
 
 def channel_conversation_id(channel_id: int) -> str:
     return f"discord-channel-{channel_id}"
-
-
-def observed_interaction(callback):
-    """Give persistent Discord buttons the same request lifecycle as messages."""
-    @functools.wraps(callback)
-    async def wrapped(self, interaction: discord.Interaction):
-        channel_id = getattr(interaction.channel, "id", None)
-        conversation_id = channel_conversation_id(channel_id) if channel_id is not None else None
-        with observability.request_context(
-            conversation_id=conversation_id,
-        ):
-            observability.event("turn.entry", entry="button")
-            observed = config.LOG_ENABLED
-            started = time.perf_counter() if observed else 0.0
-            if observed:
-                observability.event("request.started", platform="discord", message_kind="button")
-            try:
-                await callback(self, interaction)
-            except mutation_admission.MutationHeld:
-                await delivery.send_interaction_message(interaction, mutation_admission.NOTICE, ephemeral=True)
-            except Exception as exc:
-                if observed:
-                    observability.event(
-                        "request.failed", level=logging.ERROR,
-                        duration_ms=(time.perf_counter() - started) * 1000,
-                        error_type=type(exc).__name__, status="error",
-                        **delivery.request_metrics(),
-                    )
-                raise
-            else:
-                if observed:
-                    duration_ms = (time.perf_counter() - started) * 1000
-                    observability.event(
-                        "request.completed",
-                        level=logging.WARNING if duration_ms >= LOG_SLOW_REQUEST_MS else logging.INFO,
-                        duration_ms=duration_ms,
-                        slow_threshold_ms=LOG_SLOW_REQUEST_MS,
-                        status="success",
-                        **delivery.request_metrics(),
-                    )
-    return wrapped
 
 
 def can_manage_server(member: discord.abc.User) -> bool:
