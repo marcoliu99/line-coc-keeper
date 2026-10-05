@@ -33,6 +33,7 @@ from app.domain.models import (
     SpeakerRole,
 )
 from app.models import GroupState
+from app.providers import turn_budget
 from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
 from app.services import (
@@ -96,6 +97,15 @@ def _evidence_text(message: AgentMessage) -> str:
                                           message.payload.get("recovery_context", "")) if part)
 
 
+def _time_for_retry() -> bool:
+    """Whether the turn deadline leaves room for another Executor request (no deadline: always)."""
+    try:
+        left = turn_budget.remaining()
+    except TimeoutError:  # TurnDeadlineExceeded
+        return False
+    return left is None or left >= config.TURN_RETRY_MIN_REMAINING_SECONDS
+
+
 async def _recover_blocked_turn(
     message: AgentMessage, result: MechanicResult, *, state: GroupState, user_id: str, text: str,
     speaker_role: SpeakerRole, before_pending: dict, before_luck: dict,
@@ -112,6 +122,7 @@ async def _recover_blocked_turn(
     if reason is None:
         return result, None, "not_attempted"
     if (not config.TURN_FALLBACK_RECOVERY_ENABLED
+            or (reason == "internal_error" and not _time_for_retry())
             or not turn_fallback.recoverable(reason, result, before_pending=before_pending,
                                              before_luck=before_luck, state=state)
             or message.payload.get("private_messages") or message.payload.get("image_requests")):

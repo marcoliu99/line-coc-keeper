@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -89,3 +90,41 @@ class AppServerTests(unittest.IsolatedAsyncioTestCase):
         ]
         with self.assertRaisesRegex(CodexError, 'turn_failed'):
             await transport.request('test', {})
+
+
+class StopProcessTests(unittest.IsolatedAsyncioTestCase):
+    """Cleanup after a timeout must not replace the timeout with its own error (a real run saw EPERM)."""
+
+    def process(self):
+        proc = AsyncMock()
+        proc.pid = 4242
+        proc.send_signal = unittest.mock.MagicMock()
+        proc.wait = AsyncMock(return_value=0)
+        return proc
+
+    async def test_permission_denied_on_the_group_falls_back_to_the_child(self):
+        from app.providers import codex_transport
+        proc = self.process()
+        with patch.object(codex_transport.os, 'killpg', side_effect=PermissionError(1, 'Operation not permitted')):
+            await codex_transport.stop_process(proc)
+        self.assertEqual(proc.send_signal.call_count, 2)
+        proc.wait.assert_awaited()
+
+    async def test_a_vanished_group_and_child_are_both_ignored(self):
+        from app.providers import codex_transport
+        proc = self.process()
+        proc.send_signal.side_effect = ProcessLookupError
+        with patch.object(codex_transport.os, 'killpg', side_effect=ProcessLookupError):
+            await codex_transport.stop_process(proc)
+        proc.wait.assert_awaited()
+
+    async def test_the_original_timeout_is_not_masked_by_cleanup(self):
+        from app.providers import codex_transport
+        process = codex_transport.Process()
+        process.proc = self.process()
+        with patch.object(codex_transport.os, 'killpg', side_effect=PermissionError(1, 'Operation not permitted')), \
+                self.assertRaises(TimeoutError):
+            try:
+                raise TimeoutError
+            finally:
+                await process.close()

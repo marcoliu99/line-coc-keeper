@@ -81,16 +81,28 @@ def config_args(overrides: dict[str, Any]) -> list[str]:
     return result
 
 
+def _signal_group(proc: asyncio.subprocess.Process, sig: signal.Signals) -> None:
+    """Signal the child's process group; cleanup must never replace the error that triggered it.
+
+    A real run saw `PermissionError` (EPERM) from killpg while cleaning up after a 120 s timeout,
+    which surfaced to the player as an internal error instead of the timeout.
+    """
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        # The group is gone, or not ours to signal: fall back to the child itself.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            proc.send_signal(sig)
+
+
 async def stop_process(proc: asyncio.subprocess.Process) -> None:
     # Also kill descendants after a parent exits; pipes may still be held open.
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGTERM)
+    _signal_group(proc, signal.SIGTERM)
     try:
         await asyncio.wait_for(proc.wait(), 0.5)
     except TimeoutError:
         pass
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGKILL)
+    _signal_group(proc, signal.SIGKILL)
     await proc.wait()
 
 
