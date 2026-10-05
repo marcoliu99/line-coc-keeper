@@ -219,6 +219,30 @@ async def test_a_turn_that_changed_the_game_is_never_run_again(touched) -> None:
     assert run_executor.await_count == 1 and searched.call_count == 0
 
 
+def _outcome(tool: str, number: int = 1) -> ObservedOutcome:
+    return ObservedOutcome(f"tool:{number}", tool, True, "", "internal")
+
+
+@aio
+async def test_a_turn_that_only_looked_things_up_is_run_again(events) -> None:
+    """``search_scenario`` leaves an observed outcome of its own; that must not make the turn unrecoverable."""
+    lookups = _result("incomplete", "model_incomplete", observed_outcomes=[_outcome("search_scenario"), _outcome("search_scenario", 2)],
+                      tool_calls=(("search_scenario", True), ("search_scenario", True)))
+    _, run_executor, _, _ = await _turn(_state(), [lookups, _resolved()])
+    assert run_executor.await_count == 2
+    [row] = fallbacks(events)
+    assert (row["fallback_reason"], row["recovery_attempted"], row["recovery_result"]) == ("executor_no_action", True, "recovered")
+
+
+@pytest.mark.parametrize("tool", ["record_clue", "add_carried_item", "remove_carried_item", "skill_check", "adjust_character"])
+@aio
+async def test_a_turn_whose_tool_changed_anything_is_never_run_again(tool) -> None:
+    result = _result("incomplete", "model_incomplete", observed_outcomes=[_outcome("search_scenario"), _outcome(tool, 2)],
+                     tool_calls=(("search_scenario", True), (tool, True)))
+    _, run_executor, searched, _ = await _turn(_state(), [result])
+    assert run_executor.await_count == 1 and searched.call_count == 0
+
+
 @aio
 async def test_a_tool_failure_is_not_retried_and_is_named() -> None:
     result = _result("incomplete", "model_incomplete", tool_calls=(("skill_check", False),))

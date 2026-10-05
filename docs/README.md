@@ -42,6 +42,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Turn fallback reasons and bounded recovery](specs/bug/turn_fallback_reasons_design_spec.md) | implemented | [繁體中文](specs/bug/turn_fallback_reasons_design_spec_zh.md) |
 | [Same-turn mechanical obligations of a scenario event](specs/bug/event_obligations_design_spec.md) | implemented | [繁體中文](specs/bug/event_obligations_design_spec_zh.md) |
 | [Adjacent scenario trigger retrieval](specs/bug/adjacent_scenario_trigger_design_spec.md) | implemented | [繁體中文](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) |
+| [A fallback turn that only looked things up gets its one retry](specs/bug/fallback_recovery_after_lookup_design_spec.md) | implemented | [繁體中文](specs/bug/fallback_recovery_after_lookup_design_spec_zh.md) |
 | [A failed Executor request is retried once when it ran nothing, and cleanup never hides the failure](specs/bug/executor_request_failure_retry_design_spec.md) | implemented | [繁體中文](specs/bug/executor_request_failure_retry_design_spec_zh.md) |
 
 ## enhancement
@@ -80,6 +81,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Keeping the scenario search from being starved, and counting Chinese text honestly without a tokenizer](specs/enhancement/retrieval_budget_headroom_design_spec.md) | implemented | [繁體中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) |
 | [What a player reads when a turn cannot finish, how long a queue is acknowledged, and what a character is called](specs/enhancement/player_facing_wording_design_spec.md) | implemented | [繁體中文](specs/enhancement/player_facing_wording_design_spec_zh.md) |
 | [An empty internal id label must not reach a player, and removing one must not eat the sentence](specs/enhancement/internal_id_display_design_spec.md) | implemented | [繁體中文](specs/enhancement/internal_id_display_design_spec_zh.md) |
+| [The turn summary and its report count failed model requests](specs/enhancement/turn_summary_failures_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_failures_design_spec_zh.md) |
 
 ## feature
 

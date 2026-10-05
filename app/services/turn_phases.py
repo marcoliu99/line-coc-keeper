@@ -139,6 +139,11 @@ def timeline(
     token = _current.set(line)
     try:
         yield line
+    except Exception as exc:
+        # A turn that raised never reached ``turn_fallback.record``, so its summary line would show nothing wrong.
+        line.notes.setdefault("fallback", "internal_error")
+        line.notes.setdefault("error", type(exc).__name__)
+        raise
     finally:
         _current.reset(token)
         try:
@@ -191,7 +196,7 @@ def _log_summary(line: Timeline, summary: dict[str, Any]) -> None:
         "executor_ms": exclusive.get("executor_llm", 0), "tool_ms": exclusive.get("tool_execution", 0),
         "continuation_ms": exclusive.get("continuation_processing", 0),
         "narrator_ms": exclusive.get("narrator_llm", 0), "other_ms": exclusive.get("other", 0),
-        "fallback": line.notes.get("fallback", ""),
+        "fallback": line.notes.get("fallback", ""), "error": line.notes.get("error", ""),
     }
     _summary_logger.info("turn.summary " + " ".join(f"{key}={value}" for key, value in fields.items() if value != ""))
 
