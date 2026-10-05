@@ -71,6 +71,32 @@ def test_an_internal_id_never_reaches_the_player(text: str) -> None:
     assert "（）" not in shown and "()" not in shown
 
 
+@pytest.mark.parametrize(("raw", "shown"), [
+    ("檢定已建立（check_id=），請擲骰。", "檢定已建立，請擲骰。"),
+    ("check_id: 請擲骰", "請擲骰"),
+    ("check_id=請擲骰", "請擲骰"),
+    ("請擲骰（check_id=）", "請擲骰"),
+    ("event_id=\nSee below", "\nSee below"),
+])
+def test_an_empty_label_is_removed_and_the_sentence_after_it_is_kept(raw: str, shown: str) -> None:
+    assert presentation.player_text(raw) == shown
+
+
+def test_a_bracketed_empty_label_leaves_no_label_behind() -> None:
+    shown = presentation.player_text("檢定已建立 (check_id: ) 請擲骰。")
+    assert "check_id" not in shown and "()" not in shown and "請擲骰。" in shown
+
+
+def test_an_id_stops_at_the_first_non_ascii_character() -> None:
+    assert presentation.player_text(f"check_id={CHECK_ID}請擲骰") == "請擲骰"
+    assert presentation.player_text("timeline_id=timeline-ab12cd34繼續探索") == "繼續探索"
+
+
+def test_the_empty_label_is_still_shown_when_debugging(monkeypatch) -> None:
+    monkeypatch.setattr(config, "DEBUG_SHOW_INTERNAL_IDS", True)
+    assert presentation.player_text("check_id=") == "check_id="
+
+
 def test_the_surrounding_sentence_survives_the_removal() -> None:
     assert presentation.player_text(f"檢定已建立（check_id={CHECK_ID}），請擲骰。") == "檢定已建立，請擲骰。"
 

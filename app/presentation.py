@@ -20,8 +20,12 @@ _ASCII_WORD = "A-Za-z0-9"
 _TIER_ENUM = "fumble|fail|regular|hard|extreme|critical"
 _OUTCOME = re.compile(rf"(?<![A-Za-z])({_TIER_ENUM})(?![A-Za-z])\s*(成功|失敗)")
 _LABELLED = re.compile(rf"(?P<label>(?:原始|所需|最終|實際)?(?:難度|等級)\s*[:：=]?\s*[「『\"]?)(?P<value>{_TIER_ENUM})(?![A-Za-z])")
-# Internal ids: opaque handles for the engine, never something a player acts on.
-_ID_LABELLED = re.compile(r"[（(\[【]?\s*(?:check_id|decision_id|event_id|timeline_id|source_check_id)\s*[=:：]\s*[\w.:-]+\s*[）)\]】]?")
+# Internal ids: opaque handles for the engine, never something a player acts on. A label is removed with whatever value
+# follows it, including none ("check_id=" with nothing after it was shown to players). Ids are ASCII, so the value stops
+# at the first non-ASCII character instead of eating the sentence that follows ("check_id: 請擲骰"), and an empty label does
+# not reach across a line break to take the next line's first word.
+_ID_LABELLED = re.compile(
+    r"[（(\[【]?\s*(?:check_id|decision_id|event_id|timeline_id|source_check_id)\s*[=:：][ \t]*[A-Za-z0-9_.:-]*[ \t]*[）)\]】]?")
 _ID_BARE = re.compile(r"(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?![\w-])")
 
 

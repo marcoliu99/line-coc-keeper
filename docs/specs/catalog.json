@@ -2159,6 +2159,19 @@
       "path": "docs/specs/enhancement/player_facing_wording_design_spec.md",
       "zh_path": "docs/specs/enhancement/player_facing_wording_design_spec_zh.md",
       "source_revision": "f03a110ed9ee1bbb637c30c67938bf08d9543aee"
+    },
+    {
+      "title": "An empty internal id label must not reach a player, and removing one must not eat the sentence",
+      "zh": "空的內部 id 標籤不能露給玩家，移除標籤時也不能吃掉後面的句子",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/presentation.py",
+        "tests/test_presentation.py"
+      ],
+      "path": "docs/specs/enhancement/internal_id_display_design_spec.md",
+      "zh_path": "docs/specs/enhancement/internal_id_display_design_spec_zh.md",
+      "source_revision": "7782690ba47ac651576814983512f868fa152def"
     }
   ]
 }
