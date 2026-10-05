@@ -76,6 +76,22 @@ def _no_mechanics() -> MechanicResult:
     return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
 
+# A retrieval that came back without usable evidence. "disabled" is not one of these: the full scenario (or the
+# combat state) is already in the prompt, so searching again would only bypass the setting that turned it off.
+_DEGRADED_RAG = frozenset({"empty", "fallback", "timeout", "error"})
+
+
+def _evidence_status(message: AgentMessage) -> str:
+    """The retrieval status as the Executor saw it: a successful recovery search counts as evidence."""
+    return "success" if message.payload.get("recovery_context") else message.payload.get("rag_status", "")
+
+
+def _evidence_text(message: AgentMessage) -> str:
+    """The scenario text the turn had, including what the one recovery search found."""
+    return "\n\n".join(part for part in (message.payload.get("rag_context", ""),
+                                          message.payload.get("recovery_context", "")) if part)
+
+
 async def _recover_blocked_turn(
     message: AgentMessage, result: MechanicResult, *, state: GroupState, user_id: str, text: str,
     speaker_role: SpeakerRole, before_pending: dict, before_luck: dict,
@@ -96,7 +112,7 @@ async def _recover_blocked_turn(
                                              before_luck=before_luck, state=state)
             or message.payload.get("private_messages") or message.payload.get("image_requests")):
         return result, reason, "not_attempted"
-    if rag_status != "success" or reason == "no_scenario_evidence":
+    if rag_status in _DEGRADED_RAG:
         query = turn_fallback.recovery_query(state, text, message.payload.get("resolved_location"))
         try:
             context, _status = await asyncio.to_thread(
@@ -111,7 +127,7 @@ async def _recover_blocked_turn(
         if context:
             message.payload["recovery_context"] = context
     retry = await executor.run_executor(message)
-    if turn_fallback.classify(retry, state, user_id, rag_status=rag_status) is None:
+    if turn_fallback.classify(retry, state, user_id, rag_status=_evidence_status(message)) is None:
         return retry, reason, "recovered"
     return retry, reason, "unresolved"
 
@@ -216,12 +232,12 @@ async def run_turn(
             before_pending=pending_checks_before, before_luck=pending_luck_before,
         )
         fallback_reason = turn_fallback.classify(
-            mechanic_result, state, user_id, rag_status=message.payload.get("rag_status", ""))
+            mechanic_result, state, user_id, rag_status=_evidence_status(message))
         mechanic_result.fallback_reason = fallback_reason
         if fallback_reason or recovery == "recovered":
             turn_fallback.record(
                 fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn_id,
-                rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                rag_context=_evidence_text(message), result=mechanic_result,
                 resolved_location=resolved_location, recovery_attempted=recovery != "not_attempted",
                 recovery_result=recovery, initial_reason=first_reason if first_reason != fallback_reason else None,
             )
@@ -268,7 +284,7 @@ async def run_turn(
     if pending_reply and not autoroll_followups:
         reply_text = pending_reply
         turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             rag_context=_evidence_text(message), result=mechanic_result,
                              resolved_location=resolved_location)
         private_messages: list[tuple[str, str]] = []
         image_requests: list[tuple[str | None, int]] = []
@@ -290,7 +306,7 @@ async def run_turn(
             reply_text, private_messages, image_requests = await narrator.run_narrator(message)
     if message.payload.get("narration_failed"):
         turn_fallback.record("narration_failure", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             rag_context=_evidence_text(message), result=mechanic_result,
                              resolved_location=resolved_location)
     if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
@@ -342,7 +358,7 @@ async def run_turn(
             and not message.payload.get("narration_failed")))
     if safety_blocked:
         turn_fallback.record("safety_block", state=state, user_id=user_id, turn_id=turn_id,
-                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             rag_context=_evidence_text(message), result=mechanic_result,
                              resolved_location=resolved_location)
     private_messages.extend(item for item in private_controls if item not in private_messages)
 
