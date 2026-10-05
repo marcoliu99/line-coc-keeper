@@ -43,7 +43,9 @@ def _env_str_map(name: str) -> dict[str, str]:
     if isinstance(parsed, dict) and all(
         isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip() for k, v in parsed.items()
     ):
-        return dict(parsed)
+        # Command arguments are split on whitespace and rejoined with single spaces, so a value is kept in that form: the
+        # alias a player copies out of a message then equals the alias that was configured.
+        return {key: " ".join(value.split()) for key, value in parsed.items()}
     INVALID_LOG_SETTINGS.append((name, "JSON object of text to text", "{}"))
     return {}
 

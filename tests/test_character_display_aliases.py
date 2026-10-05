@@ -266,6 +266,11 @@ class AliasSettingTests(unittest.TestCase):
     def test_a_json_object_of_text_is_read(self):
         self.assertEqual(self.read('{"The Tough Guy": "硬漢"}'), ({"The Tough Guy": "硬漢"}, []))
 
+    def test_an_alias_is_kept_the_way_a_command_will_read_it_back(self):
+        """Commands split on whitespace and rejoin with single spaces, so a copied alias must equal the configured one."""
+        value, reported = self.read('{"The Tough Guy": " 硬 \\t 漢\\n"}')
+        self.assertEqual((value, reported), ({"The Tough Guy": "硬 漢"}, []))
+
     def test_anything_else_is_ignored_and_reported(self):
         for bad in ("not json", "[1, 2]", '{"a": 1}', '{"": "x"}', '"text"',
                     '{" ": "X"}', '{"The Tough Guy": ""}', '{"The Tough Guy": "  "}', '{"Ann": "Bob", "\\t": "x"}'):
