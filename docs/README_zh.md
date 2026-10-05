@@ -115,6 +115,7 @@
 | 規格 | 狀態 | 語言 |
 | --- | --- | --- |
 | [雙語規格對齊與分類](specs/maintenance/documentation_alignment_design_spec_zh.md) | 已實作 | [English](specs/maintenance/documentation_alignment_design_spec.md) |
+| [Camp Sunny 長跑從未涵蓋的戰鬥與機制](specs/maintenance/combat_mechanics_coverage_design_spec_zh.md) | 已實作 | [English](specs/maintenance/combat_mechanics_coverage_design_spec.md) |
 
 ## References / 參考
 

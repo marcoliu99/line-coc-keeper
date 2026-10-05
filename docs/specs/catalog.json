@@ -1961,6 +1961,21 @@
       "path": "docs/specs/bug/player_facing_presentation_design_spec.md",
       "zh_path": "docs/specs/bug/player_facing_presentation_design_spec_zh.md",
       "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
+      "title": "Combat and mechanics coverage the Camp Sunny soak never exercised",
+      "zh": "Camp Sunny 長跑從未涵蓋的戰鬥與機制",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "tests/test_combat_mechanics_coverage.py",
+        "tests/test_combat_state_machine_integration.py",
+        "tests/test_combat_flow.py",
+        "tests/test_resolved_check_consequences.py"
+      ],
+      "path": "docs/specs/maintenance/combat_mechanics_coverage_design_spec.md",
+      "zh_path": "docs/specs/maintenance/combat_mechanics_coverage_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
     }
   ]
 }
