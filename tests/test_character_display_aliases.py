@@ -56,6 +56,17 @@ class CharacterAliasTests(unittest.TestCase):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
             self.assertEqual(presentation.character_aliases("The Tough Guy沿門邊走進房內"), "硬漢沿門邊走進房內")
 
+    def test_a_command_the_player_is_told_to_type_is_left_alone(self):
+        """A character called "coc" or "check" must not turn "/coc check" into something the router rejects."""
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"coc": "庫克", "check": "偵探"}):
+            self.assertEqual(presentation.character_aliases("請輸入 /coc check 後再試"), "請輸入 /coc check 後再試")
+            self.assertEqual(presentation.character_aliases("coc 與 check 都來了"), "庫克 與 偵探 都來了")
+            self.assertEqual(presentation.character_aliases("/COC  check"), "/COC  check")
+
+    def test_the_name_argument_of_a_command_is_still_mapped(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
+            self.assertEqual(presentation.character_aliases("/coc switch The Tough Guy"), "/coc switch 硬漢")
+
     def test_an_alias_is_inserted_literally(self):
         with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"Ann": r"安\1\g<0>"}):
             self.assertEqual(presentation.character_aliases("Ann 到了"), r"安\1\g<0> 到了")
