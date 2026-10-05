@@ -1,6 +1,6 @@
 """Owe the mechanic a scenario attaches to an event in the turn the event is narrated.
 
-The Narrator can show what the scenario evidence describes (a severed hand in a bucket) whether or not the
+The Narrator can show what the scenario evidence describes (an object a rule says costs SAN to see) whether or not the
 Executor called the tool the scenario's rule requires. Before the narration is committed, this gate reads the
 explicit obligations in the evidence the turn was given (``services/event_obligations``), and for each one
 whose trigger the narration shows and that has not been applied to this investigator, applies it through the
