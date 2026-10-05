@@ -17,8 +17,8 @@ def test_unavailable_tokenizer_is_conservative_and_diagnostic(monkeypatch):
     monkeypatch.setitem(sys.modules, 'tiktoken', None)
     try:
         with patch.object(input_budget.observability, 'event') as event:
-            assert input_budget.estimate('中文', 'test') == 6
-            assert input_budget.tokenizer_method('test') == 'utf8_bytes_fallback'
+            assert input_budget.estimate('中文', 'test') == 3
+            assert input_budget.tokenizer_method('test') == 'fallback_estimate'
         assert event.call_count == 1
         assert event.call_args.args == ('llm.tokenizer.unavailable',)
         assert event.call_args.kwargs['error_type'] == 'ModuleNotFoundError'
@@ -58,7 +58,7 @@ def test_transient_tokenizer_failure_is_retried_instead_of_latched(monkeypatch):
     monkeypatch.setattr(input_budget, '_load_encoding', loader)
     try:
         with patch.object(input_budget.observability, 'event') as event:
-            assert input_budget.estimate('中文', 'gpt-test') == 6
+            assert input_budget.estimate('中文', 'gpt-test') == 3
             assert event.call_count == 1
             assert event.call_args.args == ('llm.tokenizer.unavailable',)
             assert event.call_args.kwargs['failed_attempts'] == 1
@@ -66,7 +66,7 @@ def test_transient_tokenizer_failure_is_retried_instead_of_latched(monkeypatch):
 
             # Inside the retry window the fallback is reused without reloading.
             clock.now += input_budget.ENCODING_RETRY_SECONDS - 1
-            assert input_budget.tokenizer_method('gpt-test') == 'utf8_bytes_fallback'
+            assert input_budget.tokenizer_method('gpt-test') == 'fallback_estimate'
             assert attempts == ['gpt-test']
             assert event.call_count == 1
 
@@ -102,22 +102,24 @@ def test_resolved_tokenizer_is_cached_without_reloading(monkeypatch):
         input_budget.reset_encoding_cache()
 
 
-def test_named_model_byte_fallback_reports_zero_budget_honestly(monkeypatch):
+def test_named_model_fallback_estimate_still_reports_an_overfull_context_honestly(monkeypatch):
+    """A context that fills the ceiling leaves no natural budget; with no floor configured the budget is zero."""
     monkeypatch.setattr(input_budget, '_encoding', lambda _: None)
     monkeypatch.setattr(scenario_retrieval.config, 'SCENARIO_CONTEXT_TOKEN_CEILING', 32000)
+    monkeypatch.setattr(scenario_retrieval.config, 'SCENARIO_RETRIEVAL_MIN_TOKENS', 0)
     token = scenario_retrieval.MODEL.set('named-model-without-encoder')
     budget = scenario_retrieval.BUDGET.set(0)
     try:
         with patch.object(scenario_retrieval.observability, 'event') as event:
             assert scenario_retrieval.remaining_budget('中' * 22000, 'named-model-without-encoder') == 0
-        assert event.call_args.kwargs['context_tokens_estimate'] == 66000
-        assert event.call_args.kwargs['token_estimate_method'] == 'utf8_bytes_fallback'
+        assert event.call_args.kwargs['context_tokens_estimate'] == 33000
+        assert event.call_args.kwargs['token_estimate_method'] == 'fallback_estimate'
         row = scenario_retrieval.project({'intro': {
             'page': 1, 'name': 'Intro', 'visibility': 'kp_only', 'type': 'scene',
             'kp_text': '房東提供鑰匙。', 'public_text': '', 'related_record_ids': [],
         }}, ['intro'], '鑰匙')[0]
         assert not row['complete_for_action']
-        assert row['token_estimate_method'] == 'utf8_bytes_fallback'
+        assert row['token_estimate_method'] == 'fallback_estimate'
         assert row['missing_required_ids'] == ['intro#kp_only']
     finally:
         scenario_retrieval.BUDGET.reset(budget)
@@ -237,14 +239,33 @@ def test_ranked_candidate_metadata_fits_final_budget(monkeypatch, capacity, mode
         assert row['completeness_scope'] == 'selected_records_and_required_dependencies'
         actual_cost = scenario_retrieval._cost(json.dumps(row, ensure_ascii=False))
         assert actual_cost <= row['projection_tokens_estimate'] <= capacity
-        if model != 'named-tokenizer' and capacity == 1500:
-            assert len(row['deferred_candidates']) < 8
     finally:
         scenario_retrieval.BUDGET.reset(budget)
         scenario_retrieval.MODEL.reset(model_token)
 
 
-@pytest.mark.parametrize('capacity', [0, 100, 1000])
+@pytest.mark.parametrize('model', ['unknown', 'named-fallback'])
+def test_ranked_candidate_metadata_shrinks_to_a_tight_budget(monkeypatch, model):
+    """Below what all eight candidates need, fewer are listed and the projection still fits the budget."""
+    monkeypatch.setattr(input_budget, '_encoding', lambda _: None)
+    records = {str(i): {
+        'page': i + 1, 'name': '房屋地下室與閣樓中的詳細線索資訊' * 3 if i else 'intro',
+        'visibility': 'kp_only', 'type': 'source_unit',
+        'kp_text': 'key' if i == 0 else 'hidden' * 3000,
+        'public_text': '', 'related_record_ids': [],
+    } for i in range(9)}
+    budget = scenario_retrieval.BUDGET.set(1000)
+    model_token = scenario_retrieval.MODEL.set(model)
+    try:
+        row = scenario_retrieval.project_ranked(records, list(records), 'keys')[0]
+        assert len(row['deferred_candidates']) < 8
+        assert row['projection_tokens_estimate'] <= 1000
+    finally:
+        scenario_retrieval.BUDGET.reset(budget)
+        scenario_retrieval.MODEL.reset(model_token)
+
+
+@pytest.mark.parametrize('capacity', [0, 100, 300])
 def test_ranked_control_envelope_overflow_is_explicit(capacity):
     records = {'intro': {
         'page': 1, 'name': 'Intro', 'visibility': 'kp_only', 'type': 'scene',

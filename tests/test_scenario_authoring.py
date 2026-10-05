@@ -16,6 +16,13 @@ from app import scenario_library, scenario_rag, scenario_retrieval, tool_dispatc
 from app import scenario_templates as templates
 
 
+@pytest.fixture(autouse=True)
+def exact_budgets(monkeypatch):
+    """These tests pin exact budget arithmetic and cursor behaviour at tiny budgets; the floor is tested on its own
+    (tests/test_retrieval_budget_floor.py), so it is off here."""
+    monkeypatch.setattr(scenario_retrieval.config, 'SCENARIO_RETRIEVAL_MIN_TOKENS', 0)
+
+
 @pytest.fixture
 def library(tmp_path, monkeypatch):
     monkeypatch.setattr(templates, 'IMPORT_DIR', tmp_path / 'imports')
@@ -207,7 +214,7 @@ def test_cycles_cross_chapter_privacy_and_unknown_conditions():
 
 
 def test_continuation_is_query_authorization_and_version_bound():
-    records = {str(i): v4_record(str(i), rules=[], kp_text='完整規則。'*150) for i in range(4)}
+    records = {str(i): v4_record(str(i), rules=[], kp_text='完整規則。'*300) for i in range(4)}
     row = scenario_retrieval.project(records, list(records), '攻擊')[0]
     assert not row['complete_for_action'] and row['missing_required_ids']
     binding = ['group', 'timeline', 'role', 'variant', 'chapters', 'hash', 'query']
@@ -417,7 +424,7 @@ def test_long_history_budget_matches_provider_selection(monkeypatch):
 def test_continuation_accumulates_evidence_and_releases_tool_gate(monkeypatch):
     from app.agents.tool_gateway import make_tool_executor
     from app.models import GroupState
-    records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 3000) for i in range(4)}
+    records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 9000) for i in range(4)}
     binding = ['same-turn']
     delivered = []
     async def exercise():
@@ -447,7 +454,7 @@ def test_continuation_accumulates_evidence_and_releases_tool_gate(monkeypatch):
 
 def test_oversized_middle_fragment_cannot_be_skipped_by_cursor():
     records = {str(i): v4_record(str(i), rules=[], kp_text='x' * size)
-               for i, size in enumerate([2000, 9000, 100])}
+               for i, size in enumerate([6000, 27000, 300])}
     row = scenario_retrieval.project(records, list(records), 'action')[0]
     scenario_retrieval.bind_continuation([row], ['binding'])
     offset = scenario_retrieval.continuation_offset(row['continuation_token'], ['binding'])
@@ -459,7 +466,7 @@ def test_oversized_middle_fragment_cannot_be_skipped_by_cursor():
 
 
 def test_search_continuation_keeps_roots_without_reranking_and_rejects_new_history(monkeypatch):
-    records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 3000) for i in range(2)}
+    records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 9000) for i in range(2)}
     index = SimpleNamespace(record_store=records, text_hash='fixed-version')
     state = SimpleNamespace(group_id='g', timeline_id='t', scenario_library_id='s',
                             scenario_variant_id='v', context_chapter_ids=['c1'], log=[])

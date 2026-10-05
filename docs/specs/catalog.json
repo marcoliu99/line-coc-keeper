@@ -2127,6 +2127,22 @@
       "source_revision": "f03a110ed9ee1bbb637c30c67938bf08d9543aee"
     },
     {
+      "title": "Keeping the scenario search from being starved, and counting Chinese text honestly without a tokenizer",
+      "zh": "不讓劇本搜尋被擠到沒有預算，以及沒有 tokenizer 時誠實地估算中文",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_retrieval.py",
+        "app/services/input_budget.py",
+        "app/config.py",
+        "tests/test_retrieval_budget_floor.py",
+        "tests/test_retrieval_readiness.py"
+      ],
+      "path": "docs/specs/enhancement/retrieval_budget_headroom_design_spec.md",
+      "zh_path": "docs/specs/enhancement/retrieval_budget_headroom_design_spec_zh.md",
+      "source_revision": "1fd3ccbcb53422f578995e87b493b900c1c6eec7"
+    },
+    {
       "title": "What a player reads when a turn cannot finish, how long a queue is acknowledged, and what a character is called",
       "zh": "回合無法完成時玩家讀到什麼、排隊通知持續多久、角色叫什麼名字",
       "category": "enhancement",
@@ -2135,6 +2151,7 @@
         "app/services/turn_fallback.py",
         "app/commands/turn_scope.py",
         "app/presentation.py",
+        "app/discord_transport/delivery.py",
         "app/config.py",
         "tests/test_character_display_aliases.py",
         "tests/test_turn_queue_observability.py"
