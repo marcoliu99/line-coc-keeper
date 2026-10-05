@@ -133,4 +133,5 @@ Later entries record their own source revisions; the proposed turn safety and la
 
 - [Changelog](changelog.md)
 - [Raw evaluations](evaluations)
+- [Camp Sunny validation: root causes](validation/camp_sunny_fix_root_cause.md), [targeted regression](validation/camp_sunny_targeted_regression.md), [latency before/after](validation/camp_sunny_latency_before_after.md), [findings](validation/camp_sunny_findings.json) (Traditional Chinese; the real-runtime stages were not run)
 - [Machine-readable spec catalog](specs/catalog.json)
