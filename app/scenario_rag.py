@@ -44,12 +44,14 @@ from app import (
     embedding_cache,
     embedding_execution,
     observability,
+    scenario_adjacency,
     scenario_projection,
 )
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
+    SCENARIO_RAG_ADJACENT_CHUNKS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
@@ -507,16 +509,78 @@ def _bm25_score(index: ScenarioIndex, query_tokens: list[str], chunk: _Chunk, id
     return score
 
 
+# Across one search, at most this many neighbours are attached in total, whatever the per-side setting.
+_ADJACENT_TOTAL_MAX = 4
+
+
+def _attach_adjacent(
+    chunk: _Chunk, position: int, index: ScenarioIndex, usable: set[int],
+    absorbed: set[int], query_tokens: list[str], budget: int,
+) -> tuple[str, list[dict[str, Any]]]:
+    """The hit's text with the neighbours it visibly needs, and a record of why each came along."""
+    per_side = SCENARIO_RAG_ADJACENT_CHUNKS
+    shared = set(chunk.term_counts) & set(query_tokens)
+    before: list[str] = []
+    after: list[str] = []
+    notes: list[dict[str, Any]] = []
+    cursor = chunk
+    for step in range(1, per_side + 1):
+        at = position + step
+        if budget - len(notes) <= 0 or at >= len(index.chunks):
+            break
+        neighbour = index.chunks[at]
+        if (id(neighbour) not in usable or id(neighbour) in absorbed or neighbour.record_id
+                or neighbour.page - cursor.page > 1):
+            break
+        ahead = index.chunks[position - 1].text if cursor is chunk and position > 0 else ""
+        reason = scenario_adjacency.reason_for_next(cursor.text, neighbour.text, shared, ahead)
+        if not reason:
+            break
+        after.append(scenario_adjacency.new_text(cursor.text, neighbour.text))
+        absorbed.add(id(neighbour))
+        notes.append({"side": "next", "page": neighbour.page, "reason": reason})
+        cursor = neighbour
+    cursor = chunk
+    for step in range(1, per_side + 1):
+        at = position - step
+        if budget - len(notes) <= 0 or at < 0:
+            break
+        neighbour = index.chunks[at]
+        if (id(neighbour) not in usable or id(neighbour) in absorbed or neighbour.record_id
+                or cursor.page - neighbour.page > 1):
+            break
+        reason = scenario_adjacency.reason_for_previous(neighbour.text, cursor.text, shared)
+        if not reason:
+            break
+        before.insert(0, neighbour.text.strip())
+        absorbed.add(id(neighbour))
+        notes.append({"side": "previous", "page": neighbour.page, "reason": reason})
+        cursor = neighbour
+    own = chunk.result_text or chunk.text
+    if before:
+        own = scenario_adjacency.new_text(index.chunks[position - 1].text, own)
+    return "\n\n".join([*before, own, *after]), notes
+
+
 def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int,
-                 eligible: list[_Chunk] | None = None) -> list[dict]:
+                 eligible: list[_Chunk] | None = None, *,
+                 index: ScenarioIndex | None = None, query_tokens: list[str] | None = None) -> list[dict]:
     rows: list[dict] = []
     seen: set[str] = set()
     used = 0
     omitted = 0
     candidates = eligible if eligible is not None else [c for _, c in scored]
+    expand = (index is not None and bool(query_tokens) and SCENARIO_RAG_ADJACENT_CHUNKS > 0
+              and index.record_store is None)
+    position = {id(c): i for i, c in enumerate(index.chunks)} if expand and index else {}
+    usable = {id(c) for c in candidates}
+    absorbed: set[int] = set()
+    adjacent_total = 0
     for score, chunk in scored:
         if len(rows) >= top_k:
             break
+        if id(chunk) in absorbed:
+            continue  # already travelling with the hit it continues
         identity = chunk.record_id or f"page:{chunk.page}:text:{chunk.text}"
         if identity in seen:
             continue
@@ -528,8 +592,16 @@ def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int,
             omitted += 1
             continue
         used += len(content) if chunk.record_id else 0
-        rows.append({"page": chunk.page, "text": content, "score": score,
-                     "record_id": chunk.record_id})
+        row = {"page": chunk.page, "text": content, "score": score, "record_id": chunk.record_id}
+        if expand and not chunk.record_id and id(chunk) in position and index is not None:
+            text, notes = _attach_adjacent(
+                chunk, position[id(chunk)], index, usable, absorbed, query_tokens or [],
+                _ADJACENT_TOTAL_MAX - adjacent_total,
+            )
+            if notes:
+                adjacent_total += len(notes)
+                row.update(text=text, adjacent_chunks=notes)
+        rows.append(row)
     if rows and omitted:
         rows[-1]["budget_omitted"] = omitted
     return rows
@@ -538,12 +610,17 @@ def _result_rows(scored: list[tuple[float, _Chunk]], top_k: int,
 def _ranked_rows(index: ScenarioIndex, scored: list, top_k: int, eligible: list, query: str,
                  scopes: set[str] | None) -> list[dict]:
     if index.record_store is None:
-        return _result_rows(scored, top_k, eligible)
+        return _result_rows(scored, top_k, eligible, index=index, query_tokens=_tokenize(query))
     from app import scenario_retrieval
     roots = list(dict.fromkeys(c.record_id for _, c in scored))[:top_k]
     if not roots:
         return []
     return scenario_retrieval.project_ranked(index.record_store, roots, query, scopes)
+
+
+def _note_results(metrics: dict[str, object], results: list[dict]) -> None:
+    metrics["result_count"] = len(results)
+    metrics["adjacent_chunk_count"] = sum(len(row.get("adjacent_chunks", ())) for row in results)
 
 
 def search(
@@ -599,7 +676,7 @@ def search(
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         results = _ranked_rows(index, scored, top_k, eligible, query, allowed_visibility)
         if metrics is not None:
-            metrics["result_count"] = len(results)
+            _note_results(metrics, results)
         return results
 
     def _embed_query_once() -> list[float] | None:
@@ -616,7 +693,7 @@ def search(
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
         results = _ranked_rows(index, scored, top_k, eligible, query, allowed_visibility)
         if metrics is not None:
-            metrics["result_count"] = len(results)
+            _note_results(metrics, results)
         return results
     if metrics is not None:
         metrics["query_embedding_status"] = "success"
@@ -646,7 +723,7 @@ def search(
     combined.sort(key=lambda sc: -sc[0])
     results = _ranked_rows(index, combined, top_k, eligible, query, allowed_visibility)
     if metrics is not None:
-        metrics["result_count"] = len(results)
+        _note_results(metrics, results)
     return results
 
 
