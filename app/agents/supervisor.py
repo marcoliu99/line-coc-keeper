@@ -33,6 +33,7 @@ from app.services import (
     turn_delivery,
     turn_fallback,
     turn_handoff,
+    turn_phases,
 )
 
 _logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ async def _recover_blocked_turn(
         try:
             context, _status = await asyncio.to_thread(
                 context_builder.search_scenario_context, state, user_id, speaker_role, query,
-                label="supervisor.recovery_retrieval", accept_lexical=True,
+                label="supervisor.recovery_retrieval", accept_lexical=True, phase_name="recovery_retrieval",
             )
         except asyncio.CancelledError:
             raise
@@ -118,6 +119,7 @@ async def _recover_blocked_turn(
 
 @with_turn_deadline
 @with_codex_turn
+@turn_phases.timed_turn
 async def run_turn(
     state: GroupState,
     user_id: str,
@@ -167,7 +169,14 @@ async def run_turn(
         _logger.info("Supervisor answered %s from state: Luck decision outstanding", display_name)
         return prompt_config.pending_luck_reply(
             held_luck, actor.name if actor else ""), [], []
-    # 1. Build Context
+    # 1. Build Context. The continuation of a roll reuses the evidence its action turn gathered when nothing it
+    # depended on has moved, instead of searching the same scene again.
+    reused_grounding = None
+    if (prefetched_retrieval is None and turn_kind == "resolved_check_followup"
+            and config.RETRIEVAL_REUSE_FOR_FOLLOWUPS):
+        reused_grounding = context_builder.reusable_grounding(state, user_id)
+        observability.event("rag.followup_grounding", reused=reused_grounding is not None)
+        prefetched_retrieval = reused_grounding
     message = await context_builder.build_context(
         state=state,
         user_id=user_id,
@@ -179,6 +188,8 @@ async def run_turn(
         prefetched=prefetched_retrieval,
     )
     message.payload["turn_kind"] = turn_kind
+    if turn_kind == "player_action":
+        context_builder.remember_grounding(state, user_id, message)
     if turn_kind == "resolved_check_followup":
         if not resolved_check_context:
             raise ValueError("resolved_check_followup requires an authoritative result")

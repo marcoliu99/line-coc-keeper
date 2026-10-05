@@ -1861,6 +1861,23 @@
       "path": "docs/specs/bug/event_obligations_design_spec.md",
       "zh_path": "docs/specs/bug/event_obligations_design_spec_zh.md",
       "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
+      "title": "Turn phase timeline and retrieval amplification",
+      "zh": "回合階段計時與檢索放大",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_phases.py",
+        "app/agents/context_builder.py",
+        "app/agents/supervisor.py",
+        "app/agents/tool_gateway.py",
+        "app/commands/router.py",
+        "tests/test_turn_phases.py"
+      ],
+      "path": "docs/specs/enhancement/turn_latency_instrumentation_design_spec.md",
+      "zh_path": "docs/specs/enhancement/turn_latency_instrumentation_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
     }
   ]
 }

@@ -14,7 +14,7 @@ from app.config import (
 from app.domain.models import CheckStatus, ObservedOutcome
 from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
-from app.services import mutation_admission, turn_delivery
+from app.services import mutation_admission, turn_delivery, turn_phases
 
 _logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ def make_tool_executor(
     observed_outcomes: list[ObservedOutcome] | None = None,
     actor_id: str = "",
     resolved_check_followup: bool = False,
+    scenario_search_limit: int | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -92,6 +93,7 @@ def make_tool_executor(
     """
 
     blocked_evidence = set(required_evidence_ids or ())
+    scenario_searches = 0
 
     def rejection(tool_name: str, error: str, message: str) -> dict[str, Any]:
         result = {"ok": False, "error": error, "message": message}
@@ -103,8 +105,15 @@ def make_tool_executor(
         return result
 
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        nonlocal evidence_incomplete
+        nonlocal evidence_incomplete, scenario_searches
         mutation_admission.assert_admitted(state.group_id)
+        if tool_name == "search_scenario" and scenario_search_limit is not None:
+            scenario_searches += 1
+            if scenario_searches > scenario_search_limit:
+                observability.event("executor.scenario_search.limit_exceeded", level=logging.WARNING,
+                                    limit=scenario_search_limit, attempted=scenario_searches)
+                return rejection(tool_name, "scenario_search_limit_reached",
+                                 "本回合的劇本查詢次數已達上限；請用已取得的依據裁決，或暫緩並請玩家聚焦行動。")
         spec = tool_registry.REGISTRY.get(tool_name)
         if spec is not None and spec.followup_only and not resolved_check_followup:
             return rejection(tool_name, "tool_not_allowed_for_turn", "此工具只供已結算檢定後續使用")
@@ -178,12 +187,13 @@ def make_tool_executor(
             task = asyncio.create_task(asyncio.to_thread(run_owned_tool))
             task.add_done_callback(lambda done: mutation_admission.reject_unstarted(owner) if done.cancelled() else None)
             try:
-                if tool_name in BOUNDED_QUERY_TOOLS:
-                    result = await asyncio.wait_for(
-                        asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
-                    )
-                else:
-                    result = await asyncio.shield(task)
+                with turn_phases.phase("tool_execution"):
+                    if tool_name in BOUNDED_QUERY_TOOLS:
+                        result = await asyncio.wait_for(
+                            asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
+                        )
+                    else:
+                        result = await asyncio.shield(task)
             except asyncio.TimeoutError:
                 mutation_admission.detach(owner)
                 observability.event(

@@ -5,6 +5,7 @@ import logging
 from typing import cast
 
 from app import observability
+from app.services import turn_phases
 
 
 def embed_texts(
@@ -25,9 +26,9 @@ def embed_texts(
         batch_count = (len(texts) + batch_size - 1) // batch_size
         for batch_index, start in enumerate(range(0, len(texts), batch_size)):
             batch = texts[start:start + batch_size]
-            with observability.span('embedding.batch', embedding_model=model,
-                                    batch_size=len(batch), batch_index=batch_index,
-                                    batch_count=batch_count):
+            with turn_phases.phase('embedding'), observability.span(
+                    'embedding.batch', embedding_model=model, batch_size=len(batch),
+                    batch_index=batch_index, batch_count=batch_count):
                 response = client.embeddings.create(model=model, input=batch)
             seen: set[int] = set()
             for item in response.data:

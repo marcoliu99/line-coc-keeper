@@ -309,6 +309,12 @@ OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 
 # A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
 # scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
 TURN_FALLBACK_RECOVERY_ENABLED = os.environ.get("TURN_FALLBACK_RECOVERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+# The scenario evidence a turn gathered is reused by the continuation that follows its dice roll, while nothing it
+# depended on has changed and no other turn has searched since (app/agents/context_builder.py), instead of searching
+# again for the same scene. A turn may also ask the scenario search tool at most this many times.
+RETRIEVAL_REUSE_FOR_FOLLOWUPS = os.environ.get("RETRIEVAL_REUSE_FOR_FOLLOWUPS", "true").strip().lower() in ("1", "true", "yes")
+RETRIEVAL_REUSE_TTL_SECONDS = _env_float("RETRIEVAL_REUSE_TTL_SECONDS", 900.0, minimum=1.0)
+SCENARIO_SEARCH_MAX_PER_TURN = _env_int("SCENARIO_SEARCH_MAX_PER_TURN", 5, minimum=1)
 SCENARIO_PROACTIVE_TOKEN_BUDGET = _env_int('SCENARIO_PROACTIVE_TOKEN_BUDGET', 3000, minimum=1)
 SCENARIO_RETRIEVAL_TOKEN_BUDGET = _env_int('SCENARIO_RETRIEVAL_TOKEN_BUDGET', 6000, minimum=1)
 SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 32000, minimum=1)
