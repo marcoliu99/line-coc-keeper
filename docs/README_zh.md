@@ -135,6 +135,10 @@
 - [scenario_template_reference_review](references/scenario_template_reference_review_zh.md)
 - [scenario_zh_external_preparation](references/scenario_zh_external_preparation_zh.md)
 
+## Architecture / 架構
+
+- [main_v2 架構總覽與深度審查（以玩家體驗為準）](architecture/main_v2_architecture_review_zh.md) · [English](architecture/main_v2_architecture_review.md)
+
 ## Guides / 指南
 
 - [setup](guides/setup_zh.md)
