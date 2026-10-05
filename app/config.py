@@ -309,6 +309,9 @@ OPENAI_NARRATOR_MAX_OUTPUT_TOKENS = _env_int("OPENAI_NARRATOR_MAX_OUTPUT_TOKENS"
 OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 0)
 
 # V4 scenario retrieval reserves capacity before the existing provider admission.
+# A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
+# scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
+TURN_FALLBACK_RECOVERY_ENABLED = os.environ.get("TURN_FALLBACK_RECOVERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 SCENARIO_PROACTIVE_TOKEN_BUDGET = _env_int('SCENARIO_PROACTIVE_TOKEN_BUDGET', 3000, minimum=1)
 SCENARIO_RETRIEVAL_TOKEN_BUDGET = _env_int('SCENARIO_RETRIEVAL_TOKEN_BUDGET', 6000, minimum=1)
 SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 32000, minimum=1)

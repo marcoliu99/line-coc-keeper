@@ -21,7 +21,7 @@ BUILT_BY_CONTEXT_BUILDER = {
 }
 # Added later, by exactly these modules.
 WRITERS = {
-    "app/agents/supervisor.py": {"turn_kind", "intent", "resolved_check_context", "mechanic_result"},
+    "app/agents/supervisor.py": {"turn_kind", "intent", "resolved_check_context", "mechanic_result", "recovery_context"},
     "app/agents/executor.py": {"private_messages", "image_requests", "observed_outcomes"},
     "app/agents/narrator.py": {"narration_requirements", "narration_failed", "observed_outcomes"},
     "app/services/turn_delivery.py": {"delivery_envelope"},

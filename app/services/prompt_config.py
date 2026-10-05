@@ -4,7 +4,7 @@ import json
 import re
 
 from app.domain.models import MechanicResult
-from app.services import opposed_checks
+from app.services import opposed_checks, turn_fallback
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -370,7 +370,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
             if status.get("scenario_evidence_blocked"):
                 return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
-            return f"{warning}請先確認目前狀態或更正原本的行動。"
+            return f"{warning}{turn_fallback.guidance(result.fallback_reason)}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
             return f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"
