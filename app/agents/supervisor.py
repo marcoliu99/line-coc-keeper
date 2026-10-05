@@ -5,7 +5,15 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, locks, observability, opening_identity, presentation, spoiler_policy
+from app import (
+    config,
+    keeper,
+    locks,
+    observability,
+    opening_identity,
+    presentation,
+    spoiler_policy,
+)
 from app.agents import (
     assistant,
     context_builder,
