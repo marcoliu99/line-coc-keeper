@@ -4,7 +4,7 @@
 
 ## Stage 1 — 單元／整合與靜態檢查
 
-七個分支各自、以及把它們全部合併後的整合分支，都跑過：
+七個分支各自都跑過，並在合併進 `main_v2` 之前各自併入最新的 `main_v2` 再跑一次：
 
 ```
 ruff check .          # 通過
@@ -12,9 +12,13 @@ mypy app              # 通過（158 個檔案）
 pytest                # 通過
 ```
 
-合併後的整合分支共 2710 項測試（`main_v2` 為 2513 項，增加 197 項），全部通過。整合檢查發現並修掉一個跨 PR 問題：事件義務 gate 的 docstring 寫到驗證的範例用語，被「執行期程式不得寫出特定劇本或其觸發物」的檢查擋下（已修在 [#181](https://github.com/marcoliu99/line-coc-keeper/pull/181)）。
+全部合併後的 `main_v2` 共 2740 項測試（修正前為 2513 項，增加 227 項），全部通過。整合檢查發現並修掉一個跨 PR 問題：事件義務 gate 的 docstring 寫到驗證的範例用語，被「執行期程式不得寫出特定劇本或其觸發物」的檢查擋下（已修在 [#181](https://github.com/marcoliu99/line-coc-keeper/pull/181)）。
 
-這些 PR 彼此會在 `docs/README.md`、`docs/README_zh.md`、`docs/specs/catalog.json`、`app/config.py` 與 `app/agents/supervisor.py` 的 import 行有相鄰行衝突（內容不衝突）；合併時需要「兩邊都保留」地解。
+審查階段（每個 PR 都有自動審查意見，都經確認並修正，並以先失敗再通過的測試涵蓋）另外抓到的問題，包括：相鄰 chunk 重複與重疊切分、`disabled` 檢索被誤當成沒有依據、復原後原因分類、守門順序與取消清理、embedding 切分與重試上限、隊伍人數改寫範圍。
+
+**測試本身找到的漏洞：** 戰鬥覆蓋測試重放過期的檢定按鈕時，發現回覆文字仍印出原始等級（CS-003 的另一個洩漏處，[#185](https://github.com/marcoliu99/line-coc-keeper/pull/185) 沒有涵蓋），已在 [#186](https://github.com/marcoliu99/line-coc-keeper/pull/186) 修正。這也說明了離線測試能抓到的是呈現與機制路徑，而不是真實模型行為。
+
+這些 PR 彼此在 `docs/README.md`、`docs/README_zh.md`、`docs/specs/catalog.json`、`app/config.py` 與 `app/agents/supervisor.py` 的 import 行有相鄰行衝突（內容不衝突），合併時都以「兩邊都保留」解開，並在解開後重跑上述檢查。
 
 ## Stage 2 — 定向情境回歸（離線，合成 fixture）
 

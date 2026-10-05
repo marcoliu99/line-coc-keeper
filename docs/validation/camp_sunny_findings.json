@@ -103,11 +103,12 @@
     "turn_ids": [],
     "player_ids": [],
     "evidence": [
-      "outcome is stored as 'hard 成功' and several display sites print it"
+      "outcome is stored as 'hard 成功' and several display sites print it",
+      "found by the combat coverage test: replaying a stale check button printed the raw tier"
     ],
     "root_cause": "no presentation layer between the engine's English tiers and the player",
     "fix_commit": null,
-    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/185",
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/185, https://github.com/marcoliu99/line-coc-keeper/pull/186",
     "verification": "offline synthetic only"
   },
   {

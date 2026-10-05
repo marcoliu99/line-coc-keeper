@@ -16,7 +16,7 @@
 | CS-005 記憶 embedding 全部失敗 | P2 | 無界 chunk 已確認；「provider 因過長拒絕」可能 | [#182](https://github.com/marcoliu99/line-coc-keeper/pull/182) | 已實作，未驗證 |
 | CS-006 五人同時發言延遲 | P2 | **未知**（沒有階段資料） | [#184](https://github.com/marcoliu99/line-coc-keeper/pull/184) | 只有量測工具與兩項減量；**延遲未量測** |
 | CS-001 五人被敘述成六人 | P2 | 已確認 | [#185](https://github.com/marcoliu99/line-coc-keeper/pull/185) | 已實作，未驗證 |
-| CS-003 英文等級原始值外洩 | P3 | 已確認 | [#185](https://github.com/marcoliu99/line-coc-keeper/pull/185) | 已實作，未驗證 |
+| CS-003 英文等級原始值外洩 | P3 | 已確認 | [#185](https://github.com/marcoliu99/line-coc-keeper/pull/185)、[#186](https://github.com/marcoliu99/line-coc-keeper/pull/186) | 已實作，未驗證 |
 | CS-004 `check_id` 外洩 | P3 | 已確認 | [#185](https://github.com/marcoliu99/line-coc-keeper/pull/185) | 已實作，未驗證 |
 | 戰鬥與機制未涵蓋（§9） | — | — | [#186](https://github.com/marcoliu99/line-coc-keeper/pull/186) | 離線測試；真實執行未做 |
 
@@ -75,3 +75,5 @@
 **程式裡確定的。** Narrator 沒有被告知隊伍人數；結算結果以英文等級存成 `hard 成功`，數個顯示處直接印出；`_describe_tool_call` 把 `check_id` 放進交給 Narrator 複述的事實。
 
 **修正。** 呈現層（等級對應、移除內部識別碼、更正較大的隊伍人數），不改儲存形式（已存事件與 golden trace 依賴英文）。限制見 [規格](../specs/bug/player_facing_presentation_design_spec_zh.md)。
+
+**測試找到的漏洞。** 戰鬥覆蓋測試重放過期的檢定按鈕時，發現回覆文字仍印出原始等級（#185 沒有涵蓋到的顯示處），已在 [#186](https://github.com/marcoliu99/line-coc-keeper/pull/186) 改為經過呈現層。這代表仍可能有其他沒被離線測試走到的顯示處，真實執行才能確認。
