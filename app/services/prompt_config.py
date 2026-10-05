@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 
+from app import presentation
 from app.domain.models import MechanicResult
 from app.services import opposed_checks
 
@@ -148,7 +149,7 @@ def build_resolved_check_history_block(
         lines.append(
             f"- {event.get('investigator', '調查員')}：{event.get('skill', '檢定')} "
             f"{event.get('skill_value', '?')}%，擲出 {event.get('roll', '?')}，"
-            f"難度 {event.get('difficulty', 'regular')}，結果 {event.get('outcome', '未知')}。"
+            f"難度 {presentation.difficulty_label(event.get('difficulty', 'regular'))}，結果 {presentation.outcome_label(str(event.get('outcome', '未知')))}。"
         )
         if event.get('provisional'):
             lines.append('  此戰鬥紀錄是暫定機械結果；擲骰保留，但不能獨立建立已提交的世界後果。')
@@ -275,7 +276,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         skill = pending_luck.get("skill_name", "檢定")
         lines.extend([
             "【待處理 Luck 決定：骰已擲出，最終結果尚未定案】",
-            f"調查員：{investigator}；檢定：{skill}；原始骰值：{pending_luck.get('roll', '未知')}；原始等級：{pending_luck.get('original_tier', '未知')}。",
+            f"調查員：{investigator}；檢定：{skill}；原始骰值：{pending_luck.get('roll', '未知')}；原始等級：{presentation.tier_label(str(pending_luck.get('original_tier', '未知')))}。",
             f"可用選項：{options_text or '依待處理 Luck 按鈕選擇'}；輸入 /coc luck skip 可保留原骰結果。",
             "必須請玩家完成這筆既有 Luck 決定；禁止要求重新擲骰、建立另一筆檢定，或把骰值說成已定案的成敗。暫停同一行動的後續結果敘述。",
         ])
@@ -285,7 +286,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         opposed_winner = resolved.get('opposed_winner')
         lines.extend([
             "【已結算檢定：結果權威且不得重擲】",
-            f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {resolved.get('difficulty', 'regular')}，等級 {resolved.get('tier', '未知')}，結果 {outcome}。",
+            f"{resolved.get('investigator', '調查員')} 的 {resolved.get('skill', '檢定')}：技能值 {resolved.get('skill_value', '未知')}，擲出 {resolved.get('roll', '未知')}，難度 {presentation.difficulty_label(resolved.get('difficulty', 'regular'))}，等級 {presentation.tier_label(str(resolved.get('tier', '未知')))}，結果 {outcome}。",
             "這筆檢定已結算。不得改成尚未結算、因先攻延後同一擲骰結果、要求再擲一次，或從檢定結果自行推導未提供的傷害、破壞或戰鬥。",
         ])
         if opposed_winner:
@@ -300,7 +301,7 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
 
 def build_resolved_check_outcome_block(result: dict) -> str:
     """Build a bounded, structured authority block for post-roll narration."""
-    outcome = str(result.get("outcome", "結果未知"))
+    outcome = presentation.outcome_label(str(result.get("outcome", "結果未知")))
     skill = result.get("skill", "檢定")
     consequence_plans = result.get("consequences") or []
     consequence_note = (
@@ -312,7 +313,7 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         "【已結算檢定：權威機制結果】\n"
         f"調查員：{result.get('investigator', '未知')}；檢定：{skill}；"
         f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
-        f"難度：{result.get('difficulty', 'regular')}；最終結果：{outcome}。\n"
+        f"難度：{presentation.difficulty_label(result.get('difficulty', 'regular'))}；最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
         '【行動及對抗交接；來源與對手數值不得公開】\n'
         f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"
@@ -336,10 +337,10 @@ def enforce_resolved_check_consistency(
         contradictions.extend(("結果尚未結算", "檢定尚未結算"))
     if not any(phrase in text for phrase in contradictions):
         return text
-    outcome = str(result.get("outcome", "結果未知"))
+    outcome = presentation.outcome_label(str(result.get("outcome", "結果未知")))
     return (
         f"{result.get('investigator', '調查員')} 的 {result.get('skill', '檢定')} 已結算："
-        f"擲出 {result.get('roll', '未知')}，難度 {result.get('difficulty', 'regular')}，"
+        f"擲出 {result.get('roll', '未知')}，難度 {presentation.difficulty_label(result.get('difficulty', 'regular'))}，"
         f"結果為「{outcome}」。這次結果不得重擲或改判；未由機制結果確認的額外後果尚未發生。"
     )
 
@@ -409,7 +410,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
         outcome = "成功" if resolved.get("success") else "失敗"
         return (
             f"{investigator} 的 {skill} 檢定已結算：擲出 {resolved.get('roll', '未知')}，"
-            f"難度 {resolved.get('difficulty', 'regular')}，結果為{outcome}。"
+            f"難度 {presentation.difficulty_label(resolved.get('difficulty', 'regular'))}，結果為{outcome}。"
             "此結果不會重擲或改判；尚未由機制結果確認的額外後果仍未發生。"
         )
 

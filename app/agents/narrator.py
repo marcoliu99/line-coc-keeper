@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
-from app import config, keeper, observability
+from app import config, keeper, observability, presentation
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
@@ -60,6 +60,8 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     authority_block = canonical_facts.prompt_block(narration_requirements)
     if authority_block:
         dynamic_system += "\n\n" + authority_block
+    if party := [c.name for c in state.active_characters()]:
+        dynamic_system += "\n\n" + presentation.party_prompt(party)
     character = state.get_active_character(user_id)
     if character:
         character = resource_bridge.effective(state, character)
@@ -171,7 +173,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             result = message.payload["resolved_check_context"]
             reply_text = (
                 f"{result.get('investigator', '調查員')} 的檢定已結算（擲出 {result.get('roll', '未知')}，"
-                f"結果：{result.get('outcome', '未知')}）。守密人暫時無法完成後續敘述；"
+                f"結果：{presentation.outcome_label(str(result.get('outcome', '未知')))}）。守密人暫時無法完成後續敘述；"
                 "請先查看目前狀態，不要重新擲骰或重做這次行動。"
             )
         elif turn_kind == "opening_fallback":

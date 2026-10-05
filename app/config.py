@@ -306,6 +306,9 @@ OPENAI_NARRATOR_MAX_OUTPUT_TOKENS = _env_int("OPENAI_NARRATOR_MAX_OUTPUT_TOKENS"
 OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 0)
 
 # V4 scenario retrieval reserves capacity before the existing provider admission.
+# Internal ids (check_id and the like) and raw result-tier names are removed from what a player reads. Debugging may
+# ask to see them (app/presentation.py).
+DEBUG_SHOW_INTERNAL_IDS = os.environ.get("DEBUG_SHOW_INTERNAL_IDS", "false").strip().lower() in ("1", "true", "yes")
 SCENARIO_PROACTIVE_TOKEN_BUDGET = _env_int('SCENARIO_PROACTIVE_TOKEN_BUDGET', 3000, minimum=1)
 SCENARIO_RETRIEVAL_TOKEN_BUDGET = _env_int('SCENARIO_RETRIEVAL_TOKEN_BUDGET', 6000, minimum=1)
 SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 32000, minimum=1)
