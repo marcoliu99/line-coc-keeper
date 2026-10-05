@@ -119,3 +119,64 @@ def test_no_summary_lines_is_an_error_not_a_zero_report(tmp_path, capsys):
     assert report.main([str(tmp_path)]) == 2
     assert "LOG_TEXT_ENABLED" in capsys.readouterr().err
     assert report.main([str(tmp_path / "missing")]) == 2
+
+
+# --- failed model requests and turns that raised ---------------------------------------------------------------
+
+FAILED = [
+    {"event": "llm.turn.failed", "timestamp": "2026-10-05T16:14:46.611Z", "turn_id": "t3", "agent": "executor",
+     "provider": "codex", "status": "timeout", "error_type": "TimeoutError", "duration_ms": 120017.5, "tool_call_count": 2},
+    {"event": "llm.turn.failed", "timestamp": "2026-10-05T17:08:22.054Z", "turn_id": "t9", "agent": "executor",
+     "provider": "codex", "status": "error", "error_type": "PermissionError", "duration_ms": 120003.5},
+    {"event": "llm.turn.failed", "timestamp": "2026-10-05T17:25:08.243Z", "turn_id": "t11", "agent": "executor",
+     "provider": "codex", "status": "error", "error_type": "CodexError", "duration_ms": 51958.6},
+]
+
+
+def test_a_failed_model_request_is_read_from_the_structured_log():
+    parsed = report.parse_failure(json.dumps(FAILED[0]))
+    assert parsed["error_type"] == "TimeoutError" and parsed["tool_call_count"] == 2 and parsed["agent"] == "executor"
+    for noise in ("", "not json", "{}", json.dumps({"event": "llm.turn.completed"}), "2026 INFO app.turn turn.summary x"):
+        assert report.parse_failure(noise) is None
+
+
+def test_failures_are_counted_apart_from_the_turn_summaries():
+    rows = [report.parse_line(_text(line)) for line in LINES]  # one summary says internal_error
+    failures = [report.parse_failure(json.dumps(f)) for f in FAILED]
+    data = report.summarize(rows, failures)
+    failed = data["failed_requests"]
+    assert failed["total"] == 3 and failed["after_tool_calls"] == 1
+    assert failed["by_error"] == {"executor/TimeoutError": 1, "executor/PermissionError": 1, "executor/CodexError": 1}
+    assert failed["turn_summaries_marked_internal_error"] == 1
+    text = report.render(data)
+    assert "3 failed, 1 of them after tool calls" in text and "only 1 turn summary line(s) say internal_error" in text
+
+
+def test_without_failure_events_the_report_has_no_such_section():
+    data = report.summarize([report.parse_line(_text(line)) for line in LINES])
+    assert data["failed_requests"]["total"] == 0 and "llm.turn.failed" not in report.render(data)
+
+
+def test_the_cli_reads_failures_from_a_json_log(tmp_path, capsys):
+    (tmp_path / "runtime.jsonl").write_text(
+        "\n".join(json.dumps(f) for f in FAILED) + "\n" + "\n".join(_text(line) for line in LINES) + "\n", encoding="utf-8")
+    assert report.main([str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["failed_requests"]["total"] == 3
+
+
+def test_a_turn_that_raises_is_an_internal_error_in_its_summary(monkeypatch, caplog):
+    monkeypatch.setattr(config, "LOG_ENABLED", False)
+    caplog.set_level(logging.INFO, logger="app.turn")
+    with pytest.raises(RuntimeError), turn_phases.timeline("turn", turn_id="turn_x", player_id="u1", campaign_id="c"):
+        raise RuntimeError("boom")
+    (line,) = [r.getMessage() for r in caplog.records if r.name == "app.turn"]
+    assert "fallback=internal_error" in line and "error=RuntimeError" in line
+
+
+def test_a_reason_recorded_before_the_raise_is_kept(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="app.turn")
+    with pytest.raises(RuntimeError), turn_phases.timeline("turn", turn_id="turn_x", player_id="u1", campaign_id="c"):
+        turn_phases.note(fallback="tool_failure")
+        raise RuntimeError("boom")
+    (line,) = [r.getMessage() for r in caplog.records if r.name == "app.turn"]
+    assert "fallback=tool_failure" in line and "error=RuntimeError" in line

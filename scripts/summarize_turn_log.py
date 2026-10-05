@@ -75,6 +75,37 @@ def parse_line(line: str) -> dict[str, Any] | None:
     return fields
 
 
+def parse_failure(line: str) -> dict[str, Any] | None:
+    """One ``llm.turn.failed`` event (a model request that did not finish) from a structured JSON log line, or None.
+
+    These come from event logging (``LOG_ENABLED``) and so only exist in the JSON runtime log. They are what a turn's
+    ``internal_error`` is made of, and the one place that says whether tools had already run (``tool_call_count``).
+    """
+    text = line.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(record, dict) or record.get("event") != "llm.turn.failed":
+        return None
+    return {key: record.get(key) for key in ("timestamp", "turn_id", "agent", "provider", "status", "error_type",
+                                             "duration_ms", "tool_call_count")}
+
+
+def read_failures(paths: list[Path], since: str | None) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for path in paths:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                failure = parse_failure(line)
+                if failure is None or (since and failure["timestamp"] and str(failure["timestamp"]) < since):
+                    continue
+                failures.append(failure)
+    return failures
+
+
 def read(paths: list[Path], since: str | None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in paths:
@@ -101,7 +132,19 @@ def _spread(values: list[float]) -> dict[str, float]:
             "p95": percentile(values, 0.95), "p99": percentile(values, 0.99), "max": max(values, default=0.0)}
 
 
-def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _failures(failures: list[dict[str, Any]], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    after_tools = [f for f in failures if (f.get("tool_call_count") or 0) > 0]
+    return {
+        "total": len(failures),
+        "by_error": dict(collections.Counter(f"{f.get('agent') or '?'}/{f.get('error_type') or '?'}" for f in failures).most_common()),
+        # A request that failed after tools ran may have committed changes the player is not told about.
+        "after_tool_calls": len(after_tools),
+        "duration_ms": _spread([float(f["duration_ms"]) for f in failures if f.get("duration_ms") is not None]),
+        "turn_summaries_marked_internal_error": sum(1 for r in rows if r.get("fallback") == "internal_error"),
+    }
+
+
+def summarize(rows: list[dict[str, Any]], failures: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     turns = [r for r in rows if r.get("kind", "turn") == "turn"]
     reasons = collections.Counter(r["fallback"] for r in rows if r.get("fallback"))
     degraded = sum(reasons.values())
@@ -119,6 +162,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "share_of_lines": degraded / len(rows) if rows else 0.0,
             "by_reason": dict(reasons.most_common()),
         },
+        "failed_requests": _failures(failures or [], rows),
         "slowest": [{"turn_id": r["turn_id"], "kind": r.get("kind", ""), "wall_ms": r["wall_ms"],
                      "fallback": r.get("fallback", "")}
                     for r in sorted(rows, key=lambda r: r["wall_ms"], reverse=True)[:5]],
@@ -146,6 +190,18 @@ def render(data: dict[str, Any]) -> str:
     if "internal_error" in fallbacks["by_reason"]:
         out.append("  internal_error is a failed model/tool step caught inside the turn: no exception reaches the caller,")
         out.append("  so a harness that counts exceptions reports 0. Look the turn_id up in the runtime log.")
+    failed = data["failed_requests"]
+    if failed["total"]:
+        out += ["", "== model requests that failed (llm.turn.failed) =="]
+        out.append(f"  {failed['total']} failed, {failed['after_tool_calls']} of them after tool calls had run "
+                   "(changes may be committed)")
+        out += [f"    {kind:<32}{count:>4}" for kind, count in failed["by_error"].items()]
+        spread = failed["duration_ms"]
+        out.append(f"  duration p50 {spread['p50'] / 1000:.1f}s  max {spread['max'] / 1000:.1f}s")
+        marked = failed["turn_summaries_marked_internal_error"]
+        if marked < failed["total"]:
+            out.append(f"  only {marked} turn summary line(s) say internal_error: the rest of these turns ended some other way, "
+                       "or their summary line is missing. Look the turn_id up in the runtime log.")
     out += ["", "== routes ==", "  " + ("  ".join(f"{k} {v}" for k, v in sorted(data["routes"].items())) or "-")]
     if data["short_circuits"]:
         out.append("  answered from state: " + "  ".join(f"{k} {v}" for k, v in data["short_circuits"].items()))
@@ -174,7 +230,7 @@ def main(argv: list[str]) -> int:
         print(f"no turn.summary lines in {len(paths)} file(s) under {args.target}; the text log must include logger "
               "app.turn (LOG_TEXT_ENABLED=true)", file=sys.stderr)
         return 2
-    data = summarize(rows)
+    data = summarize(rows, read_failures(paths, args.since))
     print(json.dumps(data, ensure_ascii=False, indent=2) if args.json else render(data))
     return 0
 
