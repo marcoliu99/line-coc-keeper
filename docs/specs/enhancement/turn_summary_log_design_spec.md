@@ -13,10 +13,10 @@ How long a player waits, and where the time goes, was only recorded as the struc
 - `app/services/turn_phases.py` writes one plain line to the `app.turn` logger when a player-waited turn ends (kinds `turn` and `continuation`; background maintenance is not summarised):
 
   ```text
-  turn.summary turn_id=… kind=turn route=gameplay_action campaign=… wall_ms=… queue_wait_ms=… retrieval_ms=… executor_ms=… tool_ms=… narrator_ms=… other_ms=… fallback=…
+  turn.summary turn_id=… kind=turn route=gameplay_action campaign=… wall_ms=… queue_wait_ms=… retrieval_ms=… memory_ms=… executor_ms=… tool_ms=… continuation_ms=… narrator_ms=… other_ms=… fallback=…
   ```
 
-  The `*_ms` values are the *exclusive* times already computed for `turn.phases`: they add up to `wall_ms`. `route` comes from the supervisor's routing decision and `fallback` from `turn_fallback.record`, through `turn_phases.note`, which is free when there is no timeline. The line carries timings and ids only: no player id, no text. It is written at INFO to the text channel, so it appears under the default `LOG_TEXT_ENABLED=true` and needs no new setting. A failure to write it is swallowed like the rest of the timeline report.
+  The `*_ms` values are the *exclusive* times already computed for `turn.phases`, every phase accounted for (`retrieval` and `memory` fold in the phases of that kind), so they add up to `wall_ms`. `route` comes from the supervisor's routing decision and `fallback` from `turn_fallback.record`, through `turn_phases.note`, which is free when there is no timeline. The line carries timings and ids only: no player id, no text. It is written at INFO to the text channel, so it appears under the default `LOG_TEXT_ENABLED=true` and needs no new setting. A failure to write it is swallowed like the rest of the timeline report.
 - The generic internal-error reply now ends with `（代碼 xxxxxx）`, the last six characters of the request id that every log line of that request carries, so the KP can search the log for it. With logging fully off there is no id and the text is unchanged.
 
 ## Cost and player path

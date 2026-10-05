@@ -69,3 +69,21 @@ def test_a_failing_summary_never_fails_the_turn(monkeypatch):
 def test_the_internal_error_message_carries_a_code_the_kp_can_search_for(monkeypatch, request_id, expected):
     monkeypatch.setattr(observability, "current_context", lambda: {"request_id": request_id} if request_id else {})
     assert discord_bot._error_reference() == expected
+
+
+def test_every_exclusive_phase_is_accounted_for_so_the_parts_add_up_to_the_wall_time(caplog):
+    import re
+    import time
+
+    caplog.set_level(logging.INFO, logger="app.turn")
+    with turn_phases.timeline("continuation", turn_id="turn_all", player_id="u1", campaign_id="g", queue_wait_ms=20):
+        for name in ("initial_retrieval", "recovery_retrieval", "memory_search", "memory_write", "embedding",
+                     "executor_llm", "tool_execution", "continuation_processing", "narrator_llm"):
+            with turn_phases.phase(name):
+                time.sleep(0.002)
+    (line,) = _summary_lines(caplog)
+    fields = dict(re.findall(r"(\w+_ms)=([\d.]+)", line))
+    parts = sum(float(v) for k, v in fields.items() if k != "wall_ms")
+    assert abs(parts - float(fields["wall_ms"])) < 1.0, line
+    for name in ("memory_ms", "continuation_ms", "retrieval_ms"):
+        assert float(fields[name]) > 0, name

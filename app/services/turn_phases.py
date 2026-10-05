@@ -168,20 +168,27 @@ _SUMMARISED_KINDS = frozenset({"turn", "continuation"})
 _summary_logger = logging.getLogger("app.turn")
 
 
+def _sum(exclusive: dict[str, float], *phases: str) -> float:
+    return round(sum(exclusive.get(phase, 0) for phase in phases), 1)
+
+
 def _log_summary(line: Timeline, summary: dict[str, Any]) -> None:
     """One plain line per turn, whether or not structured event logging (``LOG_ENABLED``) is on.
 
     ``LOG_ENABLED`` stays off by default because it adds timers, counters and JSON payloads to every call. This line costs
     one string format per turn and carries only timings and ids, never player text, so a deployment can always see how long
-    players wait and where the time goes. ``*_ms`` are exclusive times: they add up to ``wall_ms`` (with ``other_ms``).
+    players wait and where the time goes. every ``*_ms`` is an exclusive time and together they add up to ``wall_ms``: ``retrieval`` and ``memory`` each fold in
+    the phases of that kind, and ``continuation_ms`` is the non-model work of a resolved-check continuation.
     """
     exclusive = summary["exclusive_ms"]
     fields: dict[str, Any] = {
         "turn_id": line.turn_id, "kind": line.kind, "route": line.notes.get("route", ""),
         "campaign": observability.safe_identifier(line.campaign_id) or "",
         "wall_ms": summary["wall_ms"], "queue_wait_ms": exclusive.get("queue_wait", 0),
-        "retrieval_ms": round(exclusive.get("initial_retrieval", 0) + exclusive.get("recovery_retrieval", 0), 1),
+        "retrieval_ms": _sum(exclusive, "initial_retrieval", "recovery_retrieval"),
+        "memory_ms": _sum(exclusive, "memory_search", "memory_write", "embedding"),
         "executor_ms": exclusive.get("executor_llm", 0), "tool_ms": exclusive.get("tool_execution", 0),
+        "continuation_ms": exclusive.get("continuation_processing", 0),
         "narrator_ms": exclusive.get("narrator_llm", 0), "other_ms": exclusive.get("other", 0),
         "fallback": line.notes.get("fallback", ""),
     }
