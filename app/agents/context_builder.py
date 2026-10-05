@@ -4,6 +4,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +20,7 @@ from app import (
 )
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+    RETRIEVAL_REUSE_TTL_SECONDS,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_ENABLED,
@@ -25,7 +29,7 @@ from app.config import (
 from app.domain.models import AgentMessage, SpeakerRole, TurnPayload
 from app.keeper_tools import resource_bridge
 from app.models import GroupState
-from app.services import narrative_corrections
+from app.services import narrative_corrections, turn_phases
 
 _logger = logging.getLogger(__name__)
 
@@ -61,6 +65,62 @@ class RetrievalPrefetch:
     rag_status: str
     memory_status: str
     binding: tuple
+    # Monotonic times of the search, so a turn can credit it to its own timeline (it ran while the turn queued).
+    started_at: float = 0.0
+    finished_at: float = 0.0
+
+
+_GROUNDING_MAX = 64
+_grounding: OrderedDict[tuple[str, str, str], tuple[float, int, RetrievalPrefetch]] = OrderedDict()
+_grounding_sequence: dict[str, int] = {}
+_grounding_lock = threading.Lock()
+
+
+def remember_grounding(state: GroupState, user_id: str, message: AgentMessage) -> None:
+    """Keep the scenario evidence an action turn gathered, for the continuation that follows its roll.
+
+    Only a successful scenario search is kept. Every call marks "someone searched in this conversation", which is
+    what makes an older entry stale for everybody else, and an unsuccessful search also drops this player's own
+    older entry: a continuation must not reuse evidence that belongs to an earlier, different action.
+    """
+    payload = message.payload
+    if payload.get("rag_status") != "success":
+        with _grounding_lock:
+            _grounding_sequence[state.group_id] = _grounding_sequence.get(state.group_id, 0) + 1
+            _grounding.pop((state.group_id, state.timeline_id, user_id), None)
+        return
+    prefetch = RetrievalPrefetch(
+        rag_context=payload.get("rag_context", ""), memory_context=payload.get("memory_context", ""),
+        rag_status="success", memory_status=payload.get("memory_status", "disabled"),
+        binding=retrieval_binding(state, user_id),
+    )
+    with _grounding_lock:
+        sequence = _grounding_sequence[state.group_id] = _grounding_sequence.get(state.group_id, 0) + 1
+        key = (state.group_id, state.timeline_id, user_id)
+        _grounding[key] = (time.monotonic(), sequence, prefetch)
+        _grounding.move_to_end(key)
+        while len(_grounding) > _GROUNDING_MAX:
+            _grounding.popitem(last=False)
+
+
+def reusable_grounding(state: GroupState, user_id: str) -> RetrievalPrefetch | None:
+    """The evidence this player's last action turn gathered, if nothing it depended on has moved since.
+
+    Not reused when it is older than the TTL, when any other turn in the conversation has searched since, or when
+    the scenario, chapter window, summary, memory, timeline, combat state or character differs (the binding).
+    """
+    key = (state.group_id, state.timeline_id, user_id)
+    with _grounding_lock:
+        entry = _grounding.get(key)
+        current = _grounding_sequence.get(state.group_id, 0)
+    if entry is None:
+        return None
+    stamped, sequence, prefetch = entry
+    if time.monotonic() - stamped > RETRIEVAL_REUSE_TTL_SECONDS or sequence != current:
+        return None
+    if prefetch.binding != retrieval_binding(state, user_id):
+        return None
+    return prefetch
 
 
 def retrieval_binding(state: GroupState, user_id: str) -> tuple:
@@ -92,6 +152,7 @@ async def prefetch_retrieval(
     under a millisecond; the searches are the ~1s this moves off the lock.
     """
     binding = retrieval_binding(state, user_id)
+    started = time.monotonic()
     message = await build_context(
         state=state, user_id=user_id, display_name=display_name, text=text,
         resolved_location=resolved_location, speaker_role=speaker_role,
@@ -102,13 +163,14 @@ async def prefetch_retrieval(
         memory_context=message.payload["memory_context"],
         rag_status=message.payload["rag_status"],
         memory_status=message.payload["memory_status"],
-        binding=binding,
+        binding=binding, started_at=started, finished_at=time.monotonic(),
     )
 
 
 def search_scenario_context(
     state: GroupState, user_id: str, speaker_role: SpeakerRole, text: str, *,
     label: str = "context_builder.scenario_rag", accept_lexical: bool = False, top_k: int = SCENARIO_RAG_TOP_K,
+    phase_name: str = "initial_retrieval",
 ) -> tuple[str, str]:
     """One scenario search for ``text``, formatted for the prompt, with its status.
 
@@ -122,7 +184,7 @@ def search_scenario_context(
     """
     _logger.info("%s query=%r", label, text)
     metrics: dict[str, Any] = {}
-    with observability.span(
+    with turn_phases.phase(phase_name), observability.span(
         "rag.search",
         rag_kind="scenario",
         top_k=top_k,
@@ -240,7 +302,7 @@ async def build_context(
             # search_memory tool.
             _logger.info("context_builder.memory_rag query=%r", text)
             metrics: dict[str, Any] = {}
-            with observability.span(
+            with turn_phases.phase("memory_search"), observability.span(
                 "memory.search", rag_kind="memory", embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
                 embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT, metrics=metrics,
             ):

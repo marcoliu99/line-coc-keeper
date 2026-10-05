@@ -25,6 +25,7 @@ from app.services import (
     mutation_admission,
     prompt_config,
     turn_context,
+    turn_phases,
     turn_resolution,
 )
 
@@ -80,6 +81,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         required_evidence_ids=scenario_retrieval.incomplete_roots(rag_context),
         observed_outcomes=observed,
         actor_id=user_id,
+        scenario_search_limit=config.SCENARIO_SEARCH_MAX_PER_TURN,
     )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
@@ -217,13 +219,14 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             '若真正缺依據或工具失敗，保留 incomplete 並解釋原因，不猜值或繞過驗證。',
                     }
                 provider_options['final_feedback'] = final_feedback
-            completion = await provider.run_conversation(
-                static_system, dynamic_system, tools, session.history(state.log), new_message,
-                execute_turn_tool, MAX_TOOL_ITERATIONS,
-                # Reuse the existing completion; never force an extra wrap-up.
-                enable_wrapup=False,
-                **provider_options,
-            )
+            with turn_phases.phase("executor_llm"):
+                completion = await provider.run_conversation(
+                    static_system, dynamic_system, tools, session.history(state.log), new_message,
+                    execute_turn_tool, MAX_TOOL_ITERATIONS,
+                    # Reuse the existing completion; never force an extra wrap-up.
+                    enable_wrapup=False,
+                    **provider_options,
+                )
     except asyncio.CancelledError:
         turn_status = "cancelled"
         raise

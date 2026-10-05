@@ -251,6 +251,8 @@ class TurnHandoff:
         # not landed in yet.
         self._mutation_locks: list[asyncio.Lock] = [mutation_lock]
         self._holds_narration = False
+        # How long this turn waited for the lock, for the turn's phase timeline (app/services/turn_phases.py).
+        self.queue_wait_ms = 0.0
 
     @property
     def narrating(self) -> bool:

@@ -52,7 +52,12 @@ from app.providers.registry import conversation_provider
 from app.repositories import state_transaction
 from app.repositories.group_state import load_state
 from app.services import combat_actions as combat_act
-from app.services import combat_engine, history_authority, mutation_admission
+from app.services import (
+    combat_engine,
+    history_authority,
+    mutation_admission,
+    turn_phases,
+)
 
 _logger = logging.getLogger(__name__)
 # Existing callers patch scenario_library through keeper. Retain the module
@@ -781,9 +786,10 @@ def _persist_memory_maintenance_state(
         return "committed"
 
     try:
-        result = state_transaction.mutate(
-            group_id, commit_trim, reason="maintenance", expected_timeline=timeline_id,
-        )
+        with turn_phases.phase("memory_write"):
+            result = state_transaction.mutate(
+                group_id, commit_trim, reason="maintenance", expected_timeline=timeline_id,
+            )
     except state_transaction.CorruptStateError as exc:
         observability.event(
             "maintenance.commit_skipped",
@@ -844,7 +850,7 @@ def run_scene_digest_maintenance(group_id: str) -> None:
         scene_digest.create_digest(state)
 
 
-def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
+def _run_post_turn_maintenance(group_id: str) -> dict[str, object]:
     """Called after every turn (see app/services/post_turn.py's
     spawn_post_turn_maintenance, which now fires this as an independent
     background task rather than awaiting it inline). Only does real work
@@ -940,6 +946,12 @@ def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
     finally:
         with locks.get_state_lock(group_id):
             _maintenance_in_flight.discard(group_id)
+
+
+def run_post_turn_maintenance(group_id: str) -> dict[str, object]:
+    """``_run_post_turn_maintenance`` with its own phase timeline (embedding, memory search and write)."""
+    with turn_phases.timeline("maintenance", turn_id=observability.new_id("maint"), player_id="", campaign_id=group_id):
+        return _run_post_turn_maintenance(group_id)
 
 
 def _scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:
