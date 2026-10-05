@@ -1,9 +1,9 @@
 """The router takes its turn locks through ``turn_scope``; the few places that still take one directly are named.
 
 ``router`` used to carry ten copies of ``async with _conversation_lock_with_notice(...)`` and the machinery behind
-them. A new route that reaches for ``locks.get_conversation_lock`` directly skips the queue notice, the hand-off and
-the held-too-long report, so each direct use is listed here with the reason, and a new one fails this test until it
-is either routed through ``turn_scope`` or added with a reason.
+them. A new route that reaches for ``locks.get_conversation_lock`` directly skips the queue notice and the hand-off
+(the held-too-long report sits on the locks themselves and still applies), so each direct use is listed here with
+the reason, and a new one fails this test until it is either routed through ``turn_scope`` or added with a reason.
 """
 from __future__ import annotations
 

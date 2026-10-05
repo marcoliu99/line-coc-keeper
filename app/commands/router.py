@@ -182,7 +182,8 @@ async def _run_sudo_act_locked(
             resolve_map_action, conversation_id, subject_user_id, action_text
         )
         state = load_state(conversation_id)
-        with observability.context(turn_id=observability.new_id("turn")):
+        with observability.context(
+                turn_id=observability.current_context().get("turn_id") or observability.new_id("turn")):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,
                 user_id=subject_user_id,

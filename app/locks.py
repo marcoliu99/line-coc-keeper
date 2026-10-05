@@ -428,12 +428,20 @@ async def narrating_turn(conversation_id: str) -> AsyncIterator[None]:
     hands off releases the first two *before* taking narration, so neither ever
     waits on the other.
     """
-    async with get_keeper_turn_lock(conversation_id):
-        await get_narration_lock(conversation_id).acquire()
+    # One id for the whole hold, taken before either lock so both carry it into `lock.held_too_long`. The turn that
+    # runs inside (`supervisor.run_turn`) adopts it from the context rather than making another.
+    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
+    keeper = get_keeper_turn_lock(conversation_id)
+    async with keeper:
+        _label_hold(keeper, turn_id)
+        narration = get_narration_lock(conversation_id)
+        await narration.acquire()
+        _label_hold(narration, turn_id)
         try:
-            yield
+            with observability.context(turn_id=turn_id):
+                yield
         finally:
-            get_narration_lock(conversation_id).release()
+            narration.release()
 
 
 def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:

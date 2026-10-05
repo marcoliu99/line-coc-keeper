@@ -95,6 +95,27 @@ class LockWatchdogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.kwargs["lock"] for call in reported], ["narration"])
         self.assertEqual(reported[0].kwargs["turn_id"], handoff.turn_id)
 
+    async def test_a_narrating_turn_names_both_its_locks_and_the_turn_inside_adopts_the_id(self):
+        """`narrating_turn` takes the Keeper turn lock and the narration lock before the turn inside has an id."""
+        seen: dict[str, str | None] = {}
+        with patch.object(config, "LOCK_HELD_WARNING_SECONDS", 0.01), \
+                patch.object(locks.observability, "event") as spy:
+            async with locks.narrating_turn(self.conversation):
+                seen["inside"] = locks.observability.current_context().get("turn_id")
+                await asyncio.sleep(0.1)
+        reported = {call.kwargs["lock"]: call.kwargs["turn_id"] for call in events_named(spy, "lock.held_too_long")}
+        self.assertEqual(set(reported), {"keeper_turn", "narration"})
+        self.assertEqual(len(set(reported.values())), 1, "both locks carry the same id")
+        self.assertEqual(seen["inside"], next(iter(reported.values())))
+
+    async def test_a_narrating_turn_keeps_the_id_of_a_turn_that_already_has_one(self):
+        with patch.object(config, "LOCK_HELD_WARNING_SECONDS", 0.01), \
+                patch.object(locks.observability, "event") as spy, \
+                locks.observability.context(turn_id="turn-given"):
+            async with locks.narrating_turn(self.conversation):
+                await asyncio.sleep(0.1)
+        self.assertEqual({call.kwargs["turn_id"] for call in events_named(spy, "lock.held_too_long")}, {"turn-given"})
+
     async def test_every_hold_has_its_own_turn_id(self):
         lock = locks.get_conversation_lock(self.conversation)
         await lock.acquire()
