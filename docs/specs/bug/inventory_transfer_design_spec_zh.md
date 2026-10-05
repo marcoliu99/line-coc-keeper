@@ -41,18 +41,18 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 5. **交接守恆物品，但不決定獨特性。** `transfer_item` 剛好把 `quantity` 筆清單項目從給出者移到接收者，所以各調查員清單的項目總數不變。重複取得仍然合法（兩位調查員可以各找到一支手電筒）。要把物品視為獨一無二的道具，需要每樣物品的身分或來源紀錄，而字串清單沒有這些；見「沒做的」。
 6. **回覆與狀態一致。** 當回合以降級收場，訊息會說出已經提交了什麼，來源是工具事件而不是模型文字（「已提交：D 把〈古書〉交給 B」），讓做到一半的回合不再讀起來像什麼都沒發生。這擴充 `turn_fallback.guidance`。
 
-7. **伺服器端的意圖檢查在第一個工具之前執行。** 由回合程式碼（不是模型）用保守的確定性偵測器分類玩家的訊息（交出／交給之類的動詞、說話者持有的物品、另一位調查員的名字，風格與其他回合意圖偵測器相同），把結果記在回合上：指出物品與接收者的*交接意圖*，或*多接收者發放意圖*。工具 gateway 在任何背包變更之前先查它：交接意圖指出某樣物品時，不論模型給什麼 `reason`，都拒絕移除那樣物品並指向 `transfer_item`；設了多接收者發放意圖時，這個回合的每一次 `add_carried_item` 都在第一次執行前就被拒絕，所以發放不會做一半（包括對行動玩家自己的角色）。意圖檢查**兩個方向都判斷，而且失敗時關閉**。單獨的 `remove_carried_item` 只有在檢查已經明確把訊息分類為該物品的移除意圖（用掉、遺失、丟棄或毀壞，且對象不是另一位調查員）時才會被接受；無法判斷時，移除被拒絕，並要 Executor 問玩家是什麼意思，所以模型自選的、不可信的 `reason` 永遠不會是唯一讓移除通過的東西。KP Assistant 或更正路徑的移除是系統擁有的，不受此限，**但只能透過伺服器擁有的准入標記**：回合程式碼在 `ToolCall` 上設定 `system_origin`（更正路徑與 KP Assistant 各設自己的值），由 `tool_gateway` 與 `actor_id` 一起往下傳。公開的 `source_event_id` 參數以及任何模型提供的欄位都不被信任。劇本事件沒有豁免：`event_obligations` 與 `obligation_gate` 目前不處理背包移除，所以移除物品的劇本後果會以一般模型工具呼叫的形式到達，和其他移除一樣要通過意圖檢查（見「沒做的」）。因此偵測器漏掉的說法只會多一個確認問題，不會弄丟物品。全隊發放的保證要等批次發放（見「沒做的」）。
+7. **伺服器端的意圖檢查在第一個工具之前執行。** 由回合程式碼（不是模型）用保守的確定性偵測器分類玩家的訊息（交出／交給之類的動詞、說話者持有的物品、另一位調查員的名字，風格與其他回合意圖偵測器相同），把結果記在回合上：指出物品與接收者的*交接意圖*，或*多接收者發放意圖*。工具 gateway 在任何背包變更之前先查它：交接意圖指出某樣物品時，不論模型給什麼 `reason`，都拒絕移除那樣物品並指向 `transfer_item`；設了多接收者發放意圖時，這個回合的每一次 `add_carried_item` 都在第一次執行前就被拒絕，所以發放不會做一半（包括對行動玩家自己的角色）。意圖檢查**兩個方向都判斷，而且失敗時關閉**。單獨的 `remove_carried_item` 只有在檢查已經明確把訊息分類為該物品的移除意圖（用掉、遺失、丟棄或毀壞，且對象不是另一位調查員）時才會被接受。偵測器同時分類移除的*種類*，記錄下來的 `reason` 就是偵測到的種類：模型自選而不同的 `reason`（例如玩家只是丟棄，模型卻填 `destroyed`）會被拒絕並指出偵測到的種類，所以持久的移除歷史不會把只是丟棄的物品記成毀壞；無法判斷時，移除被拒絕，並要 Executor 問玩家是什麼意思，所以模型自選的、不可信的 `reason` 永遠不會是唯一讓移除通過的東西。KP Assistant 或更正路徑的移除是系統擁有的，不受此限，**但只能透過伺服器擁有的准入標記**：回合程式碼在 `ToolCall` 上設定 `system_origin`（更正路徑與 KP Assistant 各設自己的值），由 `tool_gateway` 與 `actor_id` 一起往下傳。公開的 `source_event_id` 參數以及任何模型提供的欄位都不被信任。劇本事件沒有豁免：`event_obligations` 與 `obligation_gate` 目前不處理背包移除，所以移除物品的劇本後果會以一般模型工具呼叫的形式到達，和其他移除一樣要通過意圖檢查（見「沒做的」）。因此偵測器漏掉的說法只會多一個確認問題，不會弄丟物品。全隊發放的保證要等批次發放（見「沒做的」）。
 
 ## 變更（給實作用）
 
-- 新的處理函式 `inventory.transfer_item` 與工具 schema（`keeper_tools/registry.py`）。`ToolSpec.kp_assistant` 預設為 `False`，`tools_for_speaker_role` 會省略沒有它的工具，`tool_dispatch.execute_tool` 也會拒絕它們，所以規則 2、3、7 對 KP Assistant 的豁免，只有在 registry 把 `transfer_item`、`add_carried_item`、`remove_carried_item` 標成 `kp_assistant=True` 時才能用；這次變更會做這件事，並測試 KP Assistant 的呼叫被接受、玩家的呼叫不被接受；`add_carried_item`／`remove_carried_item` 的描述說明交接時不要用它們。
+- 新的處理函式 `inventory.transfer_item` 與工具 schema（`keeper_tools/registry.py`）。`ToolSpec.kp_assistant` 預設為 `False`，`tools_for_speaker_role` 會省略沒有它的工具，`tool_dispatch.execute_tool` 也會拒絕它們，所以規則 2、3、7 對 KP Assistant 的豁免，只有在 registry 把 `transfer_item`、`add_carried_item`、`remove_carried_item` 標成 `kp_assistant=True`，同時也要標成 `kp_canonical_game=True`（不標的話，沒有開頭 `!` 的呼叫其 `kp_tool_result_creates_canon` 是 false，`commit_kp_ooc_turn_result` 會把回應記成非權威的 OOC 討論，儘管背包已改變，工具收據卻不進正式歷史）才能用；這次變更兩者都做，並測試 KP Assistant 的呼叫（有或沒有開頭 `!`）被接受並記為正式遊戲內容、玩家的呼叫不被接受；`add_carried_item`／`remove_carried_item` 的描述說明交接時不要用它們。
 - `tool_gateway` 與兩個更正呼叫點：把 `actor_id` 與 `system_origin` 准入標記傳進背包呼叫（第一步，在任何檢查之前）；`tool_gateway` 同時推導回合擁有的動作 id 並傳給帳本。
 - `inventory.py`：依 `ToolCall.actor_id` 檢查是否為自己的角色；物品要完全相符；移除加上 `reason`；狀態新增交接紀錄（`inventory_transfers`）。`GroupState` 目前沒有這個欄位，而 `GroupState.to_dict()`／`from_dict()` 逐一列舉要存檔的欄位（`app/models.py`），所以欄位與它的序列化、反序列化要加在那裡，舊存檔缺少該欄位時預設為空。
 - `turn_resolution._mutation_evidence`：成功的 `transfer_item` 事件就是一次已驗證的交接；先移除再加入的配對比對在遷移期間保留，等提示不再產生成對呼叫之後移除。
 - 提示文字中要 Executor 用 add／remove 做交接的地方（`turn_context.py`、`prompt_builder.py` 的 "Equipment Consistency"）改成交接時呼叫 `transfer_item`。
 - 可觀測性：`inventory.transfer`（已提交）與 `inventory.transfer.refused`（含原因）事件；`scripts/summarize_turn_log.py` 統計被拒絕的次數。
 - 重播：`mutate_tool_state` 只回傳 `outcome.value`，重複時它是 `None`（`state_transaction._replay` 把持久化的資料放在 `TxResult.result`）。交接用 `ctx.set_result` 存下收據，重複的路徑回傳那份存下的結果，做法是用 `commit_for_snapshot` 處理重複，或擴充 adapter 回傳 `TxResult.result`。
-- 收據投影：`turn_delivery.observe_tool` 把 `transfer_item` 投影進 `MechanicResult.observed_outcomes`（目前只有 `add_carried_item` 與 `remove_carried_item`），executor 結果保留它，這樣 `turn_fallback.guidance` 與 `prompt_config` 插入已提交細節的地方，才能說出在回合失敗前已經移動的交接。
+- 收據投影：`turn_delivery.observe_tool`（每次呼叫都會記錄，包括冪等重播）把 `transfer_item` 投影進 `MechanicResult.observed_outcomes`（目前只有 `add_carried_item` 與 `remove_carried_item`），executor 結果保留它，這樣 `turn_fallback.guidance` 與 `prompt_config` 插入已提交細節的地方，才能說出在回合失敗前已經移動的交接。投影帶著邏輯操作 id，建構降級訊息之前依該 id 去除重複的結果，所以重播的呼叫不會讓同一次已提交的交接被報告兩次。
 - 工具額度：一次交接用掉四個工具中的一個，而不是兩個。
 - 回合意圖偵測器與 gateway 的准入檢查（規則 7），以及指出意圖的 `inventory.admission.refused` 事件。
 
@@ -65,6 +65,8 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 - 重播內容：第一次嘗試已提交之後，重新發出的呼叫回傳存下的收據（不是 `None`），包括模擬回應遺失的情況。
 - 守恆：交接後各調查員清單的項目總數不變，接收者已有的同名物品會變成第二筆。
 - 冪等：同一回合內重新發出的同一個呼叫，即使有新的 provider 呼叫 id、較後的順序與不同的模型文字，也會回傳原本的收據且什麼都不改；模型不能自選 id。
+- 原因綁定：玩家訊息是丟棄物品而模型填 `reason=destroyed` 時被拒絕並指出 `dropped`；相符的原因被接受並記錄。
+- 降級訊息中的重播：第一次呼叫及其重播之後的降級訊息，只提到這次交接一次。
 - 數量：省略 `quantity` 時視為 1（單純的三個參數的呼叫）；`0`、負數與非整數在任何變更之前都被拒絕；`source_event_id` 在存檔重新載入後仍在紀錄中。
 - 存檔：`inventory_transfers` 在存檔後重新載入仍在，沒有該欄位的舊快照載入後是空清單。
 - 失敗時關閉的移除：訊息無法被檢查分類時，單獨的移除被拒絕並附確認提示；訊息被分類為移除意圖時則被接受。
