@@ -67,9 +67,15 @@ def guidance(reason: str | None, hints: str = "") -> str:
 
 
 def _public_narration(state: GroupState) -> list[str]:
-    """What players have actually been told, newest first. Player lines and anything not public are left out."""
+    """What players have actually been told in this timeline, newest first.
+
+    Player lines and anything not public are left out. A new scenario starts a new timeline but keeps the log, so
+    narration stamped with another timeline (or with none, from before entries were stamped) is left out too: it was
+    about a different scenario and must not make a same-named entry of this one look disclosed.
+    """
     return [str(entry.get("content", "")) for entry in reversed(state.log[-_RECENT_NARRATION:])
-            if entry.get("role") == "assistant" and entry.get("audience", "public") == "public"]
+            if entry.get("role") == "assistant" and entry.get("audience", "public") == "public"
+            and entry.get("timeline_id", "") == (state.timeline_id or "")]
 
 
 def _names(entry: dict[str, Any]) -> list[str]:
@@ -133,7 +139,8 @@ def scene_hints(state: GroupState) -> str:
     if people:
         parts.append("人物：" + "、".join(people))
     clues = [str(c.get("text", "")).strip() for c in reversed(state.known_clues)
-             if c.get("visibility", "public") == "public" and str(c.get("text", "")).strip()]
+             if c.get("visibility", "public") == "public" and str(c.get("text", "")).strip()
+             and c.get("timeline_id", state.timeline_id) == state.timeline_id]
     clues = [c if len(c) <= _CLUE_HINT_CHARS else c[:_CLUE_HINT_CHARS] + "…" for c in clues[:3]]
     if clues:
         parts.append("已記錄的線索：" + "；".join(clues))

@@ -15,7 +15,7 @@ def state_with(*, narration: tuple[str, ...] = (), locations=(), npcs=(), clues=
     state.known_clues = [dict(item) for item in clues]
     for text in narration:
         state.log.append({"role": "user", "content": "我想去地下室和鎮長辦公室"})
-        state.log.append({"role": "assistant", "content": text, "audience": "public"})
+        state.log.append({"role": "assistant", "content": text, "audience": "public", "timeline_id": "t"})
     return state
 
 
@@ -69,6 +69,30 @@ class SceneHintTests(unittest.TestCase):
         hint = turn_fallback.scene_hints(earlier_reveal)
         self.assertIn("蒙面人", hint)
         self.assertNotIn("兇手的真名", hint)
+
+    def test_narration_from_another_timeline_does_not_disclose_a_same_named_entry(self):
+        """A new scenario keeps the log but starts a new timeline: its undisclosed "地下室" was not shown by the old one."""
+        state = state_with(narration=("你們走進了地下室。",), locations=LOCATIONS)
+        state.log[-1]["timeline_id"] = "an-earlier-timeline"
+        self.assertEqual(turn_fallback.scene_hints(state), "")
+        state.timeline_id = "an-earlier-timeline"
+        self.assertIn("地下室", turn_fallback.scene_hints(state))
+
+    def test_narration_without_a_timeline_stamp_is_not_trusted_once_the_state_has_a_timeline(self):
+        state = state_with(narration=("你們走進了地下室。",), locations=LOCATIONS)
+        del state.log[-1]["timeline_id"]
+        self.assertEqual(turn_fallback.scene_hints(state), "")
+        state.timeline_id = ""
+        self.assertIn("地下室", turn_fallback.scene_hints(state))
+
+    def test_a_clue_from_another_timeline_is_not_listed(self):
+        clues = [{"text": "舊劇本的線索", "visibility": "public", "timeline_id": "an-earlier-timeline"},
+                 {"text": "這份劇本的線索", "visibility": "public", "timeline_id": "t"},
+                 {"text": "尚未驗證的線索", "visibility": "public"}]
+        hint = turn_fallback.scene_hints(state_with(clues=clues))
+        self.assertNotIn("舊劇本的線索", hint)
+        self.assertIn("這份劇本的線索", hint)
+        self.assertIn("尚未驗證的線索", hint)  # an unstamped record is this timeline's, as everywhere else
 
     def test_the_canonical_name_is_listed_when_it_was_the_one_narrated(self):
         npcs = [{"name": "房東", "aliases": ["Gardiner 的房東"]}]
