@@ -1798,6 +1798,23 @@
       "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
     },
     {
+      "title": "Game Opening deep module",
+      "zh": "遊戲開場深模組",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/game_opening.py",
+        "app/commands/handlers/system.py",
+        "app/services/character_service.py",
+        "tests/test_game_opening_characterization.py",
+        "tests/test_unified_keeper_turn_flow.py",
+        "docs/architecture/game-opening-refactor.md"
+      ],
+      "path": "docs/specs/refactor/game_opening_module_design_spec.md",
+      "zh_path": "docs/specs/refactor/game_opening_module_design_spec_zh.md",
+      "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
+    },
+    {
       "title": "Correction lifecycle",
       "zh": "更正生命週期",
       "category": "refactor",
