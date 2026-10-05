@@ -1815,6 +1815,22 @@
       "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
     },
     {
+      "title": "Stable active scenario source identity",
+      "zh": "穩定的啟用中劇本來源身分",
+      "category": "refactor",
+      "status": "backlog",
+      "evidence": [
+        "app/models.py",
+        "app/scenario_library.py",
+        "app/scenario_activation.py",
+        "app/services/scenario_lifecycle.py",
+        "tests/test_scenario_lifecycle_characterization.py"
+      ],
+      "path": "docs/specs/refactor/active_scenario_source_identity_design_spec.md",
+      "zh_path": "docs/specs/refactor/active_scenario_source_identity_design_spec_zh.md",
+      "source_revision": "c5a19912c2f1faf5454eb262693ddbc7dc3d0e4d"
+    },
+    {
       "title": "Correction lifecycle",
       "zh": "更正生命週期",
       "category": "refactor",
