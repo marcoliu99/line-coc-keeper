@@ -43,6 +43,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Same-turn mechanical obligations of a scenario event](specs/bug/event_obligations_design_spec.md) | implemented | [繁體中文](specs/bug/event_obligations_design_spec_zh.md) |
 | [Adjacent scenario trigger retrieval](specs/bug/adjacent_scenario_trigger_design_spec.md) | implemented | [繁體中文](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) |
 | [A fallback turn that only looked things up gets its one retry](specs/bug/fallback_recovery_after_lookup_design_spec.md) | implemented | [繁體中文](specs/bug/fallback_recovery_after_lookup_design_spec_zh.md) |
+| [A failed Executor request is retried once when it ran nothing, and cleanup never hides the failure](specs/bug/executor_request_failure_retry_design_spec.md) | implemented | [繁體中文](specs/bug/executor_request_failure_retry_design_spec_zh.md) |
 
 ## enhancement
 

@@ -45,6 +45,7 @@
 | [劇本事件在同一回合的機械義務](specs/bug/event_obligations_design_spec_zh.md) | 已實作 | [English](specs/bug/event_obligations_design_spec.md) |
 | [相鄰劇本觸發的檢索](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) | 已實作 | [English](specs/bug/adjacent_scenario_trigger_design_spec.md) |
 | [只做了查詢的降級回合也能得到那一次重試](specs/bug/fallback_recovery_after_lookup_design_spec_zh.md) | 已實作 | [English](specs/bug/fallback_recovery_after_lookup_design_spec.md) |
+| [沒執行任何東西的 Executor 請求失敗會重試一次，清理動作不再蓋掉原本的失敗](specs/bug/executor_request_failure_retry_design_spec_zh.md) | 已實作 | [English](specs/bug/executor_request_failure_retry_design_spec.md) |
 
 ## 功能強化
 

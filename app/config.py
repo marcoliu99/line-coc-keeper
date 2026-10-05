@@ -369,6 +369,10 @@ CHARACTER_DISPLAY_ALIASES = _alias_map("CHARACTER_DISPLAY_ALIASES")
 # A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
 # scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
 TURN_FALLBACK_RECOVERY_ENABLED = _env_bool("TURN_FALLBACK_RECOVERY_ENABLED", True)
+# An Executor request that failed before running any tool (timeout, CLI error) is also run once more, but only
+# when at least this many seconds of the turn deadline (LLM_TURN_DEADLINE_SECONDS) are left; a retry that cannot
+# finish would only make the player wait longer for the same failure. 0 retries whenever any time is left.
+TURN_RETRY_MIN_REMAINING_SECONDS = _env_float("TURN_RETRY_MIN_REMAINING_SECONDS", 45.0, minimum=0.0)
 # The scenario evidence a turn gathered is reused by the continuation that follows its dice roll, while nothing it
 # depended on has changed and no other turn has searched since (app/agents/context_builder.py), instead of searching
 # again for the same scene. A turn may also ask the scenario search tool at most this many times.

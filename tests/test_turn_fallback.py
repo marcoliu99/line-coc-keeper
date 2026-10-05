@@ -377,3 +377,62 @@ async def test_the_fallback_event_counts_the_hits_the_recovery_found(events) -> 
                 search=("--- 第 4 頁 ---\n廚房的門鎖著", "success"))
     [row] = fallbacks(events)
     assert row["retrieval_count"] == 2 and row["retrieval_hit_ids"] == ["page:3", "page:4"]
+
+
+# --- a request that failed before running any tool -------------------------------------------------------------
+
+def _crashed(**fields: Any) -> MechanicResult:
+    return _result("incomplete", "model_incomplete", success=False, execution_health="failed", **fields)
+
+
+@aio
+async def test_a_request_that_failed_before_any_tool_is_run_once_more(events) -> None:
+    reply, run_executor, _, _ = await _turn(_state(), [_crashed(), _resolved()])
+    assert run_executor.await_count == 2 and turn_fallback.guidance("internal_error") not in reply
+    [row] = fallbacks(events)
+    assert (row["fallback_reason"], row["recovery_attempted"], row["recovery_result"]) == ("internal_error", True, "recovered")
+
+
+@aio
+async def test_a_failed_retry_is_not_repeated(events) -> None:
+    reply, run_executor, _, _ = await _turn(_state(), [_crashed(), _crashed()])
+    assert run_executor.await_count == 2 and turn_fallback.guidance("internal_error") in reply
+
+
+@pytest.mark.parametrize("touched", [
+    {"tool_calls": (("search_scenario", True),)},
+    {"observed_outcomes": [ObservedOutcome("e1", "add_carried_item", True)]},
+    {"execution_health": "partial"},
+    {"execution_health": "recovery_required"},
+    {"check_status": {"state_changed": True}},
+    {"events": [object()]},
+])
+@aio
+async def test_a_failure_after_a_tool_ran_is_never_run_again(touched) -> None:
+    fields = {"execution_health": "failed", **touched}
+    result = _result("incomplete", "model_incomplete", success=False, **fields)
+    _, run_executor, _, _ = await _turn(_state(), [result])
+    assert run_executor.await_count == 1
+
+
+@aio
+async def test_no_retry_when_the_turn_deadline_leaves_too_little_time(monkeypatch) -> None:
+    monkeypatch.setattr(config, "TURN_RETRY_MIN_REMAINING_SECONDS", 10_000.0)
+    reply, run_executor, _, _ = await _turn(_state(), [_crashed()])
+    assert run_executor.await_count == 1 and turn_fallback.guidance("internal_error") in reply
+
+
+@aio
+async def test_the_failure_retry_follows_the_recovery_switch(monkeypatch) -> None:
+    monkeypatch.setattr(config, "TURN_FALLBACK_RECOVERY_ENABLED", False)
+    _, run_executor, _, _ = await _turn(_state(), [_crashed()])
+    assert run_executor.await_count == 1
+
+
+@aio
+async def test_the_retry_time_is_checked_again_after_the_recovery_search(monkeypatch) -> None:
+    answers = iter([True, False])  # enough time before the search, not after it
+    monkeypatch.setattr(supervisor, "_time_for_retry", lambda: next(answers))
+    _, run_executor, searched, _ = await _turn(
+        _state(), [_crashed()], rag_status="empty", search=("找到的內容", "success"))
+    assert searched.call_count == 1 and run_executor.await_count == 1

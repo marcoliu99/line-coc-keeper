@@ -2200,6 +2200,22 @@
       "path": "docs/specs/enhancement/turn_summary_failures_design_spec.md",
       "zh_path": "docs/specs/enhancement/turn_summary_failures_design_spec_zh.md",
       "source_revision": "0de529b4789fe4858e8a162e5667663fa2eeb04e"
+    },
+    {
+      "title": "A failed Executor request is retried once when it ran nothing, and cleanup never hides the failure",
+      "zh": "沒執行任何東西的 Executor 請求失敗會重試一次，清理動作不再蓋掉原本的失敗",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/codex_transport.py",
+        "app/services/turn_fallback.py",
+        "app/agents/supervisor.py",
+        "tests/test_codex_transport.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/executor_request_failure_retry_design_spec.md",
+      "zh_path": "docs/specs/bug/executor_request_failure_retry_design_spec_zh.md",
+      "source_revision": "0de529b4789fe4858e8a162e5667663fa2eeb04e"
     }
   ]
 }

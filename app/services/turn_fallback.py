@@ -192,6 +192,16 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     return "unknown"
 
 
+def _failed_before_any_tool(reason: str | None, result: MechanicResult) -> bool:
+    """The model request itself failed (timeout, CLI error) before a single tool ran, so there is nothing to repeat.
+
+    Real runs lost turns this way after 52-120 s with no tool call at all. ``execution_health == "failed"`` is only
+    set when the game state is also unchanged; a failure after any tool call stays a fallback.
+    """
+    return (reason == "internal_error" and result.execution_health == "failed"
+            and not result.tool_calls and not result.observed_outcomes)
+
+
 def recoverable(reason: str | None, result: MechanicResult, *, before_pending: dict, before_luck: dict, state: GroupState) -> bool:
     """True only when running the Executor again cannot apply anything twice.
 
@@ -208,7 +218,7 @@ def recoverable(reason: str | None, result: MechanicResult, *, before_pending: d
 
     status = result.check_status
     return bool(
-        reason in RECOVERABLE
+        (reason in RECOVERABLE or _failed_before_any_tool(reason, result))
         and not status.get("state_changed") and not status.get("dice_rolled") and not status.get("resolved")
         and state.pending_checks == before_pending and state.pending_luck_decisions == before_luck
         and not result.events
