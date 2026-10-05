@@ -109,6 +109,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | Spec | Status | Language |
 | --- | --- | --- |
 | [Bilingual specification alignment](specs/maintenance/documentation_alignment_design_spec.md) | implemented | [繁體中文](specs/maintenance/documentation_alignment_design_spec_zh.md) |
+| [Combat and mechanics coverage the Camp Sunny soak never exercised](specs/maintenance/combat_mechanics_coverage_design_spec.md) | implemented | [繁體中文](specs/maintenance/combat_mechanics_coverage_design_spec_zh.md) |
 
 ## References
 
