@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat, combat_flow, combat_resources, db, dice, keeper
+from app import combat, combat_flow, combat_resources, db, dice, tool_dispatch
 from app.commands.handlers import checks as check_commands
 from app.models import Character, Combatant, CombatState, GroupState
 from app.repositories import group_state, state_transaction
@@ -83,7 +83,7 @@ def _battle(
 
 
 def _tool(name: str, arguments: dict[str, Any], actor: str = "p1") -> dict[str, Any]:
-    return keeper._execute_tool(_load(), name, arguments, [], [], actor_id=actor)
+    return tool_dispatch.execute_tool(_load(), name, arguments, [], [], actor_id=actor)
 
 
 def _hp(owner: str = "p1") -> int:

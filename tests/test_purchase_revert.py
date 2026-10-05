@@ -1,12 +1,13 @@
 """The retired purchase workflow stays unavailable while old saves remain readable."""
 
-from app import help_actions, keeper
+from app import help_actions
 from app.commands.router import is_known_coc_command
+from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
 
 
 def test_purchase_tool_and_commands_are_no_longer_exposed():
-    assert 'purchase_items' not in {tool['name'] for tool in keeper.TOOLS}
+    assert 'purchase_items' not in {tool['name'] for tool in tool_registry.TOOLS}
     assert not any(action.command in {'purchase', 'purchases', 'funds'} for action in help_actions.ACTIONS)
     for command in ('purchase', 'purchases', 'funds'):
         assert not is_known_coc_command(command)

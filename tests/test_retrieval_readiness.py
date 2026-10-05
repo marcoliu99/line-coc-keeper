@@ -129,7 +129,7 @@ def test_evidence_rejection_keeps_facts_and_diagnostics_without_execution():
         facts, status = [], {}
         execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', facts, status,
                                      evidence_incomplete=True, required_evidence_ids={'intro'})
-        with patch('app.agents.tool_gateway.keeper._execute_tool') as tool, \
+        with patch('app.agents.tool_gateway.tool_dispatch.execute_tool') as tool, \
                 patch('app.agents.tool_gateway.observability.event') as event:
             result = await execute('add_carried_item', {'investigator': 'private-name', 'item': 'private-item'})
         tool.assert_not_called()
@@ -146,7 +146,7 @@ def test_correction_rejection_is_also_recorded():
         facts = []
         execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', facts)
         with patch('app.services.narrative_corrections.blocking_reply', return_value='pending correction'), \
-                patch('app.agents.tool_gateway.keeper._execute_tool', new=Mock()) as tool:
+                patch('app.agents.tool_gateway.tool_dispatch.execute_tool', new=Mock()) as tool:
             result = await execute('add_carried_item', {})
         tool.assert_not_called()
         assert result['error'] == 'narrative_correction_hold'
@@ -276,7 +276,7 @@ def test_evidence_status_tracks_remaining_roots_and_narrator_reason():
             calls.append(name)
             return {'ok': True, **data}
 
-        with patch('app.agents.tool_gateway.keeper._execute_tool', side_effect=tool):
+        with patch('app.agents.tool_gateway.tool_dispatch.execute_tool', side_effect=tool):
             await execute('search_scenario', {'complete_for_action': False, 'evidence_record_ids': ['intro', 'rules']})
             for receipt in (
                 {'complete_for_action': True, 'evidence_record_ids': ['unrelated']},

@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app import scenario_rag, scenario_templates
+from app import scenario_rag, scenario_templates, tool_dispatch
+from app.keeper_tools import registry as tool_registry
 
 
 def selected(index, variant='zh-TW-current'):
@@ -101,15 +102,14 @@ def test_explicit_original_bypasses_nonempty_chinese_index():
 
 
 def test_tool_dispatches_original_source_and_rejects_invalid_source():
-    from app import keeper
     from app.models import GroupState
 
     state = GroupState(group_id='g', scenario_text='current chapter')
-    schema = keeper._SEARCH_SCENARIO_TOOL['input_schema']['properties']['source']
+    schema = tool_registry.SEARCH_SCENARIO_TOOL['input_schema']['properties']['source']
     assert schema['enum'] == ['auto', 'original']
     with patch.object(scenario_templates, 'search_for_state', return_value=(object(), [])) as search:
-        result = keeper._execute_tool(state, 'search_scenario', {'query': 'armor', 'source': 'original'}, [], [])
+        result = tool_dispatch.execute_tool(state, 'search_scenario', {'query': 'armor', 'source': 'original'}, [], [])
     assert result['ok']
     assert search.call_args.kwargs['source'] == 'original'
-    result = keeper._execute_tool(state, 'search_scenario', {'query': 'armor', 'source': 'all_chapters'}, [], [])
+    result = tool_dispatch.execute_tool(state, 'search_scenario', {'query': 'armor', 'source': 'all_chapters'}, [], [])
     assert not result['ok']

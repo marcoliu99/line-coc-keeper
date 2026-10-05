@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import scenario_authoring as authoring
-from app import scenario_library, scenario_rag, scenario_retrieval
+from app import scenario_library, scenario_rag, scenario_retrieval, tool_dispatch
 from app import scenario_templates as templates
 
 
@@ -272,14 +272,13 @@ def test_export_failure_never_claims_success(library, monkeypatch):
 
 def test_unrelated_complete_search_cannot_release_mechanical_hold(monkeypatch):
     async def exercise():
-        from app import keeper
         from app.agents.tool_gateway import make_tool_executor
         from app.models import GroupState
         calls = []
         def tool(state, name, data, *args):
             calls.append(name)
             return {'ok': True, **data}
-        monkeypatch.setattr(keeper, '_execute_tool', tool)
+        monkeypatch.setattr(tool_dispatch, 'execute_tool', tool)
         execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', [],
                                      evidence_incomplete=True, required_evidence_ids={'npc'})
         result = await execute('search_scenario', {'complete_for_action': True, 'evidence_record_ids': ['unrelated']})
@@ -416,14 +415,13 @@ def test_long_history_budget_matches_provider_selection(monkeypatch):
 
 
 def test_continuation_accumulates_evidence_and_releases_tool_gate(monkeypatch):
-    from app import keeper
     from app.agents.tool_gateway import make_tool_executor
     from app.models import GroupState
     records = {str(i): v4_record(str(i), rules=[], kp_text=str(i) * 3000) for i in range(4)}
     binding = ['same-turn']
     delivered = []
     async def exercise():
-        monkeypatch.setattr(keeper, '_execute_tool', lambda state, name, data, *args: {'ok': True, **data})
+        monkeypatch.setattr(tool_dispatch, 'execute_tool', lambda state, name, data, *args: {'ok': True, **data})
         execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', [],
                                      evidence_incomplete=True, required_evidence_ids=set(records))
         offset = 0

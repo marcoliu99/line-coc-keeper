@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from app import config, db, keeper, scenario_intro, turn_commit
+from app import config, db, scenario_intro, tool_dispatch, turn_commit
 from app.agents import assistant, narrator, supervisor
 from app.checks.models import CheckOutcome
 from app.commands.handlers import checks as check_commands
@@ -27,8 +27,11 @@ def _context(state: GroupState, text: str) -> AgentMessage:
 
 class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
     def test_legacy_keeper_model_loop_is_removed(self):
-        self.assertFalse(hasattr(keeper, "run_turn"))
-        self.assertFalse(hasattr(keeper, "_run_turn_impl"))
+        import importlib.util
+
+        self.assertIsNone(importlib.util.find_spec("app.keeper"))
+        self.assertFalse(hasattr(tool_dispatch, "run_turn"))
+        self.assertFalse(hasattr(tool_dispatch, "_run_turn_impl"))
 
     async def test_player_bang_remains_a_normal_supervisor_turn(self):
         class Provider:
@@ -110,7 +113,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}),
                 patch.object(config, "LLM_PROVIDER", "openai"),
-                patch.object(keeper, "_execute_tool", return_value={"ok": True, "result": 4}) as execute,
+                patch.object(tool_dispatch, "execute_tool", return_value={"ok": True, "result": 4}) as execute,
             ):
                 reply, _, _ = await assistant.run_assistant(message)
             persisted = load_state("assistant-canon")
@@ -329,7 +332,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             patch.object(supervisor.intent_router, "classify_intent", side_effect=AssertionError("special turn was classified")),
             patch.object(supervisor.executor, "run_executor", side_effect=AssertionError("check was rerolled")),
             patch.object(supervisor.turn_commit, "commit_turn_result", commit),
-            patch.object(narrator.keeper, "_execute_tool", execute),
+            patch.object(narrator.tool_dispatch, "execute_tool", execute),
             patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}),
             patch.object(config, "LLM_PROVIDER", "openai"),
         ):
@@ -374,7 +377,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
             patch.object(narrator, "tools_for_speaker_role", return_value=[
                 {"name": "search_scenario"}, {"name": "skill_check"},
             ]),
-            patch.object(narrator.keeper, "_execute_tool", execute),
+            patch.object(narrator.tool_dispatch, "execute_tool", execute),
             patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}),
             patch.object(config, "LLM_PROVIDER", "openai"),
         ):

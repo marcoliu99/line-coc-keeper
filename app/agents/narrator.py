@@ -3,7 +3,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
-from app import config, keeper, observability, presentation, prompt_builder
+from app import (
+    config,
+    observability,
+    presentation,
+    prompt_builder,
+    tool_dispatch,
+)
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
@@ -102,7 +108,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     provider_options: dict = session.stage_options("narrator")
     if tool_enabled:
         allowed = (
-            keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+            tool_registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
             if turn_kind == "resolved_check_followup" else _OPENING_TOOL_NAMES
         )
         tools = [tool for tool in tools_for_speaker_role("player")
@@ -121,7 +127,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             resolved_check_followup=(turn_kind == "resolved_check_followup"),
         )
         combat_status_gate = (
-            keeper._CombatStatusToolGate(state) if session.dynamic_tools else None
+            tool_dispatch.CombatStatusToolGate(state) if session.dynamic_tools else None
         )
 
         async def execute_restricted_tool(name: str, tool_input: dict) -> dict:

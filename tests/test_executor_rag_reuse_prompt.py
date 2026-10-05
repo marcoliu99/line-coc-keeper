@@ -58,7 +58,7 @@ class ExecutorRagReuseIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": fake_provider}), \
                 patch.object(config, "LLM_PROVIDER", "openai"), \
-                patch("app.keeper.SCENARIO_RAG_ENABLED", True), \
+                patch("app.tool_dispatch.SCENARIO_RAG_ENABLED", True), \
                 patch("app.prompt_builder.SCENARIO_RAG_ENABLED", True):
             await executor.run_executor(message)
 

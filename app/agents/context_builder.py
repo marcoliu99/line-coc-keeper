@@ -18,6 +18,7 @@ from app import (
     prompt_builder,
     scenario_rag,
     scenario_templates,
+    tool_dispatch,
 )
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
@@ -194,11 +195,11 @@ def search_scenario_context(
         metrics=metrics,
     ):
         if state.scenario_variant_id and state.scenario_variant_id != "original":
-            from app import config, keeper, scenario_retrieval
+            from app import config, scenario_retrieval
             model = getattr(config, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
             budget = scenario_retrieval.request_budget(
                 [prompt_builder.build_static_prompt(state), prompt_builder.build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
-                 keeper._tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
+                 tool_dispatch.tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
             budget_token = scenario_retrieval.BUDGET.set(min(budget, config.SCENARIO_PROACTIVE_TOKEN_BUDGET))
             model_token = scenario_retrieval.MODEL.set(model)
             try:

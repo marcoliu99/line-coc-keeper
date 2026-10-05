@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.keeper_tools import resource_bridge
+from app.keeper_tools import resource_bridge, support
 from app.models import GroupState
 
 if TYPE_CHECKING:
@@ -11,11 +11,10 @@ if TYPE_CHECKING:
 
 
 def adjust_character(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     state = call.state
     tool_input = call.input
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     field_name = tool_input["field"]
@@ -23,12 +22,12 @@ def adjust_character(call: ToolCall) -> dict[str, Any]:
     if field_name not in attr_map:
         return {"ok": False, "error": "field 必須是 hp/mp/san/luck 其中之一"}
     cur_attr, max_attr = attr_map[field_name]
-    new_val, major_wound, wound_roll, blocked_hit = keeper.apply_character_attribute_delta(
+    new_val, major_wound, wound_roll, blocked_hit = support.apply_character_attribute_delta(
         state, tool_input, field_name, cur_attr, max_attr
     )
     if blocked_hit is not None:
         return blocked_hit
-    refreshed_char = keeper.require_character(state, tool_input.get("investigator", ""))
+    refreshed_char = support.require_character(state, tool_input.get("investigator", ""))
     response = {"ok": True, "investigator": refreshed_char.name, "field": field_name, "value": new_val,
                 "provisional": resource_bridge.participating(state, refreshed_char)}
     if major_wound:
@@ -44,29 +43,27 @@ def adjust_character(call: ToolCall) -> dict[str, Any]:
 
 
 def set_skill(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     state = call.state
     tool_input = call.input
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     value = max(0, min(100, int(tool_input["value"])))
     def _mutate_set_skill(target_state: GroupState) -> None:
-        target_char = keeper.require_character(target_state, tool_input.get("investigator", ""))
+        target_char = support.require_character(target_state, tool_input.get("investigator", ""))
         target_char.skills[tool_input["skill"]] = value
-    keeper.mutate_tool_state(state, _mutate_set_skill)
-    refreshed_char = keeper.require_character(state, tool_input.get("investigator", ""))
+    support.mutate_tool_state(state, _mutate_set_skill)
+    refreshed_char = support.require_character(state, tool_input.get("investigator", ""))
     return {"ok": True, "investigator": refreshed_char.name, "skill": tool_input["skill"], "value": value}
 
 
 def get_character_sheet(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     state = call.state
     tool_input = call.input
-    keeper.refresh_tool_state(state)
-    char = keeper.find_character(state, tool_input.get("investigator", ""))
+    support.refresh_tool_state(state)
+    char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
     return {"ok": True, "sheet": resource_bridge.effective(state, char).to_dict(),

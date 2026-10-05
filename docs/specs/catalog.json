@@ -2002,12 +2002,14 @@
       "title": "Splitting app/keeper.py by responsibility",
       "zh": "依職責拆分 app/keeper.py",
       "category": "refactor",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
         "app/prompt_builder.py",
         "app/turn_commit.py",
         "app/memory_maintenance.py",
-        "app/keeper.py",
+        "app/tool_dispatch.py",
+        "app/keeper_tools/support.py",
+        "tests/test_architecture_keeper_tools.py",
         "tests/test_static_prompt_integration.py",
         "tests/test_spoiler_policy.py"
       ],

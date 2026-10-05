@@ -44,7 +44,7 @@ def prepare_narrator_handoff(
 ) -> str:
     """Select live per-Investigator waiting facts; never replay or mutate tools."""
     # The post-tool in-memory snapshot is synchronized from persisted state
-    # by _mutate_and_save_state. Prefer that authoritative final state to
+    # by mutate_tool_state. Prefer that authoritative final state to
     # tool-call summaries, and include a pending check carried in from an
     # earlier turn too.
     new_or_changed_pending = [

@@ -15,9 +15,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from app import dice, keeper, observability, scenario_retrieval
+from app import dice, observability, scenario_retrieval
 from app.agents.tool_gateway import make_tool_executor
 from app.domain.models import MechanicResult, ObservedOutcome
+from app.keeper_tools import support
 from app.models import GroupState
 from app.services import event_obligations
 
@@ -56,15 +57,15 @@ def _reserve(state: GroupState, identity: str, obligation: event_obligations.Obl
     def mutate(latest: GroupState) -> Any:
         nonlocal taken
         if identity in latest.check_consequence_receipts:
-            return keeper.ToolStateMutation({"ok": False}, should_save=False)
+            return support.ToolStateMutation({"ok": False}, should_save=False)
         latest.check_consequence_receipts[identity] = {
             "fingerprint": obligation.key,
             "result": {"status": "reserved", "kind": obligation.kind},
         }
         taken = True
-        return keeper.ToolStateMutation({"ok": True}, should_save=True)
+        return support.ToolStateMutation({"ok": True}, should_save=True)
 
-    keeper.mutate_tool_state(state, mutate)
+    support.mutate_tool_state(state, mutate)
     return taken
 
 
@@ -75,9 +76,9 @@ def _executing(state: GroupState, identity: str) -> None:
         entry = latest.check_consequence_receipts.get(identity)
         if entry is not None:
             entry["result"] = {**entry["result"], "status": "executing"}
-        return keeper.ToolStateMutation({"ok": True}, should_save=True)
+        return support.ToolStateMutation({"ok": True}, should_save=True)
 
-    keeper.mutate_tool_state(state, mutate)
+    support.mutate_tool_state(state, mutate)
 
 
 def _settle(state: GroupState, identity: str, result: dict[str, Any] | None) -> None:
@@ -90,9 +91,9 @@ def _settle(state: GroupState, identity: str, result: dict[str, Any] | None) -> 
             entry = latest.check_consequence_receipts.get(identity)
             if entry is not None:
                 entry["result"] = {"status": "applied", **result}
-        return keeper.ToolStateMutation({"ok": True}, should_save=True)
+        return support.ToolStateMutation({"ok": True}, should_save=True)
 
-    keeper.mutate_tool_state(state, mutate)
+    support.mutate_tool_state(state, mutate)
 
 
 def _summary(obligation: event_obligations.Obligation, name: str, result: dict[str, Any], extra: dict[str, Any]) -> tuple[str, bool]:

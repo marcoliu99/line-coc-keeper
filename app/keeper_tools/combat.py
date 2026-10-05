@@ -5,7 +5,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from app import combat
-from app.keeper_tools import managed_combat, resource_bridge
+from app.keeper_tools import managed_combat, resource_bridge, support
 from app.models import ArmorRule, AttackRule, GroupState, SpecialAbility
 from app.services import combat_actions as act
 from app.services import combat_engine
@@ -25,19 +25,17 @@ def _reviewed_skills(payload):
 
 
 def start_combat(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     state = call.state
 
     def mutate(target_state: GroupState) -> None:
         combat_engine.handle(target_state, act.Start())
 
-    keeper.mutate_tool_state(state, mutate)
+    support.mutate_tool_state(state, mutate)
     return {"ok": True, "status": combat_engine.handle(state, act.Status())}
 
 
 def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     state = call.state
     tool_input = call.input
@@ -48,7 +46,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
         hp = requested_hp
         index_note = ""
         # The indexed HP is authoritative for a matching scenario NPC.
-        index_entry = keeper.find_npc_index_entry(target_state, npc_name)
+        index_entry = support.find_npc_index_entry(target_state, npc_name)
         if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
             canonical_hp = int(index_entry["hp"])
             if canonical_hp != hp:
@@ -69,7 +67,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             source=tool_input.get("source"), skills=_reviewed_skills(tool_input.get("skills")),
         ))
         if added.reused:
-            return keeper.ToolStateMutation(
+            return support.ToolStateMutation(
                 f"（系統偵測到「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
                 "這隻怪物的血量與狀態沿用原本那份，之後不要為同一隻怪物再呼叫一次 "
                 "add_npc_to_combat。）",
@@ -82,9 +80,9 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
                 f"如果這其實是同一隻，請明確更正「{new.display_name}」的建立紀錄，"
                 "並依原本倒下的狀態敘事。）"
             )
-        return keeper.ToolStateMutation(index_note, should_save=True)
+        return support.ToolStateMutation(index_note, should_save=True)
 
-    index_note = keeper.mutate_tool_state(state, mutate)
+    index_note = support.mutate_tool_state(state, mutate)
     response = {"ok": True, "status": combat_engine.handle(state, act.Status())}
     if index_note:
         response["note"] = index_note
@@ -92,7 +90,6 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
 
 
 def initialize_combat(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     state = call.state
     enemies = call.input.get("enemies") or []
@@ -121,7 +118,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                         for rule in rules:
                             rule_type.from_dict(rule)
                 index_note = ""
-                index_entry = keeper.find_npc_index_entry(target_state, requested_name)
+                index_entry = support.find_npc_index_entry(target_state, requested_name)
                 if index_entry is not None and isinstance(index_entry.get("hp"), (int, float)):
                     canonical_hp = int(index_entry["hp"])
                     if canonical_hp != hp:
@@ -153,9 +150,9 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
             # The single-add path preserves the first actor while sorting.
             # Before the first turn, the full roster's highest DEX acts first.
             target_state.combat.current_index = 0
-        return keeper.ToolStateMutation(results, should_save=added_any)
+        return support.ToolStateMutation(results, should_save=added_any)
 
-    entry_results = keeper.mutate_tool_state(state, mutate)
+    entry_results = support.mutate_tool_state(state, mutate)
     return {
         "ok": any(entry["ok"] for entry in entry_results),
         "status": combat_engine.handle(state, act.Status()),
@@ -164,9 +161,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
 
 
 def get_combat_status(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    keeper.refresh_tool_state(call.state)
+    support.refresh_tool_state(call.state)
     response = {
         "ok": True, "provisional": resource_bridge.managed(call.state),
         "status": combat_engine.handle(
@@ -242,7 +238,6 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
 
 
 def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
@@ -251,65 +246,61 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                 actor_id=call.input.get('actor_id', ''),
                 event_id=resource_bridge.mutation_id(call.name, call.input),
             ))
-            return keeper.ToolStateMutation(result, should_save=target_state.to_dict() != before)
-        return keeper.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
+            return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
+        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
 
-    return managed_combat.public_result(keeper.mutate_tool_state(call.state, mutate),
+    return managed_combat.public_result(support.mutate_tool_state(call.state, mutate),
                                         include_private=call.speaker_role == 'kp_assistant')
 
 
 def damage_combatant(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
-            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat_engine.handle(
+            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
+        return support.skip_save_if_blocked(combat_engine.handle(
             target_state, act.DamageCombatant(tool_input["name"], int(tool_input["delta"])),
         ))
 
-    result = keeper.mutate_tool_state(call.state, mutate)
-    return keeper.filter_public_combat_damage_result(result, call.speaker_role)
+    result = support.mutate_tool_state(call.state, mutate)
+    return support.filter_public_combat_damage_result(result, call.speaker_role)
 
 
 def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     def mutate(target_state: GroupState) -> Any:
-        return keeper.skip_save_if_blocked(
+        return support.skip_save_if_blocked(
             combat_engine.handle(target_state, act.PlanEnemy(call.input.get("enemy", "")))
         )
 
-    return keeper.mutate_tool_state(call.state, mutate)
+    return support.mutate_tool_state(call.state, mutate)
 
 
 def resolve_enemy_action(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
-            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat_engine.handle(
+            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
+        return support.skip_save_if_blocked(combat_engine.handle(
             target_state,
             act.ResolveEnemy(plan_id=tool_input["plan_id"], outcome=tool_input.get("outcome")),
         ))
 
-    return keeper.mutate_tool_state(call.state, mutate)
+    return support.mutate_tool_state(call.state, mutate)
 
 
 def apply_combat_damage(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
-            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
+            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
+        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
             target=tool_input["target"],
             raw_damage=int(tool_input["raw_damage"]),
             damage_type=tool_input.get("damage_type", "physical"),
@@ -317,19 +308,18 @@ def apply_combat_damage(call: ToolCall) -> dict[str, Any]:
             source_id=tool_input.get("source_id", ""),
         )))
 
-    result = keeper.mutate_tool_state(call.state, mutate)
-    return keeper.filter_public_combat_damage_result(result, call.speaker_role)
+    result = support.mutate_tool_state(call.state, mutate)
+    return support.filter_public_combat_damage_result(result, call.speaker_role)
 
 
 def apply_final_combat_damage(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
-            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return keeper.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
+            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
+        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
             target=tool_input["target"],
             raw_damage=int(tool_input["final_damage"]),
             damage_type=tool_input.get("damage_type", "physical"),
@@ -339,18 +329,17 @@ def apply_final_combat_damage(call: ToolCall) -> dict[str, Any]:
             entry_point="apply_final_combat_damage",
         )))
 
-    result = keeper.mutate_tool_state(call.state, mutate)
-    return keeper.filter_public_combat_damage_result(result, call.speaker_role)
+    result = support.mutate_tool_state(call.state, mutate)
+    return support.filter_public_combat_damage_result(result, call.speaker_role)
 
 
 def add_combat_effect(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     tool_input = call.input
 
     def mutate(target_state: GroupState) -> Any:
         if target_state.combat.active:
-            return keeper.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
+            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
         return combat_engine.handle(target_state, act.AddEffect(
             target=tool_input["target"],
             label=tool_input["label"],
@@ -363,7 +352,7 @@ def add_combat_effect(call: ToolCall) -> dict[str, Any]:
             public_description=tool_input.get("public_description", ""),
         ))
 
-    return keeper.mutate_tool_state(call.state, mutate)
+    return support.mutate_tool_state(call.state, mutate)
 
 
 def end_combat(call: ToolCall) -> dict[str, Any]:

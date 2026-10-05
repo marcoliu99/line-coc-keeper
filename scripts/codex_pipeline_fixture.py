@@ -5,11 +5,11 @@ import asyncio
 import uuid
 from unittest.mock import patch
 
-from app import turn_commit
+from app import tool_dispatch, turn_commit
+from app.repositories.group_state import load_state
 
 
 async def run_pipeline(kind='check_success'):
-    from app import keeper
     from app.agents import supervisor
     from app.commands.handlers import checks as check_commands
     from app.models import Character, GroupState
@@ -42,14 +42,14 @@ async def run_pipeline(kind='check_success'):
         'pending': '我要檢查桌上字跡模糊的文件，辨認日期。',
     }
     if kind in {'pending', 'pending_pickup'}:
-        receipt = keeper._execute_tool(state, 'skill_check', {'investigator': 'Marco',
+        receipt = tool_dispatch.execute_tool(state, 'skill_check', {'investigator': 'Marco',
             'skill': '偵查', 'action_context': actions['pending']}, [], [], speaker_role='player')
         assert receipt.get('pending'), 'Fixture setup did not create a pending check'
     old_check = dict(state.pending_checks.get('player') or {})
     with patch('app.dice.roll_percentile_with_dice_pool', side_effect=roll):
         reply, private, images = await supervisor.run_turn(state, 'player', 'Marco', actions[kind],
             None, 'player', state.group_id)
-        state = keeper.load_state(state.group_id)
+        state = load_state(state.group_id)
         failures = []
         first_reply = reply
         if rolls:
@@ -62,14 +62,14 @@ async def run_pipeline(kind='check_success'):
             if not failures:
                 resolved = await asyncio.to_thread(check_commands.resolve_check,
                     state.group_id, 'player', '/coc check')
-                state = keeper.load_state(state.group_id)
+                state = load_state(state.group_id)
                 if not resolved.should_finalize or not resolved.resolved_event:
                     failures.append('resolution_not_final')
                 else:
                     reply, private, images = await supervisor.run_turn(state, 'player', 'Marco',
                         resolved.keeper_message, None, 'player', state.group_id,
                         turn_kind='resolved_check_followup', resolved_check_context=resolved.resolved_event)
-                    state = keeper.load_state(state.group_id)
+                    state = load_state(state.group_id)
                 if len(rolls) != 1:
                     failures.append('wrong_roll_count')
                 if state.pending_checks or state.pending_luck_decisions:

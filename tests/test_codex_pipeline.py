@@ -4,7 +4,7 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from app import config, keeper, turn_commit
+from app import config, tool_dispatch, turn_commit
 from app.agents import supervisor
 from app.commands.handlers import checks as check_commands
 from app.models import Character, GroupState
@@ -77,7 +77,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
                 state.scenario_text = '桌上黃銅鑰匙可以直接拾取，文件需偵查檢定。'
                 group_state.save_state(state)
                 turn_commit.ensure_turn_timeline(state)
-                keeper._execute_tool(state, 'skill_check', {'investigator': 'Marco', 'skill': '偵查',
+                tool_dispatch.execute_tool(state, 'skill_check', {'investigator': 'Marco', 'skill': '偵查',
                     'action_context': '辨認文件'}, [], [], speaker_role='player')
                 old_pending = dict(state.pending_checks['u'])
                 dispatched = []

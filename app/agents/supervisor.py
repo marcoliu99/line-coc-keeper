@@ -401,8 +401,8 @@ async def run_turn(
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
     # pending_checks/combat/etc.) already happened inside the Executor's
-    # tool calls, via keeper._execute_tool's own locked
-    # (_mutate_and_save_state) path — see state_reducer.py's docstring.
+    # tool calls, via tool_dispatch.execute_tool's own locked
+    # (mutate_tool_state) path — see state_reducer.py's docstring.
     # What's left here is just committing this turn's log entries: reload
     # the latest state under the state lock (so this can't clobber
     # whatever the tool calls above already saved), append, save, then sync

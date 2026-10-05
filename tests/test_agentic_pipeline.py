@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import config
+from app import config, tool_dispatch
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.models import Character, GroupState
 from app.providers import registry
@@ -279,17 +279,17 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task.done())
 
     async def test_recovery_marker_persistence_is_bounded_and_observed(self):
-        from app import async_utils, keeper
+        from app import async_utils
 
         release = asyncio.Event()
 
         async def blocked_marker(*_args):
             await release.wait()
 
-        with patch.object(keeper, "record_tool_recovery_marker", side_effect=blocked_marker), \
-                patch.object(keeper, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
+        with patch.object(tool_dispatch, "record_tool_recovery_marker", side_effect=blocked_marker), \
+                patch.object(tool_dispatch, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
             started_at = time.perf_counter()
-            await keeper.record_tool_recovery_marker_bounded(
+            await tool_dispatch.record_tool_recovery_marker_bounded(
                 GroupState(group_id="marker-test"), "apply_combat_damage", {"damage": 1}
             )
             elapsed = time.perf_counter() - started_at

@@ -1,8 +1,8 @@
 import unittest
 
 from app import combat
-from app.keeper import _CombatStatusToolGate
 from app.models import Combatant, CombatState, GroupState
+from app.tool_dispatch import CombatStatusToolGate
 from tests import combat_calls as calls
 
 
@@ -23,25 +23,25 @@ class CombatStatusToolGateTests(unittest.TestCase):
         return state
 
     def test_withholds_initial_status_lookup_when_snapshot_is_complete(self):
-        gate = _CombatStatusToolGate(self._active_state())
+        gate = CombatStatusToolGate(self._active_state())
 
         self.assertEqual(gate.tools_for_request(self.tools), [{"name": "skill_check"}])
 
     def test_keeps_status_lookup_when_combat_snapshot_is_missing(self):
         state = GroupState(group_id="g")
         state.combat = CombatState(active=True, round_number=1)
-        gate = _CombatStatusToolGate(state)
+        gate = CombatStatusToolGate(state)
 
         self.assertEqual(gate.tools_for_request(self.tools), self.tools)
 
     def test_failed_mutation_does_not_reopen_status_tool(self):
-        gate = _CombatStatusToolGate(self._active_state())
+        gate = CombatStatusToolGate(self._active_state())
         gate.observe_tool_result("advance_combat_turn", {"ok": False, "error": "no combat"})
 
         self.assertEqual(gate.tools_for_request(self.tools), [{"name": "skill_check"}])
 
     def test_successful_mutation_without_complete_status_reopens_tool(self):
-        gate = _CombatStatusToolGate(self._active_state())
+        gate = CombatStatusToolGate(self._active_state())
         gate.observe_tool_result("advance_combat_turn", {"ok": True, "current_turn": "Cultist"})
 
         self.assertEqual(gate.tools_for_request(self.tools), self.tools)
@@ -57,7 +57,7 @@ class CombatStatusToolGateTests(unittest.TestCase):
         )
         enemy = next(combatant for combatant in state.combat.order if combatant.name == "Cultist")
         combat.add_combat_effect(state, "Cultist", "burning", timing="turn_start", damage="1")
-        gate = _CombatStatusToolGate(state)
+        gate = CombatStatusToolGate(state)
 
         result = calls.plan_enemy_turn(state, "Cultist")
 
@@ -67,7 +67,7 @@ class CombatStatusToolGateTests(unittest.TestCase):
         self.assertEqual(gate.tools_for_request(self.tools), self.tools)
 
     def test_successful_mutation_with_complete_status_keeps_tool_withheld(self):
-        gate = _CombatStatusToolGate(self._active_state())
+        gate = CombatStatusToolGate(self._active_state())
         gate.observe_tool_result(
             "add_npc_to_combat", {"ok": True, "status": "戰鬥中 - 第 1 輪\n=> Cultist"}
         )
@@ -75,7 +75,7 @@ class CombatStatusToolGateTests(unittest.TestCase):
         self.assertEqual(gate.tools_for_request(self.tools), [{"name": "skill_check"}])
 
     def test_non_combat_tools_do_not_reopen_status_tool(self):
-        gate = _CombatStatusToolGate(self._active_state())
+        gate = CombatStatusToolGate(self._active_state())
         gate.observe_tool_result("skill_check", {"ok": True, "result": "success"})
 
         self.assertEqual(gate.tools_for_request(self.tools), [{"name": "skill_check"}])

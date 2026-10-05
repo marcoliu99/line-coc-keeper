@@ -20,9 +20,9 @@ def apply_mechanic_result(message: AgentMessage, result: MechanicResult) -> None
 
     As of the Executor rewrite (see app/agents/executor.py), real state
     mutation already happens for real, synchronously, before this function
-    is ever called: tool calls go through keeper._execute_tool via
+    is ever called: tool calls go through tool_dispatch.execute_tool via
     tool_gateway.make_tool_executor, which uses the same
-    _mutate_and_save_state locking every other Keeper tool call in this
+    mutate_tool_state locking every other Keeper tool call in this
     project uses (reload-latest-under-lock, mutate, save). Re-applying
     `state_delta` here on top of that — especially via an unlocked, blind
     save_state(state) — would either double-apply the same change or, worse,
