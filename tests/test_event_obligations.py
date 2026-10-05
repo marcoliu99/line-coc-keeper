@@ -264,3 +264,100 @@ def test_no_runtime_module_other_than_the_gate_applies_an_obligation() -> None:
                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
     }
     assert users == {"agents/obligation_gate.py"}
+
+
+# --- review: incomplete evidence, what survives the Guard, the mutation phase, cancellation ---------------
+
+INCOMPLETE = (
+    f"--- 第 12 頁 ---\n{BUCKET_RULE}\n【依據尚未完整】必要依據未齊；請續取、補查或聚焦行動，暫緩機制。\n"
+    '【取用完整性】[{"complete_for_action": false, "root_record_ids": ["r1"]}]'
+)
+
+
+@aio
+async def test_a_rule_read_from_evidence_marked_incomplete_is_not_applied(state) -> None:
+    applied, _ = await _enforce(state, REVEAL, [INCOMPLETE])
+    assert applied == [] and not group_state.load_state(state.group_id).pending_checks
+    complete = f"--- 第 12 頁 ---\n{BUCKET_RULE}"
+    applied, _ = await _enforce(state, REVEAL, [INCOMPLETE, complete])
+    assert len(applied) == 1  # the complete passage still counts
+
+
+@aio
+async def test_nothing_is_applied_when_the_executor_was_told_its_evidence_is_incomplete(state) -> None:
+    blocked = _result()
+    blocked.check_status["scenario_evidence_blocked"] = True
+    applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], result=blocked)
+    assert applied == [] and not obligation_gate.possible([BUCKET_RULE], blocked)
+    assert obligation_gate.possible([BUCKET_RULE], _result()) and not obligation_gate.possible(["沒有規則。"], _result())
+
+
+@aio
+async def test_a_trigger_the_guard_removed_charges_nothing(state) -> None:
+    message = AgentMessage(payload={
+        "conversation_id": state.group_id, "user_id": "a", "display_name": "Marco", "text": "我掀開水桶",
+        "resolved_location": None, "speaker_role": "player", "state": state, "character": None,
+        "rag_context": f"--- 第 12 頁 ---\n{BUCKET_RULE}", "memory_context": "", "rag_status": "success",
+    })
+    executed = MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
+                              turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
+    with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
+            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
+            patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
+            patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
+            patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=(REVEAL, [], []))), \
+            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(return_value="你掀開蓋子，什麼也沒看清。")):
+        reply, _, _ = await supervisor.run_turn(
+            state=state, user_id="a", display_name="Marco", text="我掀開水桶", resolved_location=None,
+            speaker_role="player", conversation_id=state.group_id)
+    assert "斷手" not in reply and "理智檢定" not in reply
+    assert not group_state.load_state(state.group_id).pending_checks
+
+
+@pytest.mark.parametrize(("evidence", "hands_off"), [(f"--- 第 12 頁 ---\n{BUCKET_RULE}", False), ("沒有任何機制規則。", True)])
+@aio
+async def test_the_mutation_phase_is_kept_when_the_evidence_states_an_obligation(state, monkeypatch, evidence, hands_off) -> None:
+    from app import config
+
+    monkeypatch.setattr(config, "NARRATION_OUTSIDE_MUTATION_LOCK", True)
+    handoff = AsyncMock()
+    message = AgentMessage(payload={
+        "conversation_id": state.group_id, "user_id": "a", "display_name": "Marco", "text": "我掀開水桶",
+        "resolved_location": None, "speaker_role": "player", "state": state, "character": None,
+        "rag_context": evidence, "memory_context": "", "rag_status": "success",
+    })
+    executed = MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
+                              turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
+    with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
+            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
+            patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
+            patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
+            patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("你掀開水桶。", [], []))), \
+            patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
+        await supervisor.run_turn(
+            state=state, user_id="a", display_name="Marco", text="我掀開水桶", resolved_location=None,
+            speaker_role="player", conversation_id=state.group_id, handoff=handoff)
+    assert (handoff.to_narration.await_count == 1) is hands_off
+
+
+@aio
+async def test_a_cancelled_application_is_never_applied_a_second_time(state) -> None:
+    cancelled = AsyncMock(side_effect=asyncio.CancelledError())
+    with patch.object(obligation_gate, "make_tool_executor", return_value=cancelled), pytest.raises(asyncio.CancelledError):
+        await _enforce(state, REVEAL, [BUCKET_RULE])
+    [receipt] = group_state.load_state(state.group_id).check_consequence_receipts.values()
+    assert receipt["result"]["status"] == "executing"  # the tool may have run, so it is never run again
+    applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], turn_id="turn-2")
+    assert applied == []
+
+
+@aio
+async def test_an_application_cannot_be_cancelled_between_reserving_and_starting(state) -> None:
+    """Reserving and marking happen without awaiting, so no cancellation point leaves a reservation with no tool run."""
+    import inspect
+
+    source = inspect.getsource(obligation_gate.enforce)
+    reserve, mark, execute = source.index("_reserve(state"), source.index("_executing(state"), source.index("await execute(")
+    assert "await" not in source[reserve:mark] and reserve < mark < execute

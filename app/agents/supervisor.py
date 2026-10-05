@@ -271,8 +271,17 @@ async def run_turn(
     # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
     # and opening_fallback a restricted tool set, and #99 commits arrivals
     # inside that loop, so those turns keep the mutation lock to the end.
+    #
+    # Nor when the evidence states a mechanic the narration may make due: that gate changes state, so it needs the
+    # mutation phase.
+    obligation_evidence = [
+        _evidence_text(message), *(mechanic_result.scenario_evidence if mechanic_result else ())]
+    obligation_candidates = (
+        turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups)
+        and obligation_gate.possible(obligation_evidence, mechanic_result)
+    )
     if (handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
-            and turn_kind == "player_action"):
+            and turn_kind == "player_action" and not obligation_candidates):
         await handoff.to_narration()
         observability.event("turn.handoff", phase="narration")
 
@@ -312,24 +321,6 @@ async def run_turn(
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
 
-    # What the scenario attaches to an event the narration has just shown is owed now, not when a player
-    # later says they are frightened (CS-007). The gate applies it through the ordinary tools.
-    if turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups):
-        owed = await obligation_gate.enforce(
-            state, user_id, reply_text,
-            [message.payload.get("rag_context", ""), message.payload.get("recovery_context", ""),
-             *(mechanic_result.scenario_evidence if mechanic_result else ())],
-            mechanic_result or _no_mechanics(),
-            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
-            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
-        )
-        if owed:
-            if mechanic_result is None:
-                mechanic_result = _no_mechanics()
-            turn_handoff.prepare_narrator_handoff(
-                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
-            reply_text = reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed)
-
     # Consistency precedes Guard; any Guard rewrite is checked again. The
     # deterministic delivery contract is the final writer and safety boundary.
     public_result = turn_delivery.public_mechanic(mechanic_result, state)
@@ -351,6 +342,24 @@ async def run_turn(
     reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     reply_text = consistent(reply_text)
+
+    # What the scenario attaches to an event is owed now, not when a player later says they are frightened (CS-007).
+    # Decided on the narration that survived consistency repair and the Guard, so a trigger they removed charges nothing.
+    if obligation_candidates:
+        owed = await obligation_gate.enforce(
+            state, user_id, reply_text, obligation_evidence,
+            mechanic_result or _no_mechanics(),
+            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
+            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
+        )
+        if owed:
+            if mechanic_result is None:
+                mechanic_result = _no_mechanics()
+            turn_handoff.prepare_narrator_handoff(
+                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
+            public_result = turn_delivery.public_mechanic(mechanic_result, state)
+            reply_text = consistent(reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed))
+
     reply_text, private_controls = turn_delivery.finalize(message, reply_text)
     safety_blocked = reply_text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
         getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
