@@ -13,6 +13,7 @@ from app.agents import (
     guard,
     intent_router,
     narrator,
+    obligation_gate,
     state_reducer,
 )
 from app.domain.models import (
@@ -21,6 +22,7 @@ from app.domain.models import (
     MechanicResult,
     PlayerTurnKind,
     SpeakerRole,
+    StateDelta,
 )
 from app.models import GroupState
 from app.providers.codex_provider import with_codex_turn
@@ -67,6 +69,11 @@ async def prefetch_retrieval(
         observability.event("rag.prefetch.failed", level=logging.WARNING)
         _logger.exception("Retrieval prefetch failed; the turn will search under the lock")
         return None
+
+
+def _no_mechanics() -> MechanicResult:
+    """The mechanics of a turn that ran no Executor, for work that needs somewhere to record them."""
+    return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
 
 # A retrieval that came back without usable evidence. "disabled" is not one of these: the full scenario (or the
@@ -264,12 +271,25 @@ async def run_turn(
     # Not for a tool-enabled Narrator. narrator.py gives resolved_check_followup
     # and opening_fallback a restricted tool set, and #99 commits arrivals
     # inside that loop, so those turns keep the mutation lock to the end.
+    #
+    # Nor when the evidence states a mechanic the narration may make due: that gate changes state, so it needs the
+    # mutation phase.
+    obligation_evidence = [
+        _evidence_text(message), *(mechanic_result.scenario_evidence if mechanic_result else ())]
+    obligation_candidates = (
+        turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups)
+        and obligation_gate.possible(obligation_evidence, mechanic_result)
+    )
     if (handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
-            and turn_kind == "player_action"):
+            and turn_kind == "player_action" and not obligation_candidates):
         await handoff.to_narration()
         observability.event("turn.handoff", phase="narration")
 
     # 5. Narrator Agent generates the final text
+    handoff_before = (
+        (pending_checks_before, pending_luck_before) if intent == "GAMEPLAY_ACTION"
+        else (deepcopy(state.pending_checks), deepcopy(state.pending_luck_decisions))
+    )
     if pending_reply and not autoroll_followups:
         reply_text = pending_reply
         turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn_id,
@@ -322,6 +342,24 @@ async def run_turn(
     reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     reply_text = consistent(reply_text)
+
+    # What the scenario attaches to an event is owed now, not when a player later says they are frightened (CS-007).
+    # Decided on the narration that survived consistency repair and the Guard, so a trigger they removed charges nothing.
+    if obligation_candidates:
+        owed = await obligation_gate.enforce(
+            state, user_id, reply_text, obligation_evidence,
+            mechanic_result or _no_mechanics(),
+            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
+            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
+        )
+        if owed:
+            if mechanic_result is None:
+                mechanic_result = _no_mechanics()
+            turn_handoff.prepare_narrator_handoff(
+                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
+            public_result = turn_delivery.public_mechanic(mechanic_result, state)
+            reply_text = consistent(reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed))
+
     reply_text, private_controls = turn_delivery.finalize(message, reply_text)
     safety_blocked = reply_text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
         getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
