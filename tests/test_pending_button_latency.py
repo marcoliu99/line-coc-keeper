@@ -9,7 +9,7 @@ from app.check_identity import (
     effective_check_id,
     effective_decision_id,
 )
-from app.commands import router
+from app.commands import router, turn_scope
 from app.commands.handlers import buttons
 from app.discord_transport import controls, delivery
 from app.models import GroupState
@@ -190,7 +190,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         with self.assertRaises(RuntimeError):
-            async with router._conversation_lock_with_notice(conversation_id, reply, hook):
+            async with turn_scope.conversation_turn(conversation_id, reply, hook):
                 raise RuntimeError("later turn step failed")
         self.assertEqual(observed, [True])
         self.assertFalse(locks.get_conversation_lock(conversation_id).locked())

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from app import locks, scenario_rag
-from app.commands import router
+from app.commands import router, turn_scope
 
 
 class TurnsAheadTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class TurnQueueEventTests(unittest.TestCase):
             async def reply(_message: str) -> None:
                 pass
 
-            async with router._conversation_lock_with_notice("conv-queue-free", reply):
+            async with turn_scope.conversation_turn("conv-queue-free", reply):
                 pass
 
         with patch.object(router.observability, "event") as event:
@@ -63,7 +63,7 @@ class TurnQueueEventTests(unittest.TestCase):
             await lock.acquire()
 
             async def queued() -> None:
-                async with router._conversation_lock_with_notice(
+                async with turn_scope.conversation_turn(
                     "conv-queue-busy", reply, route="check", speaker_role="player",
                 ):
                     pass
@@ -73,7 +73,7 @@ class TurnQueueEventTests(unittest.TestCase):
             lock.release()
             await task
 
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 30.0), \
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 30.0), \
                 patch.object(router.observability, "event") as event:
             asyncio.run(scenario())
         queued_calls = [call for call in event.call_args_list if call.args[0] == "turn.queue"]
@@ -95,7 +95,7 @@ class TurnQueueEventTests(unittest.TestCase):
                 replies.append(message)
 
             async def turn(release: asyncio.Event) -> None:
-                async with router._keeper_priority_gate_and_lock_with_notice(
+                async with turn_scope.keeper_turn(
                     "conv-gate-depth", is_kp=False, reply=reply, speaker_role="player",
                 ):
                     await release.wait()
@@ -117,8 +117,8 @@ class TurnQueueEventTests(unittest.TestCase):
             await asyncio.wait_for(asyncio.gather(holder, second, third), 2)
             return replies
 
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
-                patch.object(router, "_QUEUE_ACK_REFRESH_SECONDS", 0.01), \
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
+                patch.object(turn_scope, "_QUEUE_ACK_REFRESH_SECONDS", 0.01), \
                 patch.object(router.observability, "event") as event:
             replies = asyncio.run(scenario())
         self.assertTrue(any("前面還有 2 個動作" in message for message in replies), replies)
@@ -137,15 +137,15 @@ class QueueNoticeTests(unittest.TestCase):
                 replies.append(message)
 
             # Three notices at the patched cadence, then the wait resolves.
-            task = asyncio.create_task(router._delayed_queue_notice(reply, lambda: 2))
+            task = asyncio.create_task(turn_scope._delayed_queue_notice(reply, lambda: 2))
             await asyncio.sleep(0.2)
-            await router._stop_queue_notice_task(task)
+            await turn_scope._stop_queue_notice_task(task)
             return replies
 
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
-                patch.object(router, "_QUEUE_ACK_REFRESH_SECONDS", 0.01):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
+                patch.object(turn_scope, "_QUEUE_ACK_REFRESH_SECONDS", 0.01):
             replies = asyncio.run(scenario())
-        self.assertEqual(len(replies), router._QUEUE_ACK_MAX_NOTICES)
+        self.assertEqual(len(replies), turn_scope._QUEUE_ACK_MAX_NOTICES)
         for message in replies:
             self.assertIn("2", message)
 
@@ -186,15 +186,15 @@ class QueueNoticeTests(unittest.TestCase):
             async def reply(message: str) -> None:
                 replies.append(message)
 
-            task = asyncio.create_task(router._delayed_queue_notice(reply, lambda: 0))
+            task = asyncio.create_task(turn_scope._delayed_queue_notice(reply, lambda: 0))
             await asyncio.sleep(0.05)
-            await router._stop_queue_notice_task(task)
+            await turn_scope._stop_queue_notice_task(task)
             return replies
 
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
-                patch.object(router, "_QUEUE_ACK_REFRESH_SECONDS", 10.0):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
+                patch.object(turn_scope, "_QUEUE_ACK_REFRESH_SECONDS", 10.0):
             replies = asyncio.run(scenario())
-        self.assertEqual(replies[:1], [router._QUEUE_ACK_MESSAGE])
+        self.assertEqual(replies[:1], [turn_scope._QUEUE_ACK_MESSAGE])
 
     def test_a_failing_notice_stops_rather_than_retrying_forever(self):
         async def scenario() -> int:
@@ -205,13 +205,13 @@ class QueueNoticeTests(unittest.TestCase):
                 attempts += 1
                 raise RuntimeError("discord down")
 
-            task = asyncio.create_task(router._delayed_queue_notice(reply, lambda: 1))
+            task = asyncio.create_task(turn_scope._delayed_queue_notice(reply, lambda: 1))
             await asyncio.sleep(0.1)
-            await router._stop_queue_notice_task(task)
+            await turn_scope._stop_queue_notice_task(task)
             return attempts
 
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
-                patch.object(router, "_QUEUE_ACK_REFRESH_SECONDS", 0.01), \
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.01), \
+                patch.object(turn_scope, "_QUEUE_ACK_REFRESH_SECONDS", 0.01), \
                 patch.object(router.observability, "event"):
             self.assertEqual(asyncio.run(scenario()), 1)
 

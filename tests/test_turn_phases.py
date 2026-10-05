@@ -166,16 +166,16 @@ async def test_a_continuation_is_labelled_and_timed_as_one(events) -> None:
 
 @aio
 async def test_the_lock_helper_records_how_long_the_turn_queued() -> None:
-    from app.commands import router
+    from app.commands import turn_scope
 
     reply = AsyncMock()
     seen = []
 
     async def waiter() -> None:
-        async with router._conversation_lock_with_notice("queue-conv", reply) as handoff:
+        async with turn_scope.conversation_turn("queue-conv", reply) as handoff:
             seen.append(handoff.queue_wait_ms)
 
-    async with router._conversation_lock_with_notice("queue-conv", reply) as first:
+    async with turn_scope.conversation_turn("queue-conv", reply) as first:
         task = asyncio.create_task(waiter())
         await asyncio.sleep(0.05)
     await task

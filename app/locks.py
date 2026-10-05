@@ -20,7 +20,9 @@ within the same conversation queue up behind each other.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
+import time
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -253,6 +255,33 @@ class TurnHandoff:
         self._holds_narration = False
         # How long this turn waited for the lock, for the turn's phase timeline (app/services/turn_phases.py).
         self.queue_wait_ms = 0.0
+        # Named by the router once the turn has an id, so a held-too-long report says whose turn it is.
+        self.turn_id: str | None = None
+        self._acquired_at = time.monotonic()
+        self._warned = False
+        self._watchdog: asyncio.TimerHandle | None = None
+        if config.LOCK_HELD_WARNING_SECONDS > 0:
+            try:
+                self._watchdog = asyncio.get_running_loop().call_later(
+                    config.LOCK_HELD_WARNING_SECONDS, self._warn_held_too_long)
+            except RuntimeError:  # built outside a running loop: nothing to watch with
+                pass
+
+    def _held_ms(self) -> float:
+        return (time.monotonic() - self._acquired_at) * 1000
+
+    def _warn_held_too_long(self) -> None:
+        """Report a turn that still holds its locks long after its deadline. Reports only.
+
+        Releasing from here would turn a stuck turn into two turns changing the state at once, which is worse than
+        a stuck channel that someone can now see and name.
+        """
+        self._warned = True
+        observability.event(
+            "lock.held_too_long", level=logging.WARNING,
+            conversation=observability.safe_identifier(self.conversation_id), turn_id=self.turn_id,
+            phase="narration" if self._holds_narration else "mutation", held_ms=round(self._held_ms()),
+        )
 
     @property
     def narrating(self) -> bool:
@@ -298,10 +327,20 @@ class TurnHandoff:
         self._holds_narration = True
 
     def close(self) -> None:
+        if self._watchdog is not None:
+            self._watchdog.cancel()
+            self._watchdog = None
         self._release_mutation_locks()
         if self._holds_narration:
             self._holds_narration = False
             get_narration_lock(self.conversation_id).release()
+        if self._warned:
+            self._warned = False
+            observability.event(
+                "lock.released_after_warning", level=logging.WARNING,
+                conversation=observability.safe_identifier(self.conversation_id), turn_id=self.turn_id,
+                held_ms=round(self._held_ms()),
+            )
 
 
 @asynccontextmanager
