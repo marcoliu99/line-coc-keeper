@@ -64,7 +64,7 @@ def _load(review_id: str) -> dict:
 
 
 def _source_pages(text: str, count: int) -> list[str]:
-    pieces = library._PAGE_RE.split(text)
+    pieces = library.PAGE_MARKER_RE.split(text)
     if len(pieces) == 1 and count == 1:
         return [text]
     numbers = [int(pieces[i]) for i in range(1, len(pieces), 2)]
@@ -150,7 +150,7 @@ def _validate_proposal(proposal: dict, registry: dict) -> tuple[list[dict], list
         if (not isinstance(row['text'], str) or not isinstance(row['review_note'], str)
                 or type(row['image_only']) is not bool):
             raise ValueError('Invalid page text/review metadata')
-        if library._PAGE_RE.search(row['text']):
+        if library.PAGE_MARKER_RE.search(row['text']):
             raise ValueError('Page text cannot inject physical page markers')
         if not row['review_note'].strip():
             issues.append(f'page {number}: missing review note')
@@ -252,7 +252,7 @@ def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
 
 def rebind(scenario_id: str, *, old_scenario_id: str, old_export_id: str) -> dict:
     """Export new workbooks and conservatively reuse uniquely unchanged source units."""
-    old_root = templates._root() / old_scenario_id / 'exports'
+    old_root = library.exports_dir(old_scenario_id)
     old_manifest, _ = templates._source(old_scenario_id)
     old_dir, old_registry = authoring.registry_for(old_root, {'export_id': old_export_id},
                                                   old_manifest['content_hash'], templates._chapter_hash(old_manifest))
@@ -264,7 +264,7 @@ def rebind(scenario_id: str, *, old_scenario_id: str, old_export_id: str) -> dic
         raise ValueError('Rebinding requires a reviewed source derived from this original scenario')
     exported = templates.export_template(scenario_id)
     new_export_id = exported.parent.parent.name
-    new_dir, registry = authoring.registry_for(templates._root() / scenario_id / 'exports', {'export_id': new_export_id},
+    new_dir, registry = authoring.registry_for(library.exports_dir(scenario_id), {'export_id': new_export_id},
                                               new_manifest['content_hash'], templates._chapter_hash(new_manifest))
     old_units = {u['id']: u for u in old_registry['units']}
     occurrences = Counter(u['text'] for u in registry['units'])

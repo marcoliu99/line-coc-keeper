@@ -336,7 +336,7 @@ def _validate(payload: dict, registry: dict) -> dict[str, dict]:
                 or any(not isinstance(x, str) or not x.strip() for x in p['unresolved'])
                 or not isinstance(p['changes'], list)):
             raise ValueError(f'{p["page_id"]}: invalid text/status/changes/unresolved')
-        if ('\x00' in p['text'] or library._PAGE_RE.search(p['text'])
+        if ('\x00' in p['text'] or library.PAGE_MARKER_RE.search(p['text'])
                 or re.search(r'\[SOURCE_IMAGE\b', p['text'])):
             raise ValueError(f'{p["page_id"]}: text cannot inject page/image control markers')
         if ((p['status'] == 'complete' and (not p['text'].strip() or p['unresolved']))

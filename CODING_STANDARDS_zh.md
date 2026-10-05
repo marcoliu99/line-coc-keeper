@@ -38,6 +38,9 @@ _理由：_ 兩者原本都是 `dict[str, Any]`，key 打錯會默默讀到預�
 **更正報告的狀態只在 `narrative_corrections` 裡改變。** 用 `new_report`／`file_report` 建立、用 `record_ruling`／`record_unverified`／`record_presentation_repair` 裁定、用 `withdraw` 撤回、用 `supersede` 取代、用 `hold` 暫停。handler 或 service 只負責解析、檢查權限與組回覆；不要自己指派 `report["status"]` 或組報告 dict。
 _理由：_ 狀態原本在四個地方被修改，「玩家的主張什麼時候變成權威」得跨模組拼湊；現在允許的轉換是一張表。`tests/test_architecture_corrections.py` 會在有模組又長出自己的版本時失敗。規格：`docs/specs/refactor/correction_lifecycle_design_spec_zh.md`。
 
+**只有 `scenario_library` 知道劇本來源與版本存在哪裡。** 用 `read_source`、`read_variant`、`variant_manifests` 讀取，用 `publish_variant`、`write_variant_manifest` 寫入，用 `exports_dir` 取得匯出套件。library 以上的模組不要呼叫 `_` 開頭的 library 名稱，也不要寫出 `manifest.json`／`records.json`。
+_理由：_ 模板模組原本自己組來源與版本的路徑，改目錄結構就得改好幾個模組。`tests/test_architecture_scenario_store.py` 兩種情況都會擋。規格：`docs/specs/refactor/scenario_source_store_design_spec_zh.md`。
+
 **每個新的待處理檢定都要經過歸屬檢查。** 登記技能、SAN 或 CON 檢定前，在 `_mutate_and_save_state` 內、針對重新載入的狀態，同時檢查 `pending_checks` 和 `pending_luck_decisions`（參考 `_reject_if_check_already_pending`）。被擋下時要讓玩家或模型知道。
 _理由：_ 無聲返回的檢定會讓規則後果直接消失。規格：`docs/specs/bug/bugfix_duplicate_pending_checks.md`。
 

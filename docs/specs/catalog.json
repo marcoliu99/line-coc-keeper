@@ -1830,6 +1830,22 @@
       "path": "docs/specs/refactor/correction_lifecycle_design_spec.md",
       "zh_path": "docs/specs/refactor/correction_lifecycle_design_spec_zh.md",
       "source_revision": "ee23aa98fb0359baa7cd8d2e8b41e6b2ddc460fc"
+    },
+    {
+      "title": "Scenario source and variant store",
+      "zh": "劇本來源與模板版本儲存",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_library.py",
+        "app/scenario_templates.py",
+        "app/scenario_source_review.py",
+        "tests/test_scenario_source_store.py",
+        "tests/test_architecture_scenario_store.py"
+      ],
+      "path": "docs/specs/refactor/scenario_source_store_design_spec.md",
+      "zh_path": "docs/specs/refactor/scenario_source_store_design_spec_zh.md",
+      "source_revision": "7ab07965eeebfa8e7ed638c67cc8e471f4c4626e"
     }
   ]
 }
