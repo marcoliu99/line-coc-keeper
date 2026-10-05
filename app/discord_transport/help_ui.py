@@ -286,7 +286,7 @@ class HelpOptionSelect(discord.ui.Select):
         super().__init__(
             placeholder="選擇一項",
             min_values=1, max_values=1,
-            options=[discord.SelectOption(label=label[:100], value=str(parent.page * 25 + index))
+            options=[discord.SelectOption(label=delivery.shown(label)[:100], value=str(parent.page * 25 + index))
                      for index, (label, _) in enumerate(options)],
         )
         self.parent_help = parent

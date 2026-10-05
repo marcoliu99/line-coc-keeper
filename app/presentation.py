@@ -75,6 +75,19 @@ def registered_name(typed: str, known: Collection[str]) -> str:
     return matches[0] if len(matches) == 1 else typed
 
 
+def leading_name(args: list[str], known: Collection[str], *, after: int) -> tuple[str, list[str]]:
+    """Split ``args`` into a character name and the ``after`` or more arguments that follow it.
+
+    A name or alias may itself contain spaces, so the longest leading run of arguments that is one of ``known`` (or the
+    alias shown for one) wins. With no match the first argument is the name, as before.
+    """
+    for count in range(len(args) - after, 0, -1):
+        candidate = registered_name(" ".join(args[:count]), known)
+        if candidate in known:
+            return candidate, args[count:]
+    return args[0], args[1:]
+
+
 def player_text(text: str) -> str:
     """``text`` with raw tier names mapped and internal ids removed, unless debugging asks to see them.
 

@@ -14,7 +14,7 @@
 
 ## 限制：只改措辭與節奏
 
-回合的判定、工具、鎖與時間都不變。會 fallback 的回合仍然因為同樣的原因 fallback，只有玩家讀到的那句話不同。存檔、已存的遊玩紀錄、回合日誌、送出文字的文字日誌與 id 永遠不會看到別名：別名是在它們保存之後才寫的。唯一保存帶別名文字的地方是已送出訊息的更正回條（`narrative_message_receipts`），因為玩家更正時引用的是自己讀到的字。文字在套用別名之後才切成 Discord 訊息，因為別名會改變長度。因為玩家會照著讀到的字輸入，接受角色名的指令（`/coc switch`、`/coc retire`、`/coc setskill`、`/coc setconnection`，以及代操作標記的 switch 查詢）也接受別名：只有在玩家的角色中恰好一位以該別名顯示時，`presentation.registered_name` 才把它還原成登記名，登記名永遠優先於別名。
+回合的判定、工具、鎖與時間都不變。會 fallback 的回合仍然因為同樣的原因 fallback，只有玩家讀到的那句話不同。存檔、已存的遊玩紀錄、回合日誌、送出文字的文字日誌與 id 永遠不會看到別名：別名是在它們保存之後才寫的。唯一保存帶別名文字的地方是已送出訊息的更正回條（`narrative_message_receipts`），因為玩家更正時引用的是自己讀到的字。文字在套用別名之後才切成 Discord 訊息，因為別名會改變長度。因為玩家會照著讀到的字輸入，接受角色名的指令（`/coc switch`、`/coc retire`、`/coc setskill`、`/coc setconnection`，以及代操作標記的 switch 查詢）也接受別名：只有在玩家的角色中恰好一位以該別名顯示時，`presentation.registered_name` 才把它還原成登記名，登記名永遠優先於別名。名稱或別名可以含空格，所以 `/coc setskill` 與 `/coc setconnection` 在讀取其餘參數之前，先取最長且等於角色名稱或其顯示別名的前導參數（`presentation.leading_name`）。Help 選單的角色選單以別名作為選項標籤，值仍是登記名。
 
 ## 變更
 

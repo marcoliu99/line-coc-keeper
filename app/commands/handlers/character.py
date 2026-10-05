@@ -104,9 +104,9 @@ def _pc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
 def _setskill(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if len(parts) < 5:
         return refuse("用法：/coc setskill 角色名 技能名 數值")
-    skill, value_str = parts[3], parts[4]
     char = state.get_active_character(user_id)
-    name = presentation.registered_name(parts[2], [char.name] if char else [])
+    name, rest = presentation.leading_name(parts[2:], [char.name] if char else [], after=2)
+    skill, value_str = rest[0], rest[1]
     if not char or char.name != name:
         return refuse("只能修改你自己建立的角色（角色名稱需完全相符）。")
     try:
@@ -120,9 +120,9 @@ def _setskill(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
 def _setconnection(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if len(parts) < 4:
         return refuse("用法：/coc setconnection 角色名 敘述（例如：/coc setconnection 小明 你失散多年的妹妹）")
-    description = " ".join(parts[3:])
     char = state.get_active_character(user_id)
-    name = presentation.registered_name(parts[2], [char.name] if char else [])
+    name, rest = presentation.leading_name(parts[2:], [char.name] if char else [], after=1)
+    description = " ".join(rest)
     if not char or char.name != name:
         return refuse("只能修改你自己建立的角色（角色名稱需完全相符）。")
     char.key_connection = description

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from app import config, presentation
 from app.commands.handlers import character
-from app.discord_transport import delivery
+from app.discord_transport import delivery, help_ui
 from app.models import Character, GroupState
 from app.services import turn_delivery, turn_fallback
 
@@ -196,6 +196,29 @@ class TypedAliasTests(unittest.TestCase):
         self.assertTrue(character._setskill(state, "u1", ["/coc", "setskill", "硬漢", "偵查", "60"]).ok)
         self.assertTrue(character._setconnection(state, "u1", ["/coc", "setconnection", "硬漢", "舊識"]).ok)
         self.assertEqual(state.get_active_character("u1").skills["偵查"], 60)
+
+    def test_an_alias_with_spaces_is_taken_before_the_other_arguments(self):
+        state = self.state()
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"The Tough Guy": "硬 漢"}):
+            self.assertTrue(character._setskill(state, "u1", ["/coc", "setskill", "硬", "漢", "偵查", "60"]).ok)
+            self.assertEqual(state.get_active_character("u1").skills["偵查"], 60)
+            self.assertTrue(character._setconnection(state, "u1", ["/coc", "setconnection", "硬", "漢", "舊", "識"]).ok)
+            self.assertEqual(state.get_active_character("u1").key_connection, "舊 識")
+
+    def test_a_registered_name_with_spaces_works_too(self):
+        state = self.state()
+        self.assertTrue(character._setskill(
+            state, "u1", ["/coc", "setskill", "The", "Tough", "Guy", "偵查", "55"]).ok)
+        self.assertEqual(state.get_active_character("u1").skills["偵查"], 55)
+
+    def test_without_a_known_name_the_first_argument_is_the_name_as_before(self):
+        self.assertEqual(presentation.leading_name(["路人", "偵查", "60"], ["The Tough Guy"], after=2),
+                         ("路人", ["偵查", "60"]))
+
+    def test_a_picker_shows_the_alias_and_keeps_the_registered_name_as_its_value(self):
+        parent = SimpleNamespace(page=0)
+        select = help_ui.HelpOptionSelect(parent, [("The Tough Guy", "The Tough Guy")])
+        self.assertEqual([option.label for option in select.options], ["硬漢"])
 
     def test_a_wrong_name_is_still_refused(self):
         self.assertFalse(character._switch(self.state(), "u1", ["/coc", "switch", "路人"]).ok)
