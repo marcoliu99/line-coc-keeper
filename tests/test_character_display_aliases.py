@@ -244,7 +244,8 @@ class AliasSettingTests(unittest.TestCase):
         self.assertEqual(self.read('{"The Tough Guy": "硬漢"}'), ({"The Tough Guy": "硬漢"}, []))
 
     def test_anything_else_is_ignored_and_reported(self):
-        for bad in ("not json", "[1, 2]", '{"a": 1}', '{"": "x"}', '"text"'):
+        for bad in ("not json", "[1, 2]", '{"a": 1}', '{"": "x"}', '"text"',
+                    '{" ": "X"}', '{"The Tough Guy": ""}', '{"The Tough Guy": "  "}', '{"Ann": "Bob", "\\t": "x"}'):
             with self.subTest(value=bad):
                 value, reported = self.read(bad)
                 self.assertEqual(value, {})

@@ -31,7 +31,7 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
 
 
 def _env_str_map(name: str) -> dict[str, str]:
-    """A JSON object of text to text, e.g. ``{"The Tough Guy": "硬漢"}``; anything else is ignored and reported."""
+    """A JSON object of non-blank text to non-blank text, e.g. ``{"The Tough Guy": "硬漢"}``; anything else is ignored and reported."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return {}
@@ -39,7 +39,10 @@ def _env_str_map(name: str) -> dict[str, str]:
         parsed = json.loads(raw)
     except ValueError:
         parsed = None
-    if isinstance(parsed, dict) and all(isinstance(k, str) and isinstance(v, str) and k for k, v in parsed.items()):
+    # A blank key would match every space and a blank value would erase a name, so neither is a setting to honour.
+    if isinstance(parsed, dict) and all(
+        isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip() for k, v in parsed.items()
+    ):
         return dict(parsed)
     INVALID_LOG_SETTINGS.append((name, "JSON object of text to text", "{}"))
     return {}
