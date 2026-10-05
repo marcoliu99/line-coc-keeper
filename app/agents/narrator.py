@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
-from app import config, keeper, observability
+from app import config, keeper, observability, presentation
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage, MechanicResult
 from app.keeper_tools import registry as tool_registry
 from app.keeper_tools import resource_bridge
 from app.providers.conversation_session import ConversationSession
-from app.services import canonical_facts, mutation_admission, prompt_config
+from app.services import canonical_facts, mutation_admission, prompt_config, turn_phases
 
 _logger = logging.getLogger(__name__)
 _OPENING_TOOL_NAMES = tool_registry.OPENING_TOOL_NAMES
@@ -60,6 +60,8 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     authority_block = canonical_facts.prompt_block(narration_requirements)
     if authority_block:
         dynamic_system += "\n\n" + authority_block
+    if party := [c.name for c in state.active_characters()]:
+        dynamic_system += "\n\n" + presentation.party_prompt(party)
     character = state.get_active_character(user_id)
     if character:
         character = resource_bridge.effective(state, character)
@@ -156,11 +158,12 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=turn_metrics,
         ):
-            reply_text = await provider.run_conversation(
-                static_system, dynamic_system, tools, history, new_message,
-                execute_tool, MAX_TOOL_ITERATIONS if tool_enabled else 1,
-                **provider_options,
-            )
+            with turn_phases.phase("narrator_llm"):
+                reply_text = await provider.run_conversation(
+                    static_system, dynamic_system, tools, history, new_message,
+                    execute_tool, MAX_TOOL_ITERATIONS if tool_enabled else 1,
+                    **provider_options,
+                )
             if tool_enabled and not reply_text.strip():
                 raise ValueError("tool-enabled narrator returned an empty reply")
     except Exception:
@@ -171,7 +174,7 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             result = message.payload["resolved_check_context"]
             reply_text = (
                 f"{result.get('investigator', '調查員')} 的檢定已結算（擲出 {result.get('roll', '未知')}，"
-                f"結果：{result.get('outcome', '未知')}）。守密人暫時無法完成後續敘述；"
+                f"結果：{presentation.outcome_label(str(result.get('outcome', '未知')))}）。守密人暫時無法完成後續敘述；"
                 "請先查看目前狀態，不要重新擲骰或重做這次行動。"
             )
         elif turn_kind == "opening_fallback":

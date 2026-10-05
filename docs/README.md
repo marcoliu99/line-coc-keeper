@@ -37,6 +37,11 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [State revision and timeline isolation](specs/bug/state-loss-amnesia-hardening_design_spec.md) | implemented | [繁體中文](specs/bug/state-loss-amnesia-hardening_design_spec_zh.md) |
 | [Authoritative turn-state handoffs](specs/bug/log_backed_turn_consistency_design_spec.md) | implemented | [繁體中文](specs/bug/log_backed_turn_consistency_design_spec_zh.md) |
 | [Atomic narrative purchases and acquisition provenance](specs/bug/purchase_turn_provenance_design_spec.md) | implemented | [繁體中文](specs/bug/purchase_turn_provenance_design_spec_zh.md) |
+| [Player-facing presentation: tiers, internal ids, party size](specs/bug/player_facing_presentation_design_spec.md) | implemented | [繁體中文](specs/bug/player_facing_presentation_design_spec_zh.md) |
+| [Bounded long-term memory embeddings](specs/bug/memory_embedding_bounds_design_spec.md) | implemented | [繁體中文](specs/bug/memory_embedding_bounds_design_spec_zh.md) |
+| [Turn fallback reasons and bounded recovery](specs/bug/turn_fallback_reasons_design_spec.md) | implemented | [繁體中文](specs/bug/turn_fallback_reasons_design_spec_zh.md) |
+| [Same-turn mechanical obligations of a scenario event](specs/bug/event_obligations_design_spec.md) | implemented | [繁體中文](specs/bug/event_obligations_design_spec_zh.md) |
+| [Adjacent scenario trigger retrieval](specs/bug/adjacent_scenario_trigger_design_spec.md) | implemented | [繁體中文](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) |
 
 ## enhancement
 
@@ -68,6 +73,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Proposed reasoning policy for ongoing combat effects](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) | backlog | [繁體中文](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) |
 | [External AI template authoring and import diagnostics](specs/enhancement/external_template_authoring_design_spec.md) | implemented; live trials pending | [繁體中文](specs/enhancement/external_template_authoring_design_spec_zh.md) |
 | [At most three scenario authoring files](specs/enhancement/three_file_scenario_export_design_spec.md) | implemented | [繁體中文](specs/enhancement/three_file_scenario_export_design_spec_zh.md) |
+| [Turn phase timeline and retrieval amplification](specs/enhancement/turn_latency_instrumentation_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) |
 
 ## feature
 
@@ -109,6 +115,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | Spec | Status | Language |
 | --- | --- | --- |
 | [Bilingual specification alignment](specs/maintenance/documentation_alignment_design_spec.md) | implemented | [繁體中文](specs/maintenance/documentation_alignment_design_spec_zh.md) |
+| [Combat and mechanics coverage the Camp Sunny soak never exercised](specs/maintenance/combat_mechanics_coverage_design_spec.md) | implemented | [繁體中文](specs/maintenance/combat_mechanics_coverage_design_spec_zh.md) |
 
 ## References
 
@@ -133,4 +140,5 @@ Later entries record their own source revisions; the proposed turn safety and la
 
 - [Changelog](changelog.md)
 - [Raw evaluations](evaluations)
+- [Camp Sunny validation: root causes](validation/camp_sunny_fix_root_cause.md), [targeted regression](validation/camp_sunny_targeted_regression.md), [latency before/after](validation/camp_sunny_latency_before_after.md), [findings](validation/camp_sunny_findings.json) (Traditional Chinese; the real-runtime stages were not run)
 - [Machine-readable spec catalog](specs/catalog.json)

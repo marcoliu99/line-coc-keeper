@@ -160,6 +160,9 @@ HIGH_ITERATION_WATERMARK = _env_int("HIGH_ITERATION_WATERMARK", 4, minimum=1)
 # would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
 SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", "5"))
+# How many contiguous chunks on each side of a text-index hit may be attached when the hit visibly
+# continues into them (see scenario_rag.attach_adjacent). 0 turns the expansion off.
+SCENARIO_RAG_ADJACENT_CHUNKS = _env_int("SCENARIO_RAG_ADJACENT_CHUNKS", 1, minimum=0)
 
 # Scenario lifecycle authorization. Keep this off during the initial lobby so
 # a player who is also helping as KP can upload/reparse/cancel a scenario while
@@ -226,6 +229,12 @@ LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 3)
 LLM_RETRY_BASE_DELAY_SECONDS = _env_float("LLM_RETRY_BASE_DELAY_SECONDS", 1.0)
 LLM_REQUEST_TIMEOUT_SECONDS = _env_float("LLM_REQUEST_TIMEOUT_SECONDS", 60.0, minimum=0.1)
 LLM_TIMEOUT_RETRIES = _env_int("LLM_TIMEOUT_RETRIES", 1)
+# Long-term memory is embedded in parts that each fit this many tokens (an embedding input is limited by the
+# provider, ~8k for the default model), and a chunk without a vector is retried a bounded number of times, a few per
+# maintenance pass, before it is left lexical-only on purpose. See app/memory_chunking.py and memory_rag.backfill_embeddings.
+MEMORY_EMBEDDING_MAX_TOKENS = _env_int("MEMORY_EMBEDDING_MAX_TOKENS", 6000, minimum=64)
+MEMORY_EMBEDDING_MAX_ATTEMPTS = _env_int("MEMORY_EMBEDDING_MAX_ATTEMPTS", 3, minimum=1)
+MEMORY_EMBEDDING_BACKFILL_LIMIT = _env_int("MEMORY_EMBEDDING_BACKFILL_LIMIT", 4, minimum=0)
 EMBEDDING_REQUEST_TIMEOUT_SECONDS = _env_float("EMBEDDING_REQUEST_TIMEOUT_SECONDS", 20.0, minimum=0.1)
 DISCORD_REQUEST_TIMEOUT_SECONDS = _env_float("DISCORD_REQUEST_TIMEOUT_SECONDS", 10.0, minimum=0.1)
 TOOL_EXECUTION_TIMEOUT_SECONDS = _env_float("TOOL_EXECUTION_TIMEOUT_SECONDS", 30.0, minimum=0.1)
@@ -306,6 +315,18 @@ OPENAI_NARRATOR_MAX_OUTPUT_TOKENS = _env_int("OPENAI_NARRATOR_MAX_OUTPUT_TOKENS"
 OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 0)
 
 # V4 scenario retrieval reserves capacity before the existing provider admission.
+# Internal ids (check_id and the like) and raw result-tier names are removed from what a player reads. Debugging may
+# ask to see them (app/presentation.py).
+DEBUG_SHOW_INTERNAL_IDS = os.environ.get("DEBUG_SHOW_INTERNAL_IDS", "false").strip().lower() in ("1", "true", "yes")
+# A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
+# scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
+TURN_FALLBACK_RECOVERY_ENABLED = os.environ.get("TURN_FALLBACK_RECOVERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+# The scenario evidence a turn gathered is reused by the continuation that follows its dice roll, while nothing it
+# depended on has changed and no other turn has searched since (app/agents/context_builder.py), instead of searching
+# again for the same scene. A turn may also ask the scenario search tool at most this many times.
+RETRIEVAL_REUSE_FOR_FOLLOWUPS = os.environ.get("RETRIEVAL_REUSE_FOR_FOLLOWUPS", "true").strip().lower() in ("1", "true", "yes")
+RETRIEVAL_REUSE_TTL_SECONDS = _env_float("RETRIEVAL_REUSE_TTL_SECONDS", 900.0, minimum=1.0)
+SCENARIO_SEARCH_MAX_PER_TURN = _env_int("SCENARIO_SEARCH_MAX_PER_TURN", 5, minimum=1)
 SCENARIO_PROACTIVE_TOKEN_BUDGET = _env_int('SCENARIO_PROACTIVE_TOKEN_BUDGET', 3000, minimum=1)
 SCENARIO_RETRIEVAL_TOKEN_BUDGET = _env_int('SCENARIO_RETRIEVAL_TOKEN_BUDGET', 6000, minimum=1)
 SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 32000, minimum=1)

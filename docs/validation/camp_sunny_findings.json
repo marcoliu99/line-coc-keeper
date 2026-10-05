@@ -1,0 +1,129 @@
+[
+  {
+    "id": "CS-002",
+    "severity": "P1",
+    "category": "retrieval/progression",
+    "status": "LIKELY",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "synthetic fixture tests/test_scenario_adjacency.py reproduces a consequence in the next chunk with no shared term",
+      "original index and logs not available in the repository"
+    ],
+    "root_cause": "chunk-level retrieval scores each ~400-char chunk alone; a scripted consequence in the neighbouring chunk is not returned, and the Executor policy did not prefer a stated consequence over an improvised check",
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/179",
+    "verification": "offline synthetic only; real-runtime not run"
+  },
+  {
+    "id": "CS-008",
+    "severity": "P2",
+    "category": "fallback",
+    "status": "UNCERTAIN",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "the generic reply is produced by prompt_config.enforce_mechanic_check_consistency for any blocked/incomplete resolution (about fourteen distinct validation outcomes)",
+      "the 17 turns' logs are not available; they were not replayed or classified"
+    ],
+    "root_cause": null,
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/180",
+    "verification": "classification and one bounded recovery implemented; effect on the 17 historical turns unknown"
+  },
+  {
+    "id": "CS-007",
+    "severity": "P2",
+    "category": "mechanics",
+    "status": "CONFIRMED",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "Narrator and Executor receive the same scenario evidence and the Narrator has no tools",
+      "nothing compared the narration with the scenario's stated rules"
+    ],
+    "root_cause": "the mechanic depended on the Executor remembering to call sanity_check; narration of the event was not tied to the rule",
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/181",
+    "verification": "offline synthetic only; detection is lexical"
+  },
+  {
+    "id": "CS-005",
+    "severity": "P2",
+    "category": "memory",
+    "status": "CONFIRMED",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "each log trim became one memory chunk and one embedding input with no length bound",
+      "failure returned None without diagnosis or later retry",
+      "provider rejection payload was never captured"
+    ],
+    "root_cause": "unbounded embedding input (overlength as the provider's reason is LIKELY, not proven)",
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/182",
+    "verification": "offline synthetic only; no real embedding call"
+  },
+  {
+    "id": "CS-006",
+    "severity": "P2",
+    "category": "latency",
+    "status": "UNCERTAIN",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "no phase timeline existed",
+      "each roll continuation searched the scenario again; the search tool had no per-turn limit"
+    ],
+    "root_cause": null,
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/184",
+    "verification": "instrumentation and two reductions only; latency not measured"
+  },
+  {
+    "id": "CS-001",
+    "severity": "P2",
+    "category": "narration",
+    "status": "CONFIRMED",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "the Narrator prompt did not state the party size"
+    ],
+    "root_cause": "party size was left for the model to infer from the scenario's pre-generated sheets and prose",
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/185",
+    "verification": "offline synthetic only"
+  },
+  {
+    "id": "CS-003",
+    "severity": "P3",
+    "category": "presentation",
+    "status": "CONFIRMED",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "outcome is stored as 'hard 成功' and several display sites print it",
+      "found by the combat coverage test: replaying a stale check button printed the raw tier"
+    ],
+    "root_cause": "no presentation layer between the engine's English tiers and the player",
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/185, https://github.com/marcoliu99/line-coc-keeper/pull/186",
+    "verification": "offline synthetic only"
+  },
+  {
+    "id": "CS-004",
+    "severity": "P3",
+    "category": "presentation",
+    "status": "CONFIRMED",
+    "turn_ids": [],
+    "player_ids": [],
+    "evidence": [
+      "tool facts handed to the Narrator included check_id"
+    ],
+    "root_cause": "internal ids were part of text the model retells",
+    "fix_commit": null,
+    "fix_pr": "https://github.com/marcoliu99/line-coc-keeper/pull/185",
+    "verification": "offline synthetic only"
+  }
+]

@@ -33,9 +33,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from app import db, embedding_cache, embedding_execution
+from app import (
+    db,
+    embedding_cache,
+    embedding_execution,
+    locks,
+    memory_chunking,
+    observability,
+)
 from app.config import (
     EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+    MEMORY_EMBEDDING_BACKFILL_LIMIT,
+    MEMORY_EMBEDDING_MAX_ATTEMPTS,
+    MEMORY_EMBEDDING_MAX_TOKENS,
     OPENAI_API_KEY,
     SCENARIO_RAG_EMBEDDING_MODEL,
     SCENARIO_RAG_EMBEDDING_WEIGHT,
@@ -109,6 +119,10 @@ class _Chunk:
     timeline_id: str = ""
     source_messages: list[dict[str, str]] = field(default_factory=list)
     superseded_by: list[str] = field(default_factory=list)
+    # A trim too long for one embedding is stored as parts of one parent; they read back as one memory.
+    parent_id: str = ""
+    part_index: int = 0
+    part_count: int = 0
     tokens: list[str] = field(default_factory=list)
     term_counts: dict[str, int] = field(default_factory=dict)
     embedding: list[float] | None = None
@@ -145,20 +159,21 @@ def mark_superseded_receipt(group_id: str, timeline_id: str, *, turn_id: str, ex
     """Annotate only chunks provably containing a corrected message receipt."""
     if not turn_id or not excerpt or not correction_id:
         return 0
-    raw_chunks = _load_raw_chunks(group_id)
-    changed = 0
-    for row in raw_chunks:
-        if (row.get("timeline_id") != timeline_id or excerpt not in str(row.get("text", ""))
-                or not any(item.get("turn_id") == turn_id
-                           for item in row.get("source_messages", []) if isinstance(item, dict))):
-            continue
-        refs = row.setdefault("superseded_by", [])
-        if correction_id not in refs:
-            refs.append(correction_id)
-            changed += 1
-    if changed:
-        _save_raw_chunks(group_id, raw_chunks)
-        _index_cache.pop((group_id, timeline_id), None)
+    with locks.get_state_lock(group_id):  # the same lock as every other writer of this blob (backfill, a trim)
+        raw_chunks = _load_raw_chunks(group_id)
+        changed = 0
+        for row in raw_chunks:
+            if (row.get("timeline_id") != timeline_id or excerpt not in str(row.get("text", ""))
+                    or not any(item.get("turn_id") == turn_id
+                               for item in row.get("source_messages", []) if isinstance(item, dict))):
+                continue
+            refs = row.setdefault("superseded_by", [])
+            if correction_id not in refs:
+                refs.append(correction_id)
+                changed += 1
+        if changed:
+            _save_raw_chunks(group_id, raw_chunks)
+            _index_cache.pop((group_id, timeline_id), None)
     return changed
 
 
@@ -177,6 +192,58 @@ def prepare_memory_embedding(text: str) -> list[float] | None:
         return None
 
 
+def _pending_embedding(failure: embedding_execution.EmbeddingFailure | None) -> dict[str, Any]:
+    """Mark a chunk stored without a vector, and say whether trying again can help."""
+    return {
+        "embedding_status": "pending" if failure is None or failure.retryable else "failed_permanent",
+        # No key configured is not an attempt the provider refused: it is not counted against the chunk.
+        "embedding_attempts": 0 if failure is not None and failure.reason == "missing_api_key" else 1,
+        **({"embedding_failure": {
+            "reason": failure.reason, "status_class": failure.status_class, "status_code": failure.status_code,
+            "error_code": failure.error_code, "retryable": failure.retryable,
+        }} if failure is not None else {}),
+    }
+
+
+def measure_tokens(text: str) -> int:
+    """The embedding model's own token count of ``text`` (a UTF-8 byte count when no tokenizer loads)."""
+    from app.services import input_budget
+    return input_budget.estimate(text, SCENARIO_RAG_EMBEDDING_MODEL)
+
+
+@dataclass(frozen=True)
+class PreparedMemory:
+    """A trim as parts that each fit one embedding input, with the vectors that could be made for them."""
+    parts: list[memory_chunking.MemoryPart]
+    embeddings: list[list[float] | None]
+    failure: embedding_execution.EmbeddingFailure | None = None
+
+
+def prepare_memory(
+    messages: list[dict[str, str]], source_messages: list[dict[str, str]], *, max_tokens: int | None = None,
+) -> PreparedMemory:
+    """Split a trim into bounded parts and embed them, outside the memory commit boundary.
+
+    A failure leaves the parts without vectors (they stay searchable lexically) and records why.
+    """
+    parts = memory_chunking.pack(
+        messages, source_messages, max_tokens=max_tokens or MEMORY_EMBEDDING_MAX_TOKENS, measure=measure_tokens)
+    if not parts:
+        return PreparedMemory([], [])
+    embedding_execution.take_failure()
+    if len(parts) == 1:
+        vector = prepare_memory_embedding(parts[0].text)
+        return PreparedMemory(parts, [vector], None if vector is not None else embedding_execution.take_failure())
+    try:
+        vectors = _embed_texts([part.text for part in parts], rag_kind="memory")
+    except Exception:
+        _logger.exception("embedding failed while preparing a split memory chunk")
+        vectors = None
+    if vectors is None or len(vectors) != len(parts):
+        return PreparedMemory(parts, [None] * len(parts), embedding_execution.take_failure())
+    return PreparedMemory(parts, list(vectors))
+
+
 def _append_memory_payload(
     raw_chunks: list[dict],
     *,
@@ -186,11 +253,15 @@ def _append_memory_payload(
     source_revision: int | None,
     embedding: list[float] | None,
     source_messages: list[dict[str, str]] | None = None,
+    failure: embedding_execution.EmbeddingFailure | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[list[dict], bool]:
     if idempotency_key and any(item.get("idempotency_key") == idempotency_key for item in raw_chunks):
         return raw_chunks, False
     label = f"記憶片段 #{len(raw_chunks) + 1}"
     raw_chunks.append({
+        **(extra or {}),
+        **({} if embedding is not None else _pending_embedding(failure)),
         "label": label,
         "chunk_id": idempotency_key or f"memory-{len(raw_chunks) + 1}",
         "idempotency_key": idempotency_key,
@@ -224,18 +295,19 @@ def append_memory(
         return False
     if embedding is _EMBEDDING_NOT_PROVIDED:
         embedding = prepare_memory_embedding(text)
-    raw_chunks = _load_raw_chunks(group_id)
-    raw_chunks, appended = _append_memory_payload(
-        raw_chunks,
-        text=text,
-        timeline_id=timeline_id,
-        idempotency_key=idempotency_key,
-        source_revision=source_revision,
-        embedding=cast(list[float] | None, embedding),
-        source_messages=source_messages,
-    )
-    if appended:
-        _save_raw_chunks(group_id, raw_chunks)
+    with locks.get_state_lock(group_id):
+        raw_chunks = _load_raw_chunks(group_id)
+        raw_chunks, appended = _append_memory_payload(
+            raw_chunks,
+            text=text,
+            timeline_id=timeline_id,
+            idempotency_key=idempotency_key,
+            source_revision=source_revision,
+            embedding=cast(list[float] | None, embedding),
+            source_messages=source_messages,
+        )
+        if appended:
+            _save_raw_chunks(group_id, raw_chunks)
     return appended
 
 
@@ -249,6 +321,7 @@ def append_memory_tx(
     source_revision: int | None = None,
     embedding: list[float] | None = None,
     source_messages: list[dict[str, str]] | None = None,
+    failure: embedding_execution.EmbeddingFailure | None = None,
 ) -> bool:
     """Append a prepared memory chunk through an existing DB transaction.
 
@@ -276,10 +349,57 @@ def append_memory_tx(
         source_revision=source_revision,
         embedding=embedding,
         source_messages=source_messages,
+        failure=failure,
     )
     if appended:
         db.set_json_tx(conn, "memory_chunks", group_id, raw_chunks)
     return appended
+
+
+def append_memory_parts_tx(
+    conn,
+    group_id: str,
+    prepared: PreparedMemory,
+    *,
+    timeline_id: str,
+    idempotency_key: str,
+    source_revision: int | None = None,
+) -> bool:
+    """Append a prepared trim through an existing DB transaction: one chunk, or the parts of an oversized one.
+
+    A trim that fits is stored exactly as before. A longer one becomes ordered parts that point at one parent
+    (``idempotency_key``), each with its own vector and the provenance of the messages it holds; replaying the
+    commit finds the parent and appends nothing.
+    """
+    if not prepared.parts:
+        return False
+    if len(prepared.parts) == 1:
+        return append_memory_tx(
+            conn, group_id, prepared.parts[0].text, timeline_id=timeline_id, idempotency_key=idempotency_key,
+            source_revision=source_revision, embedding=prepared.embeddings[0],
+            source_messages=list(prepared.parts[0].source_messages), failure=prepared.failure,
+        )
+    row = conn.execute("SELECT data FROM memory_chunks WHERE key = ?", (group_id,)).fetchone()
+    raw_chunks: list[dict] = []
+    if row is not None:
+        try:
+            decoded = json.loads(row[0])
+            raw_chunks = decoded if isinstance(decoded, list) else []
+        except (TypeError, json.JSONDecodeError):
+            raw_chunks = []
+    if any(item.get("idempotency_key") == idempotency_key or item.get("parent_id") == idempotency_key
+           for item in raw_chunks if isinstance(item, dict)):
+        return False
+    count = len(prepared.parts)
+    for number, (part, vector) in enumerate(zip(prepared.parts, prepared.embeddings, strict=True), 1):
+        raw_chunks, _ = _append_memory_payload(
+            raw_chunks, text=part.text, timeline_id=timeline_id, idempotency_key=f"{idempotency_key}#{number}/{count}",
+            source_revision=source_revision, embedding=vector, source_messages=list(part.source_messages),
+            failure=prepared.failure,
+            extra={"parent_id": idempotency_key, "part_index": number, "part_count": count},
+        )
+    db.set_json_tx(conn, "memory_chunks", group_id, raw_chunks)
+    return True
 
 
 def _build_index(raw_chunks: list[dict]) -> MemoryIndex:
@@ -302,6 +422,8 @@ def _build_index(raw_chunks: list[dict]) -> MemoryIndex:
             timeline_id=raw.get("timeline_id", ""),
             source_messages=raw.get("source_messages", []),
             superseded_by=raw.get("superseded_by", []),
+            parent_id=raw.get("parent_id", ""), part_index=raw.get("part_index", 0),
+            part_count=raw.get("part_count", 0),
             term_counts=term_counts, embedding=embedding,
             # Recomputed here rather than persisted alongside "embedding" in
             # the stored dict: cheap (once per group's index rebuild, which
@@ -376,6 +498,39 @@ def _result(chunk: _Chunk, score: float) -> dict:
     }
 
 
+def _collapse(pairs: list[tuple[float, _Chunk]], top_k: int) -> list[dict]:
+    """Rank rows, folding the parts of one split memory into a single row so they are not read as separate facts.
+
+    The row takes the best part's score and carries the matching parts in their original order. Every part folded
+    in contributes its provenance and its corrections, so a corrected part cannot be shown as current memory just
+    because a better-scoring sibling was not corrected.
+    """
+    rows: list[dict] = []
+    folded: dict[str, tuple[dict, dict[int, _Chunk]]] = {}
+    for score, chunk in pairs:
+        if not chunk.parent_id:
+            rows.append(_result(chunk, score))
+            continue
+        if chunk.parent_id not in folded:
+            row = _result(chunk, score)
+            row["parent_id"] = chunk.parent_id
+            folded[chunk.parent_id] = (row, {})
+            rows.append(row)
+        row, parts = folded[chunk.parent_id]
+        parts[chunk.part_index] = chunk
+        row["part_count"] = chunk.part_count
+    for row, parts in folded.values():
+        ordered = [parts[index] for index in sorted(parts)]
+        row["text"] = "\n…\n".join(part.text for part in ordered)
+        row["parts"] = [part.part_index for part in ordered]
+        row["superseded_by"] = list(dict.fromkeys(ref for part in ordered for ref in part.superseded_by))
+        sources: list[dict[str, str]] = []
+        for part in ordered:
+            sources.extend(m for m in part.source_messages if m not in sources)
+        row["source_messages"] = sources
+    return rows[:top_k]
+
+
 def search_memory(
     group_id: str,
     query: str,
@@ -408,9 +563,17 @@ def search_memory(
                            query_embedding_status="not_used")
         return []
     index = _get_index(group_id, raw_chunks, timeline_id)
+    missing = sum(chunk.embedding is None for chunk in index.chunks)
     if metrics is not None:
         metrics.update(index_cache=index.index_cache, candidate_count=len(index.chunks),
-                       has_embeddings=index.has_embeddings)
+                       has_embeddings=index.has_embeddings, chunks_without_embedding=missing)
+    if missing:
+        # Lexical-only memory must never be the quiet steady state: say how much of it there is on every search.
+        observability.event("memory.embedding_gap", level=logging.WARNING, group_id=observability.safe_identifier(group_id),
+                            chunks_without_embedding=missing, chunk_count=len(index.chunks),
+                            failed_permanent=sum(
+                                1 for raw in raw_chunks if raw.get("embedding") is None
+                                and raw.get("embedding_status") == "failed_permanent"))
 
     query_tokens = _tokenize(query)
     if not query_tokens:
@@ -426,7 +589,7 @@ def search_memory(
         if metrics is not None:
             metrics["query_embedding_status"] = "not_used"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = [_result(c, s) for s, c in scored[:top_k]]
+        results = _collapse(scored, top_k)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -440,7 +603,7 @@ def search_memory(
         if metrics is not None:
             metrics["query_embedding_status"] = "fallback"
         scored = sorted(((bm25_raw[id(c)], c) for c in matched), key=lambda sc: -sc[0])
-        results = [_result(c, s) for s, c in scored[:top_k]]
+        results = _collapse(scored, top_k)
         if metrics is not None:
             metrics["result_count"] = len(results)
         return results
@@ -470,10 +633,93 @@ def search_memory(
         score = weight * cos + (1 - weight) * bm25_norm
         combined.append((score, c))
     combined.sort(key=lambda sc: -sc[0])
-    results = [_result(c, s) for s, c in combined[:top_k]]
+    results = _collapse(combined, top_k)
     if metrics is not None:
         metrics["result_count"] = len(results)
     return results
+
+
+def _invalidate_index(group_id: str) -> None:
+    for key in [key for key in _index_cache if key[0] == group_id]:
+        _index_cache.pop(key, None)
+
+
+def backfill_embeddings(group_id: str, *, limit: int = MEMORY_EMBEDDING_BACKFILL_LIMIT) -> dict[str, int]:
+    """Give chunks stored without a vector another, bounded, chance.
+
+    At most ``limit`` chunks per call, each tried at most ``MEMORY_EMBEDDING_MAX_ATTEMPTS`` times, and none
+    again once the provider has said that retrying cannot help. A chunk too long for one embedding (stored
+    before parts existed) is split into parts first, in place. Embedding happens outside the state lock; the
+    result is applied under it, to the chunk as it is then, so a concurrent trim is never overwritten.
+    """
+    stats = {"examined": 0, "embedded": 0, "split": 0, "failed": 0, "gave_up": 0}
+    if limit <= 0:
+        return stats
+    candidates = [
+        dict(row) for row in _load_raw_chunks(group_id)
+        if isinstance(row, dict) and row.get("embedding") is None and str(row.get("text", "")).strip()
+        and row.get("chunk_id") and row.get("embedding_status") != "failed_permanent"
+        and int(row.get("embedding_attempts", 0)) < MEMORY_EMBEDDING_MAX_ATTEMPTS
+    ][:limit]
+    outcomes: dict[str, tuple[list[str], list[list[float]] | None, embedding_execution.EmbeddingFailure | None]] = {}
+    for row in candidates:
+        stats["examined"] += 1
+        texts = memory_chunking.split_text(str(row["text"]), MEMORY_EMBEDDING_MAX_TOKENS, measure_tokens)
+        embedding_execution.take_failure()
+        try:
+            vectors = _embed_texts(texts, rag_kind="memory")
+        except Exception:
+            _logger.exception("embedding backfill failed")
+            vectors = None
+        outcomes[str(row.get("chunk_id", ""))] = (
+            texts, vectors if vectors is not None and len(vectors) == len(texts) else None,
+            embedding_execution.take_failure() if vectors is None else None,
+        )
+    if not outcomes:
+        return stats
+    with locks.get_state_lock(group_id):
+        current = _load_raw_chunks(group_id)
+        rebuilt: list[dict] = []
+        for row in current:
+            outcome = outcomes.get(str(row.get("chunk_id", ""))) if isinstance(row, dict) else None
+            if outcome is None or row.get("embedding") is not None:
+                rebuilt.append(row)
+                continue
+            texts, vectors, failure = outcome
+            if vectors is None and failure is not None and failure.reason == "missing_api_key":
+                rebuilt.append(row)  # nothing was asked of the provider: not an attempt, and not a reason to give up
+                continue
+            if vectors is None:
+                attempts = int(row.get("embedding_attempts", 0)) + 1
+                permanent = (failure is not None and not failure.retryable) or attempts >= MEMORY_EMBEDDING_MAX_ATTEMPTS
+                rebuilt.append({
+                    **row, "embedding_attempts": attempts,
+                    "embedding_status": "failed_permanent" if permanent else "pending",
+                    **({"embedding_failure": {
+                        "reason": failure.reason, "status_class": failure.status_class,
+                        "status_code": failure.status_code, "error_code": failure.error_code,
+                        "retryable": failure.retryable}} if failure is not None else {}),
+                })
+                stats["gave_up" if permanent else "failed"] += 1
+                continue
+            base = {k: v for k, v in row.items()
+                    if k not in {"embedding", "embedding_status", "embedding_attempts", "embedding_failure"}}
+            if len(texts) == 1:
+                rebuilt.append({**base, "embedding": vectors[0]})
+            else:
+                parent = str(row.get("chunk_id", ""))
+                rebuilt.extend({
+                    **base, "text": text, "embedding": vector, "chunk_id": f"{parent}#{number}/{len(texts)}",
+                    "idempotency_key": f"{parent}#{number}/{len(texts)}", "parent_id": parent,
+                    "part_index": number, "part_count": len(texts),
+                } for number, (text, vector) in enumerate(zip(texts, vectors, strict=True), 1))
+                stats["split"] += 1
+            stats["embedded"] += 1
+        _save_raw_chunks(group_id, rebuilt)
+        _invalidate_index(group_id)
+    observability.event("memory.embedding_backfill", level=logging.INFO,
+                        group_id=observability.safe_identifier(group_id), **stats)
+    return stats
 
 
 def format_results(results: list[dict]) -> str:
