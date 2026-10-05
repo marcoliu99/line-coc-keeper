@@ -67,6 +67,46 @@ class LockWatchdogTests(unittest.IsolatedAsyncioTestCase):
             handoff.close()
         self.assertEqual(events_named(spy, "lock.held_too_long")[0].kwargs["phase"], "narration")
 
+    async def test_a_turn_queueing_for_narration_holds_nothing_and_is_not_reported(self):
+        narration = locks.get_narration_lock(self.conversation)
+        await narration.acquire()  # the previous turn is still narrating
+        with patch.object(config, "LOCK_HELD_WARNING_SECONDS", 0.01), \
+                patch.object(locks.observability, "event") as spy:
+            handoff = locks.TurnHandoff(self.conversation, self.lock)
+            waiting = asyncio.create_task(handoff.to_narration())
+            await asyncio.sleep(0.1)
+            self.assertEqual(events_named(spy, "lock.held_too_long"), [], "it holds no lock while it queues")
+            narration.release()
+            await asyncio.wait_for(waiting, 5)
+            await asyncio.sleep(0.1)
+            reported = events_named(spy, "lock.held_too_long")
+            self.assertEqual(len(reported), 1)
+            self.assertEqual(reported[0].kwargs["phase"], "narration")
+            handoff.close()
+        self.assertFalse(narration.locked())
+
+    async def test_a_cancelled_wait_for_narration_reports_nothing(self):
+        narration = locks.get_narration_lock(self.conversation)
+        await narration.acquire()
+        with patch.object(config, "LOCK_HELD_WARNING_SECONDS", 0.01), \
+                patch.object(locks.observability, "event") as spy:
+            handoff = locks.TurnHandoff(self.conversation, self.lock)
+            waiting = asyncio.create_task(handoff.to_narration())
+            await asyncio.sleep(0.1)
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+            handoff.close()
+            await asyncio.sleep(0.05)
+        narration.release()
+        self.assertEqual(spy.call_args_list, [])
+
+    async def test_every_hold_has_its_own_turn_id(self):
+        first = locks.TurnHandoff(self.conversation, self.lock)
+        second = locks.TurnHandoff(self.conversation, self.lock)
+        self.assertTrue(first.turn_id.startswith("turn"))
+        self.assertNotEqual(first.turn_id, second.turn_id)
+        first.close()
+
     async def test_the_default_is_the_deadline_plus_a_minute(self):
         self.assertEqual(config.LOCK_HELD_WARNING_SECONDS, config.LLM_TURN_DEADLINE_SECONDS + 60.0)
 

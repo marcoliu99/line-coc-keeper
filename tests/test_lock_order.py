@@ -10,9 +10,11 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from app import locks
+from app import config, locks, scenario_intro
 from app.commands import router, turn_scope
 from app.models import Character, GroupState
+from app.providers import registry
+from tests.state_store import StateStorePatch
 
 RANK = {"gate": 0, "conversation": 1, "keeper": 2, "narration": 3}
 
@@ -170,34 +172,82 @@ class LockOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(trace.violations, [])
         self.assertEqual(trace.sequence[0], "+gate")
 
-    async def test_a_command_route_that_narrates_follows_the_order(self):
-        trace = install("order-command")
 
-        async def command() -> None:
-            async with turn_scope.conversation_turn("order-command", nothing), \
-                    locks.narrating_turn("order-command"):
-                await asyncio.sleep(0)
+class RealRouteOrderTests(unittest.IsolatedAsyncioTestCase):
+    """The same recording, driven through ``router.handle_text_message`` so the call graph is the real one."""
 
-        await asyncio.wait_for(asyncio.gather(
-            command(), command(),
-            self.player_turn(lambda cid: turn_scope.conversation_turn(cid, nothing), "order-command", hand_off=True),
-        ), 5)
+    async def test_a_sudo_act_and_ordinary_turns_through_the_router_follow_the_order(self):
+        group = "order-real-sudo"
+        trace = install(group)
+        state = GroupState(group_id=group, active=True, game_started=True, kp_assistant_user_id="kp")
+        target = Character(name="小明", owner_id="p1")
+        state.characters["p1"] = target
+        state.set_active_character("p1", target.character_id)
+        state.timeline_id = "timeline-order"
+
+        async def run_turn(**kwargs):
+            await asyncio.sleep(0)
+            if kwargs["handoff"] is not None:
+                await kwargs["handoff"].to_narration()
+            await asyncio.sleep(0)
+            return "角色行動結果", [], []
+
+        async def maintenance(conversation_id, reply, public_message, *args, **kwargs):
+            await reply(public_message)
+
+        replies: list[str] = []
+
+        async def reply(text: str) -> None:
+            replies.append(text)
+
+        with StateStorePatch(router) as store, \
+                patch.object(router.supervisor, "run_turn", run_turn), \
+                patch.object(router, "resolve_map_action", lambda *args: None), \
+                patch.object(router, "run_post_turn_maintenance_after_output", maintenance):
+            store.put(state)
+
+            async def display():
+                return "小明"
+
+            await asyncio.wait_for(asyncio.gather(
+                router.handle_text_message(group, "kp", nothing, reply, nothing, nothing, nothing,
+                                           "/coc sudo p1 act 調查房間", allow_opaque_sudo_target=True),
+                router.handle_text_message(group, "p1", display, reply, nothing, nothing, nothing, "我推開門"),
+                router.handle_text_message(group, "p1", display, reply, nothing, nothing, nothing, "我再看一眼"),
+            ), 10)
         self.assertEqual(trace.violations, [])
+        self.assertIn("+gate", trace.sequence)
+        self.assertIn("+narration", trace.sequence)
+        self.assertGreaterEqual(len(replies), 3, replies)
 
-    async def test_a_sudo_style_path_follows_the_order(self):
-        trace = install("order-sudo")
+    async def test_the_opening_command_through_the_router_follows_the_order(self):
+        group = "order-real-start"
+        trace = install(group)
 
-        async def sudo() -> None:
-            async with locks.get_keeper_priority_gate("order-sudo", is_kp=True), \
-                    locks.get_conversation_lock("order-sudo"), locks.narrating_turn("order-sudo"):
-                await asyncio.sleep(0)
+        class Provider:
+            async def run_conversation(self, *_args: object, **_kwargs: object) -> str:
+                return "後備開場"
 
-        await asyncio.wait_for(asyncio.gather(
-            sudo(), self.player_turn(
-                lambda cid, is_kp: turn_scope.keeper_turn(cid, is_kp=is_kp, reply=nothing),
-                "order-sudo", hand_off=True, is_kp=False),
-        ), 5)
+        replies: list[str] = []
+
+        async def reply(text: str) -> None:
+            replies.append(text)
+
+        state = GroupState(group_id=group, timeline_id="timeline-order", active=True, scenario_text="開場劇本",
+                           characters={"first": Character(name="first", owner_id="first")})
+        with StateStorePatch(router) as store, \
+                patch.object(scenario_intro, "extract_opening_narration", return_value={"found": False}), \
+                patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": Provider()}), \
+                patch.object(config, "LLM_PROVIDER", "openai"), \
+                patch("app.services.post_turn.spawn_post_turn_maintenance"):
+            store.put(state)
+            await asyncio.wait_for(router.handle_text_message(
+                group, "first", display_name, reply, nothing, nothing, nothing, "/coc start"), 10)
         self.assertEqual(trace.violations, [])
+        self.assertIn("+conversation", trace.sequence)
+        self.assertIn("+keeper", trace.sequence)
+        self.assertIn("+narration", trace.sequence)
+        self.assertTrue(any("後備開場" in text for text in replies), replies)
 
 
 if __name__ == "__main__":

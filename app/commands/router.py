@@ -824,9 +824,8 @@ async def _handle_ordinary_text_message_locked(
                 resolve_map_action, conversation_id, user_id, text
             )
             state = load_state(conversation_id)
-        turn_id = observability.new_id("turn")
-        if handoff is not None:
-            handoff.turn_id = turn_id
+        # The hold and the turn share one id, so a lock.held_too_long names the turn that holds it.
+        turn_id = handoff.turn_id if handoff is not None else observability.new_id("turn")
         with observability.context(turn_id=turn_id):
             reply_text, private_messages, image_requests = await supervisor.run_turn(
                 state=state,

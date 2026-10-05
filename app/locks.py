@@ -255,27 +255,36 @@ class TurnHandoff:
         self._holds_narration = False
         # How long this turn waited for the lock, for the turn's phase timeline (app/services/turn_phases.py).
         self.queue_wait_ms = 0.0
-        # Named by the router once the turn has an id, so a held-too-long report says whose turn it is.
-        self.turn_id: str | None = None
+        # Names this turn's hold in `lock.held_too_long` and in the ordinary text turn's own events, which adopt it.
+        self.turn_id: str = observability.new_id("turn")
         self._acquired_at = time.monotonic()
         self._warned = False
         self._watchdog: asyncio.TimerHandle | None = None
         if config.LOCK_HELD_WARNING_SECONDS > 0:
             try:
                 self._watchdog = asyncio.get_running_loop().call_later(
-                    config.LOCK_HELD_WARNING_SECONDS, self._warn_held_too_long)
+                    config.LOCK_HELD_WARNING_SECONDS, self._check_held_too_long)
             except RuntimeError:  # built outside a running loop: nothing to watch with
                 pass
+
+    def _holds_any_lock(self) -> bool:
+        return bool(self._mutation_locks) or self._holds_narration
 
     def _held_ms(self) -> float:
         return (time.monotonic() - self._acquired_at) * 1000
 
-    def _warn_held_too_long(self) -> None:
+    def _check_held_too_long(self) -> None:
         """Report a turn that still holds its locks long after its deadline. Reports only.
 
         Releasing from here would turn a stuck turn into two turns changing the state at once, which is worse than
-        a stuck channel that someone can now see and name.
+        a stuck channel that someone can now see and name. A turn queueing for the narration lock (`to_narration`
+        has freed its mutation locks and holds nothing yet) is the previous turn's to report, so look again soon.
         """
+        self._watchdog = None
+        if not self._holds_any_lock():
+            self._watchdog = asyncio.get_running_loop().call_later(
+                min(5.0, config.LOCK_HELD_WARNING_SECONDS), self._check_held_too_long)
+            return
         self._warned = True
         observability.event(
             "lock.held_too_long", level=logging.WARNING,
