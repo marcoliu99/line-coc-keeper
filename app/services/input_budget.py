@@ -70,21 +70,39 @@ def reset_encoding_cache() -> None:
         _encoding_failures.clear()
 
 
-# Chinese, Japanese and Korean text is about one token per character in the tokenizers this project uses (a rare
-# character can cost two or three); the UTF-8 byte count this module used to fall back on bills every one of them
-# three times over, which is what starved the scenario retrieval budget to zero for a Chinese table whenever the
-# tokenizer could not be loaded. The fallback counts a character at the top of that range and everything else
-# (ASCII, JSON punctuation, emoji) at one token per three bytes, so it still never undercounts but is no longer
-# two to three times too high. It is an estimate, labelled as one.
+# Chinese, Japanese and Korean text is about one token per character in the tokenizers this project uses; the UTF-8
+# byte count this module used to fall back on bills every one of them three times over, which is what starved the
+# scenario retrieval budget to zero for a Chinese table whenever the tokenizer could not be loaded. The fallback prices
+# a common character at 1.5 tokens, a rare one (extension A, compatibility ideographs, jamo, and everything outside the
+# Basic Multilingual Plane: extension B and later ideographs, emoji) at 3, an identifier-like run (hex ids, hashes,
+# base64) at one token per two characters, and any other byte at a third of a token. It leans high for ordinary text
+# and is an estimate, labelled as one: unusual text can still cost more than it says, which is why the retrieval budget
+# also keeps a safety margin and a hard window (SCENARIO_CONTEXT_WINDOW_TOKENS).
 FALLBACK_METHOD = "fallback_estimate"
-_WIDE = re.compile(r"[\u1100-\u11ff\u3000-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]")
+_COMMON_WIDE = re.compile(r"[\u3000-\u30ff\u3130-\u318f\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]")
+_RARE = re.compile(r"[\u1100-\u11ff\u3400-\u4dbf\uf900-\ufaff\U00010000-\U0010ffff]")
+_RUN = re.compile(r"[A-Za-z0-9+/_=-]{20,}")
 
 
 def fallback_tokens(text: str) -> int:
-    """An upper-end token estimate that needs no tokenizer: 1.5 per CJK character, one per three other bytes."""
-    wide = len(_WIDE.findall(text))
-    other_bytes = len(_WIDE.sub("", text).encode("utf-8"))
-    return (3 * wide + 1) // 2 + (other_bytes + 2) // 3
+    """An upper-end token estimate that needs no tokenizer; see the comment above for the prices."""
+    # A run needs a digit to look like an identifier; checked after the match, which keeps the scan linear.
+    dense = 0
+
+    def take(match: re.Match[str]) -> str:
+        nonlocal dense
+        run = match.group(0)
+        if any(char.isdigit() for char in run):
+            dense += (len(run) + 1) // 2
+            return ""
+        return run
+
+    text = _RUN.sub(take, text)
+    rare = len(_RARE.findall(text))
+    text = _RARE.sub("", text)
+    common = len(_COMMON_WIDE.findall(text))
+    other_bytes = len(_COMMON_WIDE.sub("", text).encode("utf-8"))
+    return 3 * rare + (3 * common + 1) // 2 + (other_bytes + 2) // 3 + dense
 
 
 def tokenizer_method(model: str) -> str:

@@ -339,5 +339,9 @@ SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 3200
 # everything else and drove the search budget to zero, after which the Keeper had no scenario evidence to decide on
 # and the player got a generic reply. 0 restores "the budget can reach zero". Capped at SCENARIO_RETRIEVAL_TOKEN_BUDGET.
 SCENARIO_RETRIEVAL_MIN_TOKENS = _env_int('SCENARIO_RETRIEVAL_MIN_TOKENS', 3000)
+# The hard limit: the search never gets more than what is left of this after the prompt and the output reserve, floor
+# included, because a request over the model's real window fails the turn. The default is below the window of every
+# provider this project supports; set it to your model's window (minus headroom) or lower for a smaller one.
+SCENARIO_CONTEXT_WINDOW_TOKENS = _env_int('SCENARIO_CONTEXT_WINDOW_TOKENS', 128000, minimum=1)
 SCENARIO_OUTPUT_TOKEN_RESERVE = _env_int('SCENARIO_OUTPUT_TOKEN_RESERVE', 4096, minimum=1)
 SCENARIO_CONTEXT_SAFETY_TOKENS = _env_int('SCENARIO_CONTEXT_SAFETY_TOKENS', 2048, minimum=1)

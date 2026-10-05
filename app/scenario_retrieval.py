@@ -30,11 +30,14 @@ def remaining_budget(context: Any, model: str) -> int:
     natural = max(0, min(config.SCENARIO_RETRIEVAL_TOKEN_BUDGET, available))
     # Evidence is what the Keeper decides on; the rest of the prompt does not get to crowd it out entirely.
     floor = min(config.SCENARIO_RETRIEVAL_MIN_TOKENS, config.SCENARIO_RETRIEVAL_TOKEN_BUDGET)
-    budget = max(natural, floor)
+    # The ceiling is a planning number the floor may exceed; the window is not. Nothing here may push the request past it.
+    room = max(0, config.SCENARIO_CONTEXT_WINDOW_TOKENS - context_cost - reserve)
+    budget = min(max(natural, floor), room)
     floor_applied = budget > natural
     observability.event("rag.retrieval.budget", level=logging.WARNING if floor_applied or budget == 0 else logging.INFO,
                         context_tokens_estimate=context_cost, reserve_tokens=reserve,
-                        context_ceiling=config.SCENARIO_CONTEXT_TOKEN_CEILING, budget_tokens=budget,
+                        context_ceiling=config.SCENARIO_CONTEXT_TOKEN_CEILING, context_window=config.SCENARIO_CONTEXT_WINDOW_TOKENS,
+                        budget_tokens=budget, budget_capped_by_window=room < max(natural, floor),
                         budget_floor_applied=floor_applied, budget_before_floor=natural,
                         token_estimate_method=input_budget.tokenizer_method(model))
     return budget

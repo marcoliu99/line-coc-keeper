@@ -21,8 +21,9 @@ Haunting 500 回合測試（`b0e875c`）記錄到 198 次 `rag.retrieval.budget`
 ## 變更
 
 - **`SCENARIO_RETRIEVAL_MIN_TOKENS`**（預設 3,000，上限是 `SCENARIO_RETRIEVAL_TOKEN_BUDGET`，`0` 恢復舊行為）：搜尋至少拿到這麼多。3,000 是一般預算的一半，也等於主動搜尋的上限。`rag.retrieval.budget` 事件新增 `budget_floor_applied` 與 `budget_before_floor`，用到下限時是 WARNING，操作者看得出上限設得太低。
+- **`SCENARIO_CONTEXT_WINDOW_TOKENS`**（預設 128,000，低於所有支援 provider 的視窗）：硬上限。下限可以超過上限（它只是規劃用的數字），但絕不超過視窗：預算最多是視窗減去提示與輸出保留量之後剩下的（可能是零），所以下限不會因為太大而讓請求失敗。事件新增 `context_window` 與 `budget_capped_by_window`。模型視窗較小時請調低。
 - **真正的解法是設定，不是程式：** 把 `SCENARIO_CONTEXT_TOKEN_CEILING` 調到模型實際的上下文視窗減去餘量。這個值由操作者決定（本專案不知道 provider 的視窗大小）；`.env.example` 與設定指南都這麼說。
-- **備用估算認得中文**（`input_budget.fallback_tokens`）：每個 CJK 字元（含假名、諺文與全形符號）1.5 token，其他每三個位元組 1 token，取代每個位元組 1 token。它仍是偏高的估計，從不樂觀，標籤從 `utf8_bytes_fallback` 改為 `fallback_estimate`（舊名稱描述的已經不是它在做的事）。模型未知時，搜尋內部計算依據成本也用它，所以過去因為成本被拒的必要依據現在放得下。
+- **備用估算認得中文**（`input_budget.fallback_tokens`）：每個 CJK 字元（含假名、諺文與全形符號）1.5 token，其他每三個位元組 1 token，取代每個位元組 1 token。罕見字元（擴充 A、諺文字母、相容表意文字，以及基本多文種平面以外的所有字元：擴充 B 之後的漢字、emoji）每個 3 token，含數字且 20 字元以上的識別碼樣式連續片段（hex id、雜湊、base64）每兩個字元 1 token。它對一般文字偏高，但只是估計而不是上界：特殊文字仍可能更貴，輸出保留量、安全餘量與上面的視窗就是為此而設。標籤從 `utf8_bytes_fallback` 改為 `fallback_estimate`（舊名稱描述的已經不是它在做的事）。模型未知時，搜尋內部計算依據成本也用它，所以過去因為成本被拒的必要依據現在放得下。
 
 ## 沒做的
 

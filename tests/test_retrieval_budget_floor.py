@@ -27,7 +27,20 @@ class FallbackEstimateTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(input_budget.fallback_tokens(text), (3 * len(text) + 1) // 2)
 
-    def test_it_never_undercounts_a_realistic_one_token_per_character(self):
+    def test_rare_characters_cost_three_not_one_and_a_half(self):
+        """Extension A, extension B and later (four bytes in UTF-8), jamo, compatibility ideographs and emoji."""
+        for text in ("㐀" * 10, "𠀀" * 10, "ᄀ" * 10, "\uf900" * 10, "😀" * 10):
+            with self.subTest(text=text[0]):
+                self.assertEqual(input_budget.fallback_tokens(text), 30)
+
+    def test_identifier_like_runs_cost_a_token_per_two_characters(self):
+        identifier = "check-" + "0a1b" * 8  # a 38-character id, the shape the prompt carries
+        self.assertEqual(input_budget.fallback_tokens(identifier), 19)
+        self.assertGreater(input_budget.fallback_tokens(identifier), (len(identifier) + 2) // 3)
+        self.assertEqual(input_budget.fallback_tokens("a-long-hyphenated-english-phrase"), (32 + 2) // 3,
+                         "a run without a digit is ordinary text")
+
+    def test_it_leans_high_on_a_realistic_one_token_per_character(self):
         sample = "房東低聲說：他像是從跪姿向前倒下的，衣服上的血已經乾了。" * 20
         self.assertGreaterEqual(input_budget.fallback_tokens(sample), len(sample))
 
@@ -74,6 +87,21 @@ class BudgetFloorTests(unittest.TestCase):
 
     def test_the_floor_never_exceeds_the_normal_budget(self):
         self.assertEqual(self.budget(60000, SCENARIO_RETRIEVAL_MIN_TOKENS=9000)[0], 6000)
+
+    def test_the_floor_never_pushes_the_request_past_the_window(self):
+        """Ceiling 32000 is a planning number; a 40000 window leaves 40000 - 36000 - 6144 < 0 for the search."""
+        budget, fields = self.budget(36000, SCENARIO_CONTEXT_WINDOW_TOKENS=40000)
+        self.assertEqual((budget, fields["budget_capped_by_window"]), (0, True))
+        budget, fields = self.budget(33500, SCENARIO_CONTEXT_WINDOW_TOKENS=40000)  # 356 of room, under the floor of 3000
+        self.assertEqual((budget, fields["budget_capped_by_window"], fields["budget_floor_applied"]), (356, True, True))
+
+    def test_a_ceiling_above_the_window_is_held_to_the_window(self):
+        budget, fields = self.budget(10000, SCENARIO_CONTEXT_TOKEN_CEILING=200000, SCENARIO_CONTEXT_WINDOW_TOKENS=20000)
+        self.assertEqual((budget, fields["budget_capped_by_window"]), (3856, True))
+
+    def test_the_default_window_leaves_the_normal_cases_alone(self):
+        self.assertEqual(config.SCENARIO_CONTEXT_WINDOW_TOKENS, 128000)
+        self.assertEqual(self.budget(60000)[1]["budget_capped_by_window"], False)
 
     def test_a_higher_ceiling_alone_restores_the_full_budget(self):
         """The no-code route: SCENARIO_CONTEXT_TOKEN_CEILING in .env."""
