@@ -112,6 +112,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Turn safety, recoverable results and measured latency](specs/refactor/turn_safety_and_latency_design_spec.md) | partial; S0/S1/S3 implemented, S2 reverted | [繁體中文](specs/refactor/turn_safety_and_latency_design_spec_zh.md) |
 | [Splitting app/keeper.py by responsibility](specs/refactor/keeper_module_split_design_spec.md) | implemented | [繁體中文](specs/refactor/keeper_module_split_design_spec_zh.md) |
 | [Splitting app/discord_bot.py](specs/refactor/discord_transport_split_design_spec.md) | implemented | [繁體中文](specs/refactor/discord_transport_split_design_spec_zh.md) |
+| [/coc system subcommands as a table of handlers](specs/refactor/system_command_table_design_spec.md) | implemented | [繁體中文](specs/refactor/system_command_table_design_spec_zh.md) |
 
 ## maintenance
 
