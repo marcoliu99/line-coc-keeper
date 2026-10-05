@@ -71,11 +71,14 @@ def _public_narration(state: GroupState) -> list[str]:
 
     Player lines and anything not public are left out. A new scenario starts a new timeline but keeps the log, so
     narration and clues stamped with another timeline (or with none: unverified clues are stored unstamped, and a new scenario keeps them) are left out too: it was
-    about a different scenario and must not make a same-named entry of this one look disclosed.
+    about a different scenario and must not make a same-named entry of this one look disclosed. Only narration that
+    still stands counts: text an approved correction replaced (``superseded_by``) was withdrawn, and a correction's own
+    wording ("narrative_correction") may name the very thing it denies.
     """
     return [str(entry.get("content", "")) for entry in reversed(state.log[-_RECENT_NARRATION:])
             if entry.get("role") == "assistant" and entry.get("audience", "public") == "public"
-            and entry.get("timeline_id", "") == (state.timeline_id or "")]
+            and entry.get("timeline_id", "") == (state.timeline_id or "")
+            and entry.get("record_kind") == "narrative" and not entry.get("superseded_by")]
 
 
 def _names(entry: dict[str, Any]) -> list[str]:

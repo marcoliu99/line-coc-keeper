@@ -15,7 +15,8 @@ def state_with(*, narration: tuple[str, ...] = (), locations=(), npcs=(), clues=
     state.known_clues = [{"timeline_id": "t", **item} for item in clues]  # stamped, as verified clues are
     for text in narration:
         state.log.append({"role": "user", "content": "我想去地下室和鎮長辦公室"})
-        state.log.append({"role": "assistant", "content": text, "audience": "public", "timeline_id": "t"})
+        state.log.append({"role": "assistant", "content": text, "audience": "public", "timeline_id": "t",
+                          "record_kind": "narrative"})
     return state
 
 
@@ -76,6 +77,16 @@ class SceneHintTests(unittest.TestCase):
         state.log[-1]["timeline_id"] = "an-earlier-timeline"
         self.assertEqual(turn_fallback.scene_hints(state), "")
         state.timeline_id = "an-earlier-timeline"
+        self.assertIn("地下室", turn_fallback.scene_hints(state))
+
+    def test_corrected_narration_and_the_correction_itself_do_not_disclose_anything(self):
+        state = state_with(narration=("你們走進了地下室。",), locations=LOCATIONS)
+        state.log[-1]["superseded_by"] = ["correction-1"]
+        self.assertEqual(turn_fallback.scene_hints(state), "")
+        state = state_with(narration=("先前提到的地下室並不存在。",), locations=LOCATIONS)
+        state.log[-1]["record_kind"] = "narrative_correction"
+        self.assertEqual(turn_fallback.scene_hints(state), "")
+        state.log[-1]["record_kind"] = "narrative"
         self.assertIn("地下室", turn_fallback.scene_hints(state))
 
     def test_narration_without_a_timeline_stamp_is_not_trusted_once_the_state_has_a_timeline(self):
