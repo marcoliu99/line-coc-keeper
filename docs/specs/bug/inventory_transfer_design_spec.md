@@ -45,7 +45,7 @@ The run report counts this as DB200-F3 (a likely issue, "root cause unconfirmed"
 
 ## Changes (for the implementation)
 
-- New handler `inventory.transfer_item` and tool schema in `keeper_tools/registry.py`; descriptions of `add_carried_item`/`remove_carried_item` say when not to use them for a hand-off.
+- New handler `inventory.transfer_item` and tool schema in `keeper_tools/registry.py`. `ToolSpec.kp_assistant` defaults to `False`, `tools_for_speaker_role` omits tools without it and `tool_dispatch.execute_tool` rejects them, so the KP Assistant exemptions in rules 2, 3 and 7 only work if the registry marks `transfer_item`, `add_carried_item` and `remove_carried_item` `kp_assistant=True`; the change does that and tests that a KP Assistant call is admitted and a player call is not; descriptions of `add_carried_item`/`remove_carried_item` say when not to use them for a hand-off.
 - `tool_gateway` and the two correction call sites: pass `actor_id` and the `system_origin` admission marker into inventory calls (first step, before any gate); `tool_gateway` also derives the turn-owned action id and passes it to the ledger.
 - `inventory.py`: own-character check from `ToolCall.actor_id`; exact item match; `reason` on removal; the transfer record on state (`inventory_transfers`). `GroupState` has no such field today and `GroupState.to_dict()`/`from_dict()` enumerate persisted fields (`app/models.py`), so the field and its serialisation and deserialisation are added there, defaulting to empty for old saves.
 - `turn_resolution._mutation_evidence`: a successful `transfer_item` event is one verified transfer; the remove-then-add pair matching stays during migration and is removed once the prompt no longer produces pairs.
@@ -65,7 +65,7 @@ The run report counts this as DB200-F3 (a likely issue, "root cause unconfirmed"
 - Replay content: a re-emitted call returns the stored receipt (not `None`) after the first attempt committed, including after a simulated lost response.
 - Conservation: after a transfer the number of entries across investigators is unchanged, and a duplicate item the receiver already holds stays a second entry.
 - Idempotency: the same call re-emitted in the same turn with a new provider call id, a later position and different model text returns the original receipt and changes nothing; the model cannot choose the id.
-- Quantity: `0`, a negative value, a non-integer and a missing-but-required value are refused before any mutation; `source_event_id` survives a save/reload in the record.
+- Quantity: An omitted `quantity` is accepted as 1 (the plain three-argument call); `0`, a negative value and a non-integer are refused before any mutation; `source_event_id` survives a save/reload in the record.
 - Persistence: `inventory_transfers` survives a save/reload and an old snapshot without the field loads with an empty list.
 - Fail-closed removal: a standalone removal under a message the check cannot classify is refused with a clarification prompt, and one under a message classified as a removal intent is admitted.
 - Intent admission: a message that hands an item to a named investigator makes `remove_carried_item` of that item refused even with `reason=lost`; a message granting an item to several investigators makes every `add_carried_item` of the turn refused, including the one for the acting player's own character; an unrelated removal in the same turn still works.

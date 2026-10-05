@@ -45,7 +45,7 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 
 ## 變更（給實作用）
 
-- 新的處理函式 `inventory.transfer_item` 與工具 schema（`keeper_tools/registry.py`）；`add_carried_item`／`remove_carried_item` 的描述說明交接時不要用它們。
+- 新的處理函式 `inventory.transfer_item` 與工具 schema（`keeper_tools/registry.py`）。`ToolSpec.kp_assistant` 預設為 `False`，`tools_for_speaker_role` 會省略沒有它的工具，`tool_dispatch.execute_tool` 也會拒絕它們，所以規則 2、3、7 對 KP Assistant 的豁免，只有在 registry 把 `transfer_item`、`add_carried_item`、`remove_carried_item` 標成 `kp_assistant=True` 時才能用；這次變更會做這件事，並測試 KP Assistant 的呼叫被接受、玩家的呼叫不被接受；`add_carried_item`／`remove_carried_item` 的描述說明交接時不要用它們。
 - `tool_gateway` 與兩個更正呼叫點：把 `actor_id` 與 `system_origin` 准入標記傳進背包呼叫（第一步，在任何檢查之前）；`tool_gateway` 同時推導回合擁有的動作 id 並傳給帳本。
 - `inventory.py`：依 `ToolCall.actor_id` 檢查是否為自己的角色；物品要完全相符；移除加上 `reason`；狀態新增交接紀錄（`inventory_transfers`）。`GroupState` 目前沒有這個欄位，而 `GroupState.to_dict()`／`from_dict()` 逐一列舉要存檔的欄位（`app/models.py`），所以欄位與它的序列化、反序列化要加在那裡，舊存檔缺少該欄位時預設為空。
 - `turn_resolution._mutation_evidence`：成功的 `transfer_item` 事件就是一次已驗證的交接；先移除再加入的配對比對在遷移期間保留，等提示不再產生成對呼叫之後移除。
@@ -65,7 +65,7 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 - 重播內容：第一次嘗試已提交之後，重新發出的呼叫回傳存下的收據（不是 `None`），包括模擬回應遺失的情況。
 - 守恆：交接後各調查員清單的項目總數不變，接收者已有的同名物品會變成第二筆。
 - 冪等：同一回合內重新發出的同一個呼叫，即使有新的 provider 呼叫 id、較後的順序與不同的模型文字，也會回傳原本的收據且什麼都不改；模型不能自選 id。
-- 數量：`0`、負數、非整數與必填卻缺少的值，在任何變更之前都被拒絕；`source_event_id` 在存檔重新載入後仍在紀錄中。
+- 數量：省略 `quantity` 時視為 1（單純的三個參數的呼叫）；`0`、負數與非整數在任何變更之前都被拒絕；`source_event_id` 在存檔重新載入後仍在紀錄中。
 - 存檔：`inventory_transfers` 在存檔後重新載入仍在，沒有該欄位的舊快照載入後是空清單。
 - 失敗時關閉的移除：訊息無法被檢查分類時，單獨的移除被拒絕並附確認提示；訊息被分類為移除意圖時則被接受。
 - 意圖准入：訊息把物品交給指名的調查員時，即使模型給 `reason=lost`，移除那樣物品也被拒絕；訊息把物品發給多位調查員時，這個回合的每一次 `add_carried_item` 都被拒絕，包括對行動玩家自己角色的那一次；同一回合中無關的移除仍然可用。
