@@ -21,28 +21,41 @@ _tokens: dict[str, tuple[str, int, list[str]]] = {}
 _lock = threading.RLock()
 
 
-def remaining_budget(context: Any, model: str) -> int:
+# What an earlier tool round adds to the provider's live conversation that the caller cannot see: the model's own text
+# and reasoning before the call. The call and its result are already in the context. An allowance, not a measurement.
+PRIOR_ROUND_ALLOWANCE_TOKENS = 1000
+
+
+def remaining_budget(context: Any, model: str, prior_rounds: int = 0) -> int:
     # Deployment ceiling is conservative and configurable; it is not a claim
     # about a provider's advertised context window.
     context_cost = input_budget.estimate(context, model)
     reserve = config.SCENARIO_OUTPUT_TOKEN_RESERVE + config.SCENARIO_CONTEXT_SAFETY_TOKENS
     available = config.SCENARIO_CONTEXT_TOKEN_CEILING - context_cost - reserve
-    budget = max(0, min(config.SCENARIO_RETRIEVAL_TOKEN_BUDGET, available))
-    observability.event("rag.retrieval.budget", level=logging.WARNING if budget == 0 else logging.INFO,
+    natural = max(0, min(config.SCENARIO_RETRIEVAL_TOKEN_BUDGET, available))
+    # Evidence is what the Keeper decides on; the rest of the prompt does not get to crowd it out entirely.
+    floor = min(config.SCENARIO_RETRIEVAL_MIN_TOKENS, config.SCENARIO_RETRIEVAL_TOKEN_BUDGET)
+    # The ceiling is a planning number the floor may exceed; the window is not. Nothing here may push the request past it.
+    room = max(0, config.SCENARIO_CONTEXT_WINDOW_TOKENS - context_cost - reserve - prior_rounds * PRIOR_ROUND_ALLOWANCE_TOKENS)
+    budget = min(max(natural, floor), room)
+    floor_applied = budget > natural
+    observability.event("rag.retrieval.budget", level=logging.WARNING if floor_applied or budget == 0 else logging.INFO,
                         context_tokens_estimate=context_cost, reserve_tokens=reserve,
-                        context_ceiling=config.SCENARIO_CONTEXT_TOKEN_CEILING, budget_tokens=budget,
+                        context_ceiling=config.SCENARIO_CONTEXT_TOKEN_CEILING, context_window=config.SCENARIO_CONTEXT_WINDOW_TOKENS,
+                        budget_tokens=budget, budget_capped_by_window=room < max(natural, floor),
+                        budget_floor_applied=floor_applied, budget_before_floor=natural,
                         token_estimate_method=input_budget.tokenizer_method(model))
     return budget
 
 
-def request_budget(context: list, history: list[dict], model: str, provider: str) -> int:
-    return remaining_budget([*context, input_budget.provider_history(history, model, provider)], model)
+def request_budget(context: list, history: list[dict], model: str, provider: str, prior_rounds: int = 0) -> int:
+    return remaining_budget([*context, input_budget.provider_history(history, model, provider)], model, prior_rounds)
 
 
 def _cost(text: str) -> int:
-    # Unknown model uses bytes, never an optimistic token conversion.
+    # An unknown model has no tokenizer: the upper-end estimate, never an optimistic conversion.
     if MODEL.get() == 'unknown':
-        return len(text.encode('utf-8'))
+        return input_budget.fallback_tokens(text)
     return input_budget.estimate(text, MODEL.get())
 
 
@@ -140,7 +153,7 @@ def project(records: dict[str, dict], roots: list[str], query: str,
            'missing_required_ids': missing[:16], 'missing_required_count': len(missing),
            'deferred_optional_ids': optional[:16], 'deferred_optional_count': len(optional), 'blocked_dependency_count': blocked,
            'complete_for_action': complete, 'traversal_limited': limited,
-           'budget_tokens': capacity, 'token_estimate_method': 'utf8_bytes' if MODEL.get() == 'unknown' else input_budget.tokenizer_method(MODEL.get()),
+           'budget_tokens': capacity, 'token_estimate_method': input_budget.FALLBACK_METHOD if MODEL.get() == 'unknown' else input_budget.tokenizer_method(MODEL.get()),
            'required_tokens_estimate': required_cost, 'continuation_token': '',
            'projection_reason': 'complete' if complete else 'required_evidence_unavailable'}
     # Metadata is part of the input too. Remove optional prose first; never

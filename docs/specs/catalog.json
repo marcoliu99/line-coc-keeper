@@ -2125,6 +2125,22 @@
       "path": "docs/specs/enhancement/turn_summary_report_design_spec.md",
       "zh_path": "docs/specs/enhancement/turn_summary_report_design_spec_zh.md",
       "source_revision": "f03a110ed9ee1bbb637c30c67938bf08d9543aee"
+    },
+    {
+      "title": "Keeping the scenario search from being starved, and counting Chinese text honestly without a tokenizer",
+      "zh": "不讓劇本搜尋被擠到沒有預算，以及沒有 tokenizer 時誠實地估算中文",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_retrieval.py",
+        "app/services/input_budget.py",
+        "app/config.py",
+        "tests/test_retrieval_budget_floor.py",
+        "tests/test_retrieval_readiness.py"
+      ],
+      "path": "docs/specs/enhancement/retrieval_budget_headroom_design_spec.md",
+      "zh_path": "docs/specs/enhancement/retrieval_budget_headroom_design_spec_zh.md",
+      "source_revision": "f03a110ed9ee1bbb637c30c67938bf08d9543aee"
     }
   ]
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from typing import Any
@@ -45,7 +46,7 @@ def _encoding(model: str) -> Any:
             _encoding_retry_after[model] = time.monotonic() + ENCODING_RETRY_SECONDS
             attempts = _encoding_failures[model] = _encoding_failures.get(model, 0) + 1
         observability.event("llm.tokenizer.unavailable", level=logging.WARNING,
-                            tokenizer="utf8_bytes_fallback", error_type=type(exc).__name__,
+                            tokenizer=FALLBACK_METHOD, error_type=type(exc).__name__,
                             failed_attempts=attempts, retry_after_seconds=ENCODING_RETRY_SECONDS,
                             remediation="install_declared_tiktoken_dependency_and_check_encoding_cache")
         return None
@@ -69,15 +70,50 @@ def reset_encoding_cache() -> None:
         _encoding_failures.clear()
 
 
+# Chinese, Japanese and Korean text is about one token per character in the tokenizers this project uses; the UTF-8
+# byte count this module used to fall back on bills every one of them three times over, which is what starved the
+# scenario retrieval budget to zero for a Chinese table whenever the tokenizer could not be loaded. The fallback prices
+# a common character at 1.5 tokens, a rare one (extension A, compatibility ideographs, jamo, and everything outside the
+# Basic Multilingual Plane: extension B and later ideographs, emoji) at 3, an identifier-like run (hex ids, hashes,
+# base64) at one token per two characters, and any other byte at a third of a token. It leans high for ordinary text
+# and is an estimate, labelled as one: unusual text can still cost more than it says, which is why the retrieval budget
+# also keeps a safety margin and a hard window (SCENARIO_CONTEXT_WINDOW_TOKENS).
+FALLBACK_METHOD = "fallback_estimate"
+_COMMON_WIDE = re.compile(r"[\u3000-\u30ff\u3130-\u318f\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]")
+_RARE = re.compile(r"[\u1100-\u11ff\u3400-\u4dbf\uf900-\ufaff\U00010000-\U0010ffff]")
+_RUN = re.compile(r"[A-Za-z0-9+/_=-]{20,}")
+
+
+def fallback_tokens(text: str) -> int:
+    """An upper-end token estimate that needs no tokenizer; see the comment above for the prices."""
+    # A run needs a digit to look like an identifier; checked after the match, which keeps the scan linear.
+    dense = 0
+
+    def take(match: re.Match[str]) -> str:
+        nonlocal dense
+        run = match.group(0)
+        if any(char.isdigit() for char in run):
+            dense += (len(run) + 1) // 2
+            return ""
+        return run
+
+    text = _RUN.sub(take, text)
+    rare = len(_RARE.findall(text))
+    text = _RARE.sub("", text)
+    common = len(_COMMON_WIDE.findall(text))
+    other_bytes = len(_COMMON_WIDE.sub("", text).encode("utf-8"))
+    return 3 * rare + (3 * common + 1) // 2 + (other_bytes + 2) // 3 + dense
+
+
 def tokenizer_method(model: str) -> str:
-    return "tokenizer_estimate" if _encoding(model) is not None else "utf8_bytes_fallback"
+    return "tokenizer_estimate" if _encoding(model) is not None else FALLBACK_METHOD
 
 
 def estimate(value, model: str) -> int:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(',', ':'), default=str)
     encoding = _encoding(model)
     if encoding is None:
-        return len(text.encode('utf-8'))  # conservative fallback, not a measured token count
+        return fallback_tokens(text)  # an upper-end estimate, not a measured token count
     return len(encoding.encode(text, disallowed_special=()))
 
 
@@ -102,7 +138,7 @@ def select_history(history: list[dict], model: str, budget: int, keep_turns: int
     observability.event('llm.history.selected', before_tokens_estimate=before,
                         after_tokens_estimate=after, entries_removed=start, budget=budget,
                         budget_exceeded=after > budget,
-                        tokenizer=getattr(encoding, 'name', 'utf8_bytes_fallback'))
+                        tokenizer=getattr(encoding, 'name', FALLBACK_METHOD))
     return selected
 
 

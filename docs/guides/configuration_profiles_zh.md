@@ -14,6 +14,9 @@
 | `SCENARIO_RAG_ENABLED` | `false` | `false`：整份劇本（最多 `MAX_SCENARIO_CHARS`）放進提示。`true`：Keeper 用 `search_scenario` 檢索劇本，長劇本放得下，但每次檢索都是多一次模型往返。 | 延遲分析（`search_scenario` 占工具呼叫的 79%）針對的是 `true`。 |
 | `RETRIEVAL_REUSE_FOR_FOLLOWUPS` | `true` | 擲骰後的續擲沿用造成它的那個行動的劇本證據，不重新搜尋（前提是它依賴的東西都沒變）。 | 已有離線測試；對真實劇本回答品質的影響未量測。 |
 | `SCENARIO_SEARCH_MAX_PER_TURN` | `5` | 單一回合 `search_scenario` 的呼叫上限。 | |
+| `SCENARIO_CONTEXT_TOKEN_CEILING` | `32000` | 劇本搜尋用來計算預算的提示大小上限：搜尋最多能用「這個值減去提示已佔的大小、輸出保留量與安全餘量」。設太低，搜尋會被擠到沒有預算，守密人拿不到劇本依據，玩家就收到通用的「無法繼續」回覆。 | 工具 schema 與靜態提示約 20k tokens（估計，沒有實測）。請設成你的模型實際的上下文視窗減去餘量；它是部署上限，不是對視窗大小的宣稱。 |
+| `SCENARIO_CONTEXT_WINDOW_TOKENS` | `128000` | 硬上限。搜尋最多只能用「這個值減去提示與輸出保留量」之後剩下的，即使有下限也一樣，所以請求不會超過模型的視窗。 | 視窗較小的模型請調低；`rag.retrieval.budget` 會回報 `budget_capped_by_window`。 |
+| `SCENARIO_RETRIEVAL_TOKEN_BUDGET` / `SCENARIO_RETRIEVAL_MIN_TOKENS` | `6000` / `3000` | 一次劇本搜尋最多、最少能用多少。下限避免擁擠的提示把搜尋壓到零；`0` 允許壓到零。記錄在 `rag.retrieval.budget`，用到下限時帶 `budget_floor_applied`。 | 下限只是後盾：常常看到它被套用，代表上限設太低。 |
 | `TURN_FALLBACK_RECOVERY_ENABLED` | `true` | 原本會以通用「無法繼續」回覆收場的回合，先多搜尋一次、多決定一次。 | 最多多一次搜尋與一次模型呼叫，只發生在這類回合。 |
 | `LLM_TURN_DEADLINE_SECONDS` | `180` | 模型工作的整回合期限；超過時回合以明確訊息結束，已提交的變更保留。 | |
 | `MAX_TOOL_ITERATIONS` / `MAX_TOOLS_PER_TURN` | `5` / `4` | Executor 工具迴圈的上限。 | |
