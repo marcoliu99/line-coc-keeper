@@ -139,12 +139,18 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         from app import memory_rag, scenario_rag
         from app.agents import context_builder
 
+        # Concurrency is shown by each search seeing the other under way, not by a wall-clock budget.
+        scenario_started, memory_started = threading.Event(), threading.Event()
+        overlap: dict[str, bool] = {}
+
         def slow_scenario_search(*_args, **_kwargs):
-            time.sleep(0.08)
+            scenario_started.set()
+            overlap["scenario_saw_memory"] = memory_started.wait(5)
             raise RuntimeError("scenario index unavailable")
 
         def slow_memory_search(*_args, **_kwargs):
-            time.sleep(0.08)
+            memory_started.set()
+            overlap["memory_saw_scenario"] = scenario_started.wait(5)
             return [{"label": "old", "text": "memory"}]
 
         with patch.object(context_builder, "SCENARIO_RAG_ENABLED", True), \
@@ -153,16 +159,14 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(memory_rag, "search_memory", side_effect=slow_memory_search), \
                 patch.object(scenario_rag, "format_results", return_value=""), \
                 patch.object(memory_rag, "format_results", return_value="memory context"):
-            started = time.perf_counter()
             state = self._state()
             state.characters["u1"] = Character(name="P1", owner_id="u1")
             message = await context_builder.build_context(
                 state=state, user_id="u1", display_name="P1", text="hi",
                 resolved_location=None, speaker_role="player", conversation_id="g",
             )
-            elapsed = time.perf_counter() - started
 
-        self.assertLess(elapsed, 0.15)
+        self.assertEqual(overlap, {"scenario_saw_memory": True, "memory_saw_scenario": True})
         self.assertEqual(message.payload["rag_context"], "")
         self.assertEqual(message.payload["rag_status"], "error")
         self.assertEqual(message.payload["memory_context"], "memory context")

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from app import locks
-from app.commands import router
+from app.commands import turn_scope
 
 
 class ConversationLockWithNoticeTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
             async def reply(message: str) -> None:
                 replies.append(message)
 
-            async with router._conversation_lock_with_notice("conv-free", reply):
+            async with turn_scope.conversation_turn("conv-free", reply):
                 pass
             return replies
 
@@ -27,7 +27,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
         self.assertEqual(replies, [])
 
     def test_notice_sent_after_delay_when_lock_is_still_contended(self):
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.05):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.05):
             async def scenario() -> list[str]:
                 replies: list[str] = []
 
@@ -46,7 +46,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
                 # back.
                 asyncio.ensure_future(release_after(0.2))
 
-                async with router._conversation_lock_with_notice("conv-contended", reply):
+                async with turn_scope.conversation_turn("conv-contended", reply):
                     pass
                 return replies
 
@@ -59,7 +59,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
         self.assertIn("前面還有 1 個動作", replies[0])
 
     def test_no_notice_when_lock_frees_before_the_delay_elapses(self):
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.2):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.2):
             async def scenario() -> list[str]:
                 replies: list[str] = []
 
@@ -76,7 +76,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
                 # Releases well before the 0.2s notice delay would fire.
                 asyncio.ensure_future(release_after(0.02))
 
-                async with router._conversation_lock_with_notice("conv-quick-release", reply):
+                async with turn_scope.conversation_turn("conv-quick-release", reply):
                     pass
                 return replies
 
@@ -90,7 +90,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
                 pass
 
             lock = locks.get_conversation_lock("conv-held-during-body")
-            async with router._conversation_lock_with_notice("conv-held-during-body", reply):
+            async with turn_scope.conversation_turn("conv-held-during-body", reply):
                 return lock.locked()
             return False  # pragma: no cover - unreachable
 
@@ -102,7 +102,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
                 pass
 
             lock = locks.get_conversation_lock("conv-released-after")
-            async with router._conversation_lock_with_notice("conv-released-after", reply):
+            async with turn_scope.conversation_turn("conv-released-after", reply):
                 pass
             return lock.locked()
 
@@ -116,7 +116,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
         # before the lock's own `finally: lock.release()` was ever reached
         # - permanently leaking a lock that HAD been successfully acquired,
         # deadlocking every future command in that conversation.
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.02):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.02):
             async def scenario() -> bool:
                 async def failing_reply(_message: str) -> None:
                     raise RuntimeError("Discord API error")
@@ -134,7 +134,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
                 # than a clean cancellation.
                 asyncio.ensure_future(release_after(0.1))
 
-                async with router._conversation_lock_with_notice("conv-notify-fails", failing_reply):
+                async with turn_scope.conversation_turn("conv-notify-fails", failing_reply):
                     pass
                 return lock.locked()
 
@@ -143,7 +143,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
         self.assertFalse(still_locked)
 
     def test_priority_gate_wait_is_included_in_queue_notice_delay(self):
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.02):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.02):
             async def scenario() -> tuple[list[str], bool, bool]:
                 replies: list[str] = []
 
@@ -175,13 +175,13 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
         self.assertFalse(any_lock_left_held)
 
     async def _run_priority_wait(self, conversation_id: str, reply) -> None:
-        async with router._keeper_priority_gate_and_lock_with_notice(
+        async with turn_scope.keeper_turn(
             conversation_id, is_kp=False, reply=reply
         ):
             pass
 
     def test_priority_wait_that_resolves_before_delay_sends_no_notice(self):
-        with patch.object(router, "_QUEUE_ACK_DELAY_SECONDS", 0.2):
+        with patch.object(turn_scope, "_QUEUE_ACK_DELAY_SECONDS", 0.2):
             async def scenario() -> list[str]:
                 replies: list[str] = []
 
@@ -211,7 +211,7 @@ class ConversationLockWithNoticeTests(unittest.TestCase):
 
             conversation_id = "conv-priority-body-raises"
             with self.assertRaisesRegex(RuntimeError, "handler failed"):
-                async with router._keeper_priority_gate_and_lock_with_notice(
+                async with turn_scope.keeper_turn(
                     conversation_id, is_kp=False, reply=reply
                 ):
                     raise RuntimeError("handler failed")

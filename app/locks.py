@@ -20,12 +20,14 @@ within the same conversation queue up behind each other.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
+import time
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from app import config, observability
 from app.services import mutation_admission
@@ -128,6 +130,98 @@ def priority_gate_position(conversation_id: str, task: asyncio.Task | None, *, i
     return gate.turns_ahead(task, is_kp=is_kp), gate.active_task
 
 
+_watch_logger = logging.getLogger("app.locks")
+
+
+class _HoldWatch:
+    """Reports, never releases, a lock that one holder keeps far longer than any turn should.
+
+    A conversation whose lock is never given back stays dead until the bot restarts, and until now nothing said so or
+    named the holder. The timer is armed when the lock is acquired and cancelled when it is released, so it covers every
+    path that takes the lock (a turn, a sudo act, a button click), and a waiter that holds nothing yet is never
+    reported. It reports and does not release: a forced release would turn a stuck turn into two turns changing the
+    state at once, which is worse than a stuck channel that someone can now see and name.
+
+    The report is a plain WARNING on logger ``app.locks`` so a default deployment (``LOG_ENABLED`` off) sees it, and a
+    structured event as well when that channel is on. It carries ids and times only, never player text.
+    """
+
+    def __init__(self, lock_name: str, conversation_id: str) -> None:
+        self.lock_name = lock_name
+        self.conversation_id = conversation_id
+        self.turn_id: str | None = None
+        self._ids: dict[str, str] = {}
+        self._since = 0.0
+        self._holder = ""
+        self._warned = False
+        self._timer: asyncio.TimerHandle | None = None
+
+    def arm(self) -> None:
+        threshold = config.LOCK_HELD_WARNING_SECONDS
+        if threshold <= 0:
+            return
+        context = observability.current_context()
+        self._ids = {key: context[key] for key in ("request_id", "turn_id") if key in context}
+        self.turn_id = None  # a TurnHandoff names its hold after acquiring
+        task = asyncio.current_task()
+        self._holder = task.get_name() if task is not None else ""
+        self._since = time.monotonic()
+        self._warned = False
+        try:
+            self._timer = asyncio.get_running_loop().call_later(threshold, self._report_held)
+        except RuntimeError:  # acquired outside a running loop: nothing to watch with
+            self._timer = None
+
+    def disarm(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._warned:
+            self._warned = False
+            self._report("lock.released_after_warning")
+
+    def _held_ms(self) -> int:
+        return round((time.monotonic() - self._since) * 1000)
+
+    def _report_held(self) -> None:
+        self._timer = None
+        self._warned = True
+        self._report("lock.held_too_long")
+
+    def _report(self, name: str) -> None:
+        fields: dict[str, Any] = {
+            "lock": self.lock_name, "conversation": observability.safe_identifier(self.conversation_id),
+            "turn_id": self.turn_id or self._ids.get("turn_id"), "request_id": self._ids.get("request_id"),
+            "holder": self._holder, "held_ms": self._held_ms(),
+        }
+        _watch_logger.warning("%s %s", name, " ".join(f"{key}={value}" for key, value in fields.items() if value))
+        observability.event(name, level=logging.WARNING, **fields)
+
+
+class _WatchedLock(asyncio.Lock):
+    """An asyncio.Lock that a `_HoldWatch` watches; behaves exactly like one."""
+
+    def __init__(self, lock_name: str, conversation_id: str) -> None:
+        super().__init__()
+        self.watch = _HoldWatch(lock_name, conversation_id)
+
+    async def acquire(self) -> Literal[True]:
+        await super().acquire()
+        self.watch.arm()
+        return True
+
+    def release(self) -> None:
+        self.watch.disarm()
+        super().release()
+
+
+def _label_hold(lock: asyncio.Lock, turn_id: str) -> None:
+    """Name the turn that holds `lock`, when it is a watched one."""
+    watch = getattr(lock, "watch", None)
+    if isinstance(watch, _HoldWatch):
+        watch.turn_id = turn_id
+
+
 class _ObservableConversationLock(asyncio.Lock):
     """Conversation lock that measures queue wait without changing semantics.
 
@@ -151,6 +245,7 @@ class _ObservableConversationLock(asyncio.Lock):
         self.completed = 0
         self.holder_task: asyncio.Task | None = None
         self.waiting_tasks: set[asyncio.Task] = set()
+        self.watch = _HoldWatch("conversation", conversation_id)
 
     def contains_task(self, task: asyncio.Task | None) -> bool:
         return task is not None and (task is self.holder_task or task in self.waiting_tasks)
@@ -187,6 +282,7 @@ class _ObservableConversationLock(asyncio.Lock):
                     # countdown still sees this turn leave the queue.
                     self.release()
                     raise
+                self.watch.arm()
                 return True
         finally:
             self.blocked -= 1
@@ -196,6 +292,7 @@ class _ObservableConversationLock(asyncio.Lock):
     def release(self) -> None:
         self.completed += 1
         self.holder_task = None
+        self.watch.disarm()
         super().release()
 
 
@@ -226,7 +323,7 @@ _narration_locks: dict[str, asyncio.Lock] = {}
 def get_narration_lock(conversation_id: str) -> asyncio.Lock:
     lock = _narration_locks.get(conversation_id)
     if lock is None:
-        lock = asyncio.Lock()
+        lock = _WatchedLock("narration", conversation_id)
         _narration_locks[conversation_id] = lock
     return lock
 
@@ -253,6 +350,10 @@ class TurnHandoff:
         self._holds_narration = False
         # How long this turn waited for the lock, for the turn's phase timeline (app/services/turn_phases.py).
         self.queue_wait_ms = 0.0
+        # One id for this turn's hold. The ordinary text turn adopts it for its own events, and the locks it takes carry it
+        # into `lock.held_too_long`, so the report names the turn that holds them.
+        self.turn_id: str = observability.new_id("turn")
+        _label_hold(mutation_lock, self.turn_id)
 
     @property
     def narrating(self) -> bool:
@@ -269,6 +370,7 @@ class TurnHandoff:
         """
         await lock.acquire()
         self._mutation_locks.append(lock)
+        _label_hold(lock, self.turn_id)
         try:
             yield
         finally:
@@ -294,7 +396,9 @@ class TurnHandoff:
         # Cancelled while queueing leaves this turn holding neither lock, which
         # is exactly what close then sees: _holds_narration is set only after
         # the acquire returns.
-        await get_narration_lock(self.conversation_id).acquire()
+        narration = get_narration_lock(self.conversation_id)
+        await narration.acquire()
+        _label_hold(narration, self.turn_id)
         self._holds_narration = True
 
     def close(self) -> None:
@@ -324,18 +428,26 @@ async def narrating_turn(conversation_id: str) -> AsyncIterator[None]:
     hands off releases the first two *before* taking narration, so neither ever
     waits on the other.
     """
-    async with get_keeper_turn_lock(conversation_id):
-        await get_narration_lock(conversation_id).acquire()
+    # One id for the whole hold, taken before either lock so both carry it into `lock.held_too_long`. The turn that
+    # runs inside (`supervisor.run_turn`) adopts it from the context rather than making another.
+    turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
+    keeper = get_keeper_turn_lock(conversation_id)
+    async with keeper:
+        _label_hold(keeper, turn_id)
+        narration = get_narration_lock(conversation_id)
+        await narration.acquire()
+        _label_hold(narration, turn_id)
         try:
-            yield
+            with observability.context(turn_id=turn_id):
+                yield
         finally:
-            get_narration_lock(conversation_id).release()
+            narration.release()
 
 
 def get_keeper_turn_lock(conversation_id: str) -> asyncio.Lock:
     lock = _keeper_turn_locks.get(conversation_id)
     if lock is None:
-        lock = asyncio.Lock()
+        lock = _WatchedLock("keeper_turn", conversation_id)
         _keeper_turn_locks[conversation_id] = lock
     return lock
 

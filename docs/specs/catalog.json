@@ -2096,6 +2096,22 @@
       "path": "docs/specs/refactor/system_command_table_design_spec.md",
       "zh_path": "docs/specs/refactor/system_command_table_design_spec_zh.md",
       "source_revision": "e4c6044ea20ca1a119405d8a27cfbbeb85367d85"
+    },
+    {
+      "title": "One home for a turn's locks, an order test, and a held-too-long report",
+      "zh": "把一個回合的鎖集中在一處、加上鎖序測試與「持鎖過久」報告",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/commands/turn_scope.py",
+        "app/locks.py",
+        "tests/test_lock_order.py",
+        "tests/test_lock_watchdog.py",
+        "tests/test_architecture_turn_scope.py"
+      ],
+      "path": "docs/specs/refactor/turn_scope_design_spec.md",
+      "zh_path": "docs/specs/refactor/turn_scope_design_spec_zh.md",
+      "source_revision": "e4c6044ea20ca1a119405d8a27cfbbeb85367d85"
     }
   ]
 }

@@ -19,13 +19,15 @@ The numbers in this document (line counts, function lengths, cycle counts) descr
 | P2 split `keeper.py`: tool dispatch, `keeper_tools/support`, import gate; delete `keeper.py` | F9 | **merged** | [#193](https://github.com/marcoliu99/line-coc-keeper/pull/193) |
 | P3 pin the persistent buttons' `custom_id` | F11 | **merged** | [#190](https://github.com/marcoliu99/line-coc-keeper/pull/190) |
 | P3 split `discord_bot.py` (1,862 → 311 lines) | F11 | **merged** | [#194](https://github.com/marcoliu99/line-coc-keeper/pull/194) |
-| P1 `reply_pipeline`, `run_turn` in six stages, `TurnScope` + lock-order test + watchdog | F4, F5 | not started | — |
-| P3 `handle_system_command` as a table | F10 (cold path) | not started | — |
+| P1 `reply_pipeline` and `run_turn` in five stages (delivery stays with the router) | F4 | **merged** | [#198](https://github.com/marcoliu99/line-coc-keeper/pull/198) |
+| P1 one home for a turn's locks (`turn_scope`), lock-order test, held-too-long report on the locks themselves; a timing test without the wall clock | F5, F16 | **merged** | [#199](https://github.com/marcoliu99/line-coc-keeper/pull/199) |
+| P3 `handle_system_command` as a table | F10 (cold path) | **merged** | [#200](https://github.com/marcoliu99/line-coc-keeper/pull/200) |
 | P4 latency levers (narration outside the lock, tool surface, retiring legacy combat, provider loop core, synchronous SQLite) | F1, F3, F6, F10, F13 | not started; needs data from #195's summary and one real five-player run first | — |
 | P5 cold-path packaging, `GroupState` sub-states | F12, F14 | not started | — |
 
 What the finished items achieved:
 
+- `supervisor.run_turn` reads as `prepare → mechanics → narrate → reply steps → commit`, and the reply steps are an ordered list in `app/agents/reply_pipeline.py` that rejects a list breaking an ordering rule at import. `/coc` system subcommands are a table of handlers. A turn's locks have one home (`app/commands/turn_scope.py`); `tests/test_lock_order.py` records real acquisitions and fails on a reversed order, and a lock held past `LOCK_HELD_WARNING_SECONDS` is reported as `lock.held_too_long` on logger `app.locks` (always on) without ever being released.
 - `app/keeper.py` (1,532 lines, fan-out 31) is **deleted**, replaced by `prompt_builder`, `turn_commit`, `memory_maintenance`, `tool_dispatch` and `keeper_tools/support`; the 12-module cycle between `keeper_tools` and `keeper` is gone and `tests/test_architecture_keeper_tools.py` keeps it from coming back. The number of `app/` files carrying an `SLF001` exemption fell from 16 to 7.
 - `app/discord_bot.py` went from 1,862 to 311 lines, the rest living in `app/discord_transport/` (`gateway`, `delivery`, `interactions`, `lifecycle`, `controls`, `help_ui`), with `tests/test_architecture_discord_transport.py` checking the layering and importing each module alone. In review, Codex found two real problems in the first version — an import cycle inside the transport package (importing one module alone failed, masked by the normal start-up order) and tests that patched the wrong module binding — both fixed and each now guarded by a test.
 - Everything above is a pure move or added output; **no latency improvement is claimed.**
@@ -47,7 +49,7 @@ Suggested order (§6): **P0 make it visible (always-on one-line turn summary + d
 | # | Invariant | What guarantees it today |
 | --- | --- | --- |
 | U1 | The typing indicator shows immediately on receipt | `discord_bot.on_message` enters `_best_effort_typing` before taking any lock |
-| U2 | A wait over 10 s is acknowledged and the position refreshed as the queue drains (up to 3 notices) | `router._delayed_queue_notice`, `_QUEUE_ACK_*` |
+| U2 | A wait over 10 s is acknowledged and the position refreshed as the queue drains (up to 3 notices) | `turn_scope._delayed_queue_notice`, `_QUEUE_ACK_*` (moved out of `router` by #199) |
 | U3 | The reply is sent first; maintenance runs afterwards in the background and never blocks the next player | `post_turn.run_post_turn_maintenance_after_output` → `spawn_post_turn_maintenance` |
 | U4 | Check/Luck buttons survive a restart; duplicate clicks are rejected rather than queued into a second roll | `DynamicItem` buttons (`timeout=None`), `locks.try_acquire_check`, the `state_actions` ledger |
 | U5 | When a model fails, committed changes are kept and the player gets a clear, actionable message — no silence, no re-roll | `turn_fallback` (12 reasons), the narrator failure path, `LLM_TURN_DEADLINE_SECONDS=180` |
@@ -192,7 +194,7 @@ Severity = impact on players; each item says whether it touches the hot path.
 
 ### F1 (high, hot path) The mechanics phase serves one player at a time, with many serial model round trips
 
-- **Evidence**: `router._handle_text_message_impl` → `_conversation_lock_with_notice`; `supervisor.run_turn`; measurements in §2.2. `NARRATION_OUTSIDE_MUTATION_LOCK` defaults to `false` (`config.py:306`, `.env.example:160`); the spec estimates enabling it takes the median hold from ~21.7 s to ~15.7 s. The complexity of `TurnHandoff`, the narration lock and `narrating_turn` is already paid for; the benefit is not collected.
+- **Evidence**: `router._handle_text_message_impl` → `turn_scope.conversation_turn` (was `router._conversation_lock_with_notice` at the baseline); `supervisor.run_turn`; measurements in §2.2. `NARRATION_OUTSIDE_MUTATION_LOCK` defaults to `false` (`config.py:306`, `.env.example:160`); the spec estimates enabling it takes the median hold from ~21.7 s to ~15.7 s. The complexity of `TurnHandoff`, the narration lock and `narrating_turn` is already paid for; the benefit is not collected.
 - **Player impact**: with five players speaking together, the last waits for everyone's Executor.
 - **Recommendation**: do not just flip the flag. In order: (1) do F2 first; (2) in one real five-player run record `turn.queue` and `turn.phases`; (3) add F5's hold watchdog; (4) enable `NARRATION_OUTSIDE_MUTATION_LOCK` on a test channel and compare `queue_wait` p50/p95 and check for ordering errors; (5) change the default only if that passes. Note `supervisor` keeps the mutation phase when the evidence may state a mechanic (`obligation_candidates`), so the real gain depends on how many turns are like that — look at data.
 - **Do not**: run Executor and Narrator in parallel (the Narrator needs the Executor's deterministic result); split the lock so different players run concurrently (it introduces `state_revision` conflicts and turn-order problems with no measurement behind it).
@@ -219,7 +221,7 @@ Severity = impact on players; each item says whether it touches the hot path.
 
 ### F5 (medium, hot path) The lock choreography fails by hanging a channel and is held together by documentation
 
-- **Evidence**: the `TurnHandoff` docstring in `locks.py` says an unreleased conversation lock "deadlocks the channel until the process restarts"; `router` has 10 sites of `async with _conversation_lock_with_notice(...)`/priority gate, each repeating the pattern; spec WP3.5 records several lock-order problems found only in review.
+- **Evidence**: the `TurnHandoff` docstring in `locks.py` says an unreleased conversation lock "deadlocks the channel until the process restarts"; at the baseline `router` had 10 sites of `async with _conversation_lock_with_notice(...)`/priority gate, each repeating the pattern (now `turn_scope.conversation_turn`/`keeper_turn`, with the remaining direct uses pinned by `tests/test_architecture_turn_scope.py`); spec WP3.5 records several lock-order problems found only in review.
 - **Existing mitigation**: `LLM_TURN_DEADLINE_SECONDS=180`, `DISCORD_REQUEST_TIMEOUT_SECONDS`, `finally` releases.
 - **Recommendation**: (1) wrap "take locks → hand off → release → post-turn hook" in one `TurnScope` that the router uses without touching locks itself; (2) add a lock-order test (conversation → keeper turn → narration; any violation fails); (3) add a **log-only, never auto-release** hold watchdog: holding past a threshold (e.g. deadline + 60 s) emits `lock.held_too_long` with the holder's turn id. Do not force-release: that turns "stuck" into "two turns mutating state at once".
 

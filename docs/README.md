@@ -114,6 +114,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Splitting app/discord_bot.py](specs/refactor/discord_transport_split_design_spec.md) | implemented | [繁體中文](specs/refactor/discord_transport_split_design_spec_zh.md) |
 | [Splitting supervisor.run_turn and ordering the reply steps](specs/refactor/reply_pipeline_design_spec.md) | implemented | [繁體中文](specs/refactor/reply_pipeline_design_spec_zh.md) |
 | [/coc system subcommands as a table of handlers](specs/refactor/system_command_table_design_spec.md) | implemented | [繁體中文](specs/refactor/system_command_table_design_spec_zh.md) |
+| [One home for a turn's locks, an order test, and a held-too-long report](specs/refactor/turn_scope_design_spec.md) | implemented | [繁體中文](specs/refactor/turn_scope_design_spec_zh.md) |
 
 ## maintenance
 
