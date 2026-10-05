@@ -4,7 +4,7 @@
 
 ## Status / Baseline
 
-類別：`refactor`。狀態：**已實作**；實際邊界與驗證見 [架構紀錄](../../architecture/game-opening-refactor.md)。2026-10-05 `git fetch origin` 後的設計基準：`origin/main_v2` `b0e875ccb268966599a19f3823d377a7b4c7630f`，已包含 Scenario Lifecycle PR #173；實作驗證前已整合 `7ab07965eeebfa8e7ed638c67cc8e471f4c4626e`。本文從該版執行程式及測試重建行為，不沿用 #173 合併前的架構推測。`app/state_transaction.py` 在目前樹中的實際路徑是 `app/repositories/state_transaction.py`。
+類別：`refactor`。狀態：**已實作**；實際邊界與驗證見 [架構紀錄](../../architecture/game-opening-refactor.md)。2026-10-05 `git fetch origin` 後的設計基準：`origin/main_v2` `b0e875ccb268966599a19f3823d377a7b4c7630f`，已包含 Scenario Lifecycle PR #173；實作驗證前已整合 `aa79f22c1db67c00992ea9bc878eea8836788b1f`。本文從該版執行程式及測試重建行為，不沿用 #173 合併前的架構推測。`app/state_transaction.py` 在目前樹中的實際路徑是 `app/repositories/state_transaction.py`。
 
 這是零意圖性 UX／遊戲規則變更的設計。實作前先加特徵測試；沒有新增 runtime schema。
 

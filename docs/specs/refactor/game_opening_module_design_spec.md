@@ -4,7 +4,7 @@
 
 ## Status / Baseline
 
-Category: `refactor`. Status: **implemented**; see the [architecture record](../../architecture/game-opening-refactor.md) for the actual boundary and validation. Factual design baseline after `git fetch origin` on 2026-10-05: `origin/main_v2` `b0e875ccb268966599a19f3823d377a7b4c7630f`, including Scenario Lifecycle PR #173; `7ab07965eeebfa8e7ed638c67cc8e471f4c4626e` was integrated before implementation validation. This spec reconstructs behavior from the design baseline and its tests. The current transaction module is `app/repositories/state_transaction.py`, not `app/state_transaction.py`. The refactor preserves user-visible behavior and began with characterization tests; it added no schema change.
+Category: `refactor`. Status: **implemented**; see the [architecture record](../../architecture/game-opening-refactor.md) for the actual boundary and validation. Factual design baseline after `git fetch origin` on 2026-10-05: `origin/main_v2` `b0e875ccb268966599a19f3823d377a7b4c7630f`, including Scenario Lifecycle PR #173; `aa79f22c1db67c00992ea9bc878eea8836788b1f` was integrated before implementation validation. This spec reconstructs behavior from the design baseline and its tests. The current transaction module is `app/repositories/state_transaction.py`, not `app/state_transaction.py`. The refactor preserves user-visible behavior and began with characterization tests; it added no schema change.
 
 ## Existing Flow
 
