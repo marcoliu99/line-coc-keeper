@@ -25,9 +25,9 @@ The 500-turn run never fought, pushed a roll, fired a weapon or impaled. Section
 | 7 | ammunition | **new** (one round spent, replay spends none, committed on settlement), `test_a_shot_with_no_range_needs_a_ruling_…`; existing `test_single_shot_uses_owned_ammo_once_…` |
 | 8 | major wound | **new** `test_a_blow_of_half_her_hit_points_registers_one_con_check_…`, `test_a_blow_below_the_threshold_…`; existing `test_major_wound_failed_con_sets_effective_unconscious_only` |
 | 9 | combat termination | **new** `test_settling_commits_the_working_resources_once_…`; existing `test_atomic_settlement_updates_both_mirrors_…` |
-| 10 | push outside combat | **new** `test_a_failed_check_can_be_pushed_once_and_the_pushed_roll_is_final`; existing `test_c10_a_pushed_roll_is_final_and_never_offers_luck`, `test_pushed_roll_never_offers_luck_buyup_…` |
+| 10 | push outside combat | **new** `test_a_failed_check_can_be_pushed_and_the_pushed_roll_is_final` (the engine makes a pushed result final and offers no Luck; it does not limit how many times a roll is pushed — that is the Keeper's rule); existing `test_c10_a_pushed_roll_is_final_and_never_offers_luck`, `test_pushed_roll_never_offers_luck_buyup_…` |
 | 11 | follow-up damage or check from a resolved result | existing `test_resolved_damage_roll_and_hp_commit_are_one_idempotent_result`, `test_major_wound_damage_and_con_check_commit_together`, `test_successful_spot_hidden_creates_distinct_pending_dodge_…` |
-| – | narration matches the state | **new** `test_what_the_player_is_told_matches_the_state_and_shows_no_raw_tier` |
+| – | the deterministic result text matches the state | **new** `test_the_result_text_the_player_receives_matches_the_state_and_shows_no_raw_tier` (the Keeper's prose is not exercised: the shared harness stubs `run_turn`) |
 
 ## Not covered
 

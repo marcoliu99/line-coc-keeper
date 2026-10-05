@@ -25,9 +25,9 @@
 | 7 | 彈藥 | **新增**（消耗一發、重播不再消耗、結算時才寫回）、`test_a_shot_with_no_range_needs_a_ruling_…`；既有 `test_single_shot_uses_owned_ammo_once_…` |
 | 8 | 重傷 | **新增** `test_a_blow_of_half_her_hit_points_registers_one_con_check_…`、`test_a_blow_below_the_threshold_…`；既有 `test_major_wound_failed_con_sets_effective_unconscious_only` |
 | 9 | 戰鬥結束 | **新增** `test_settling_commits_the_working_resources_once_…`；既有 `test_atomic_settlement_updates_both_mirrors_…` |
-| 10 | 戰鬥外的推骰 | **新增** `test_a_failed_check_can_be_pushed_once_and_the_pushed_roll_is_final`；既有 `test_c10_a_pushed_roll_is_final_and_never_offers_luck`、`test_pushed_roll_never_offers_luck_buyup_…` |
+| 10 | 戰鬥外的推骰 | **新增** `test_a_failed_check_can_be_pushed_and_the_pushed_roll_is_final`（引擎讓推骰結果成為終局且不提供 Luck；不限制一個骰可以推幾次，那是 Keeper 的規則）；既有 `test_c10_a_pushed_roll_is_final_and_never_offers_luck`、`test_pushed_roll_never_offers_luck_buyup_…` |
 | 11 | 由已結算結果觸發的後續傷害／檢定 | 既有 `test_resolved_damage_roll_and_hp_commit_are_one_idempotent_result`、`test_major_wound_damage_and_con_check_commit_together`、`test_successful_spot_hidden_creates_distinct_pending_dodge_…` |
-| – | 敘事與狀態一致 | **新增** `test_what_the_player_is_told_matches_the_state_and_shows_no_raw_tier` |
+| – | 確定性的結果文字與狀態一致 | **新增** `test_the_result_text_the_player_receives_matches_the_state_and_shows_no_raw_tier`（Keeper 的敘事沒有被執行：共用的測試框架把 `run_turn` 換成了固定回覆） |
 
 ## 未涵蓋
 

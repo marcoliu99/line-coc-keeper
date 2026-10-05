@@ -30,13 +30,25 @@ def enemy_of(state) -> Combatant:
 
 
 def resolve_player_roll(battle: Battle, outcomes: list, *, damage_roll: int = 2) -> None:
-    """Press the owner's pending check button, then skip any Luck offer, with scripted dice."""
+    """Press the owner's pending check button, skip any Luck offer, then replay both buttons.
+
+    The replay is part of the helper so that every scenario that uses it proves a stale or foreign press changes
+    nothing: no new dice, no new damage, no change to the stored state.
+    """
     pending = battle.load().pending_checks['player']
-    with patch.object(dice, 'skill_check', side_effect=outcomes), patch('app.dice.random.randint', return_value=damage_roll):
+    with patch.object(dice, 'skill_check', side_effect=outcomes) as rng, \
+            patch('app.dice.random.randint', return_value=damage_roll) as damage_dice:
         battle.check(pending['check_id'])
-        state = battle.load()
-        if state.pending_luck_decisions:
-            battle.luck(state.pending_luck_decisions['player']['decision_id'])
+        decision = battle.load().pending_luck_decisions.get('player')
+        if decision:
+            battle.luck(decision['decision_id'])
+        settled, draws, rolled = battle.load().to_dict(), rng.call_count, damage_dice.call_count
+        battle.check(pending['check_id'])
+        battle.check(pending['check_id'], clicker='intruder')
+        if decision:
+            battle.luck(decision['decision_id'])
+        assert (rng.call_count, damage_dice.call_count) == (draws, rolled)
+        assert battle.load().to_dict() == settled
 
 
 def npc_attacks(battle: Battle, attack_tier: str = 'regular') -> str:
@@ -227,18 +239,25 @@ def test_settling_commits_the_working_resources_once_and_closes_the_battle(battl
 
 # --- narration matches the state -------------------------------------------------------------------------
 
-def test_what_the_player_is_told_matches_the_state_and_shows_no_raw_tier(battle):
+def test_the_result_text_the_player_receives_matches_the_state_and_shows_no_raw_tier(battle):
+    """The deterministic text (roll line, damage summary). The Keeper's prose is not exercised here: ``run_turn`` is
+    stubbed by the shared combat harness."""
     battle.start()
     battle.declare('hit:7')
     resolve_player_roll(battle, [result(roll=10, tier='hard'), result(roll=90, tier='fail', value=40)])
     told = "\n".join([*battle.notifications, *battle.messages])
     assert '困難成功' in told and not RAW_TIER.search(told)
-    assert enemy_of(battle.load()).hp == 18
+    after = battle.load()
+    damage = after.combat.actions['hit:7']['result']['damage']
+    assert damage['hp_after'] == enemy_of(after).hp == 18
+    assert str(damage['final_damage']) in damage['public_summary'] and enemy_of(after).display_name in damage['public_summary']
 
 
 # --- 10 a pushed roll outside combat -------------------------------------------------------------------------
 
-def test_a_failed_check_can_be_pushed_once_and_the_pushed_roll_is_final(battle):
+def test_a_failed_check_can_be_pushed_and_the_pushed_roll_is_final(battle):
+    """The engine registers a pushed check and makes its result final (no Luck). How many times a roll may be pushed
+    is the Keeper's rule, not enforced here."""
     first = battle.tool('skill_check', {'investigator': 'Ada', 'skill': '閃避', 'action_context': '跳過缺口'})
     assert first['ok'] and first['pending'] is True
     first_id = battle.load().pending_checks['player']['check_id']

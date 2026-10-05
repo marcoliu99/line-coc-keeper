@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app import locks, observability
+from app import locks, observability, presentation
 from app.commands.handlers.checks import handle_check_command, handle_luck_decision
 from app.commands.types import Reply, SendDM, SendDMImage, SendImage
 from app.models import GroupState
@@ -111,7 +111,7 @@ async def _replay_control(state, owner_id, identity, io, *, choice=None, check_o
         return True
     suffix = ('請使用目前的 Luck 按鈕決定，原骰值不會重擲。' if receipt.get('pending_luck')
               else '這是已保存的同一檢定結果，沒有重新擲骰或再次套用資源。')
-    await io.notify(f"🎲 {receipt['skill']} {receipt['skill_value']}%，擲出 {receipt['roll']} → {receipt['tier']}。{suffix}")
+    await io.notify(f"🎲 {receipt['skill']} {receipt['skill_value']}%，擲出 {receipt['roll']} → {presentation.tier_label(str(receipt['tier']))}。{suffix}")
     return True
 
 
