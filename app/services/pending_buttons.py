@@ -87,21 +87,30 @@ class ControlCompletion:
     before_luck: dict
     sudo_command: sudo_policy.ParsedSudoCommand | None = None
     intents: list[PendingButtonIntent] | None = field(default=None, init=False)
+    claim_failed: bool = field(default=False, init=False)
 
     async def claim_locked(self) -> None:
-        self.intents = await try_claim_pending_buttons_locked(
+        newly_claimed = await try_claim_pending_buttons_locked(
             self.conversation_id, self.before_pending, self.before_luck,
             sudo_command=self.sudo_command,
         )
+        if newly_claimed is None:
+            self.claim_failed = True
+        elif self.intents is None:
+            self.intents = newly_claimed
+        else:
+            # A phased command may release and reacquire the mutation lock.
+            # Preserve its earlier claims until one after-command publication.
+            self.intents.extend(newly_claimed)
 
     async def publish(
         self, send: Callable[[PendingButtonIntent], Awaitable[None]],
         recover: Callable[[dict, dict, sudo_policy.ParsedSudoCommand | None], Awaitable[None]],
     ) -> None:
-        if self.intents is None:
-            await recover(self.before_pending, self.before_luck, self.sudo_command)
-        else:
+        if self.intents:
             await publish_claimed_buttons(self.conversation_id, self.intents, send)
+        if self.claim_failed or self.intents is None:
+            await recover(self.before_pending, self.before_luck, self.sudo_command)
 
 
 def _new_entries(
