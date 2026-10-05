@@ -79,6 +79,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Keeping the scenario search from being starved, and counting Chinese text honestly without a tokenizer](specs/enhancement/retrieval_budget_headroom_design_spec.md) | implemented | [繁體中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) |
 | [What a player reads when a turn cannot finish, how long a queue is acknowledged, and what a character is called](specs/enhancement/player_facing_wording_design_spec.md) | implemented | [繁體中文](specs/enhancement/player_facing_wording_design_spec_zh.md) |
 | [An empty internal id label must not reach a player, and removing one must not eat the sentence](specs/enhancement/internal_id_display_design_spec.md) | implemented | [繁體中文](specs/enhancement/internal_id_display_design_spec_zh.md) |
+| [A fallback turn that only looked things up gets its one retry](specs/bug/fallback_recovery_after_lookup_design_spec.md) | implemented | [繁體中文](specs/bug/fallback_recovery_after_lookup_design_spec_zh.md) |
 
 ## feature
 
