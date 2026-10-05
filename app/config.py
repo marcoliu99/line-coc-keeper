@@ -229,6 +229,12 @@ LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 3)
 LLM_RETRY_BASE_DELAY_SECONDS = _env_float("LLM_RETRY_BASE_DELAY_SECONDS", 1.0)
 LLM_REQUEST_TIMEOUT_SECONDS = _env_float("LLM_REQUEST_TIMEOUT_SECONDS", 60.0, minimum=0.1)
 LLM_TIMEOUT_RETRIES = _env_int("LLM_TIMEOUT_RETRIES", 1)
+# Long-term memory is embedded in parts that each fit this many tokens (an embedding input is limited by the
+# provider, ~8k for the default model), and a chunk without a vector is retried a bounded number of times, a few per
+# maintenance pass, before it is left lexical-only on purpose. See app/memory_chunking.py and memory_rag.backfill_embeddings.
+MEMORY_EMBEDDING_MAX_TOKENS = _env_int("MEMORY_EMBEDDING_MAX_TOKENS", 6000, minimum=64)
+MEMORY_EMBEDDING_MAX_ATTEMPTS = _env_int("MEMORY_EMBEDDING_MAX_ATTEMPTS", 3, minimum=1)
+MEMORY_EMBEDDING_BACKFILL_LIMIT = _env_int("MEMORY_EMBEDDING_BACKFILL_LIMIT", 4, minimum=0)
 EMBEDDING_REQUEST_TIMEOUT_SECONDS = _env_float("EMBEDDING_REQUEST_TIMEOUT_SECONDS", 20.0, minimum=0.1)
 DISCORD_REQUEST_TIMEOUT_SECONDS = _env_float("DISCORD_REQUEST_TIMEOUT_SECONDS", 10.0, minimum=0.1)
 TOOL_EXECUTION_TIMEOUT_SECONDS = _env_float("TOOL_EXECUTION_TIMEOUT_SECONDS", 30.0, minimum=0.1)

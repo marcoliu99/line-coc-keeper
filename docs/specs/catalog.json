@@ -1912,6 +1912,22 @@
       "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
     },
     {
+      "title": "Bounded long-term memory embeddings",
+      "zh": "有界的長期記憶 embedding",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/memory_chunking.py",
+        "app/memory_rag.py",
+        "app/embedding_execution.py",
+        "app/keeper.py",
+        "tests/test_memory_embedding_bounds.py"
+      ],
+      "path": "docs/specs/bug/memory_embedding_bounds_design_spec.md",
+      "zh_path": "docs/specs/bug/memory_embedding_bounds_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
       "title": "Player-facing presentation: tiers, internal ids, party size",
       "zh": "面向玩家的呈現：等級、內部識別碼、隊伍人數",
       "category": "bug",
