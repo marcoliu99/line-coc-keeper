@@ -153,7 +153,7 @@ class CheckButton(discord.ui.DynamicItem[discord.ui.Button], template=_CHECK_BUT
     explicit group-level opt-in exception. Persisted pending checks remain
     supported.
 
-    Registered as a *dynamic* item (gateway.client.add_dynamic_items below, matched by
+    Registered as a *dynamic* item (``add_dynamic_items`` in app/discord_bot.py, matched by
     the custom_id pattern above) rather than a plain per-message View, so it
     keeps working across bot restarts — this project restarts the Discord
     process after nearly every deploy, and a plain View() only lives in this
