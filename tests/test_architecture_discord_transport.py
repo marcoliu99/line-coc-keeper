@@ -48,3 +48,14 @@ def test_each_module_imports_in_a_fresh_interpreter(module):
         [sys.executable, "-c", f"import {module}"], cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
     )
     assert result.returncode == 0, result.stderr[-800:]
+
+
+def test_the_state_loading_test_helper_covers_every_module_that_binds_it():
+    """tests/discord_state.py must patch each module that imports ``load_group_state``, or a test steers the wrong one."""
+    binders = {"discord_bot"} if "load_group_state" in (ROOT / "app" / "discord_bot.py").read_text(encoding="utf-8") else set()
+    for path in (ROOT / "app" / "discord_transport").glob("*.py"):
+        if "load_state as load_group_state" in path.read_text(encoding="utf-8"):
+            binders.add(path.stem)
+    from tests import discord_state
+
+    assert {module.__name__.rsplit(".", 1)[-1] for module in discord_state.MODULES} == binders

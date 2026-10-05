@@ -19,6 +19,7 @@ from app.discord_transport import controls, delivery, help_ui, interactions
 from app.models import Character, GroupState
 from app.repositories import state_transaction
 from app.scenario_source_authoring import SourceReadyMessage
+from tests.discord_state import patched_group_state
 
 KP_ONLY = "只有目前的 KP 助手"
 
@@ -156,7 +157,7 @@ class KpOnlyViewsAndButtonsTests(unittest.IsolatedAsyncioTestCase):
         conversation_id = interactions.channel_conversation_id(5)
         button = controls.PdfUploadChoiceButton(conversation_id, "new", "新劇本")
         with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", True), \
-                patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
+                patched_group_state(_state(kp_assistant_user_id="kp")), \
                 patch.object(delivery, "send_interaction_message", new_callable=AsyncMock) as sent, \
                 patch.object(discord_bot.command_router, "handle_pdf_choice_button", new_callable=AsyncMock) as resolve:
             await button.callback(self._interaction(conversation_id))
@@ -167,7 +168,7 @@ class KpOnlyViewsAndButtonsTests(unittest.IsolatedAsyncioTestCase):
         conversation_id = interactions.channel_conversation_id(5)
         result = SourceReadyMessage("sid", "7")
         button = help_ui.SourceReadyButton(conversation_id, result, "source_use", "選用新版英文")
-        with patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
+        with patched_group_state(_state(kp_assistant_user_id="kp")), \
                 patch.object(delivery, "send_interaction_message", new_callable=AsyncMock) as sent, \
                 patch.object(help_ui, "finish_help_action", new_callable=AsyncMock) as finish:
             await button.callback(self._interaction(conversation_id))

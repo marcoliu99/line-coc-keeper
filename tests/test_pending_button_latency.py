@@ -14,6 +14,7 @@ from app.commands.handlers import buttons
 from app.discord_transport import controls, delivery
 from app.models import GroupState
 from app.services import pending_buttons
+from tests.discord_state import patched_group_state
 from tests.state_store import MemoryTransactions
 
 
@@ -46,7 +47,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 acquired.set()
                 await release.wait()
 
-        with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+        with patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched(), \
                 patch.object(discord_bot.discord.ui, "View", _FakeView), \
                 patch.object(controls, "CheckButton", _FakeButton), \
@@ -77,7 +78,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 state = GroupState(group_id=conversation_id)
                 state.pending_checks["123"] = {"type": "skill", "skill": "DEX", "skill_value": 70}
                 memory = MemoryTransactions(state)
-                with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+                with patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                         memory.patched(), \
                         patch.object(discord_bot.discord.ui, "View", _FakeView), \
                         patch.object(controls, "CheckButton", _FakeButton), \
@@ -106,7 +107,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
             current.timeline_id = "timeline-created-by-save"
 
         memory = MemoryTransactions(state, on_commit=created_by_save)
-        with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+        with patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
             async with locks.get_conversation_lock(conversation_id):
                 intents = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
@@ -127,7 +128,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         old = {"type": "skill", "skill": "DEX", "skill_value": 70}
         state.pending_checks["123"] = dict(old)
         memory = MemoryTransactions(state)
-        with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+        with patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 memory.patched():
             async with locks.get_conversation_lock(conversation_id):
                 first = await pending_buttons.claim_pending_buttons_locked(conversation_id, {}, {})
@@ -167,7 +168,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         state.pending_checks["123"] = {"type": "skill", "skill": "DEX", "skill_value": 70}
         state.pending_luck_decisions["123"] = {"options": [{"cost": 1, "tier": "regular"}]}
         send = AsyncMock(side_effect=lambda *args, **kwargs: state.pending_luck_decisions.clear())
-        with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+        with patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched(), \
                 patch.object(discord_bot.discord.ui, "View", _FakeView), \
                 patch.object(controls, "CheckButton", _FakeButton), \
@@ -238,7 +239,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
         async def send_check(*args, **kwargs):
             observed.append(not locks.get_conversation_lock(conversation_id).locked())
 
-        with patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+        with patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched(), \
                 patch.object(discord_bot.command_router, "handle_text_message", side_effect=route), \
                 patch.object(delivery, "make_reply", return_value=AsyncMock()), \
@@ -281,7 +282,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(buttons, "handle_check_command", side_effect=handle), \
                 patch.object(controls, "send_luck_button", side_effect=send_luck), \
                 patch.object(controls, "post_pending_buttons", AsyncMock()) as fallback, \
-                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+                patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched():
             await button.callback(interaction)
         self.assertEqual(observed, [True])
@@ -321,7 +322,7 @@ class PendingButtonLatencyTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(buttons, "handle_luck_decision", side_effect=handle), \
                 patch.object(controls, "send_check_button", side_effect=send_check), \
                 patch.object(controls, "post_pending_buttons", AsyncMock()) as fallback, \
-                patch.object(discord_bot, "load_group_state", return_value=state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
+                patched_group_state(state), patch.object(pending_buttons, "load_state", return_value=state), patch.object(buttons, "load_state", return_value=state), \
                 MemoryTransactions(state).patched():
             await button.callback(interaction)
         self.assertEqual(observed, [True])
