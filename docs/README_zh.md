@@ -74,6 +74,7 @@
 | [持續戰鬥效果的推理設定提案](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) |
 | [外部 AI 中文模板整備與匯入診斷](specs/enhancement/external_template_authoring_design_spec_zh.md) | 已實作；實測待完成 | [English](specs/enhancement/external_template_authoring_design_spec.md) |
 | [回合階段計時與檢索放大](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_latency_instrumentation_design_spec.md) |
+| [無論日誌設定為何，每回合一行摘要](specs/enhancement/turn_summary_log_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_summary_log_design_spec.md) |
 
 ## 功能
 

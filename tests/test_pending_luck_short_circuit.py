@@ -121,6 +121,13 @@ class PendingLuckShortCircuitTests(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertEqual(reported[0].kwargs["reason"], "pending_luck")
 
+    def test_the_summary_line_names_the_route_and_the_short_circuit(self):
+        with self.assertLogs("app.turn", level="INFO") as logs:
+            _run(_state(luck={"u1": LUCK}))
+        (line,) = [message for message in logs.output if "turn.summary" in message]
+        self.assertIn("route=gameplay_action", line)
+        self.assertIn("short_circuit=pending_luck", line)
+
 
 if __name__ == "__main__":
     unittest.main()

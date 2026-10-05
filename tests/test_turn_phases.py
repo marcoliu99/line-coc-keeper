@@ -417,3 +417,13 @@ def test_the_counter_of_finished_turns_is_bounded() -> None:
             tool_gateway.note_scenario_search()
     assert len(tool_gateway._searches) == tool_gateway._SEARCHES_MAX_TURNS
     assert tool_gateway.note_scenario_search() is None  # no turn id: nothing to count against
+
+
+@aio
+async def test_a_supervised_turn_names_its_route_in_the_summary_line(events, caplog) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO, logger="app.turn")
+    await _supervised(make_state(), "player_action")
+    lines = [r.getMessage() for r in caplog.records if r.name == "app.turn"]
+    assert len(lines) == 1 and " route=gameplay_action " in lines[0] and lines[0].startswith("turn.summary ")

@@ -74,6 +74,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [External AI template authoring and import diagnostics](specs/enhancement/external_template_authoring_design_spec.md) | implemented; live trials pending | [繁體中文](specs/enhancement/external_template_authoring_design_spec_zh.md) |
 | [At most three scenario authoring files](specs/enhancement/three_file_scenario_export_design_spec.md) | implemented | [繁體中文](specs/enhancement/three_file_scenario_export_design_spec_zh.md) |
 | [Turn phase timeline and retrieval amplification](specs/enhancement/turn_latency_instrumentation_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) |
+| [One summary line per turn, whatever the logging settings](specs/enhancement/turn_summary_log_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_log_design_spec_zh.md) |
 
 ## feature
 
