@@ -26,7 +26,7 @@
 | `SPOILER_PROTECTION_ENABLED` | `true` | 守密人專屬的劇本內容不會出現在公開回覆。關閉後旁白可能揭露它。 |
 | `PRIVACY_ISOLATION_ENABLED` | `true` | 私人資訊與秘密目標只給擁有者。關閉時啟動會有明顯警告。 |
 | `DEBUG_SHOW_INTERNAL_IDS` | `false` | 在回覆中顯示內部識別碼（例如 `check_id`），供除錯。原始的結果等級名稱永遠不會顯示。 |
-| `SCENARIO_LIFECYCLE_KP_ONLY` | `false` | 只有目前的 KP Assistant 可以上傳、重新解析或取消劇本。角色還在安排時請保持關閉。 |
+| `SCENARIO_LIFECYCLE_KP_ONLY` | `false` | 只有目前的 KP Assistant 可以使用劇本選擇按鈕（新上傳或修正重傳）與 `/coc scenario` 指令（use、import、merge、reparse、cancel）。**上傳劇本檔案本身不受限制**：任何玩家都可以上傳，而且一個對話的第一次上傳會立即套用。角色還在安排時請保持關閉。 |
 
 ## 看見玩家等了多久
 

@@ -26,7 +26,7 @@ An unrecognised value for a boolean setting (`ture`) keeps the default and is re
 | `SPOILER_PROTECTION_ENABLED` | `true` | Keeper-only scenario material is withheld from public replies. Turning it off lets the narration reveal it. |
 | `PRIVACY_ISOLATION_ENABLED` | `true` | Private information and secret goals reach only their owner. The bot warns loudly at startup when this is off. |
 | `DEBUG_SHOW_INTERNAL_IDS` | `false` | Shows internal ids (such as `check_id`) in replies, for debugging. Raw result-tier names are never shown. |
-| `SCENARIO_LIFECYCLE_KP_ONLY` | `false` | Only the current KP Assistant may upload, reparse or cancel a scenario. Keep it off while roles are still being arranged. |
+| `SCENARIO_LIFECYCLE_KP_ONLY` | `false` | Only the current KP Assistant may use the scenario-choice buttons (new upload vs corrected re-upload) and the `/coc scenario` commands (use, import, merge, reparse, cancel). **Uploading a scenario file is not restricted**: any player may upload one, and the first upload of a conversation applies at once. Keep it off while roles are still being arranged. |
 
 ## Seeing how long players wait
 

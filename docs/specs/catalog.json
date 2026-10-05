@@ -2033,6 +2033,20 @@
       "path": "docs/specs/enhancement/turn_summary_log_design_spec.md",
       "zh_path": "docs/specs/enhancement/turn_summary_log_design_spec_zh.md",
       "source_revision": "27a53e2cb215c293283a84dc73cfe9550da36f70"
+    },
+    {
+      "title": "Reading boolean settings one way",
+      "zh": "布林設定只用一種讀法",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "app/config.py",
+        "tests/test_config_flags.py",
+        "docs/guides/configuration_profiles.md"
+      ],
+      "path": "docs/specs/maintenance/boolean_settings_design_spec.md",
+      "zh_path": "docs/specs/maintenance/boolean_settings_design_spec_zh.md",
+      "source_revision": "70aea2143ba22a4b9886c7a35be5383c32880d93"
     }
   ]
 }
