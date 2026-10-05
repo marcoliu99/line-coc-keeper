@@ -140,4 +140,5 @@
 
 - [Changelog](changelog.md)
 - [Raw evaluations](evaluations)
+- [Camp Sunny 驗證：根因](validation/camp_sunny_fix_root_cause.md)、[定向回歸](validation/camp_sunny_targeted_regression.md)、[延遲前後](validation/camp_sunny_latency_before_after.md)、[發現清單](validation/camp_sunny_findings.json)（真實執行的階段尚未進行）
 - [Machine-readable spec catalog](specs/catalog.json)
