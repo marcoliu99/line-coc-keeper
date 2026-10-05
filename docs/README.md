@@ -131,6 +131,10 @@ Later entries record their own source revisions; the proposed turn safety and la
 - [scenario_template_reference_review](references/scenario_template_reference_review.md)
 - [scenario_zh_external_preparation](references/scenario_zh_external_preparation.md)
 
+## Architecture
+
+- [main_v2 architecture overview and deep review (player experience first)](architecture/main_v2_architecture_review.md) · [繁體中文](architecture/main_v2_architecture_review_zh.md)
+
 ## Guides
 
 - [setup](guides/setup.md)
