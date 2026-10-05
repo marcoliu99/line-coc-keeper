@@ -77,7 +77,7 @@
 | [無論日誌設定為何，每回合一行摘要](specs/enhancement/turn_summary_log_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_summary_log_design_spec.md) |
 | [用回合摘要行統計沒有完成的回合](specs/enhancement/turn_summary_report_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_summary_report_design_spec.md) |
 | [不讓劇本搜尋被擠到沒有預算，以及沒有 tokenizer 時誠實地估算中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) | 已實作 | [English](specs/enhancement/retrieval_budget_headroom_design_spec.md) |
-| [回合無法完成時玩家讀到什麼、排隊通知持續多久](specs/enhancement/player_facing_wording_design_spec_zh.md) | 已實作 | [English](specs/enhancement/player_facing_wording_design_spec.md) |
+| [回合無法完成時玩家讀到什麼、排隊通知持續多久、角色叫什麼名字](specs/enhancement/player_facing_wording_design_spec_zh.md) | 已實作 | [English](specs/enhancement/player_facing_wording_design_spec.md) |
 
 ## 功能
 

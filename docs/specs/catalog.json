@@ -2143,15 +2143,17 @@
       "source_revision": "1fd3ccbcb53422f578995e87b493b900c1c6eec7"
     },
     {
-      "title": "What a player reads when a turn cannot finish and how long a queue is acknowledged",
-      "zh": "回合無法完成時玩家讀到什麼、排隊通知持續多久",
+      "title": "What a player reads when a turn cannot finish, how long a queue is acknowledged, and what a character is called",
+      "zh": "回合無法完成時玩家讀到什麼、排隊通知持續多久、角色叫什麼名字",
       "category": "enhancement",
       "status": "implemented",
       "evidence": [
         "app/services/turn_fallback.py",
         "app/commands/turn_scope.py",
-        "tests/test_fallback_wording.py",
-        "tests/test_scene_hints.py",
+        "app/presentation.py",
+        "app/discord_transport/delivery.py",
+        "app/config.py",
+        "tests/test_character_display_aliases.py",
         "tests/test_turn_queue_observability.py"
       ],
       "path": "docs/specs/enhancement/player_facing_wording_design_spec.md",

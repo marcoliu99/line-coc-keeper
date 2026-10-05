@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -27,6 +28,44 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     except (TypeError, ValueError):
         INVALID_LOG_SETTINGS.append((name, "integer", str(default)))
         return default
+
+
+def _env_str_map(name: str) -> dict[str, str]:
+    """A JSON object of non-blank text to non-blank text, e.g. ``{"The Tough Guy": "硬漢"}``; anything else is ignored and reported."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = None
+    # A blank key would match every space and a blank value would erase a name, so neither is a setting to honour.
+    if isinstance(parsed, dict) and all(
+        isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip() for k, v in parsed.items()
+    ):
+        # Command arguments are split on whitespace and rejoined with single spaces, so a value is kept in that form: the
+        # alias a player copies out of a message then equals the alias that was configured.
+        return {key: " ".join(value.split()) for key, value in parsed.items()}
+    INVALID_LOG_SETTINGS.append((name, "JSON object of text to text", "{}"))
+    return {}
+
+
+# A registered name that is also ordinary game text cannot be replaced everywhere it appears without rewriting the game:
+# a character called "7" would turn a dice result into the alias, one called "Luck" or "HP" a mechanic. Such a key is
+# refused (the whole setting is ignored and reported) rather than guessed at.
+_GAME_TEXT_NAMES = frozenset({
+    "luck", "hp", "mp", "san", "sanity", "str", "con", "siz", "dex", "app", "int", "pow", "edu", "db", "mov", "build",
+    "coc", "check", "roll", "skill", "success", "fail", "failure", "critical", "fumble", "hard", "extreme", "regular",
+})
+
+
+def _alias_map(name: str) -> dict[str, str]:
+    aliases = _env_str_map(name)
+    ambiguous = [key for key in aliases if key.strip().isdigit() or len(key.strip()) < 2 or key.strip().casefold() in _GAME_TEXT_NAMES]
+    if ambiguous:
+        INVALID_LOG_SETTINGS.append((name, f"names that are not also game text (not {ambiguous[0]!r})", "{}"))
+        return {}
+    return aliases
 
 
 def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
@@ -322,6 +361,11 @@ OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 
 # Internal ids (check_id and the like) and raw result-tier names are removed from what a player reads. Debugging may
 # ask to see them (app/presentation.py).
 DEBUG_SHOW_INTERNAL_IDS = _env_bool("DEBUG_SHOW_INTERNAL_IDS", False)
+# How a character's registered name is written in what players read, e.g. {"The Tough Guy": "硬漢"}. Pregenerated
+# archetypes are registered under English names, the Narrator calls them by a Chinese one, and system lines
+# ("…的背包已確認…") use the registered name, so one character reads as two. Empty (the default) changes nothing;
+# saved state, logs and ids always keep the registered name.
+CHARACTER_DISPLAY_ALIASES = _alias_map("CHARACTER_DISPLAY_ALIASES")
 # A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
 # scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
 TURN_FALLBACK_RECOVERY_ENABLED = _env_bool("TURN_FALLBACK_RECOVERY_ENABLED", True)
