@@ -34,8 +34,8 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 
 ## 規則
 
-1. **一個步驟。** 調查員之間的交接是單一個工具呼叫 `transfer_item(from, to, item, source_event_id?)`，先驗證全部條件，再在同一個 `mutate_tool_state` 裡改兩邊的背包。要嘛全部發生，要嘛完全不發生。動作 id **不是工具參數**：模型在收據遺失後重送呼叫時，可能自己編出不同的 id。由回合擁有的程式碼從回合 id 與驗證後、正規化的參數（`from`、`to`、`item`）推導穩定的**邏輯操作 id**，而不是 provider 的工具呼叫 id 或該呼叫的順序，因為重新發出的呼叫會有新的呼叫 id 與較後的順序。它與 `actor_id` 一起經由 `tool_gateway` 傳給狀態交易帳本（`run_snapshot` 的 `action_id`）。同一回合、同一個邏輯操作的呼叫被重新發出時，不論呼叫 id 或文字為何，都回傳原本的收據，而不是「沒有持有該物品」這類拒絕。同一回合內同一樣物品不可能合法地在同兩位調查員之間交接兩次，所以重複一定是重播。`source_event_id` 仍是可選的紀錄用中繼資料。
-2. **先驗證再改動。** 下列情況會拒絕交接，附上 Keeper 可以使用的原因，而且什麼都不寫入：給出者不是行動玩家的角色（發言者是 KP Assistant 時除外）；接收者不存在、不是現役角色、或與給出者相同；物品不在給出者的清單中（要求正規化後完全相符，不退回子字串）。
+1. **一個步驟。** 調查員之間的交接是單一個工具呼叫 `transfer_item(from, to, item, quantity?, source_event_id?)`，先驗證全部條件，再在同一個 `mutate_tool_state` 裡改兩邊的背包。要嘛全部發生，要嘛完全不發生。動作 id **不是工具參數**：模型在收據遺失後重送呼叫時，可能自己編出不同的 id。由回合擁有的程式碼從回合 id 與驗證後、正規化的參數（`from`、`to`、`item`）推導穩定的**邏輯操作 id**，而不是 provider 的工具呼叫 id 或該呼叫的順序，因為重新發出的呼叫會有新的呼叫 id 與較後的順序。它與 `actor_id` 一起經由 `tool_gateway` 傳給狀態交易帳本（`run_snapshot` 的 `action_id`）。同一回合、同一個邏輯操作的呼叫被重新發出時，不論呼叫 id 或文字為何，都回傳原本的收據，而不是「沒有持有該物品」這類拒絕。`quantity`（預設 1）在同一個原子步驟裡移動那麼多筆同名項目，並且是邏輯操作的一部分，所以持有兩份的給出者要全部交出時，在單一呼叫裡要求 `quantity` 2。同一回合內第二個完全相同的呼叫（相同的 `from`、`to`、`item`、`quantity`）依定義就是重播，會得到原本的收據；收據會寫明移動了幾筆、給出者還持有幾筆。要多移動一份就用較大的 quantity 發一個新呼叫，或在之後的回合開新的操作。`source_event_id` 仍是可選的紀錄用中繼資料。
+2. **先驗證再改動。** 下列情況會拒絕交接，附上 Keeper 可以使用的原因，而且什麼都不寫入：給出者不是行動玩家的角色（發言者是 KP Assistant 時除外）；接收者不存在、不是現役角色、或與給出者相同；物品不在給出者的清單中（要求正規化後完全相符，不退回子字串）。**兩端都不用模糊比對解析**：`from` 與 `to` 必須是標準的角色 id，或是沒有歧義的、正規化後完全相符的名字；交接不使用 `support.find_character` 的子字串退路，歧義或只有一部分的名字會被拒絕，並列出候選者。
 3. **只改自己的角色，除非用交接。** `add_carried_item` 與 `remove_carried_item` 只作用於行動玩家自己的角色（欄位是 `ToolCall.actor_id`，但**目前沒有填**：一般的背包呼叫走 `tool_gateway`（`app/agents/tool_gateway.py`）的 `else` 分支，呼叫 `execute_tool` 時沒帶 `actor_id`，兩條更正路徑建立 `ToolCall` 時也用空的預設值）。所以把 `actor_id` 經由 gateway 與兩個更正呼叫點傳下去是實作的**第一步**，要在加上檢查之前完成；沒有它就啟用檢查，會拒絕每個一般玩家的 add／remove。別的調查員的背包只能透過 `transfer_item` 改變，或發言者是 KP Assistant。更正的路徑（`correction_adjudication`、`natural_corrections`）仍可運作，因為它們在把提出更正者的 id 當作 `actor_id` 傳入之後，作用於提出更正者自己的角色。
 4. **移除要說明原因。** `remove_carried_item` 多一個 `reason`：`consumed`、`lost`、`dropped` 或 `destroyed`。`given`／交出會被拒絕，並指向 `transfer_item`，所以單獨的移除不能再冒充交接。原因是模型選的，所以它不是唯一的防線：規則 7 加上一道由伺服器端判斷的檢查，玩家自己的訊息正把某樣物品交給某人時，不論模型給什麼原因，都拒絕移除那樣物品。`consumed_or_removed_items` 保留原因；交接寫入另一份 `inventory_transfers` 紀錄（id、回合、from、to、物品），不再算成消耗。
 5. **交接守恆物品，但不決定獨特性。** `transfer_item` 剛好把一筆清單項目從給出者移到接收者，所以各調查員清單的項目總數不變。重複取得仍然合法（兩位調查員可以各找到一支手電筒）。要把物品視為獨一無二的道具，需要每樣物品的身分或來源紀錄，而字串清單沒有這些；見「沒做的」。
@@ -51,6 +51,8 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 - `turn_resolution._mutation_evidence`：成功的 `transfer_item` 事件就是一次已驗證的交接；先移除再加入的配對比對在遷移期間保留，等提示不再產生成對呼叫之後移除。
 - 提示文字中要 Executor 用 add／remove 做交接的地方（`turn_context.py`、`prompt_builder.py` 的 "Equipment Consistency"）改成交接時呼叫 `transfer_item`。
 - 可觀測性：`inventory.transfer`（已提交）與 `inventory.transfer.refused`（含原因）事件；`scripts/summarize_turn_log.py` 統計被拒絕的次數。
+- 重播：`mutate_tool_state` 只回傳 `outcome.value`，重複時它是 `None`（`state_transaction._replay` 把持久化的資料放在 `TxResult.result`）。交接用 `ctx.set_result` 存下收據，重複的路徑回傳那份存下的結果，做法是用 `commit_for_snapshot` 處理重複，或擴充 adapter 回傳 `TxResult.result`。
+- 收據投影：`turn_delivery.observe_tool` 把 `transfer_item` 投影進 `MechanicResult.observed_outcomes`（目前只有 `add_carried_item` 與 `remove_carried_item`），executor 結果保留它，這樣 `turn_fallback.guidance` 與 `prompt_config` 插入已提交細節的地方，才能說出在回合失敗前已經移動的交接。
 - 工具額度：一次交接用掉四個工具中的一個，而不是兩個。
 - 回合意圖偵測器與 gateway 的准入檢查（規則 7），以及指出意圖的 `inventory.admission.refused` 事件。
 
@@ -58,14 +60,16 @@ Dead Boarder 200 回合，`NARRATION_OUTSIDE_MUTATION_LOCK=true`（`turns.jsonl`
 
 - 每個觀察到的案例都是回歸測試：回合 47 與 199（沒有接收者的移除必須不可能發生）、56（沒有對應移除的加入）、140（交接之後逾時的四工具回合：物品在接收者手上，回覆也這麼說）。
 - 原子性：在兩次背包寫入之間注入失敗，兩邊背包都不變。
-- 拒絕情況：給出者錯誤、接收者不存在、接收者等於給出者、沒有持有該物品、只有子字串相符；每一種都什麼都不寫入。
+- 拒絕情況：給出者錯誤、接收者不存在、接收者等於給出者、沒有持有該物品、物品只有子字串相符、給出者或接收者的名字只有子字串相符或有歧義（另一位現役調查員的部分名字不能收到物品）；每一種都什麼都不寫入。
+- 份數：持有兩筆同名項目的給出者用 `quantity` 2 全部交出，在一次提交裡變成沒有，接收者有兩筆；同一回合第二個完全相同的單份呼叫回傳第一份收據且什麼都不移動。
+- 重播內容：第一次嘗試已提交之後，重新發出的呼叫回傳存下的收據（不是 `None`），包括模擬回應遺失的情況。
 - 守恆：交接後各調查員清單的項目總數不變，接收者已有的同名物品會變成第二筆。
 - 冪等：同一回合內重新發出的同一個呼叫，即使有新的 provider 呼叫 id、較後的順序與不同的模型文字，也會回傳原本的收據且什麼都不改；模型不能自選 id。
 - 意圖准入：訊息把物品交給指名的調查員時，即使模型給 `reason=lost`，移除那樣物品也被拒絕；訊息把物品發給多位調查員時，這個回合的每一次 `add_carried_item` 都被拒絕，包括對行動玩家自己角色的那一次；同一回合中無關的移除仍然可用。
 - `actor_id` 經由 gateway 與更正路徑到達背包工具；一般玩家對自己角色的 add／remove 仍然可用。
 - `reason=given` 的移除被拒絕；`consumed` 被接受並記錄。
 - 更正的路徑仍然把物品加到提出更正者的角色。
-- 降級訊息只列出已提交的交接，不多列別的。
+- 降級訊息只列出已提交的交接，不多列別的；回合之後逾時時也一樣（交接出現在 `observed_outcomes`）。
 
 ## 沒做的
 
