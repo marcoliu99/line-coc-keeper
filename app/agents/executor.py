@@ -54,6 +54,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     speaker_role = message.payload["speaker_role"]
     resolved_location = message.payload.get("resolved_location")
     rag_context = message.payload.get("rag_context", "")
+    if recovery_context := message.payload.get("recovery_context", ""):
+        rag_context = (rag_context + "\n\n" if rag_context else "") + "【補查結果】\n" + recovery_context
     memory_context = message.payload.get("memory_context", "")
 
     private_messages: list[tuple[str, str]] = []
@@ -266,4 +268,5 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                       "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
         events=inventory_events,
         turn_resolution=resolution,
+        tool_calls=tuple((e["name"], bool(e["result"].get("ok"))) for e in tool_events),
     )

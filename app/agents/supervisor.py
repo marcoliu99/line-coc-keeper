@@ -5,7 +5,7 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, locks, observability
+from app import config, keeper, locks, observability, spoiler_policy
 from app.agents import (
     assistant,
     context_builder,
@@ -15,11 +15,23 @@ from app.agents import (
     narrator,
     state_reducer,
 )
-from app.domain.models import AgentMessage, MechanicResult, PlayerTurnKind, SpeakerRole
+from app.domain.models import (
+    AgentMessage,
+    FallbackReason,
+    MechanicResult,
+    PlayerTurnKind,
+    SpeakerRole,
+)
 from app.models import GroupState
 from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
-from app.services import mutation_admission, prompt_config, turn_delivery, turn_handoff
+from app.services import (
+    mutation_admission,
+    prompt_config,
+    turn_delivery,
+    turn_fallback,
+    turn_handoff,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -55,6 +67,46 @@ async def prefetch_retrieval(
         observability.event("rag.prefetch.failed", level=logging.WARNING)
         _logger.exception("Retrieval prefetch failed; the turn will search under the lock")
         return None
+
+
+async def _recover_blocked_turn(
+    message: AgentMessage, result: MechanicResult, *, state: GroupState, user_id: str, text: str,
+    speaker_role: SpeakerRole, before_pending: dict, before_luck: dict,
+) -> tuple[MechanicResult, FallbackReason | None, str]:
+    """Give a fallback turn one more chance, when that cannot apply anything twice.
+
+    Returns the result to use, the reason the first attempt fell back (None when it did not) and the
+    outcome of the recovery: ``not_attempted``, ``recovered`` or ``unresolved``. The Executor's first
+    attempt must have left the game untouched; the retry gets at most one extra scenario search, and is
+    never repeated.
+    """
+    rag_status = message.payload.get("rag_status", "")
+    reason = turn_fallback.classify(result, state, user_id, rag_status=rag_status)
+    if reason is None:
+        return result, None, "not_attempted"
+    if (not config.TURN_FALLBACK_RECOVERY_ENABLED
+            or not turn_fallback.recoverable(reason, result, before_pending=before_pending,
+                                             before_luck=before_luck, state=state)
+            or message.payload.get("private_messages") or message.payload.get("image_requests")):
+        return result, reason, "not_attempted"
+    if rag_status != "success" or reason == "no_scenario_evidence":
+        query = turn_fallback.recovery_query(state, text, message.payload.get("resolved_location"))
+        try:
+            context, _status = await asyncio.to_thread(
+                context_builder.search_scenario_context, state, user_id, speaker_role, query,
+                label="supervisor.recovery_retrieval", accept_lexical=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # the retry still runs; it simply has no new evidence
+            _logger.exception("Recovery retrieval failed")
+            context = ""
+        if context:
+            message.payload["recovery_context"] = context
+    retry = await executor.run_executor(message)
+    if turn_fallback.classify(retry, state, user_id, rag_status=rag_status) is None:
+        return retry, reason, "recovered"
+    return retry, reason, "unresolved"
 
 
 @with_turn_deadline
@@ -152,6 +204,20 @@ async def run_turn(
         pending_luck_before = deepcopy(state.pending_luck_decisions)
         origins_before = set(state.check_consequence_origins)
         mechanic_result = await executor.run_executor(message)
+        mechanic_result, first_reason, recovery = await _recover_blocked_turn(
+            message, mechanic_result, state=state, user_id=user_id, text=text, speaker_role=speaker_role,
+            before_pending=pending_checks_before, before_luck=pending_luck_before,
+        )
+        fallback_reason = turn_fallback.classify(
+            mechanic_result, state, user_id, rag_status=message.payload.get("rag_status", ""))
+        mechanic_result.fallback_reason = fallback_reason
+        if fallback_reason or recovery == "recovered":
+            turn_fallback.record(
+                fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn_id,
+                rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                resolved_location=resolved_location, recovery_attempted=recovery != "not_attempted",
+                recovery_result=recovery, initial_reason=first_reason if first_reason != fallback_reason else None,
+            )
         autoroll_followups = [event for event in state.resolved_check_events
             if event.get("event_id") not in origins_before
             and event.get("event_id") in state.check_consequence_origins
@@ -190,6 +256,9 @@ async def run_turn(
     # 5. Narrator Agent generates the final text
     if pending_reply and not autoroll_followups:
         reply_text = pending_reply
+        turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn_id,
+                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             resolved_location=resolved_location)
         private_messages: list[tuple[str, str]] = []
         image_requests: list[tuple[str | None, int]] = []
         observability.event('narrator.pending_reused', status='skipped')
@@ -208,6 +277,10 @@ async def run_turn(
             resolved_check_context = autoroll_followups[-1]
         else:
             reply_text, private_messages, image_requests = await narrator.run_narrator(message)
+    if message.payload.get("narration_failed"):
+        turn_fallback.record("narration_failure", state=state, user_id=user_id, turn_id=turn_id,
+                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             resolved_location=resolved_location)
     if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
@@ -234,6 +307,14 @@ async def run_turn(
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     reply_text = consistent(reply_text)
     reply_text, private_controls = turn_delivery.finalize(message, reply_text)
+    safety_blocked = reply_text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
+        getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
+        or (getattr(message.payload.get("delivery_envelope"), "status", "passed") == "projected_fallback"
+            and not message.payload.get("narration_failed")))
+    if safety_blocked:
+        turn_fallback.record("safety_block", state=state, user_id=user_id, turn_id=turn_id,
+                             rag_context=message.payload.get("rag_context", ""), result=mechanic_result,
+                             resolved_location=resolved_location)
     private_messages.extend(item for item in private_controls if item not in private_messages)
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
@@ -258,6 +339,8 @@ async def run_turn(
             turn_id=turn_id,
         )
         if not committed:
+            turn_fallback.record("state_conflict", state=state, user_id=user_id, turn_id=turn_id,
+                                 result=mechanic_result, resolved_location=resolved_location)
             return "（這次回覆所屬的劇情時間線已經更新，舊回覆未送出；請依目前劇情重新操作。）", [], []
 
     return reply_text, private_messages, image_requests

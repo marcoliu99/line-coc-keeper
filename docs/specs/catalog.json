@@ -1829,6 +1829,22 @@
       "path": "docs/specs/refactor/scenario_source_store_design_spec.md",
       "zh_path": "docs/specs/refactor/scenario_source_store_design_spec_zh.md",
       "source_revision": "7ab07965eeebfa8e7ed638c67cc8e471f4c4626e"
+    },
+    {
+      "title": "Turn fallback reasons and bounded recovery",
+      "zh": "回合 fallback 原因與有界復原",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/agents/supervisor.py",
+        "app/agents/context_builder.py",
+        "app/domain/models.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/turn_fallback_reasons_design_spec.md",
+      "zh_path": "docs/specs/bug/turn_fallback_reasons_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
     }
   ]
 }
