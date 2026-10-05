@@ -17,7 +17,7 @@ from app.domain.models import FALLBACK_REASONS, FallbackReason, MechanicResult
 from app.models import GroupState
 from app.services import turn_phases
 
-__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record", "recoverable", "recovery_query"]
+__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record", "recoverable", "recovery_query", "scene_hints"]
 
 # What the player is told when the turn has no more specific wording; every reason has one.
 _GUIDANCE: dict[str, str] = {
@@ -53,8 +53,59 @@ RECOVERABLE: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_ac
 _HEADER = re.compile(r"^--- (?:原稿補查 · )?第 (\d+) 頁 ---$", re.MULTILINE)
 
 
-def guidance(reason: str | None) -> str:
-    return _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
+# Reasons whose message asks the player to try something else, so naming what they can try is the useful part.
+_HINTED: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_action", "unsupported_action"})
+_HINT_LIMIT = 5
+_CLUE_HINT_CHARS = 24
+_RECENT_NARRATION = 60
+
+
+def guidance(reason: str | None, hints: str = "") -> str:
+    """What the player is told; ``hints`` (see ``scene_hints``) is added for reasons that ask them to try something else."""
+    text = _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
+    return f"{text}\n{hints}" if hints and reason in _HINTED else text
+
+
+def _public_narration(state: GroupState) -> list[str]:
+    """What players have actually been told, newest first. Player lines and anything not public are left out."""
+    return [str(entry.get("content", "")) for entry in reversed(state.log[-_RECENT_NARRATION:])
+            if entry.get("role") == "assistant" and entry.get("audience", "public") == "public"]
+
+
+def _already_shown(index: list[dict[str, Any]], narration: list[str]) -> list[str]:
+    """Names from a scenario index that the narration has already used, the most recently mentioned first."""
+    found: list[tuple[int, str]] = []
+    for entry in index:
+        name = str(entry.get("name") or "").strip()
+        names = [n for n in (name, *map(str, entry.get("aliases") or [])) if len(n.strip()) >= 2]
+        position = next((i for i, text in enumerate(narration) if any(n in text for n in names)), None)
+        if name and position is not None:
+            found.append((position, name))
+    return list(dict.fromkeys(name for _, name in sorted(found)))[:_HINT_LIMIT]
+
+
+def scene_hints(state: GroupState) -> str:
+    """The places, people and clues the players have already been shown, as one line; empty when there are none.
+
+    Built only from what the narration has already said to the table (a scenario index entry counts once its name has
+    appeared in public narration) and from public clues, so it can only repeat what players know and never names an
+    unvisited location or an undisclosed character. A name the narration translated differently from the index will
+    not match, in which case the line is simply shorter.
+    """
+    narration = _public_narration(state)
+    parts: list[str] = []
+    places = _already_shown(state.scenario_location_index, narration)
+    if places:
+        parts.append("地點：" + "、".join(places))
+    people = _already_shown(state.scenario_npc_index, narration)
+    if people:
+        parts.append("人物：" + "、".join(people))
+    clues = [str(c.get("text", "")).strip() for c in reversed(state.known_clues)
+             if c.get("visibility", "public") == "public" and str(c.get("text", "")).strip()]
+    clues = [c if len(c) <= _CLUE_HINT_CHARS else c[:_CLUE_HINT_CHARS] + "…" for c in clues[:3]]
+    if clues:
+        parts.append("已記錄的線索：" + "；".join(clues))
+    return ("目前已在劇情中出現、可以接著問或查看的有——" + "　".join(parts) + "。") if parts else ""
 
 
 def _has_scenario_evidence(result: MechanicResult, rag_status: str, state: GroupState) -> bool:

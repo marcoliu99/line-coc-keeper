@@ -90,7 +90,7 @@ async def run(state, *, turn_kind="player_action", text="我推開門", commit=T
         events.append("consistent.resolved")
         return reply
 
-    def mechanic_consistency(reply, public_result):
+    def mechanic_consistency(reply, public_result, *, state=None):
         events.append("consistent.mechanic")
         return reply
 
