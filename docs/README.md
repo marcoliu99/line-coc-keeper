@@ -75,6 +75,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [At most three scenario authoring files](specs/enhancement/three_file_scenario_export_design_spec.md) | implemented | [繁體中文](specs/enhancement/three_file_scenario_export_design_spec_zh.md) |
 | [Turn phase timeline and retrieval amplification](specs/enhancement/turn_latency_instrumentation_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) |
 | [One summary line per turn, whatever the logging settings](specs/enhancement/turn_summary_log_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_log_design_spec_zh.md) |
+| [Counting the turns that did not finish, from the turn summary line](specs/enhancement/turn_summary_report_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_report_design_spec_zh.md) |
 | [Keeping the scenario search from being starved, and counting Chinese text honestly without a tokenizer](specs/enhancement/retrieval_budget_headroom_design_spec.md) | implemented | [繁體中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) |
 
 ## feature
