@@ -209,7 +209,7 @@ async def finish_help_action(
             await delivery.send_interaction_message(interaction, "遊戲狀態已更新，請重新開啟這個操作。", ephemeral=True)
             return
         await interaction.response.send_message(
-            delivery.shown(f"確認執行「{action.label}」{f'（{selected[:160]}）' if selected else ''}？"), ephemeral=True,
+            confirm_prompt(action.label, selected), ephemeral=True,
             view=HelpConfirmView(action, command, str(interaction.user.id),
                                  interactions.channel_conversation_id(channel.id), state.state_revision, selected),
         )
@@ -279,6 +279,11 @@ class HelpCommandModal(discord.ui.Modal):
             interaction, self.action, self.selected,
             tuple(item.value for item in self.inputs), self.revision,
         )
+
+
+def confirm_prompt(label: str, selected: str) -> str:
+    """The confirmation question, in the table's language and within one message (an alias can lengthen the name)."""
+    return delivery.shown_message(f"確認執行「{label}」{f'（{selected[:160]}）' if selected else ''}？")
 
 
 class HelpOptionSelect(discord.ui.Select):

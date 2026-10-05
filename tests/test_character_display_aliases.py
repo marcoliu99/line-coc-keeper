@@ -172,6 +172,14 @@ class TransportAliasTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent), 2000)
         self.assertTrue(sent.endswith("…"))
 
+    async def test_a_confirmation_prompt_with_a_long_alias_stays_within_one_message(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"The Tough Guy": "硬漢" * 1500}):
+            prompt = help_ui.confirm_prompt("切換角色", "The Tough Guy")
+        self.assertEqual(len(prompt), 2000)
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", ALIASES):
+            self.assertEqual(help_ui.confirm_prompt("切換角色", "The Tough Guy"), "確認執行「切換角色」（硬漢）？")
+            self.assertEqual(help_ui.confirm_prompt("退出角色", ""), "確認執行「退出角色」？")
+
     async def test_a_private_message(self):
         user = SimpleNamespace(send=AsyncMock())
         with patch.object(delivery.gateway, "client", SimpleNamespace(get_user=lambda _id: user)):
