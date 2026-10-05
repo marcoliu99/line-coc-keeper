@@ -269,4 +269,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         events=inventory_events,
         turn_resolution=resolution,
         tool_calls=tuple((e["name"], bool(e["result"].get("ok"))) for e in tool_events),
+        scenario_evidence=tuple(
+            str(e["result"].get("results", "")) for e in tool_events
+            if e["name"] == "search_scenario" and e["result"].get("ok") and e["result"].get("results")
+        ),
     )

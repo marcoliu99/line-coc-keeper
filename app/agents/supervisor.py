@@ -13,6 +13,7 @@ from app.agents import (
     guard,
     intent_router,
     narrator,
+    obligation_gate,
     state_reducer,
 )
 from app.domain.models import (
@@ -21,6 +22,7 @@ from app.domain.models import (
     MechanicResult,
     PlayerTurnKind,
     SpeakerRole,
+    StateDelta,
 )
 from app.models import GroupState
 from app.providers.codex_provider import with_codex_turn
@@ -67,6 +69,11 @@ async def prefetch_retrieval(
         observability.event("rag.prefetch.failed", level=logging.WARNING)
         _logger.exception("Retrieval prefetch failed; the turn will search under the lock")
         return None
+
+
+def _no_mechanics() -> MechanicResult:
+    """The mechanics of a turn that ran no Executor, for work that needs somewhere to record them."""
+    return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
 
 async def _recover_blocked_turn(
@@ -254,6 +261,10 @@ async def run_turn(
         observability.event("turn.handoff", phase="narration")
 
     # 5. Narrator Agent generates the final text
+    handoff_before = (
+        (pending_checks_before, pending_luck_before) if intent == "GAMEPLAY_ACTION"
+        else (deepcopy(state.pending_checks), deepcopy(state.pending_luck_decisions))
+    )
     if pending_reply and not autoroll_followups:
         reply_text = pending_reply
         turn_fallback.record("unresolved_pending_state", state=state, user_id=user_id, turn_id=turn_id,
@@ -284,6 +295,24 @@ async def run_turn(
     if turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
+
+    # What the scenario attaches to an event the narration has just shown is owed now, not when a player
+    # later says they are frightened (CS-007). The gate applies it through the ordinary tools.
+    if turn_kind in {"player_action", "resolved_check_followup"} and not (pending_reply and not autoroll_followups):
+        owed = await obligation_gate.enforce(
+            state, user_id, reply_text,
+            [message.payload.get("rag_context", ""), message.payload.get("recovery_context", ""),
+             *(mechanic_result.scenario_evidence if mechanic_result else ())],
+            mechanic_result or _no_mechanics(),
+            turn_id=turn_id, speaker_role=speaker_role, private_messages=private_messages,
+            image_requests=image_requests, observed_outcomes=message.payload.get("observed_outcomes", []),
+        )
+        if owed:
+            if mechanic_result is None:
+                mechanic_result = _no_mechanics()
+            turn_handoff.prepare_narrator_handoff(
+                state, user_id, mechanic_result, handoff_before[0], handoff_before[1], message.payload)
+            reply_text = reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed)
 
     # Consistency precedes Guard; any Guard rewrite is checked again. The
     # deterministic delivery contract is the final writer and safety boundary.

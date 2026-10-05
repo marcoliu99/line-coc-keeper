@@ -1845,6 +1845,22 @@
       "path": "docs/specs/bug/turn_fallback_reasons_design_spec.md",
       "zh_path": "docs/specs/bug/turn_fallback_reasons_design_spec_zh.md",
       "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
+      "title": "Same-turn mechanical obligations of a scenario event",
+      "zh": "劇本事件在同一回合的機械義務",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/event_obligations.py",
+        "app/agents/obligation_gate.py",
+        "app/agents/supervisor.py",
+        "app/agents/executor.py",
+        "tests/test_event_obligations.py"
+      ],
+      "path": "docs/specs/bug/event_obligations_design_spec.md",
+      "zh_path": "docs/specs/bug/event_obligations_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
     }
   ]
 }

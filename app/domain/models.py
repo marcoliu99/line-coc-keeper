@@ -104,6 +104,8 @@ class MechanicResult:
     observed_outcomes: list[ObservedOutcome] = field(default_factory=list)
     # Every tool the Executor called this turn, with whether it succeeded; never replayed.
     tool_calls: tuple[tuple[str, bool], ...] = ()
+    # The scenario passages the Executor's own searches returned this turn.
+    scenario_evidence: tuple[str, ...] = ()
     fallback_reason: FallbackReason | None = None
 
 
