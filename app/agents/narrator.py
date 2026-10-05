@@ -10,7 +10,7 @@ from app.domain.models import AgentMessage, MechanicResult
 from app.keeper_tools import registry as tool_registry
 from app.keeper_tools import resource_bridge
 from app.providers.conversation_session import ConversationSession
-from app.services import canonical_facts, mutation_admission, prompt_config
+from app.services import canonical_facts, mutation_admission, prompt_config, turn_phases
 
 _logger = logging.getLogger(__name__)
 _OPENING_TOOL_NAMES = tool_registry.OPENING_TOOL_NAMES
@@ -158,11 +158,12 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
             reasoning_effort=observability.llm_reasoning_effort(config.LLM_PROVIDER),
             metrics=turn_metrics,
         ):
-            reply_text = await provider.run_conversation(
-                static_system, dynamic_system, tools, history, new_message,
-                execute_tool, MAX_TOOL_ITERATIONS if tool_enabled else 1,
-                **provider_options,
-            )
+            with turn_phases.phase("narrator_llm"):
+                reply_text = await provider.run_conversation(
+                    static_system, dynamic_system, tools, history, new_message,
+                    execute_tool, MAX_TOOL_ITERATIONS if tool_enabled else 1,
+                    **provider_options,
+                )
             if tool_enabled and not reply_text.strip():
                 raise ValueError("tool-enabled narrator returned an empty reply")
     except Exception:

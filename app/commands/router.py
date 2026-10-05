@@ -605,6 +605,7 @@ async def _conversation_lock_with_notice(
     lock we already hold gets released.
     """
     lock = locks.get_conversation_lock(conversation_id)
+    waited_ms = 0.0
     if not lock.locked():
         await lock.acquire()
     else:
@@ -617,7 +618,9 @@ async def _conversation_lock_with_notice(
         finally:
             await _stop_queue_notice_task(notify_task)
             _emit_turn_queue(started, ahead, route, speaker_role)
+            waited_ms = (time.monotonic() - started) * 1000
     handoff = locks.TurnHandoff(conversation_id, lock)
+    handoff.queue_wait_ms = waited_ms
     try:
         # Yielded so a turn can hand the mutation lock on once its state is
         # committed. A caller that ignores it keeps the lock to the end, which
@@ -665,6 +668,7 @@ async def _keeper_priority_gate_and_lock_with_notice(
             await _stop_queue_notice_task(notify_task)
             _emit_turn_queue(started, ahead, route, speaker_role)
             handoff = locks.TurnHandoff(conversation_id, lock)
+            handoff.queue_wait_ms = (time.monotonic() - started) * 1000
             try:
                 yield handoff
             finally:
