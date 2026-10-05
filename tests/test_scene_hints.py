@@ -12,7 +12,7 @@ def state_with(*, narration: tuple[str, ...] = (), locations=(), npcs=(), clues=
     state = GroupState(group_id="g", timeline_id="t")
     state.scenario_location_index = [dict(item) for item in locations]
     state.scenario_npc_index = [dict(item) for item in npcs]
-    state.known_clues = [dict(item) for item in clues]
+    state.known_clues = [{"timeline_id": "t", **item} for item in clues]  # stamped, as verified clues are
     for text in narration:
         state.log.append({"role": "user", "content": "我想去地下室和鎮長辦公室"})
         state.log.append({"role": "assistant", "content": text, "audience": "public", "timeline_id": "t"})
@@ -85,14 +85,18 @@ class SceneHintTests(unittest.TestCase):
         state.timeline_id = ""
         self.assertIn("地下室", turn_fallback.scene_hints(state))
 
-    def test_a_clue_from_another_timeline_is_not_listed(self):
+    def test_a_clue_from_another_timeline_or_with_no_stamp_is_not_listed(self):
         clues = [{"text": "舊劇本的線索", "visibility": "public", "timeline_id": "an-earlier-timeline"},
-                 {"text": "這份劇本的線索", "visibility": "public", "timeline_id": "t"},
+                 {"text": "這份劇本的線索", "visibility": "public"},
                  {"text": "尚未驗證的線索", "visibility": "public"}]
-        hint = turn_fallback.scene_hints(state_with(clues=clues))
+        state = state_with(clues=clues)
+        del state.known_clues[2]["timeline_id"]  # unverified clues are stored unstamped and survive a new scenario
+        hint = turn_fallback.scene_hints(state)
         self.assertNotIn("舊劇本的線索", hint)
         self.assertIn("這份劇本的線索", hint)
-        self.assertIn("尚未驗證的線索", hint)  # an unstamped record is this timeline's, as everywhere else
+        self.assertNotIn("尚未驗證的線索", hint)
+        state.timeline_id = ""  # no timeline yet: nothing to tell apart, so only the unstamped one is this state's
+        self.assertIn("尚未驗證的線索", turn_fallback.scene_hints(state))
 
     def test_the_canonical_name_is_listed_when_it_was_the_one_narrated(self):
         npcs = [{"name": "房東", "aliases": ["Gardiner 的房東"]}]
