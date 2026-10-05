@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from app import checkpoints, db, keeper, scene_digest
+from app import checkpoints, db, keeper, prompt_builder, scene_digest
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import system as system_handler
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
@@ -896,7 +896,7 @@ class StatePersistenceTests(unittest.TestCase):
         # from different directions - same species/stats, but two distinct
         # individuals, not a duplicate call for the same one. The duplicate
         # guard is exact-name-match, so as long as the Keeper follows the
-        # naming instruction added to _build_static_prompt (give each
+        # naming instruction added to build_static_prompt (give each
         # same-species instance in one fight a distinct display name), both
         # must be allowed into combat as separate combatants.
         state = GroupState("discord-group-two-deep-ones")
@@ -916,7 +916,7 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_static_prompt_instructs_distinct_names_for_same_species_multiples(self):
         state = GroupState("discord-group-prompt-check")
-        prompt = keeper._build_static_prompt(state)
+        prompt = prompt_builder.build_static_prompt(state)
         self.assertIn("Each simultaneously active instance of one enemy type needs a distinct display name", prompt)
 
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import keeper, scenario_authoring
+from app import keeper, prompt_builder, scenario_authoring
 from app.agents.tool_gateway import _describe_tool_call
 from app.commands.handlers import checks as check_commands
 from app.domain.models import MechanicResult, StateDelta, TurnResolution
@@ -151,7 +151,7 @@ def test_private_opposed_receipt_never_enters_narrator_handoff():
     assert 'opponent_roll' in private_authority
     assert 'opponent_roll' not in narrator_authority
     assert 'Private source page 11' not in narrator_authority
-    narrator_prompt = keeper._build_dynamic_prompt(state, 'u1', include_private_checks=False)
+    narrator_prompt = prompt_builder.build_dynamic_prompt(state, 'u1', include_private_checks=False)
     assert 'opponent_roll' not in narrator_prompt
     assert 'Private source page 11' not in narrator_prompt
     result = {'ok': True, 'pending': True, 'opposed': state.pending_checks['u1']['opposed'],

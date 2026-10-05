@@ -6,7 +6,7 @@ from collections import Counter
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, observability, scenario_retrieval
+from app import config, keeper, observability, prompt_builder, scenario_retrieval
 from app.agents.tool_gateway import make_tool_executor, tools_for_speaker_role
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import (
@@ -90,12 +90,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     tools = tools_for_speaker_role(speaker_role)
 
     # Prompt text lives in app/services/prompt_config.py — see that module's
-    # header for why it reuses keeper._build_static_prompt/_build_dynamic_
+    # header for why it reuses prompt_builder.build_static_prompt/_build_dynamic_
     # prompt (character sheets, combat status, NPC/location index, and every
     # tool-usage rule) rather than re-deriving a second copy.
-    static_system = prompt_config.build_executor_static_prompt(keeper._build_static_prompt(state))
+    static_system = prompt_config.build_executor_static_prompt(prompt_builder.build_static_prompt(state))
     dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
-        keeper._build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
+        prompt_builder.build_dynamic_prompt(state, user_id, resolved_location, speaker_role), rag_context, memory_context
     )
     authority_block = canonical_facts.prompt_block(
         canonical_facts.requirements(state, recipient_id=user_id, speaker_role=speaker_role)
@@ -115,7 +115,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             }, provisional=resource_bridge.participating(state, character),
         )
 
-    new_message = f"{display_name}：{text}" + message.payload.get("correction_context", keeper._correction_context_message(state))
+    new_message = f"{display_name}：{text}" + message.payload.get("correction_context", prompt_builder.correction_context_message(state))
     before_pending = deepcopy(state.pending_checks)
     before_luck = deepcopy(state.pending_luck_decisions)
     before_actor = turn_resolution.actor_snapshot(state, user_id)

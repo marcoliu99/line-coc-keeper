@@ -115,7 +115,7 @@ def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]
 
 def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:
     """Renders the NPC/monster index into the block app/keeper.py's
-    _build_static_prompt injects into the cached system prompt. Empty input
+    build_static_prompt injects into the cached system prompt. Empty input
     renders to "" so callers can skip the whole section header when there's
     nothing to show yet."""
     if not npcs:

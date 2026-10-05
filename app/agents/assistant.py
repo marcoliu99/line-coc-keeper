@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app import config, keeper, observability, spoiler_policy
+from app import config, keeper, observability, prompt_builder, spoiler_policy
 from app.agents import guard, tool_gateway
 from app.config import MAX_TOOL_ITERATIONS
 from app.domain.models import AgentMessage
@@ -68,11 +68,11 @@ async def _run_assistant_turn(
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     turn_timeline_id = keeper._ensure_turn_timeline(state)
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
-    static_prompt = keeper._build_static_prompt(state)
-    dynamic_prompt = keeper._build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
+    static_prompt = prompt_builder.build_static_prompt(state)
+    dynamic_prompt = prompt_builder.build_dynamic_prompt(state, user_id, resolved_location, _ROLE)
     manual_canon, effective_text = keeper._parse_kp_manual_canon_trigger(_ROLE, message_text)
-    turn_message = keeper._format_turn_message(display_name, effective_text, _ROLE)
-    correction_context = keeper._correction_context_message(state)
+    turn_message = prompt_builder.format_turn_message(display_name, effective_text, _ROLE)
+    correction_context = prompt_builder.correction_context_message(state)
     provider_message = turn_message + correction_context
     tools = tool_gateway.tools_for_speaker_role(_ROLE)
     allowed_tools = {tool["name"] for tool in tools}
@@ -122,7 +122,7 @@ async def _run_assistant_turn(
         )
         if not spoiler_check.is_safe:
             final_text = spoiler_check.fallback_text or final_text
-        canonical_message = keeper._format_kp_canonical_history_message(
+        canonical_message = prompt_builder.format_kp_canonical_history_message(
             effective_text, canonical_tool_events
         )
         committed = keeper._commit_turn_result(

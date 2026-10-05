@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from app import keeper, keeper_prompt_policy, spoiler_policy
+from app import keeper_prompt_policy, prompt_builder, spoiler_policy
 from app.models import GroupState
 
 
@@ -15,7 +15,7 @@ def test_merged_player_prompt_preserves_authority_mechanics_and_switches() -> No
                 patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", spoilers),
                 patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", privacy),
             ):
-                prompt = keeper._build_static_prompt(state)
+                prompt = prompt_builder.build_static_prompt(state)
 
             assert prompt.count("**Operational Authority**") == 1
             assert "A. Narrative / interpretation error" in prompt
@@ -35,7 +35,7 @@ def test_merged_player_prompt_preserves_authority_mechanics_and_switches() -> No
 
 def test_merged_kp_prompt_keeps_dice_and_correction_authority() -> None:
     state = GroupState(group_id="merged-kp-prompt")
-    prompt = keeper._build_dynamic_prompt(state, "kp", speaker_role="kp_assistant")
+    prompt = prompt_builder.build_dynamic_prompt(state, "kp", speaker_role="kp_assistant")
 
     assert keeper_prompt_policy.KP_ASSISTANT_AUTHORITY in prompt
     assert "Generic deterministic dice:" in prompt

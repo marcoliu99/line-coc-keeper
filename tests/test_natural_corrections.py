@@ -2,7 +2,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from app import db, keeper, memory_rag
+from app import db, memory_rag, prompt_builder
 from app.commands import router
 from app.models import Character, GroupState
 from app.repositories.group_state import load_state, save_state
@@ -137,7 +137,7 @@ def test_incidental_possession_correction_uses_inventory_without_plot_authority(
 
 
 def test_keeper_prompt_accepts_fuzzy_present_action_without_inventing_history():
-    prompt = keeper._build_static_prompt(GroupState("prompt-correction"))
+    prompt = prompt_builder.build_static_prompt(GroupState("prompt-correction"))
     assert "不要求中譯逐字寫出鑰匙與門的配對" in prompt
     assert "不能只因 AI 舊敘事或摘要提過" in prompt
 

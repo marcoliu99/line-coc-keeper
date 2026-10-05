@@ -90,7 +90,7 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
 class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
     """Regression tests for the review finding that context_builder ran
     scenario_rag.get_index/search on every turn regardless of
-    SCENARIO_RAG_ENABLED (default off), even though keeper._build_static_prompt
+    SCENARIO_RAG_ENABLED (default off), even though prompt_builder.build_static_prompt
     already embeds the full/chapter scenario text directly in that mode,
     making the proactive search redundant and a real per-turn cost."""
 
@@ -349,11 +349,12 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.payload["memory_status"], "empty")
 
     def test_scenario_context_budget_keeps_structural_boundaries(self):
-        from app import keeper
+
+        from app import prompt_builder
 
         scenario = "--- 第 1 頁 ---\n第一頁完整內容\n--- 第 2 頁 ---\n第二頁完整內容"
-        with patch.object(keeper, "MAX_SCENARIO_CHARS", 30):
-            bounded = keeper._bounded_scenario_context(scenario)
+        with patch.object(prompt_builder, "MAX_SCENARIO_CHARS", 30):
+            bounded = prompt_builder._bounded_scenario_context(scenario)
 
         self.assertLessEqual(len(bounded), 30)
         self.assertIn("第一頁完整內容", bounded)

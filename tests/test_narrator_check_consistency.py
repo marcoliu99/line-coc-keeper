@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app import config
+from app import config, prompt_builder
 from app.agents import narrator
 from app.agents.tool_gateway import _record_check_status
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
@@ -194,8 +194,8 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(config, "LLM_PROVIDER", "openai"), \
                 patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}), \
-                patch.object(keeper, "_build_static_prompt", return_value="static"), \
-                patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
+                patch.object(prompt_builder, "build_static_prompt", return_value="static"), \
+                patch.object(prompt_builder, "build_dynamic_prompt", return_value="dynamic"), \
                 patch.object(keeper, "_tools_for_speaker_role", wraps=keeper._tools_for_speaker_role):
             reply, _, _ = await narrator.run_narrator(AgentMessage(payload={
                 "state": state, "user_id": "u1", "display_name": "Mick",
@@ -237,8 +237,8 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(config, "LLM_PROVIDER", "openai"), \
                 patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}), \
-                patch.object(keeper, "_build_static_prompt", return_value="static"), \
-                patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
+                patch.object(prompt_builder, "build_static_prompt", return_value="static"), \
+                patch.object(prompt_builder, "build_dynamic_prompt", return_value="dynamic"), \
                 patch.object(keeper, "_execute_tool", side_effect=execute):
             await narrator.run_narrator(AgentMessage(payload={
                 "state": state, "user_id": "u1", "display_name": "Mick",

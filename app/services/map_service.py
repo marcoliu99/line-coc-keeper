@@ -156,7 +156,7 @@ def _resolve_map_action_core(
                 resolved_room = result["room"]
             # result["ok"] is False (no matching exit): deliberately not
             # returned as an error here — let the Keeper's own dynamic prompt
-            # (see _build_dynamic_prompt) decide how to narrate a blocked or
+            # (see build_dynamic_prompt) decide how to narrate a blocked or
             # ambiguous direction instead of the engine flatly refusing it.
         elif intent_parser.has_movement_verb(text):
             # No relative-direction word matched, but this still reads as a

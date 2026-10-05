@@ -200,7 +200,7 @@ async def finalize_check_result(
         # an unrelated room right after a skill/sanity check), not a
         # theoretical one. Passing None here costs nothing useful: the Keeper
         # still learns the character's actual current room from state.
-        # current_map_page/current_room_id via _build_dynamic_prompt's own
+        # current_map_page/current_room_id via build_dynamic_prompt's own
         # "resolved_location is None" fallback block — it just won't be
         # mislabeled as a fresh Map Engine move this check never made.
         resolved_location = None
