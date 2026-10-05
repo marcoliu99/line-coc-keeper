@@ -2035,6 +2035,27 @@
       "source_revision": "27a53e2cb215c293283a84dc73cfe9550da36f70"
     },
     {
+      "title": "Splitting app/discord_bot.py",
+      "zh": "拆分 app/discord_bot.py",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/discord_bot.py",
+        "app/discord_transport/gateway.py",
+        "app/discord_transport/delivery.py",
+        "app/discord_transport/interactions.py",
+        "app/discord_transport/lifecycle.py",
+        "app/discord_transport/controls.py",
+        "app/discord_transport/help_ui.py",
+        "tests/test_discord_custom_id_contract.py",
+        "tests/test_architecture_discord_transport.py",
+        "tests/test_button_routing.py"
+      ],
+      "path": "docs/specs/refactor/discord_transport_split_design_spec.md",
+      "zh_path": "docs/specs/refactor/discord_transport_split_design_spec_zh.md",
+      "source_revision": "27a53e2cb215c293283a84dc73cfe9550da36f70"
+    },
+    {
       "title": "Reading boolean settings one way",
       "zh": "布林設定只用一種讀法",
       "category": "maintenance",

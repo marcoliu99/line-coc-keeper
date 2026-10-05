@@ -23,17 +23,19 @@ def _io() -> ButtonIO:
 
 
 class DiscordBotImportBoundaryTests(unittest.TestCase):
-    """discord_bot.py imports only transport/domain types and never behavior;
+    """The Discord transport (discord_bot.py and app/discord_transport) imports only transport/domain types and never behavior;
     everything it drives — check/Luck buttons, uploads, the PDF choice button —
     enters through the router instead. The types live in ``app.commands.types``;
     that nothing imports the retired ``legacy_commands`` is checked by
     ``test_architecture_legacy.py``."""
 
     def test_discord_bot_imports_only_types_from_the_command_types_module(self):
-        source = (pathlib.Path(__file__).resolve().parents[1] / "app" / "discord_bot.py").read_text(encoding="utf-8")
+        app = pathlib.Path(__file__).resolve().parents[1] / "app"
+        transport = [app / "discord_bot.py", *sorted((app / "discord_transport").glob("*.py"))]
         imported = {
             alias.asname or alias.name
-            for node in ast.walk(ast.parse(source))
+            for path in transport
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             if isinstance(node, ast.ImportFrom) and node.module == "app.commands.types"
             for alias in node.names
         }

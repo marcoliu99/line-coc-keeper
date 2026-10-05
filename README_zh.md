@@ -47,7 +47,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 ```
 
 **指令與訊息路由**
-- `app/discord_bot.py`：Discord 專用的常駐連線入口，把 Discord 的事件轉譯成呼叫 `app/commands/router.py`
+- `app/discord_bot.py`：Discord 專用的常駐連線入口，把 Discord 的事件轉譯成呼叫 `app/commands/router.py`；它送出或建構的內容在 `app/discord_transport/`（`gateway`、`delivery`、`interactions`、持久化 Check／Luck／PDF 按鈕的 `controls`、Help 畫面的 `help_ui`），持久化按鈕的 `custom_id` 格式由 `tests/test_discord_custom_id_contract.py` 釘住
 - `app/commands/router.py`：**平台無關**的指令路由入口（取代舊版單一檔案 `app/commands.py`）——依關鍵字分派到下面的 handler 模組，自由文字（不是 `/coc` 指令）交給 `app/agents/supervisor.py`
 - `app/commands/handlers/`：依領域拆開的指令處理模組——`character.py`（建角／角色卡等 9 個子指令）、`combat.py`、`system.py`（`newgame`／`pdf`／`kp`／`scenario`／`status`／`era`… 等 12 個子指令，含劇本庫的 `/coc scenario` 系列）、`map_handler.py`（`showpage`／`where`／`enter`／`leavemap`）——這些模組委派給 `app/services/` 下既有、已驗證過的邏輯，不是重新實作
 - `app/services/scenario_ingestion.py`、`map_service.py`、`character_service.py`：原本集中在單一檔案 `app/legacy_commands.py`（第 4 階段已刪除，見[架構重構](docs/specs/refactor/architecture_refactor_phases_1_4_design_spec_zh.md)）的邏輯——PDF 上傳流程與預製角色合併、地圖上傳與移動解析、角色認領／離開回歸／治療／就緒名冊。`/coc check`／`/coc luck` 在 `app/checks`（玩家自己在程式碼裡擲骰，結果交給同一個 Supervisor 的 `resolved_check_followup` 入口敘事，不得重擲已結算的骰），戰鬥動作在 `app/services/combat_engine.py`

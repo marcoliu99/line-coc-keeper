@@ -3,6 +3,8 @@ import types
 import unittest
 from unittest.mock import patch
 
+from app.discord_transport import controls
+
 sys.modules.setdefault("yaml", types.SimpleNamespace(YAMLError=Exception, safe_load=lambda data: {}))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 sys.modules.setdefault(
@@ -14,7 +16,7 @@ sys.modules.setdefault(
     ),
 )
 
-from app import dice, discord_bot
+from app import dice
 
 
 class TierPercentageHintTests(unittest.TestCase):
@@ -23,21 +25,21 @@ class TierPercentageHintTests(unittest.TestCase):
     tier thresholds (dice.py's own skill_check uses the same formulas)."""
 
     def test_regular_threshold_is_the_full_skill_value(self):
-        self.assertEqual(discord_bot._tier_percentage_hint("regular", 45), "≤45")
+        self.assertEqual(controls.tier_percentage_hint("regular", 45), "≤45")
 
     def test_hard_threshold_is_floor_half(self):
-        self.assertEqual(discord_bot._tier_percentage_hint("hard", 45), "≤22")
+        self.assertEqual(controls.tier_percentage_hint("hard", 45), "≤22")
 
     def test_extreme_threshold_is_floor_fifth(self):
-        self.assertEqual(discord_bot._tier_percentage_hint("extreme", 45), "≤9")
+        self.assertEqual(controls.tier_percentage_hint("extreme", 45), "≤9")
 
     def test_critical_is_a_fixed_roll_not_a_fraction_of_skill(self):
-        self.assertEqual(discord_bot._tier_percentage_hint("critical", 45), "骰出 01")
+        self.assertEqual(controls.tier_percentage_hint("critical", 45), "骰出 01")
 
     def test_floor_division_edge_case_odd_skill_value(self):
         # 47 // 2 = 23, 47 // 5 = 9 — exercises the floor (not round) behavior.
-        self.assertEqual(discord_bot._tier_percentage_hint("hard", 47), "≤23")
-        self.assertEqual(discord_bot._tier_percentage_hint("extreme", 47), "≤9")
+        self.assertEqual(controls.tier_percentage_hint("hard", 47), "≤23")
+        self.assertEqual(controls.tier_percentage_hint("extreme", 47), "≤9")
 
     def test_delegates_to_dice_tier_upper_bound_instead_of_reimplementing_it(self):
         """Code-review regression: this hint used to hardcode
@@ -50,8 +52,8 @@ class TierPercentageHintTests(unittest.TestCase):
         it patches dice.tier_upper_bound with an obviously-wrong stub and
         asserts the hint reflects the stub, proving it isn't computing its
         own independent value."""
-        with patch.object(discord_bot.dice, "tier_upper_bound", return_value=999):
-            self.assertEqual(discord_bot._tier_percentage_hint("hard", 45), "≤999")
+        with patch.object(dice, "tier_upper_bound", return_value=999):
+            self.assertEqual(controls.tier_percentage_hint("hard", 45), "≤999")
 
 
 class DefenseChoiceHintTests(unittest.TestCase):
@@ -67,7 +69,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
             "attacker_tier": "hard",
             "options": [{"label": "閃避", "skill": "閃避", "skill_value": 45}],
         }
-        hint = discord_bot._defense_choice_hint(check)
+        hint = controls.defense_choice_hint(check)
         self.assertIn("困難成功", hint)
         self.assertIn("達到或高於", hint)
         self.assertIn("≤22", hint)
@@ -77,7 +79,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
             "attacker_tier": "hard",
             "options": [{"label": "反擊", "skill": "格鬥", "skill_value": 60}],
         }
-        hint = discord_bot._defense_choice_hint(check)
+        hint = controls.defense_choice_hint(check)
         # hard's next tier up is extreme — Fight Back must reach extreme,
         # not just match hard, since a tied Fight Back favors the attacker.
         self.assertIn("極難成功", hint)
@@ -93,7 +95,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
                 {"label": "反擊", "skill": "格鬥", "skill_value": 45},
             ],
         }
-        hint = discord_bot._defense_choice_hint(check)
+        hint = controls.defense_choice_hint(check)
         self.assertIn("一般成功", hint)  # Dodge: match "regular"
         self.assertIn("困難成功", hint)  # Fight Back: must beat it, needs "hard"
 
@@ -103,7 +105,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
         branch), so this must return "" rather than crash or fabricate a
         threshold for a tier comparison that doesn't apply to ranged at all."""
         check = {"options": [{"label": "閃避", "skill": "閃避", "skill_value": 45}]}
-        self.assertEqual(discord_bot._defense_choice_hint(check), "")
+        self.assertEqual(controls.defense_choice_hint(check), "")
 
     def test_fight_back_option_omitted_entirely_when_attacker_rolled_critical(self):
         """Defensive fallback: keeper.py's offer_npc_attack_defense_choice
@@ -115,7 +117,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
             "attacker_tier": "critical",
             "options": [{"label": "反擊", "skill": "格鬥", "skill_value": 60}],
         }
-        self.assertEqual(discord_bot._defense_choice_hint(check), "")
+        self.assertEqual(controls.defense_choice_hint(check), "")
 
     def test_fight_back_threshold_clamped_to_regular_when_attacker_fumbled(self):
         """Code-review regression: attacker_rank + 1 for a fumbled attacker
@@ -130,7 +132,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
             "attacker_tier": "fumble",
             "options": [{"label": "反擊", "skill": "格鬥", "skill_value": 60}],
         }
-        hint = discord_bot._defense_choice_hint(check)
+        hint = controls.defense_choice_hint(check)
         # Only assert on the "選擇「反擊」需要..." clause's own tier, not the
         # whole string — the leading "對方擲出「大失敗」" sentence legitimately
         # contains "失敗" as a substring of "大失敗" and would make a bare
@@ -149,7 +151,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
             "attacker_tier": "fumble",
             "options": [{"label": "閃避", "skill": "閃避", "skill_value": 60}],
         }
-        hint = discord_bot._defense_choice_hint(check)
+        hint = controls.defense_choice_hint(check)
         self.assertIn("大失敗", hint)
 
 
@@ -157,7 +159,7 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
     """User-requested comprehensive check: a Dodge 20% / Fight Back 45%
     investigator against every possible attacker_tier (fumble through
     critical). For each tier, cross-checks the UI hint's own threshold math
-    (_defense_choice_hint) against what dice.resolve_opposed actually rules
+    (controls.defense_choice_hint) against what dice.resolve_opposed actually rules
     for a roll landing exactly on that threshold — both must agree, since
     the whole point of the fumble-clamp fix (§4.2) was to stop the hint from
     promising a threshold that resolve_opposed wouldn't actually honor."""
@@ -175,7 +177,7 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
         }
 
     def test_attacker_fumble(self):
-        hint = discord_bot._defense_choice_hint(self._check("fumble"))
+        hint = controls.defense_choice_hint(self._check("fumble"))
         self.assertIn("選擇「閃避」需要達到或高於「大失敗」", hint)
         self.assertIn("選擇「反擊」需要高於「一般成功」（≤45）", hint)
         # Dodge: tying the attacker's own fumble is still "not hit" (both_miss).
@@ -187,14 +189,14 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
         self.assertEqual(dice.resolve_opposed("fail", "fumble", is_counter=True), "both_miss")
 
     def test_attacker_fail(self):
-        hint = discord_bot._defense_choice_hint(self._check("fail"))
+        hint = controls.defense_choice_hint(self._check("fail"))
         self.assertIn("選擇「閃避」需要達到或高於「失敗」", hint)
         self.assertIn("選擇「反擊」需要高於「一般成功」（≤45）", hint)
         self.assertEqual(dice.resolve_opposed("fail", "fail", is_counter=False), "both_miss")
         self.assertEqual(dice.resolve_opposed("regular", "fail", is_counter=True), "defender_wins")
 
     def test_attacker_regular(self):
-        hint = discord_bot._defense_choice_hint(self._check("regular"))
+        hint = controls.defense_choice_hint(self._check("regular"))
         self.assertIn("選擇「閃避」需要達到或高於「一般成功」（≤20）", hint)
         self.assertIn("選擇「反擊」需要高於「困難成功」（≤22）", hint)
         self.assertEqual(dice.resolve_opposed("regular", "regular", is_counter=False), "tie_defender_wins")
@@ -204,7 +206,7 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
         self.assertEqual(dice.resolve_opposed("regular", "regular", is_counter=True), "tie_attacker_wins")
 
     def test_attacker_hard(self):
-        hint = discord_bot._defense_choice_hint(self._check("hard"))
+        hint = controls.defense_choice_hint(self._check("hard"))
         self.assertIn("選擇「閃避」需要達到或高於「困難成功」（≤10）", hint)
         self.assertIn("選擇「反擊」需要高於「極難成功」（≤9）", hint)
         self.assertEqual(dice.resolve_opposed("hard", "hard", is_counter=False), "tie_defender_wins")
@@ -212,7 +214,7 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
         self.assertEqual(dice.resolve_opposed("hard", "hard", is_counter=True), "tie_attacker_wins")
 
     def test_attacker_extreme(self):
-        hint = discord_bot._defense_choice_hint(self._check("extreme"))
+        hint = controls.defense_choice_hint(self._check("extreme"))
         self.assertIn("選擇「閃避」需要達到或高於「極難成功」（≤4）", hint)
         self.assertIn("選擇「反擊」需要高於「大成功」（骰出 01）", hint)
         self.assertEqual(dice.resolve_opposed("extreme", "extreme", is_counter=False), "tie_defender_wins")
@@ -220,7 +222,7 @@ class DodgeVsCounterAcrossAllAttackerTiersTests(unittest.TestCase):
         self.assertEqual(dice.resolve_opposed("extreme", "extreme", is_counter=True), "tie_attacker_wins")
 
     def test_attacker_critical(self):
-        hint = discord_bot._defense_choice_hint(self._check("critical"))
+        hint = controls.defense_choice_hint(self._check("critical"))
         self.assertIn("選擇「閃避」需要達到或高於「大成功」（骰出 01）", hint)
         # Nothing beats Critical — Fight Back is omitted entirely, not shown
         # with an impossible threshold.

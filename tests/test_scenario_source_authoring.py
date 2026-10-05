@@ -17,6 +17,7 @@ from app import scenario_library as library
 from app import scenario_source_authoring as source
 from app import scenario_source_review as review
 from app import scenario_templates as templates
+from app.discord_transport import delivery, help_ui
 from app.models import GroupState
 
 
@@ -426,15 +427,14 @@ async def test_private_delivery_failure_does_not_publish_diagnostics(prepared, m
 async def test_discord_ready_controls_bind_new_version_owner_and_permission(monkeypatch):
     from types import SimpleNamespace
 
-    from app import discord_bot as bot
     state = GroupState(group_id='discord-channel-123')
-    monkeypatch.setattr(bot, 'load_group_state', lambda _: state)
+    monkeypatch.setattr(help_ui, 'load_group_state', lambda _: state)
     result = source.SourceReadyMessage('new-version', '42')
-    view = bot.SourceReadyView('discord-channel-123', result)
+    view = help_ui.SourceReadyView('discord-channel-123', result)
     assert [button.key for button in view.children] == ['template_export', 'source_use']
     assert help_actions.BY_KEY['source_use'].confirm
     finish_action = AsyncMock()
-    monkeypatch.setattr(bot, '_finish_help_action', finish_action)
+    monkeypatch.setattr(help_ui, 'finish_help_action', finish_action)
     interaction = SimpleNamespace(channel=SimpleNamespace(id=123), user=SimpleNamespace(id=42, roles=[]),
                                   response=SimpleNamespace(send_message=AsyncMock(), is_done=lambda: False))
     await view.children[0].callback(interaction)
@@ -463,12 +463,12 @@ async def test_discord_both_reply_adapters_attach_ready_buttons(monkeypatch):
     monkeypatch.setattr(bot.config, 'LOG_ENABLED', False)
     result = source.SourceReadyMessage('new-source', '42')
     channel = SimpleNamespace(id=123, send=AsyncMock())
-    await bot._make_reply(channel)(result)
-    assert isinstance(channel.send.call_args.kwargs['view'], bot.SourceReadyView)
+    await delivery.make_reply(channel)(result)
+    assert isinstance(channel.send.call_args.kwargs['view'], help_ui.SourceReadyView)
     interaction = SimpleNamespace(channel=channel, followup=SimpleNamespace(send=AsyncMock()))
-    await bot._make_interaction_reply(interaction)(result)
+    await delivery.make_interaction_reply(interaction)(result)
     assert interaction.followup.send.call_args.kwargs['ephemeral']
-    assert isinstance(interaction.followup.send.call_args.kwargs['view'], bot.SourceReadyView)
+    assert isinstance(interaction.followup.send.call_args.kwargs['view'], help_ui.SourceReadyView)
 
 
 def test_separate_processes_publish_one_version(prepared):

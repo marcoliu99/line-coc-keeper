@@ -49,18 +49,18 @@ class HelpActionPlanTests(unittest.TestCase):
 
 class HelpDiscordControlTests(unittest.TestCase):
     def test_detail_view_adds_executable_button_with_persistent_id(self):
-        from app.discord_bot import HelpExecuteButton, _help_view
+        from app.discord_transport.help_ui import HelpExecuteButton, help_view
         from app.help_registry import HelpPage
 
         page = HelpPage(("character", "pc"), "角色", "文字", ())
-        view = _help_view("discord-channel-123", page)
+        view = help_view("discord-channel-123", page)
         buttons = [item for item in view.children if isinstance(item, HelpExecuteButton)]
         self.assertEqual(len(buttons), 1)
         self.assertEqual(buttons[0].item.custom_id, "coc_help_run:discord-channel-123:pc")
         self.assertLessEqual(len(buttons[0].item.custom_id), 100)
 
     def test_select_pages_at_25_and_preserves_long_option_values(self):
-        from app.discord_bot import HelpOptionSelect, HelpSelectView
+        from app.discord_transport.help_ui import HelpOptionSelect, HelpSelectView
 
         options = [(f"劇本 {i}", "s" * 120 + str(i)) for i in range(26)]
         view = HelpSelectView(help_actions.BY_KEY["scenario_use"], "u", "discord-channel-123", 1, options)
@@ -72,7 +72,7 @@ class HelpDiscordControlTests(unittest.TestCase):
         self.assertTrue(last_page.next.disabled)
 
     def test_merge_requires_two_parts_and_keeps_selection_order(self):
-        from app.discord_bot import HelpMergeView
+        from app.discord_transport.help_ui import HelpMergeView
 
         action = help_actions.BY_KEY["scenario_merge"]
         parts = [("first", "one.pdf"), ("second", "two.pdf")]
@@ -85,14 +85,14 @@ class HelpDiscordControlTests(unittest.TestCase):
 
     def test_sudo_picker_contains_only_policy_allowed_commands(self):
         from app.commands import sudo
-        from app.discord_bot import _HELP_SUDO_COMMANDS
+        from app.discord_transport.help_ui import HELP_SUDO_COMMANDS
 
-        self.assertTrue(all(sudo.is_allowed_command(command.split()[0]) for command in _HELP_SUDO_COMMANDS))
-        self.assertNotIn("luck roll", _HELP_SUDO_COMMANDS)
-        self.assertNotIn("usepregen", _HELP_SUDO_COMMANDS)
+        self.assertTrue(all(sudo.is_allowed_command(command.split()[0]) for command in HELP_SUDO_COMMANDS))
+        self.assertNotIn("luck roll", HELP_SUDO_COMMANDS)
+        self.assertNotIn("usepregen", HELP_SUDO_COMMANDS)
 
     def test_execute_button_rejects_wrong_channel(self):
-        from app.discord_bot import HelpExecuteButton
+        from app.discord_transport.help_ui import HelpExecuteButton
 
         button = HelpExecuteButton("discord-channel-123", help_actions.BY_KEY["pc"])
         interaction = SimpleNamespace(
@@ -105,7 +105,7 @@ class HelpDiscordControlTests(unittest.TestCase):
         )
 
     def test_help_dispatch_uses_command_router_with_clicker_identity_and_revision(self):
-        from app.discord_bot import _dispatch_help_command
+        from app.discord_transport.help_ui import dispatch_help_command
 
         state = GroupState(group_id="discord-channel-123")
         state.state_revision = 7
@@ -114,11 +114,11 @@ class HelpDiscordControlTests(unittest.TestCase):
             user=SimpleNamespace(id=42, display_name="Player", roles=[]),
             response=SimpleNamespace(defer=AsyncMock()),
         )
-        with patch("app.discord_bot.load_group_state", return_value=state), \
-             patch("app.discord_bot.help_service.get_page", return_value=SimpleNamespace(title="角色")), \
-             patch("app.discord_bot.command_router.handle_text_message", new_callable=AsyncMock) as route, \
-             patch("app.discord_bot._post_pending_buttons", new_callable=AsyncMock):
-            asyncio.run(_dispatch_help_command(
+        with patch("app.discord_transport.help_ui.load_group_state", return_value=state), \
+             patch("app.help_service.get_page", return_value=SimpleNamespace(title="角色")), \
+             patch("app.commands.router.handle_text_message", new_callable=AsyncMock) as route, \
+             patch("app.discord_transport.controls.post_pending_buttons", new_callable=AsyncMock):
+            asyncio.run(dispatch_help_command(
                 interaction, help_actions.BY_KEY["pc"], "/coc pc 小明", 7,
             ))
         interaction.response.defer.assert_awaited_once()

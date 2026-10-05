@@ -449,7 +449,7 @@ async def handle_luck_button(
 
 
 async def handle_pdf_choice_button(conversation_id: str, choice: PdfChoice, user_id: str, reply: Reply) -> None:
-    """A PDF upload choice button click enters here (discord_bot.PdfUploadChoiceButton).
+    """A PDF upload choice button click enters here (discord_transport.controls.PdfUploadChoiceButton).
 
     The caller has already refused the click for an unauthorized member
     without touching the buttons; handle_pdf_choice re-checks under the

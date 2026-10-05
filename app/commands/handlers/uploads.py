@@ -157,5 +157,5 @@ async def resolve_pdf_upload_choice(
 
 async def handle_pdf_choice(conversation_id: str, choice: PdfChoice, user_id: str, reply: Reply) -> None:
     """The GM's answer to the new-scenario-vs-correction choice a PDF
-    re-upload posted (discord_bot.PdfUploadChoiceButton)."""
+    re-upload posted (discord_transport.controls.PdfUploadChoiceButton)."""
     await resolve_pdf_upload_choice(conversation_id, choice, reply, user_id=user_id)
