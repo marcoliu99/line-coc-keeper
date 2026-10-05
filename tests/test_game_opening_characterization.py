@@ -10,7 +10,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app import config, db, keeper, scenario_intro
+from app import config, db, scenario_intro, turn_commit
 from app.commands import router
 from app.commands.handlers import system
 from app.models import BASE_SKILLS, Character, GroupState
@@ -718,7 +718,7 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
             self.group, lambda ctx: setattr(ctx.state, "timeline_id", "timeline-new"),
             reason="test_timeline_replacement",
         )
-        self.assertFalse(keeper._commit_turn_result(
+        self.assertFalse(turn_commit.commit_turn_result(
             old, [{"role": "assistant", "content": "舊開場"}],
             timeline_id="timeline-opening", start_game=True,
         ))

@@ -2,7 +2,7 @@
 
 [繁體中文](keeper_module_split_design_spec_zh.md)
 
-Status: **partial** — step 1 (prompt construction) implemented; steps 2–3 pending. Base: `main_v2` at `b54c986`.
+Status: **partial** — steps 1 (prompt construction) and 2 (turn commit, memory maintenance) implemented; step 3 pending. Base: `main_v2` at `b54c986`.
 
 ## Problem
 
@@ -15,7 +15,7 @@ This is a move, not a redesign. A function keeps its body, its arguments and its
 ## Steps
 
 1. **`app/prompt_builder.py`** (this step): `build_static_prompt`, `build_dynamic_prompt`, `correction_context_message`, `format_turn_message`, `format_kp_canonical_history_message`, the persona and KP Assistant prompt constants, and the scenario-budget and spoiler/privacy rule helpers. Their private names become public and every caller follows. `KP_OOC_LOG_MAX_MESSAGES` moves to `app/config.py` because both the prompt and the turn commit read it.
-2. **`turn_commit.py` and `memory_maintenance.py`**: `_commit_turn_result`, `_commit_kp_ooc_turn_result`, timeline guarantees; post-turn maintenance and log summarisation.
+2. **`app/turn_commit.py` and `app/memory_maintenance.py`** (implemented): `ensure_turn_timeline`, `commit_turn_result`, `commit_kp_ooc_turn_result` and `OpeningStartRejected`; post-turn maintenance (`run_post_turn_maintenance`, the scene-digest pass, the memory persist step and `summarize_log_chunk`). Tests that patched `keeper.MAX_LOG_TURNS`, `keeper.conversation_provider` or `keeper.scene_digest` to steer maintenance now patch `memory_maintenance`.
 3. **`tool_dispatch.py`** and a new gate: `keeper_tools` must not import `keeper`.
 
 No compatibility re-exports are left behind in `keeper.py`; tests and callers are updated to the new names in the same change.

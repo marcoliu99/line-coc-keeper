@@ -7,12 +7,12 @@ from typing import Any
 
 from app import (
     config,
-    keeper,
     locks,
     observability,
     opening_identity,
     presentation,
     spoiler_policy,
+    turn_commit,
 )
 from app.agents import (
     assistant,
@@ -174,7 +174,7 @@ async def run_turn(
     # tools may initialize or persist timeline-bound state; without this
     # early capture, a legacy state with no timeline would later fall back to
     # ``legacy-*`` and the canonical log commit could reject the whole turn.
-    turn_timeline_id = keeper._ensure_turn_timeline(state)
+    turn_timeline_id = turn_commit.ensure_turn_timeline(state)
     # One id for this run of the turn: a retry of its final commit is the same
     # action, a later turn is not.
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
@@ -409,7 +409,7 @@ async def run_turn(
     # this function's own `state` object so a caller that keeps using it
     # afterward sees the up-to-date snapshot.
     if state.game_started or turn_kind != "player_action":
-        committed = keeper._commit_turn_result(
+        committed = turn_commit.commit_turn_result(
             state,
             [
                 {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},

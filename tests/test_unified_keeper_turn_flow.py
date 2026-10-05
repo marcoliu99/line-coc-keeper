@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from app import config, db, keeper, scenario_intro
+from app import config, db, keeper, scenario_intro, turn_commit
 from app.agents import assistant, narrator, supervisor
 from app.checks.models import CheckOutcome
 from app.commands.handlers import checks as check_commands
@@ -328,7 +328,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
                          return_value=_context(state, "檢定結果")),
             patch.object(supervisor.intent_router, "classify_intent", side_effect=AssertionError("special turn was classified")),
             patch.object(supervisor.executor, "run_executor", side_effect=AssertionError("check was rerolled")),
-            patch.object(supervisor.keeper, "_commit_turn_result", commit),
+            patch.object(supervisor.turn_commit, "commit_turn_result", commit),
             patch.object(narrator.keeper, "_execute_tool", execute),
             patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}),
             patch.object(config, "LLM_PROVIDER", "openai"),
@@ -370,7 +370,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
                          return_value=_context(state, "開場後備")),
             patch.object(supervisor.intent_router, "classify_intent", side_effect=AssertionError("opening was classified")),
             patch.object(supervisor.executor, "run_executor", side_effect=AssertionError("opening used Executor")),
-            patch.object(supervisor.keeper, "_commit_turn_result", commit),
+            patch.object(supervisor.turn_commit, "commit_turn_result", commit),
             patch.object(narrator, "tools_for_speaker_role", return_value=[
                 {"name": "search_scenario"}, {"name": "skill_check"},
             ]),
@@ -398,7 +398,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(supervisor.context_builder, "build_context", new_callable=AsyncMock,
                          return_value=_context(state, "開場後備")),
-            patch.object(supervisor.keeper, "_commit_turn_result", commit),
+            patch.object(supervisor.turn_commit, "commit_turn_result", commit),
             patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}),
             patch.object(config, "LLM_PROVIDER", "openai"),
         ):
@@ -424,7 +424,7 @@ class OpeningCommitTests(unittest.TestCase):
                 {"role": "user", "content": "守密人：開始遊戲"},
                 {"role": "assistant", "content": "你站在書房門前。"},
             ]
-            self.assertTrue(keeper._commit_turn_result(
+            self.assertTrue(turn_commit.commit_turn_result(
                 state, entries, timeline_id="timeline-current", start_game=True,
             ))
             saved = load_state("start-commit")
@@ -434,7 +434,7 @@ class OpeningCommitTests(unittest.TestCase):
             )
             self.assertEqual([entry["authority"] for entry in saved.log], ["claim", "presentation"])
             committed_log = saved.log
-            self.assertFalse(keeper._commit_turn_result(
+            self.assertFalse(turn_commit.commit_turn_result(
                 state, entries, timeline_id="timeline-current", start_game=True,
             ))
             self.assertEqual(load_state("start-commit").log, committed_log)

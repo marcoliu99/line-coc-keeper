@@ -2,7 +2,7 @@
 
 [English](keeper_module_split_design_spec.md)
 
-狀態：**partial（部分完成）**——第 1 步（提示建構）已實作，第 2、3 步待做。基準：`main_v2` 於 `b54c986`。
+狀態：**partial（部分完成）**——第 1 步（提示建構）與第 2 步（回合提交、記憶維護）已實作，第 3 步待做。基準：`main_v2` 於 `b54c986`。
 
 ## 問題
 
@@ -15,7 +15,7 @@
 ## 步驟
 
 1. **`app/prompt_builder.py`**（本步）：`build_static_prompt`、`build_dynamic_prompt`、`correction_context_message`、`format_turn_message`、`format_kp_canonical_history_message`、人格與 KP Assistant 提示常數，以及劇本預算與防劇透／隱私規則輔助函式。私有名稱改為公開，所有呼叫端一併更新。`KP_OOC_LOG_MAX_MESSAGES` 移到 `app/config.py`，因為提示與回合提交都會讀它。
-2. **`turn_commit.py` 與 `memory_maintenance.py`**：`_commit_turn_result`、`_commit_kp_ooc_turn_result`、時間線保證；回合後維護與日誌摘要。
+2. **`app/turn_commit.py` 與 `app/memory_maintenance.py`**（已實作）：`ensure_turn_timeline`、`commit_turn_result`、`commit_kp_ooc_turn_result` 與 `OpeningStartRejected`；回合後維護（`run_post_turn_maintenance`、場景摘要、記憶寫入步驟與 `summarize_log_chunk`）。原本 patch `keeper.MAX_LOG_TURNS`、`keeper.conversation_provider` 或 `keeper.scene_digest` 來控制維護的測試，改為 patch `memory_maintenance`。
 3. **`tool_dispatch.py`** 與新閘門：`keeper_tools` 不得 import `keeper`。
 
 `keeper.py` 不留相容轉出；測試與呼叫端在同一個變更中改用新名稱。

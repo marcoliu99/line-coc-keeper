@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import config, db, keeper, observability
+from app import config, db, memory_maintenance, observability
 from app.agents import supervisor
 from app.commands import router
 from app.domain.models import AgentMessage
@@ -60,7 +60,7 @@ def test_real_adapter_request_baseline(tmp_path, monkeypatch, route, expected_re
     with task_trace.capture() as trace, \
          patch.object(supervisor.context_builder, "build_context", AsyncMock(side_effect=context)), \
          patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION" if gameplay else "PURE_ROLEPLAY"), \
-         patch.object(keeper.scene_digest, "latest_digest", return_value=None), \
+         patch.object(memory_maintenance.scene_digest, "latest_digest", return_value=None), \
          patch.object(router, "run_post_turn_maintenance_after_output", side_effect=deliver):
         if route in {"ordinary_route", "sudo_route"}:
             reply = AsyncMock()

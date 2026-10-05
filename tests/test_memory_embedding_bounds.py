@@ -12,8 +12,8 @@ import pytest
 from app import (
     db,
     embedding_execution,
-    keeper,
     memory_chunking,
+    memory_maintenance,
     memory_rag,
     observability,
 )
@@ -108,7 +108,7 @@ def commit(group_id: str, rows: list[dict[str, str]], prepared: memory_rag.Prepa
     state = GroupState(group_id, timeline_id="timeline-a", log=list(rows))
     group_state.save_state(state)
     stored = group_state.load_state(group_id)
-    return keeper._persist_memory_maintenance_state(
+    return memory_maintenance._persist_memory_maintenance_state(
         group_id, "摘要", rows, timeline_id="timeline-a", base_summary=stored.campaign_summary,
         source_revision=stored.state_revision, idempotency_key=key, embedding=None, prepared=prepared,
     )
@@ -311,10 +311,10 @@ def test_maintenance_never_stores_one_unbounded_chunk() -> None:
     state = GroupState("g12", timeline_id="timeline-a")
     state.log = messages(40)
     group_state.save_state(state)
-    with patch.object(keeper, "MAX_LOG_TURNS", 1), patch.object(keeper, "run_scene_digest_maintenance"), \
-            patch.object(keeper, "summarize_log_chunk", return_value="摘要"), \
+    with patch.object(memory_maintenance, "MAX_LOG_TURNS", 1), patch.object(memory_maintenance, "run_scene_digest_maintenance"), \
+            patch.object(memory_maintenance, "summarize_log_chunk", return_value="摘要"), \
             patch.object(memory_rag, "_embed_texts", vectors):
-        result = keeper.run_post_turn_maintenance("g12")
+        result = memory_maintenance.run_post_turn_maintenance("g12")
     assert result["commit_status"] == "committed" and result["embedding_updated"] is True
     chunks = db.get_json("memory_chunks", "g12")
     assert len(chunks) > 1 and all(len(c["text"]) <= LIMIT and c["embedding"] is not None for c in chunks)
@@ -324,8 +324,8 @@ def test_maintenance_gives_earlier_gaps_another_chance_before_it_trims() -> None
     stored_without_vector("g13", count=2)
     state = GroupState("g13", timeline_id="timeline-a")
     group_state.save_state(state)
-    with patch.object(keeper, "run_scene_digest_maintenance"), patch.object(memory_rag, "_embed_texts", vectors):
-        keeper.run_post_turn_maintenance("g13")
+    with patch.object(memory_maintenance, "run_scene_digest_maintenance"), patch.object(memory_rag, "_embed_texts", vectors):
+        memory_maintenance.run_post_turn_maintenance("g13")
     assert all(c["embedding"] is not None for c in db.get_json("memory_chunks", "g13"))
 
 

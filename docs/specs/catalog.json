@@ -2005,6 +2005,8 @@
       "status": "partial",
       "evidence": [
         "app/prompt_builder.py",
+        "app/turn_commit.py",
+        "app/memory_maintenance.py",
         "app/keeper.py",
         "tests/test_static_prompt_integration.py",
         "tests/test_spoiler_policy.py"

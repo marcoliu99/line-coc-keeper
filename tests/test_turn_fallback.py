@@ -67,14 +67,14 @@ async def _turn(state, executor_results, *, narration="敘事", rag_status="succ
     run_executor = AsyncMock(side_effect=executor_results)
     searched = MagicMock(side_effect=search) if isinstance(search, Exception) else MagicMock(return_value=search)
     with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", run_executor), \
             patch.object(supervisor.context_builder, "search_scenario_context", searched), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", narrator or AsyncMock(return_value=(narration, [], []))), \
             patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
-            patch.object(supervisor.keeper, "_commit_turn_result", return_value=True):
+            patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         reply, _, _ = await supervisor.run_turn(
             state=state, user_id="u1", display_name="P1", text=text, resolved_location={"name": "大廳"},
             speaker_role="player", conversation_id="g",
@@ -272,13 +272,13 @@ async def test_a_failed_narration_is_logged_as_one(events) -> None:
 async def test_a_refused_commit_is_logged_as_a_state_conflict(events) -> None:
     state = _state()
     state.game_started = True
-    with patch.object(supervisor.keeper, "_commit_turn_result", return_value=False):
+    with patch.object(supervisor.turn_commit, "commit_turn_result", return_value=False):
         message = AgentMessage(payload={
             "conversation_id": "g", "user_id": "u1", "display_name": "P1", "text": "x", "resolved_location": None,
             "speaker_role": "player", "state": state, "character": None, "rag_context": "", "memory_context": "",
         })
         with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=_resolved())), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \

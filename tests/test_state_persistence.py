@@ -9,7 +9,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from app import checkpoints, db, keeper, prompt_builder, scene_digest
+from app import (
+    checkpoints,
+    db,
+    keeper,
+    memory_maintenance,
+    prompt_builder,
+    scene_digest,
+)
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import system as system_handler
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
@@ -336,10 +343,9 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_maintenance_guard_runs_before_scene_digest(self):
         group_id = "discord-group-maintenance-guard"
-        with patch.object(keeper, "_maintenance_in_flight", {group_id}), patch.object(
-            keeper, "run_scene_digest_maintenance"
+        with patch.object(memory_maintenance, "_maintenance_in_flight", {group_id}), patch.object(memory_maintenance, "run_scene_digest_maintenance"
         ) as digest:
-            keeper.run_post_turn_maintenance(group_id)
+            memory_maintenance.run_post_turn_maintenance(group_id)
         digest.assert_not_called()
 
     def test_character_mirrors_are_scoped_by_group(self):
@@ -483,7 +489,7 @@ class StatePersistenceTests(unittest.TestCase):
                 raise sqlite3.OperationalError("outer commit failed")
 
         with patch.object(db, "_connect", failing_commit), patch.object(group_state.StateCommit, "apply") as publish, self.assertRaises(sqlite3.OperationalError):
-            keeper._persist_memory_maintenance_state(
+            memory_maintenance._persist_memory_maintenance_state(
                 state.group_id, "new summary", state.log, timeline_id=state.timeline_id,
                 base_summary="", source_revision=state.state_revision,
                 idempotency_key="failed-maintenance", embedding=[],
@@ -957,7 +963,7 @@ class StatePersistenceTests(unittest.TestCase):
 
         state.log = state.log[-3:]
         group_state.save_state(state)
-        keeper.run_scene_digest_maintenance(state.group_id)
+        memory_maintenance.run_scene_digest_maintenance(state.group_id)
 
         entries = scene_digest.list_digests(state.group_id)
         self.assertEqual(len(entries), 2)

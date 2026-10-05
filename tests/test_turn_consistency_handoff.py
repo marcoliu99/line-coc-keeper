@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import combat, config, db, keeper, prompt_builder
+from app import combat, config, db, keeper, memory_maintenance, prompt_builder
 from app.agents import executor, supervisor
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
@@ -45,7 +45,7 @@ def message(state):
 def test_pending_and_luck_are_authoritative_inputs(state):
     state.pending_checks["a"] = pending()
     state.pending_luck_decisions["b"] = {"decision_id": "luck-b", "roll": 68, "action_context": "閃避"}
-    with patch.object(keeper.scene_digest, "latest_digest", return_value=None):
+    with patch.object(memory_maintenance.scene_digest, "latest_digest", return_value=None):
         text = prompt_builder.build_dynamic_prompt(state, "a")
     for value in ("old", "製作道具", "luck-b", "閃避", '"owner_id": "b"'):
         assert value in text
@@ -58,7 +58,7 @@ def test_history_does_not_supply_old_inventory_or_combat(state):
         "consumed_or_removed_items": [{"item": "煤油兩瓶"}], "known_clues": [{"text": "線索"}],
     }, "private": {"combat": {"name": "STALE_COMBAT"}, "facts": [{"text": "秘密線索"}]}}
     saved = deepcopy(old)
-    with patch.object(keeper.scene_digest, "latest_digest", return_value=old):
+    with patch.object(memory_maintenance.scene_digest, "latest_digest", return_value=old):
         text = prompt_builder.build_dynamic_prompt(state, "a")
     assert "一瓶煤油" in text and "煤油兩瓶" in text and "秘密線索" in text
     assert "STALE_INVENTORY" not in text and "STALE_COMBAT" not in text

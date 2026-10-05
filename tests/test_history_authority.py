@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from app import db, keeper, memory_rag
+from app import db, memory_maintenance, memory_rag, turn_commit
 from app.models import GroupState
 from app.providers.conversation_session import ConversationSession
 from app.repositories.group_state import load_state, save_state
@@ -42,8 +42,8 @@ class HistoryAuthorityTests(unittest.TestCase):
         ]
         provider = Mock()
         provider.analyze_text.return_value = {"summary": "已標明來源的摘要"}
-        with patch.object(keeper, "conversation_provider", return_value=provider):
-            self.assertEqual(keeper.summarize_log_chunk("舊摘要", history), "已標明來源的摘要")
+        with patch.object(memory_maintenance, "conversation_provider", return_value=provider):
+            self.assertEqual(memory_maintenance.summarize_log_chunk("舊摘要", history), "已標明來源的摘要")
         formatted_history, _, prompt = provider.analyze_text.call_args.args
         self.assertIn("presentation only", formatted_history)
         self.assertIn("錯誤的教會紀錄", formatted_history)
@@ -75,7 +75,7 @@ class HistoryAuthorityTests(unittest.TestCase):
             db._ensure_tables()
             state = GroupState(group_id="authority-commit", timeline_id="timeline-1")
             save_state(state)
-            self.assertTrue(keeper._commit_turn_result(
+            self.assertTrue(turn_commit.commit_turn_result(
                 state,
                 [{"role": "user", "content": "我有一把鑰匙"},
                  {"role": "assistant", "content": "你看見一本日記"}],

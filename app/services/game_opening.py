@@ -22,6 +22,7 @@ from app import (
     observability,
     opening_identity,
     scenario_intro,
+    turn_commit,
 )
 from app.agents import supervisor
 from app.check_identity import PendingCheckBlocker
@@ -315,7 +316,7 @@ async def _run_fallback(
                 expected_opening_context=token.context if token else None,
                 expected_opening_participants=token.character_set if token else None,
             )
-        except keeper.OpeningStartRejected as exc:
+        except turn_commit.OpeningStartRejected as exc:
             if exc.reason == "source_changed":
                 return OpeningResult("rejected", reason="source_changed")
             if exc.reason == "already_started":

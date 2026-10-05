@@ -54,7 +54,7 @@
 
 **觀察。** 結束時 8 個記憶 chunk 全沒有 embedding；其中一個約 18,384 字元（~19,259 token）。
 
-**程式裡確定的。** 每次裁切 log 就是一個 chunk、一個 embedding 輸入（`keeper.run_post_turn_maintenance` → `memory_rag.prepare_memory_embedding`），沒有任何長度限制；失敗時只回 `None`，沒有診斷、沒有補做。
+**程式裡確定的。** 每次裁切 log 就是一個 chunk、一個 embedding 輸入（`memory_maintenance.run_post_turn_maintenance` → `memory_rag.prepare_memory_embedding`），沒有任何長度限制；失敗時只回 `None`，沒有診斷、沒有補做。
 
 **沒有證實的。** provider 是否因為 ~19k token 超過上限而拒絕——當時沒有擷取拒絕內容。
 

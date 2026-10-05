@@ -264,10 +264,10 @@ class SupervisorGateTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(config, "NARRATION_OUTSIDE_MUTATION_LOCK", enabled), \
                 patch.object(supervisor.config, "NARRATION_OUTSIDE_MUTATION_LOCK", enabled), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="t"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="t"), \
                 patch.object(supervisor.context_builder, "build_context", context), \
                 patch.object(supervisor.narrator, "run_narrator", narrate), \
-                patch.object(supervisor.keeper, "_commit_turn_result", lambda *a, **k: True), \
+                patch.object(supervisor.turn_commit, "commit_turn_result", lambda *a, **k: True), \
                 patch.object(supervisor.guard, "enforce_narrative_safety",
                              lambda _m, text: _coro(text)):
             await supervisor.run_turn(

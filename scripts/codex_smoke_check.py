@@ -5,6 +5,8 @@ import asyncio
 import json
 from unittest.mock import patch
 
+from app import turn_commit
+
 
 async def run_check(provider):
     from app import keeper
@@ -19,7 +21,7 @@ async def run_check(provider):
                                           skills={'偵查': 70}, luck=0)
     state.scenario_text = 'A sealed desk contains a faded document. A successful Spot Hidden check reveals the date 1925.'
     group_state.save_state(state)  # the first save assigns the timeline
-    keeper._ensure_turn_timeline(state)
+    turn_commit.ensure_turn_timeline(state)
     check_tool = next(t for t in keeper.TOOLS if t['name'] == 'skill_check')
     receipts = []
     gateway = make_tool_executor(state, [], [], 'player', [])
