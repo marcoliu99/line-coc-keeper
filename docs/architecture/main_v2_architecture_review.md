@@ -13,7 +13,7 @@ The numbers in this document (line counts, function lengths, cycle counts) descr
 | Roadmap item | Finding | Status | PR |
 | --- | --- | --- | --- |
 | P0 one summary line per turn (independent of `LOG_ENABLED`), a short code on internal errors | F2, F7 | **merged** | [#195](https://github.com/marcoliu99/line-coc-keeper/pull/195) |
-| P0 one boolean parser, configuration guide, README lists the new modules | F8 (part), F15 | in review | [#196](https://github.com/marcoliu99/line-coc-keeper/pull/196) |
+| P0 one boolean parser, configuration guide, README lists the new modules | F8 (part), F15 | **merged** | [#196](https://github.com/marcoliu99/line-coc-keeper/pull/196) |
 | P2 split `keeper.py`: prompt construction | F9 | **merged** | [#189](https://github.com/marcoliu99/line-coc-keeper/pull/189) |
 | P2 split `keeper.py`: turn commit, memory maintenance | F9 | **merged** | [#192](https://github.com/marcoliu99/line-coc-keeper/pull/192) |
 | P2 split `keeper.py`: tool dispatch, `keeper_tools/support`, import gate; delete `keeper.py` | F9 | **merged** | [#193](https://github.com/marcoliu99/line-coc-keeper/pull/193) |

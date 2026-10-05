@@ -13,7 +13,7 @@
 | 路線圖項目 | 對應發現 | 狀態 | PR |
 | --- | --- | --- | --- |
 | P0 每回合一行摘要（不依賴 `LOG_ENABLED`）、內部錯誤附短碼 | F2、F7 | **已合併** | [#195](https://github.com/marcoliu99/line-coc-keeper/pull/195) |
-| P0 布林設定統一、設定指南、README 補上新模組 | F8（部分）、F15 | 審查中 | [#196](https://github.com/marcoliu99/line-coc-keeper/pull/196) |
+| P0 布林設定統一、設定指南、README 補上新模組 | F8（部分）、F15 | **已合併** | [#196](https://github.com/marcoliu99/line-coc-keeper/pull/196) |
 | P2 拆 `keeper.py`：提示建構 | F9 | **已合併** | [#189](https://github.com/marcoliu99/line-coc-keeper/pull/189) |
 | P2 拆 `keeper.py`：回合提交、記憶維護 | F9 | **已合併** | [#192](https://github.com/marcoliu99/line-coc-keeper/pull/192) |
 | P2 拆 `keeper.py`：工具分派、`keeper_tools/support`、import 閘門；刪除 `keeper.py` | F9 | **已合併** | [#193](https://github.com/marcoliu99/line-coc-keeper/pull/193) |
