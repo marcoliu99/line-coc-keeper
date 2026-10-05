@@ -3,10 +3,11 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app import config
+from app import config, prompt_builder, tool_dispatch
 from app.agents import narrator
 from app.agents.tool_gateway import _record_check_status
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
+from app.keeper_tools import registry as tool_registry
 from app.providers import registry
 from app.services.prompt_config import (
     build_mechanic_facts_block,
@@ -171,7 +172,6 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
 
 class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolved_check_followup_exposes_combat_tools_without_new_roll(self):
-        from app import keeper
         from app.models import GroupState
 
         class FakeProvider:
@@ -194,9 +194,9 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(config, "LLM_PROVIDER", "openai"), \
                 patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}), \
-                patch.object(keeper, "_build_static_prompt", return_value="static"), \
-                patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
-                patch.object(keeper, "_tools_for_speaker_role", wraps=keeper._tools_for_speaker_role):
+                patch.object(prompt_builder, "build_static_prompt", return_value="static"), \
+                patch.object(prompt_builder, "build_dynamic_prompt", return_value="dynamic"), \
+                patch.object(tool_dispatch, "tools_for_speaker_role", wraps=tool_dispatch.tools_for_speaker_role):
             reply, _, _ = await narrator.run_narrator(AgentMessage(payload={
                 "state": state, "user_id": "u1", "display_name": "Mick",
                 "text": "STR 檢定結果", "speaker_role": "player",
@@ -206,7 +206,7 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
         args, _kwargs = provider.args
         offered_tools = args[2]
         offered_names = {tool["name"] for tool in offered_tools}
-        self.assertTrue(offered_names <= keeper.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES)
+        self.assertTrue(offered_names <= tool_registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES)
         self.assertTrue({"apply_combat_damage", "apply_final_combat_damage", "advance_combat_turn"} <= offered_names)
         self.assertNotIn("skill_check", offered_names)
         self.assertIn("擲出 69", args[1])
@@ -214,7 +214,6 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply, "你的行動尚未結算，等輪到你再敲。")
 
     async def test_resolved_check_can_execute_damage_followup(self):
-        from app import keeper
         from app.models import GroupState
 
         class FakeProvider:
@@ -237,9 +236,9 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(config, "LLM_PROVIDER", "openai"), \
                 patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": provider}), \
-                patch.object(keeper, "_build_static_prompt", return_value="static"), \
-                patch.object(keeper, "_build_dynamic_prompt", return_value="dynamic"), \
-                patch.object(keeper, "_execute_tool", side_effect=execute):
+                patch.object(prompt_builder, "build_static_prompt", return_value="static"), \
+                patch.object(prompt_builder, "build_dynamic_prompt", return_value="dynamic"), \
+                patch.object(tool_dispatch, "execute_tool", side_effect=execute):
             await narrator.run_narrator(AgentMessage(payload={
                 "state": state, "user_id": "u1", "display_name": "Mick",
                 "text": "防守檢定結果", "speaker_role": "player",

@@ -349,7 +349,7 @@ class Character:
     def static_sheet_text(self) -> str:
         """The part of the sheet that almost never changes turn to turn
         (attributes, occupation, skills) — see app/keeper.py's
-        _build_static_prompt, which puts this in the *cached* system-prompt
+        build_static_prompt, which puts this in the *cached* system-prompt
         block. dynamic_state_text() below is the counterpart: just the
         handful of numbers that actually change, resent fresh every turn."""
         lines = [
@@ -393,7 +393,7 @@ class Character:
 
     def keeper_notes_text(self) -> str:
         """Extra context for the Keeper's own prompt only (see
-        app/keeper.py:_build_dynamic_prompt) — never rendered anywhere a player
+        app/prompt_builder.py:build_dynamic_prompt) — never rendered anywhere a player
         would see it. Currently just the secret goal, sent to the player
         privately once when the character is created (see app/commands.py) and
         repeated here so the Keeper can keep nudging toward it narratively
@@ -1047,7 +1047,7 @@ class GroupState:
     scenario_location_index: list[dict[str, Any]] = field(default_factory=list)
 
     # Per-group override of the Keeper's tone/persona (see app/keeper.py's
-    # DEFAULT_PERSONA and _build_static_prompt) — empty string means "use the
+    # DEFAULT_PERSONA and build_static_prompt) — empty string means "use the
     # built-in default cold-observer persona", set via /coc setpersona.
     keeper_persona: str = ""
 

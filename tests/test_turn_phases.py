@@ -278,13 +278,13 @@ async def _supervised(state, turn_kind, *, prefetched=None, reuse=True):
                               turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
     with patch.object(config, "RETRIEVAL_REUSE_FOR_FOLLOWUPS", reuse), \
             patch.object(supervisor.context_builder, "build_context", build), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=("敘事", [], []))), \
             patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
-            patch.object(supervisor.keeper, "_commit_turn_result", return_value=True):
+            patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         kwargs: dict[str, Any] = {"turn_kind": turn_kind}
         if turn_kind == "resolved_check_followup":
             kwargs["resolved_check_context"] = {"check_id": "c1", "owner_id": "a"}
@@ -338,7 +338,7 @@ async def test_a_turn_may_search_the_scenario_only_so_many_times(events) -> None
         calls.append(name)
         return {"ok": True, "results": "內容"}
 
-    with patch.object(tool_gateway.keeper, "_execute_tool", fake_tool):
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", fake_tool):
         execute = tool_gateway.make_tool_executor(state, [], [], "player", facts, scenario_search_limit=2, actor_id="a")
         results = [await execute("search_scenario", {"query": f"q{n}"}) for n in range(4)]
         other = await execute("get_character_sheet", {"investigator": "Marco"})
@@ -350,7 +350,7 @@ async def test_a_turn_may_search_the_scenario_only_so_many_times(events) -> None
 @aio
 async def test_without_a_limit_searching_is_unbounded() -> None:
     facts: list[str] = []
-    with patch.object(tool_gateway.keeper, "_execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):
         execute = tool_gateway.make_tool_executor(make_state(), [], [], "player", facts, actor_id="a")
         assert all([(await execute("search_scenario", {"query": "q"}))["ok"] for _ in range(10)])
 
@@ -398,7 +398,7 @@ async def test_a_retrieval_that_finished_before_the_turn_reached_the_supervisor_
 @aio
 async def test_a_retry_and_the_recovery_search_share_the_turns_search_allowance(events) -> None:
     facts: list[str] = []
-    with patch.object(tool_gateway.keeper, "_execute_tool", lambda *a, **k: {"ok": True, "results": "x"}), \
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: {"ok": True, "results": "x"}), \
             observability.context(turn_id="turn-shared-1"):
         first = tool_gateway.make_tool_executor(make_state(), [], [], "player", facts, scenario_search_limit=3, actor_id="a")
         assert [(await first("search_scenario", {"query": "q"}))["ok"] for _ in range(2)] == [True, True]
@@ -407,7 +407,7 @@ async def test_a_retry_and_the_recovery_search_share_the_turns_search_allowance(
         assert (await retry("search_scenario", {"query": "q"}))["error"] == "scenario_search_limit_reached"
     with observability.context(turn_id="turn-shared-2"):
         fresh = tool_gateway.make_tool_executor(make_state(), [], [], "player", facts, scenario_search_limit=3, actor_id="a")
-        with patch.object(tool_gateway.keeper, "_execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):
+        with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):
             assert (await fresh("search_scenario", {"query": "q"}))["ok"]
 
 

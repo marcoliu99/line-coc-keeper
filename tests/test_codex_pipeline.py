@@ -4,12 +4,13 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from app import config, keeper
+from app import config, tool_dispatch, turn_commit
 from app.agents import supervisor
 from app.commands.handlers import checks as check_commands
 from app.models import Character, GroupState
 from app.providers import codex_provider
 from app.repositories import group_state
+from app.repositories.group_state import load_state
 from app.services.turn_context import character_id
 
 
@@ -19,7 +20,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
         state.characters['u'] = Character(name='Marco', owner_id='u', skills={'偵查': 70}, luck=0)
         state.scenario_text = '書桌的文件藏有日期 1925；偵查成功才能辨認。'
         group_state.save_state(state)  # storage assigns the timeline on the first save
-        keeper._ensure_turn_timeline(state)
+        turn_commit.ensure_turn_timeline(state)
         tool_decisions = []
         stages = []
 
@@ -53,10 +54,10 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('/coc check', reply)
             self.assertEqual(dice.call_count, 0)
             self.assertEqual(tool_decisions, ['skill_check'])
-            self.assertIn('u', keeper.load_state(state.group_id).pending_checks)
+            self.assertIn('u', load_state(state.group_id).pending_checks)
             resolved = check_commands.resolve_check(state.group_id, 'u', '/coc check')
             self.assertTrue(resolved.should_finalize)
-            state = keeper.load_state(state.group_id)
+            state = load_state(state.group_id)
             self.assertFalse(state.pending_checks)
             reply, _, _ = await supervisor.run_turn(state, 'u', 'Marco', resolved.keeper_message,
                 None, 'player', state.group_id, turn_kind='resolved_check_followup',
@@ -75,8 +76,8 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
                 state.characters['u'] = Character(name='Marco', owner_id='u', skills={'偵查': 70})
                 state.scenario_text = '桌上黃銅鑰匙可以直接拾取，文件需偵查檢定。'
                 group_state.save_state(state)
-                keeper._ensure_turn_timeline(state)
-                keeper._execute_tool(state, 'skill_check', {'investigator': 'Marco', 'skill': '偵查',
+                turn_commit.ensure_turn_timeline(state)
+                tool_dispatch.execute_tool(state, 'skill_check', {'investigator': 'Marco', 'skill': '偵查',
                     'action_context': '辨認文件'}, [], [], speaker_role='player')
                 old_pending = dict(state.pending_checks['u'])
                 dispatched = []
@@ -117,7 +118,7 @@ class CodexPipelineTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(dispatched, ['add_carried_item'])
                 self.assertEqual(rejected, ['unfinished_check_or_luck'])
                 self.assertNotIn('尚未完整處理', reply)
-                actual = keeper.load_state(state.group_id)
+                actual = load_state(state.group_id)
                 self.assertEqual(actual.pending_checks['u'], old_pending)
                 self.assertEqual(actual.get_active_character('u').carried_items.count('黃銅鑰匙'), 1)
                 dice.assert_not_called()

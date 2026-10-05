@@ -7,7 +7,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import checkpoints, config, db, keeper, locks, spoiler_policy
+from app import (
+    checkpoints,
+    config,
+    db,
+    dice,
+    locks,
+    memory_maintenance,
+    spoiler_policy,
+    tool_dispatch,
+)
 from app.agents import executor, guard, narrator, supervisor, tool_gateway
 from app.commands import router
 from app.commands.handlers import (
@@ -25,6 +34,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
+from app.keeper_tools import support
 from app.models import Character, GroupState
 from app.providers import registry
 from app.repositories.group_state import load_state, save_state
@@ -255,17 +265,17 @@ def test_direct_command_entry_matrix(state, held, handler, kwargs):
 
 
 @pytest.mark.parametrize("call", [
-    lambda s: keeper._execute_tool(s, "roll_dice", {"expression": "1d100"}, [], []),
+    lambda s: tool_dispatch.execute_tool(s, "roll_dice", {"expression": "1d100"}, [], []),
     lambda s: check_commands.resolve_check(s.group_id, "u", "/coc check"),
     lambda s: check_commands.resolve_luck(s.group_id, "u", "skip"),
     lambda s: map_service.resolve_map_action(s.group_id, "u", "go hallway"),
-    lambda s: keeper._mutate_and_save_state(s, lambda latest: setattr(latest, "scenario_title", "bad")),
+    lambda s: support.mutate_tool_state(s, lambda latest: setattr(latest, "scenario_title", "bad")),
     lambda s: save_state(GroupState(s.group_id), reason="newgame"),
     lambda s: checkpoints.rollback(s.group_id, "checkpoint", actor_id="kp"),
 ])
 def test_authoritative_entries_hold_before_side_effects(state, held, call):
     before = load_state(state.group_id).to_dict()
-    with patch.object(keeper.dice, "roll_expression") as roll, pytest.raises(admission.MutationHeld):
+    with patch.object(dice, "roll_expression") as roll, pytest.raises(admission.MutationHeld):
         call(state)
     roll.assert_not_called()
     assert load_state(state.group_id).to_dict() == before
@@ -309,7 +319,7 @@ def test_worker_original_timeline_is_rechecked_before_mutator(state):
     ran = []
     try:
         with admission.bind(owner), pytest.raises(admission.MutationHeld):
-            keeper._mutate_and_save_state(state, lambda latest: ran.append(True))
+            support.mutate_tool_state(state, lambda latest: ran.append(True))
     finally:
         admission.settle(owner)
     assert ran == [] and load_state(state.group_id).timeline_id == "replacement"
@@ -331,9 +341,9 @@ def test_cancelled_task_does_not_release_live_worker_or_replay_dice(state):
                 stopped.set()
 
         execute = tool_gateway.make_tool_executor(state, [], [], "player", facts, observed_outcomes=outcomes)
-        with patch.object(keeper, "_execute_tool", side_effect=worker), \
+        with patch.object(tool_dispatch, "execute_tool", side_effect=worker), \
              patch.object(tool_gateway, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001), \
-             patch.object(keeper, "record_tool_recovery_marker_bounded", AsyncMock()):
+             patch.object(tool_dispatch, "record_tool_recovery_marker_bounded", AsyncMock()):
             task = asyncio.create_task(execute("roll_dice", {"expression": "1d100"}))
             assert await asyncio.to_thread(started.wait, 1)
             task.cancel()
@@ -360,13 +370,13 @@ def test_cancelled_task_does_not_release_live_worker_or_replay_dice(state):
 
 def test_background_maintenance_consumes_hold(state, held):
     with pytest.raises(admission.MutationHeld):
-        keeper._persist_memory_maintenance_state(
+        memory_maintenance._persist_memory_maintenance_state(
             state.group_id, "new", [{"role": "user", "content": "old"}],
             timeline_id=state.timeline_id, base_summary="", source_revision=state.state_revision,
             idempotency_key="maintenance", embedding=[],
         )
     with pytest.raises(admission.MutationHeld):
-        keeper.run_scene_digest_maintenance(state.group_id)
+        memory_maintenance.run_scene_digest_maintenance(state.group_id)
 
 
 def test_private_button_preserves_original_identity_and_recipient(state):
@@ -629,7 +639,7 @@ def test_enemy_damage_combatant_recovery_uses_only_filtered_result():
     for result in ({'ok': True, 'name': 'Enemy', 'side': 'enemy', 'final_damage': 2, 'hp': 71, 'hp_before': 73},
                    {'ok': True, 'name': 'Enemy', 'side': 'enemy', 'hp': 73, 'hp_before': 71}):
         with patch.object(spoiler_policy, 'is_privacy_isolation_enabled', return_value=True):
-            public = keeper._filter_public_combat_damage_result(result, 'player')
+            public = support.filter_public_combat_damage_result(result, 'player')
         fact = turn_delivery.observe_tool('damage_combatant', public, 1)
         assert fact.public_text and 'Enemy' in fact.public_text
         assert '71' not in fact.public_text and '73' not in fact.public_text

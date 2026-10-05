@@ -1831,6 +1831,27 @@
       "source_revision": "c5a19912c2f1faf5454eb262693ddbc7dc3d0e4d"
     },
     {
+      "title": "Game Opening Phase 2 unlocked extraction",
+      "zh": "遊戲開場第二階段：解鎖抽取",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/opening_identity.py",
+        "app/services/game_opening.py",
+        "app/commands/router.py",
+        "app/commands/handlers/system.py",
+        "app/repositories/state_transaction.py",
+        "app/keeper.py",
+        "app/agents/supervisor.py",
+        "app/services/pending_buttons.py",
+        "tests/test_game_opening_unlocked_extraction.py",
+        "tests/test_game_opening_characterization.py"
+      ],
+      "path": "docs/specs/refactor/game_opening_unlocked_extraction_design_spec.md",
+      "zh_path": "docs/specs/refactor/game_opening_unlocked_extraction_design_spec_zh.md",
+      "source_revision": "066667812289e2128322cd17bd49c5d0646300dd"
+    },
+    {
       "title": "Correction lifecycle",
       "zh": "更正生命週期",
       "category": "refactor",
@@ -1976,6 +1997,25 @@
       "path": "docs/specs/maintenance/combat_mechanics_coverage_design_spec.md",
       "zh_path": "docs/specs/maintenance/combat_mechanics_coverage_design_spec_zh.md",
       "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
+      "title": "Splitting app/keeper.py by responsibility",
+      "zh": "依職責拆分 app/keeper.py",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/prompt_builder.py",
+        "app/turn_commit.py",
+        "app/memory_maintenance.py",
+        "app/tool_dispatch.py",
+        "app/keeper_tools/support.py",
+        "tests/test_architecture_keeper_tools.py",
+        "tests/test_static_prompt_integration.py",
+        "tests/test_spoiler_policy.py"
+      ],
+      "path": "docs/specs/refactor/keeper_module_split_design_spec.md",
+      "zh_path": "docs/specs/refactor/keeper_module_split_design_spec_zh.md",
+      "source_revision": "b54c986793bd0109634ff825edfd307877cb020b"
     }
   ]
 }

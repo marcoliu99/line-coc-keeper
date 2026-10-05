@@ -81,7 +81,7 @@ await_check 必須引用真實 check_id；await_luck 用 decision_id，不重擲
 def build_executor_static_prompt(keeper_static_prompt: str) -> str:
     """組出 Executor Agent 的 static_system。
 
-    keeper_static_prompt 是呼叫端已經拿到的 app/keeper.py._build_static_prompt(state)
+    keeper_static_prompt 是呼叫端已經拿到的 app/prompt_builder.py.build_static_prompt(state)
     輸出——那個函式是這個專案角色卡、劇本內容、NPC／地點索引、以及所有工具使用規則
     （技能檢定難度怎麼判斷、孤注一擲、彈藥／傷害規則、攜帶物合理性審查等）持續在維護
     的唯一來源，這裡不重新宣告一份，只在前面接上 Executor 專屬的角色設定跟工作範圍。
@@ -90,7 +90,7 @@ def build_executor_static_prompt(keeper_static_prompt: str) -> str:
 
 
 def build_dynamic_prompt_with_context(keeper_dynamic_prompt: str, rag_context: str, memory_context: str) -> str:
-    """組出 dynamic_system：在 app/keeper.py._build_dynamic_prompt(state, ...) 的輸出
+    """組出 dynamic_system：在 app/prompt_builder.py.build_dynamic_prompt(state, ...) 的輸出
     （戰鬥狀態、每位角色當下的 HP/SAN/彈藥等動態數值）後面，附加這回合額外查到的劇本
     片段／過去記憶片段。Executor／Narrator 兩邊都呼叫這個函式，組法完全一樣。"""
     parts = [keeper_dynamic_prompt]

@@ -9,10 +9,12 @@ spec.
 import unittest
 from unittest.mock import patch
 
-from app import keeper
+from app import tool_dispatch
 from app.keeper_tools import combat as combat_handlers
+from app.keeper_tools import support
 from app.keeper_tools.registry import ToolCall
 from app.models import GroupState
+from app.services import mutation_admission
 from app.services.turn_delivery import observe_tool
 
 
@@ -58,9 +60,9 @@ class InitializeCombatTests(unittest.TestCase):
         state.scenario_npc_index = [{"name": "Deep One", "aliases": ["魚人"], "hp": 8}]
         def mutate(current, callback):
             result = callback(current)
-            return result.value if isinstance(result, keeper.ToolStateMutation) else result
+            return result.value if isinstance(result, support.ToolStateMutation) else result
 
-        with patch.object(keeper, "mutate_tool_state", side_effect=mutate):
+        with patch.object(support, "mutate_tool_state", side_effect=mutate):
             result = combat_handlers.initialize_combat(_call(state, [
                 {"name": "Deep One", "dex": 40, "hp": 8},
                 {"name": "魚人", "dex": 45, "hp": 8},
@@ -130,9 +132,9 @@ class InitializeCombatTests(unittest.TestCase):
 
         def mutate(current, callback):
             result = callback(current)
-            return result.value if isinstance(result, keeper.ToolStateMutation) else result
+            return result.value if isinstance(result, support.ToolStateMutation) else result
 
-        with patch.object(keeper, "mutate_tool_state", side_effect=mutate):
+        with patch.object(support, "mutate_tool_state", side_effect=mutate):
             result = combat_handlers.initialize_combat(_call(state, [
                 {"name": "柯比特", "dex": 60, "hp": 16},
             ]))
@@ -152,8 +154,8 @@ class InitializeCombatTests(unittest.TestCase):
 
     def test_dispatches_through_the_registry(self):
         state = GroupState(group_id="initialize-combat-" + self._testMethodName)
-        with patch.object(keeper.mutation_admission, "assert_admitted"):
-            result = keeper._execute_tool(state, "initialize_combat", {
+        with patch.object(mutation_admission, "assert_admitted"):
+            result = tool_dispatch.execute_tool(state, "initialize_combat", {
                 "enemies": [{"name": "柯比特", "dex": 60, "hp": 16}],
             }, [], [])
         self.assertTrue(result["ok"])

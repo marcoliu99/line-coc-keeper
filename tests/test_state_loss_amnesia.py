@@ -8,7 +8,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import db, dice, keeper, memory_rag
+from app import (
+    db,
+    dice,
+    memory_maintenance,
+    memory_rag,
+    observability,
+    tool_dispatch,
+    turn_commit,
+)
 from app.models import Character, GroupState
 from app.repositories import group_state
 
@@ -57,7 +65,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         db.set_json("group_states", state.group_id, state.to_dict())
         loaded = group_state.load_state(state.group_id)
 
-        timeline_id = keeper._ensure_turn_timeline(loaded)
+        timeline_id = turn_commit.ensure_turn_timeline(loaded)
 
         self.assertTrue(timeline_id.startswith("timeline-"))
         persisted = group_state.load_state(state.group_id)
@@ -69,9 +77,9 @@ class StateLossAmnesiaTests(unittest.TestCase):
         group_state.save_state(state)
 
         with patch.object(group_state, "write_state_tx", side_effect=OSError("disk full")), \
-                patch.object(keeper.observability, "event") as event, \
+                patch.object(observability, "event") as event, \
                 self.assertRaises(OSError):
-            keeper._commit_turn_result(
+            turn_commit.commit_turn_result(
                 state,
                 [{"role": "assistant", "content": "must not be treated as saved"}],
                 timeline_id="timeline-save",
@@ -114,11 +122,11 @@ class StateLossAmnesiaTests(unittest.TestCase):
             group_state.save_state(replacement, reason="newgame")
             return "不應該提交的舊摘要"
 
-        with patch.object(keeper, "MAX_LOG_TURNS", 1), \
-                patch.object(keeper, "run_scene_digest_maintenance"), \
-                patch.object(keeper, "summarize_log_chunk", side_effect=newgame_during_summary), \
-                patch.object(keeper.memory_rag, "prepare_memory_embedding", return_value=None):
-            result = keeper.run_post_turn_maintenance(state.group_id)
+        with patch.object(memory_maintenance, "MAX_LOG_TURNS", 1), \
+                patch.object(memory_maintenance, "run_scene_digest_maintenance"), \
+                patch.object(memory_maintenance, "summarize_log_chunk", side_effect=newgame_during_summary), \
+                patch.object(memory_maintenance.memory_rag, "prepare_memory_embedding", return_value=None):
+            result = memory_maintenance.run_post_turn_maintenance(state.group_id)
 
         self.assertEqual(result["commit_status"], "stale_timeline")
         self.assertFalse(result["state_saved"])
@@ -132,11 +140,11 @@ class StateLossAmnesiaTests(unittest.TestCase):
         state.log = [{"role": "user", "content": f"event-{i}"} for i in range(5)]
         group_state.save_state(state)
 
-        with patch.object(keeper, "MAX_LOG_TURNS", 1), \
-                patch.object(keeper, "run_scene_digest_maintenance"), \
-                patch.object(keeper, "summarize_log_chunk", return_value="摘要 A"), \
-                patch.object(keeper.memory_rag, "prepare_memory_embedding", return_value=None):
-            result = keeper.run_post_turn_maintenance(state.group_id)
+        with patch.object(memory_maintenance, "MAX_LOG_TURNS", 1), \
+                patch.object(memory_maintenance, "run_scene_digest_maintenance"), \
+                patch.object(memory_maintenance, "summarize_log_chunk", return_value="摘要 A"), \
+                patch.object(memory_maintenance.memory_rag, "prepare_memory_embedding", return_value=None):
+            result = memory_maintenance.run_post_turn_maintenance(state.group_id)
 
         self.assertEqual(result["commit_status"], "committed")
         self.assertTrue(result["state_saved"])
@@ -154,7 +162,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         state.characters["p1"] = Character(name="P1", owner_id="p1")
         group_state.save_state(state)
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state,
             "skill_check",
             {"investigator": "P1", "skill": "偵查", "action_context": "在醫院地下室檢查血跡"},
@@ -230,7 +238,7 @@ class StateLossAmnesiaTests(unittest.TestCase):
         with db.transaction() as conn:
             conn.execute("UPDATE group_states SET data = ? WHERE key = ?", ("not-json", group_id))
 
-        result = keeper._persist_memory_maintenance_state(
+        result = memory_maintenance._persist_memory_maintenance_state(
             group_id,
             "摘要不應提交",
             [{"role": "user", "content": "old"}],
@@ -332,10 +340,10 @@ class MultiUserDeterministicCheckStressTests(unittest.IsolatedAsyncioTestCase):
                     skill_value=60, roll=99, bonus_dice=0, penalty_dice=0,
                     tier="fail", success=False, required_tier="regular",
                 )
-                with patch.object(keeper.dice, "skill_check", return_value=roll) as roll_mock:
+                with patch.object(dice, "skill_check", return_value=roll) as roll_mock:
                     results = await asyncio.gather(*(
                         asyncio.to_thread(
-                            keeper._execute_tool,
+                            tool_dispatch.execute_tool,
                             GroupState.from_dict(state.to_dict()),
                             "skill_check",
                             {

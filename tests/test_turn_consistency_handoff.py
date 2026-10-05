@@ -6,7 +6,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app import combat, config, db, keeper
+from app import (
+    combat,
+    config,
+    db,
+    memory_maintenance,
+    prompt_builder,
+    scenario_library,
+    tool_dispatch,
+)
 from app.agents import executor, supervisor
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
@@ -45,8 +53,8 @@ def message(state):
 def test_pending_and_luck_are_authoritative_inputs(state):
     state.pending_checks["a"] = pending()
     state.pending_luck_decisions["b"] = {"decision_id": "luck-b", "roll": 68, "action_context": "閃避"}
-    with patch.object(keeper.scene_digest, "latest_digest", return_value=None):
-        text = keeper._build_dynamic_prompt(state, "a")
+    with patch.object(memory_maintenance.scene_digest, "latest_digest", return_value=None):
+        text = prompt_builder.build_dynamic_prompt(state, "a")
     for value in ("old", "製作道具", "luck-b", "閃避", '"owner_id": "b"'):
         assert value in text
     assert state.pending_checks["a"]["check_id"] == "old"
@@ -58,8 +66,8 @@ def test_history_does_not_supply_old_inventory_or_combat(state):
         "consumed_or_removed_items": [{"item": "煤油兩瓶"}], "known_clues": [{"text": "線索"}],
     }, "private": {"combat": {"name": "STALE_COMBAT"}, "facts": [{"text": "秘密線索"}]}}
     saved = deepcopy(old)
-    with patch.object(keeper.scene_digest, "latest_digest", return_value=old):
-        text = keeper._build_dynamic_prompt(state, "a")
+    with patch.object(memory_maintenance.scene_digest, "latest_digest", return_value=old):
+        text = prompt_builder.build_dynamic_prompt(state, "a")
     assert "一瓶煤油" in text and "煤油兩瓶" in text and "秘密線索" in text
     assert "STALE_INVENTORY" not in text and "STALE_COMBAT" not in text
     assert '"state_revision": 0' in text and old == saved
@@ -72,7 +80,7 @@ def test_history_does_not_supply_old_inventory_or_combat(state):
 
 def test_reacquired_item_keeps_history_and_current_inventory(state):
     for name in ("remove_carried_item", "add_carried_item"):
-        result = keeper._execute_tool(state, name, {"investigator": "Marco", "item": "一瓶煤油"}, [], [])
+        result = tool_dispatch.execute_tool(state, name, {"investigator": "Marco", "item": "一瓶煤油"}, [], [])
         assert result["ok"]
     stored = group_state.load_state(state.group_id)
     assert stored.get_active_character("a").carried_items == ["一瓶煤油"]
@@ -614,7 +622,7 @@ def test_private_outputs_survive_executor_failure(state, failure):
     fake = AsyncMock(side_effect=provider)
     with patch.object(config, 'LLM_PROVIDER', 'openai'), \
          patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
-         patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+         patch.object(scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
         result = asyncio.run(executor.run_executor(msg))
     assert not result.success and result.turn_resolution.disposition == 'incomplete'
     assert msg.payload['private_messages'] == [('b', 'private clue')]
@@ -641,7 +649,7 @@ def test_supervisor_preserves_failed_executor_private_outputs(state):
          patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=run_conversation)}), \
          patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
          patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text), \
-         patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+         patch.object(scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
         reply, private, images = asyncio.run(supervisor.run_turn(
             state, 'a', 'Marco', '我調查房間', None, 'player', state.group_id))
     assert '尚未完整處理' in reply and 'private clue' not in reply
@@ -699,7 +707,7 @@ def test_truncated_continuation_keeps_successful_private_output_queues(state, mo
     monkeypatch.setattr(config, 'LLM_PROVIDER', 'openai')
     monkeypatch.setattr(registry, 'CONVERSATION_PROVIDERS', {'openai': openai_provider})
     msg = message(state)
-    with patch.object(keeper.scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
+    with patch.object(scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
         result = asyncio.run(executor.run_executor(msg))
     assert not result.success and result.turn_resolution.disposition == 'incomplete'
     assert msg.payload['private_messages'] == [('b', 'private clue')]
@@ -710,7 +718,7 @@ def test_truncated_continuation_keeps_successful_private_output_queues(state, mo
 @pytest.mark.parametrize('complete', [False, True])
 def test_cash_and_keys_evidence_gate_and_real_inventory_handoff(state, complete):
     """Search results are mocked; acquisition, persistence and validation are real."""
-    original_tool = keeper._execute_tool
+    original_tool = tool_dispatch.execute_tool
     def tool(s, name, data, *args):
         if name == 'search_scenario':
             return {'ok': True, 'results': '房東提供二十美元預付款與鑰匙。',
@@ -731,7 +739,7 @@ def test_cash_and_keys_evidence_gate_and_real_inventory_handoff(state, complete)
     payload.payload.update(text='拿走錢 跟鑰匙 並看一下地址', rag_context=(
         '【依據尚未完整】【取用完整性】[{"complete_for_action":false,"root_record_ids":["intro"]}]'))
     fake = AsyncMock(side_effect=provider)
-    with patch.object(keeper, '_execute_tool', side_effect=tool), \
+    with patch.object(tool_dispatch, 'execute_tool', side_effect=tool), \
             patch.object(config, 'LLM_PROVIDER', 'openai'), \
             patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(payload))
@@ -763,7 +771,7 @@ def test_followup_search_reuses_delivered_evidence_and_budgets_wire_receipts(sta
         initial = scenario_retrieval.project(records, ['intro'], 'keys')
     finally:
         scenario_retrieval.BUDGET.reset(initial_budget)
-    original_tool = keeper._execute_tool
+    original_tool = tool_dispatch.execute_tool
     seen_budgets = []
     def budget(context, *args):
         seen_budgets.append(context)
@@ -788,7 +796,7 @@ def test_followup_search_reuses_delivered_evidence_and_budgets_wire_receipts(sta
     payload = message(state)
     payload.payload.update(text='拿走鑰匙並查看地址', rag_context=scenario_rag.format_results(initial))
     fake = AsyncMock(side_effect=provider)
-    with patch.object(keeper, '_execute_tool', side_effect=tool), \
+    with patch.object(tool_dispatch, 'execute_tool', side_effect=tool), \
             patch.object(input_budget, '_encoding', return_value=None), \
             patch.object(scenario_retrieval, 'request_budget', side_effect=budget), \
             patch.object(config, 'LLM_PROVIDER', 'openai'), \

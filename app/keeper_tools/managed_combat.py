@@ -6,7 +6,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from app import combat_rules
-from app.keeper_tools import resource_bridge
+from app.keeper_tools import resource_bridge, support
 from app.services import combat_actions as act
 from app.services import combat_engine
 
@@ -15,14 +15,13 @@ if TYPE_CHECKING:
 
 
 def _mutate(call: ToolCall, operation):
-    from app import keeper
 
     def mutate(state):
         before = deepcopy(state.to_dict())
         result = operation(state)
         result.setdefault("provisional", resource_bridge.managed(state))
-        return keeper.ToolStateMutation(result, should_save=state.to_dict() != before)
-    result = keeper.mutate_tool_state(call.state, mutate)
+        return support.ToolStateMutation(result, should_save=state.to_dict() != before)
+    result = support.mutate_tool_state(call.state, mutate)
     return public_result(result, include_private=call.speaker_role == 'kp_assistant')
 
 
@@ -150,11 +149,10 @@ def correct_combat_event(call: ToolCall) -> dict[str, Any]:
 
 
 def reconcile_combat_baseline(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
     def operation(state):
         combat_engine.authorize(state, str(call.input.get('combat_id') or ''), str(call.input.get('reason') or ''))
-        character = keeper.require_character(state, call.input['investigator'])
+        character = support.require_character(state, call.input['investigator'])
         return combat_engine.handle(state, act.ReconcileBaseline(
             combat_id=str(call.input.get('combat_id') or ''), character=character,
             event_id=call.input['event_id'], decision=call.input['decision'],

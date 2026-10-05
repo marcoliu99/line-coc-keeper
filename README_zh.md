@@ -40,7 +40,7 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
   |
   +-- KP 場外討論 -> Supervisor -> assistant.py 獨立流程
 
-共用：keeper.py（提示詞／工具） -> providers/*_provider.py；Codex 對話與結構化分析共用 Codex CLI transport
+共用：prompt_builder.py（提示詞）／tool_dispatch.py（工具分派） -> providers/*_provider.py；Codex 對話與結構化分析共用 Codex CLI transport
       services/turn_context.py、turn_resolution.py（權威 state／裁決驗證）
       scenario_rag.py、memory_rag.py（BM25／可選 embeddings）
 儲存：data/coc_bot.db、data/groups/（圖片）、data/scenarios/（劇本庫）
@@ -56,18 +56,18 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/agents/supervisor.py`：純 Python 調度器，統一玩家一般回合、檢定結果後續與開場後備；依入口與訊息意圖決定機制及敘事流程
 - `app/agents/context_builder.py`：收集 Scenario RAG／Memory RAG 上下文，可使用 embeddings，不保證完全本地；Scenario RAG 受 `SCENARIO_RAG_ENABLED` 控制，戰鬥中略過主動檢索
 - `app/agents/intent_router.py`：規則式（不呼叫 LLM）分類成 `OOC_ASSISTANT`（KP 助手場外討論）／`PURE_ROLEPLAY`（純角色扮演）／`GAMEPLAY_ACTION`（含機制動作）
-- `app/agents/executor.py` + `app/agents/tool_gateway.py`：`GAMEPLAY_ACTION` 才會呼叫，直接複用 `keeper.TOOLS`／`keeper._execute_tool`（真的擲骰、真的落庫，不是重新發明一份工具）
+- `app/agents/executor.py` + `app/agents/tool_gateway.py`：`GAMEPLAY_ACTION` 才會呼叫，直接複用 `keeper_tools.registry.TOOLS`／`tool_dispatch.execute_tool`（真的擲骰、真的落庫，不是重新發明一份工具）
 - `app/agents/assistant.py`：`OOC_ASSISTANT`（KP 助手場外討論）的獨立 agent，具有自己的 provider／工具／Guard／歷史提交流程，保留明確建立正式事件的規則
 - `app/agents/narrator.py`：生成玩家可見敘事；一般回合不提供工具，檢定結果後續與開場後備則提供各自限定的工具
 - `app/agents/rule_validator.py` + `app/agents/guard.py`：正則規則校驗（洩漏系統字眼、Markdown 代碼區塊沒閉合），沒過且啟用 Guard 時最多進行 2 次修復性 LLM 呼叫，仍不合格則使用後備回覆
 - `app/agents/state_reducer.py`：純記錄用的流水線節點，不做任何狀態套用（真正的狀態變更在 Executor 呼叫工具時就已經完成並落庫）
-- `app/services/prompt_config.py`：Executor／Narrator／Guard 三個真的會呼叫 LLM 的階段共用的提示詞組裝，包在 `keeper._build_static_prompt`／`_build_dynamic_prompt`（既有、持續在維護的內容）外面
+- `app/services/prompt_config.py`：Executor／Narrator／Guard 三個真的會呼叫 LLM 的階段共用的提示詞組裝，包在 `prompt_builder.build_static_prompt`／`build_dynamic_prompt`（既有、持續在維護的內容）外面
 - `app/domain/models.py`：流水線內部傳遞用的 `AgentMessage`／`MechanicResult`／`StateDelta`／`TurnResolution` 資料結構
 
 目前入口與流程見 **[統一 Keeper 流程](docs/specs/refactor/unified_keeper_turn_flow_design_spec_zh.md)**；權威狀態交接見 **[回合一致性規格](docs/specs/bug/log_backed_turn_consistency_design_spec_zh.md)**。原始設計脈絡、已知落差與踩過的坑，見 **[docs/agentic_keeper_design_spec.md](docs/specs/refactor/agentic_keeper_design_spec_zh.md)**。
 
 **核心遊戲邏輯（不分走哪條路由都會用到）**
-- `app/keeper.py`：守密人的系統提示詞組裝、工具定義（擲骰／檢定／戰鬥／角色數值／劇本庫圖片與章節推進等）、工具執行，不綁定特定 LLM
+- `app/prompt_builder.py`、`app/tool_dispatch.py`、`app/turn_commit.py`、`app/memory_maintenance.py`（取代原本的 `app/keeper.py`，見[拆分規格](docs/specs/refactor/keeper_module_split_design_spec_zh.md)）：守密人的系統提示詞組裝、工具分派與共用閘門（擲骰／檢定／戰鬥／角色數值／劇本庫圖片與章節推進等工具的定義在 `app/keeper_tools/`）、回合提交、回覆之後的日誌維護，不綁定特定 LLM
 - `app/providers/anthropic_provider.py`：Claude（Anthropic Messages API）介面卡，含 prompt caching
 - `app/providers/gemini_provider.py` / `app/providers/openai_provider.py` / `app/providers/codex_provider.py`：Gemini（google-genai SDK）／OpenAI／已登入 Codex CLI 介面卡；Codex 用於對話及一般文字分析
 - `app/locks.py`：per-conversation 鎖，防止同一個聊天室的兩則訊息互相覆蓋對方的存檔；KP 助手訊息另有優先權佇列

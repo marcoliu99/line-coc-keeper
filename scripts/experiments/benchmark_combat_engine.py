@@ -6,7 +6,7 @@ Run from the repository root against a throwaway database::
 
 The encounter is fixed: one investigator against one cultist, melee, dice
 scripted so the investigator wins round one and the cultist's reply needs a
-Dodge. It uses only the public tool surface (``keeper._execute_tool``) and the
+Dodge. It uses only the public tool surface (``tool_dispatch.execute_tool``) and the
 player ``/coc check`` resolver, so the same script runs unchanged on a checkout
 from before and after the combat-engine refactor.
 
@@ -39,7 +39,7 @@ os.environ.setdefault("SCENARIO_LIBRARY_DIR", str(_ROOT / "scenarios"))
 os.environ.setdefault("IMPORT_DIR", str(_ROOT / "imports"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from app import combat, combat_resources, db, dice, keeper  # noqa: E402
+from app import combat, combat_resources, db, dice, tool_dispatch  # noqa: E402
 from app.commands.handlers import checks as check_commands  # noqa: E402
 from app.models import Character, Combatant, GroupState  # noqa: E402
 from app.repositories import group_state, state_transaction  # noqa: E402
@@ -92,7 +92,7 @@ class Meter:
     def tool(self, name: str, arguments: dict | None = None) -> dict:
         state = group_state.load_state(GROUP)
         started = time.perf_counter()
-        result = keeper._execute_tool(state, name, arguments or {}, [], [], actor_id="player")
+        result = tool_dispatch.execute_tool(state, name, arguments or {}, [], [], actor_id="player")
         self.samples.append((time.perf_counter() - started) * 1000)
         self.names.append(name)
         return result

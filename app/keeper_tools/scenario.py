@@ -21,6 +21,7 @@ from app.config import (
     SCENARIO_RAG_EMBEDDING_WEIGHT,
     SCENARIO_RAG_TOP_K,
 )
+from app.keeper_tools import support
 from app.models import GroupState
 
 if TYPE_CHECKING:
@@ -41,7 +42,6 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
     state = call.state
     tool_input = call.input
     name = call.name
-    from app import keeper
     field_name = "established_facts" if name == "record_established_fact" else "known_clues"
     text_value = ((tool_input.get("fact") if name == "record_established_fact" else tool_input.get("clue")) or "").strip()
     if not text_value:
@@ -101,9 +101,9 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
                            or existing.get("timeline_id") != target_state.timeline_id):
                 existing.setdefault("fact_id", f"fact:{uuid4().hex}")
                 existing.update(source)
-                return keeper.ToolStateMutation({"recorded": False, "promoted": True,
+                return support.ToolStateMutation({"recorded": False, "promoted": True,
                                                  "record": existing}, should_save=True)
-            return keeper.ToolStateMutation({"recorded": False, "records": records}, should_save=False)
+            return support.ToolStateMutation({"recorded": False, "records": records}, should_save=False)
         record = {
             "fact_id": f"fact:{uuid4().hex}",
             "text": text_value,
@@ -116,8 +116,8 @@ def record_fact_or_clue(call: ToolCall) -> dict[str, Any]:
         if source:
             record.update(source)
         records.append(record)
-        return keeper.ToolStateMutation({"recorded": True, "record": record}, should_save=True)
-    result = keeper.mutate_tool_state(state, _mutate_record)
+        return support.ToolStateMutation({"recorded": True, "record": record}, should_save=True)
+    result = support.mutate_tool_state(state, _mutate_record)
     return {"ok": True, **result}
 
 
@@ -160,7 +160,6 @@ def show_scenario_image(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
     speaker_role = call.speaker_role
     image_requests = call.image_requests
-    from app import keeper
     if not state.scenario_library_id:
         return {"ok": False, "error": "目前沒有選擇劇本庫項目"}
     page = int(tool_input["page_number"])
@@ -175,7 +174,7 @@ def show_scenario_image(call: ToolCall) -> dict[str, Any]:
     image_investigator: str = tool_input.get("investigator") or ""
     image_owner_id: str | None = None
     if image_investigator:
-        char = keeper.find_character(state, image_investigator)
+        char = support.find_character(state, image_investigator)
         if not char:
             return {"ok": False, "error": f"找不到角色「{image_investigator}」"}
         image_owner_id = char.owner_id
@@ -185,7 +184,6 @@ def show_scenario_image(call: ToolCall) -> dict[str, Any]:
 
 def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
     state = call.state
-    from app import keeper
     context_holder: dict[str, Any] = {}
     def _advance(target_state: GroupState) -> dict:
         if not target_state.scenario_library_id:
@@ -222,7 +220,7 @@ def advance_scenario_chapter(call: ToolCall) -> dict[str, Any]:
         if artifact_notice:
             result["notice"] = artifact_notice
         return result
-    result = keeper.mutate_tool_state(state, _advance)
+    result = support.mutate_tool_state(state, _advance)
     if result.get("ok") and context_holder:
         refreshed = scenario_activation.refresh_after_commit(
             state.group_id, state.scenario_library_id, context_holder,

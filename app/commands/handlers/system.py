@@ -3,17 +3,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
 
 from app import (
     character_matcher,
     checkpoints,
-    keeper,
     observability,
+    prompt_builder,
     scenario_authoring,
     scenario_index,
     scenario_library,
-    scenario_rag,  # noqa: F401 - retained for existing command integration mocks
+    scenario_rag,  # noqa: F401 - retained for existing command integration mocks,
     scenario_source_authoring,
     scenario_templates,
     scene_digest,
@@ -164,6 +165,7 @@ async def handle_system_command(
     *,
     expected_revision: int | None = None,
     server: permissions.ServerFacts = permissions.NO_SERVER_FACTS,
+    opening_mutation_scope: Callable[[], AbstractAsyncContextManager[Any]] | None = None,
 ) -> None:
     sub = parts[1].casefold() if len(parts) > 1 else ""
     if sub in {'newgame', 'end', 'rollback', 'era'} or (
@@ -669,7 +671,7 @@ async def handle_system_command(
     if sub == "setpersona":
         state = load_state(conversation_id)
         if len(parts) < 3:
-            current = state.keeper_persona or f"（目前使用預設風格）\n{keeper.DEFAULT_PERSONA}"
+            current = state.keeper_persona or f"（目前使用預設風格）\n{prompt_builder.DEFAULT_PERSONA}"
             await reply(
                 "用法：/coc setpersona <描述守密人語氣風格的文字> → 設定這個群組專屬的守密人語氣\n"
                 "/coc setpersona reset → 重設回預設的冷酷旁觀者風格\n\n"
@@ -760,35 +762,43 @@ async def handle_system_command(
         async def on_readiness(readiness: OpeningReadiness) -> None:
             await reply(build_readiness_roster(readiness, format_mention=format_mention))
 
-        opening_result = await game_opening.open_game(conversation_id, user_id, on_readiness=on_readiness)
-        if opening_result.outcome == "silent":
-            return
-        if opening_result.outcome == "rejected":
-            if opening_result.reason == "combat_unsettled":
+        async def render(opening_result: game_opening.OpeningResult) -> None:
+            if opening_result.outcome == "silent":
+                return
+            if opening_result.outcome == "rejected":
+                if opening_result.reason == "combat_unsettled":
+                    await reply(opening_result.text)
+                elif opening_result.reason == "no_scenario":
+                    await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
+                elif opening_result.reason == "no_characters":
+                    await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
+                elif opening_result.reason == "pending_pregen_luck":
+                    await reply(f"{opening_result.name} 尚未由玩家擲 LUCK，請相關玩家輸入「/coc luck roll」後才能開始遊戲。")
+                elif opening_result.reason == "already_started":
+                    await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
+                elif opening_result.reason == "pending_luck_decision":
+                    await reply(f"{opening_result.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。")
+                elif opening_result.reason == "pending_check":
+                    await reply(f"{opening_result.name} 尚有待處理的檢定，請先完成後再開始遊戲。")
+                elif opening_result.reason in {"source_changed", "timeline_changed", "character_set_changed", "admission_changed"}:
+                    await reply("開場準備期間劇本或調查員狀態已更新，舊開場未送出；請重新輸入「/coc start」。")
+                else:
+                    raise ValueError(f"unsupported opening rejection: {opening_result.reason!r}")
+                return
+            if opening_result.outcome == "scripted":
                 await reply(opening_result.text)
-            elif opening_result.reason == "no_scenario":
-                await reply("目前還沒有載入劇本，請先上傳 PDF 劇本。")
-            elif opening_result.reason == "no_characters":
-                await reply("目前這個群組還沒有任何調查員，請先用「/coc pc 角色名 職業」或「/coc usepregen 編號」建立角色。")
-            elif opening_result.reason == "pending_pregen_luck":
-                await reply(f"{opening_result.name} 尚未由玩家擲 LUCK，請相關玩家輸入「/coc luck roll」後才能開始遊戲。")
-            elif opening_result.reason == "already_started":
-                await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
-            elif opening_result.reason == "pending_luck_decision":
-                await reply(f"{opening_result.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。")
-            elif opening_result.reason == "pending_check":
-                await reply(f"{opening_result.name} 尚有待處理的檢定，請先完成後再開始遊戲。")
-            else:
-                raise ValueError(f"unsupported opening rejection: {opening_result.reason!r}")
+                if opening_result.check_reason:
+                    await reply(f"👉 {opening_result.check_reason}——請各自用「/coc check」擲骰。")
+                return
+            await run_post_turn_maintenance_after_output(
+                conversation_id, reply, opening_result.text, send_dm, send_image, send_dm_image,
+                list(opening_result.private_messages), list(opening_result.image_requests),
+            )
             return
-        if opening_result.outcome == "scripted":
-            await reply(opening_result.text)
-            if opening_result.check_reason:
-                await reply(f"👉 {opening_result.check_reason}——請各自用「/coc check」擲骰。")
-            return
-        await run_post_turn_maintenance_after_output(
-            conversation_id, reply, opening_result.text, send_dm, send_image, send_dm_image,
-            list(opening_result.private_messages), list(opening_result.image_requests),
+
+        await game_opening.open_game(
+            conversation_id, user_id, on_readiness=on_readiness,
+            mutation_scope=opening_mutation_scope, on_completion=render,
         )
         return
 

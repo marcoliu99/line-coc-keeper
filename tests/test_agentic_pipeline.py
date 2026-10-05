@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import config
+from app import config, tool_dispatch
 from app.domain.models import AgentMessage, MechanicResult, StateDelta
 from app.models import Character, GroupState
 from app.providers import registry
@@ -90,7 +90,7 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
 class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
     """Regression tests for the review finding that context_builder ran
     scenario_rag.get_index/search on every turn regardless of
-    SCENARIO_RAG_ENABLED (default off), even though keeper._build_static_prompt
+    SCENARIO_RAG_ENABLED (default off), even though prompt_builder.build_static_prompt
     already embeds the full/chapter scenario text directly in that mode,
     making the proactive search redundant and a real per-turn cost."""
 
@@ -279,17 +279,17 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task.done())
 
     async def test_recovery_marker_persistence_is_bounded_and_observed(self):
-        from app import async_utils, keeper
+        from app import async_utils
 
         release = asyncio.Event()
 
         async def blocked_marker(*_args):
             await release.wait()
 
-        with patch.object(keeper, "record_tool_recovery_marker", side_effect=blocked_marker), \
-                patch.object(keeper, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
+        with patch.object(tool_dispatch, "record_tool_recovery_marker", side_effect=blocked_marker), \
+                patch.object(tool_dispatch, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
             started_at = time.perf_counter()
-            await keeper.record_tool_recovery_marker_bounded(
+            await tool_dispatch.record_tool_recovery_marker_bounded(
                 GroupState(group_id="marker-test"), "apply_combat_damage", {"damage": 1}
             )
             elapsed = time.perf_counter() - started_at
@@ -349,11 +349,12 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.payload["memory_status"], "empty")
 
     def test_scenario_context_budget_keeps_structural_boundaries(self):
-        from app import keeper
+
+        from app import prompt_builder
 
         scenario = "--- 第 1 頁 ---\n第一頁完整內容\n--- 第 2 頁 ---\n第二頁完整內容"
-        with patch.object(keeper, "MAX_SCENARIO_CHARS", 30):
-            bounded = keeper._bounded_scenario_context(scenario)
+        with patch.object(prompt_builder, "MAX_SCENARIO_CHARS", 30):
+            bounded = prompt_builder._bounded_scenario_context(scenario)
 
         self.assertLessEqual(len(bounded), 30)
         self.assertIn("第一頁完整內容", bounded)
@@ -394,7 +395,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "narration", [], []
 
         with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", fake_run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -429,7 +430,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "請使用 /coc check 擲骰。", [], []
 
         with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -467,7 +468,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "STR 檢定尚未建立，請守密人重新建立。", [], []
 
         with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -523,7 +524,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "這次檢定尚未建立，請使用 /coc check。", [], []
 
         with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=fake_result)), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -568,7 +569,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "Target 的 CON 檢定尚未建立。", [], []
 
         with patch.object(supervisor.context_builder, "build_context", fake_build_context), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", fake_run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -616,7 +617,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             return "請先決定是否花 Luck。", [], []
 
         with patch.object(supervisor.context_builder, "build_context", build_context), \
-                patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-test"), \
+                patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-test"), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
                 patch.object(supervisor.executor, "run_executor", run_executor), \
                 patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
@@ -650,8 +651,8 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             commit_kwargs.update(kwargs)
             return True
 
-        with patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-captured"), \
-                patch.object(supervisor.keeper, "_commit_turn_result", side_effect=fake_commit), \
+        with patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-captured"), \
+                patch.object(supervisor.turn_commit, "commit_turn_result", side_effect=fake_commit), \
                 patch.object(supervisor.context_builder, "build_context", fake_build_context), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \
@@ -681,8 +682,8 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
         async def fake_run_narrator(msg):
             return "stale narration", [("p2", "private")], [(None, 1)]
 
-        with patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-captured"), \
-                patch.object(supervisor.keeper, "_commit_turn_result", return_value=False), \
+        with patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-captured"), \
+                patch.object(supervisor.turn_commit, "commit_turn_result", return_value=False), \
                 patch.object(supervisor.context_builder, "build_context", fake_build_context), \
                 patch.object(supervisor.intent_router, "classify_intent", return_value="PURE_ROLEPLAY"), \
                 patch.object(supervisor.narrator, "run_narrator", fake_run_narrator), \

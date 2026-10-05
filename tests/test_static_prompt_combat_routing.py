@@ -1,11 +1,11 @@
 """Required combat tool choices in the consolidated Keeper prompt."""
 
-from app import keeper
+from app import prompt_builder
 from app.models import GroupState
 
 
 def test_combat_routing_preserves_each_mechanical_boundary() -> None:
-    prompt = keeper._build_static_prompt(GroupState(group_id="combat-routing-prompt"))
+    prompt = prompt_builder.build_static_prompt(GroupState(group_id="combat-routing-prompt"))
     routing = prompt.split("# Combat Tool Routing\n", 1)[1].split("\n- 劇本內容", 1)[0]
 
     for tool in ('start_combat', 'initialize_combat', 'add_npc_to_combat', 'adjust_ammo'):

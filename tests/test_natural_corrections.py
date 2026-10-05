@@ -2,7 +2,7 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from app import db, keeper, memory_rag
+from app import db, memory_rag, prompt_builder
 from app.commands import router
 from app.models import Character, GroupState
 from app.repositories.group_state import load_state, save_state
@@ -97,7 +97,7 @@ def test_summary_rebuild_uses_correction_and_current_revision(tmp_path, monkeypa
     state.campaign_summary = "先前錯誤描述"
     reply, _ = natural_corrections.submit(state, "player", "你剛才說錯了，腐紙味不是煙味")
     assert "已依玩家指正" in reply
-    with patch.object(correction_summary.keeper, "summarize_log_chunk", return_value="已更正為腐紙味") as summarize:
+    with patch.object(correction_summary.memory_maintenance, "summarize_log_chunk", return_value="已更正為腐紙味") as summarize:
         asyncio.run(correction_summary.rebuild(state.group_id))
     saved = load_state(state.group_id)
     assert summarize.call_count == 1
@@ -137,7 +137,7 @@ def test_incidental_possession_correction_uses_inventory_without_plot_authority(
 
 
 def test_keeper_prompt_accepts_fuzzy_present_action_without_inventing_history():
-    prompt = keeper._build_static_prompt(GroupState("prompt-correction"))
+    prompt = prompt_builder.build_static_prompt(GroupState("prompt-correction"))
     assert "不要求中譯逐字寫出鑰匙與門的配對" in prompt
     assert "不能只因 AI 舊敘事或摘要提過" in prompt
 
@@ -226,7 +226,7 @@ def test_summary_retries_after_revision_race(tmp_path, monkeypatch):
             latest.log.append({'role': 'user', 'content': 'new action'})
             save_state(latest)
         return '已更正為腐紙味'
-    with patch.object(correction_summary.keeper, 'summarize_log_chunk', side_effect=summarize):
+    with patch.object(correction_summary.memory_maintenance, 'summarize_log_chunk', side_effect=summarize):
         asyncio.run(correction_summary.rebuild(state.group_id))
     assert len(calls) == 2
     assert load_state(state.group_id).narrative_corrections[-1]['summary_rebuild_status'] == 'done'

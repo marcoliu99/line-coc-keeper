@@ -6,7 +6,7 @@ import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import config, keeper
+from app import config, memory_maintenance
 from app.providers import codex_provider, registry, shutdown_async_clients
 
 
@@ -47,7 +47,7 @@ class CapabilityTests(unittest.TestCase):
             self.assertIs(module.analysis_provider, registry.analysis_provider)
         for module in [scenario_compare, scenario_index, scenario_intro]:
             self.assertIs(module.conversation_provider, registry.conversation_provider)
-        self.assertIs(keeper.conversation_provider, registry.conversation_provider)
+        self.assertIs(memory_maintenance.conversation_provider, registry.conversation_provider)
 
     def test_non_pdf_structured_analysis_uses_llm_provider(self):
         from app import scenario_compare, scenario_index, scenario_intro
@@ -65,7 +65,7 @@ class CapabilityTests(unittest.TestCase):
             scenario_index.extract_scenario_index('scenario text')
             scenario_intro.extract_opening_narration('scenario text')
             scenario_compare.compare_scenario_text('original', 'other parse')
-            self.assertEqual(keeper.summarize_log_chunk('', [{'role': 'user', 'content': 'hello'}]), 'updated')
+            self.assertEqual(memory_maintenance.summarize_log_chunk('', [{'role': 'user', 'content': 'hello'}]), 'updated')
         self.assertEqual(analyze_text.call_count, 4)
 
     def test_pregen_and_page_image_extraction_use_analysis_provider(self):

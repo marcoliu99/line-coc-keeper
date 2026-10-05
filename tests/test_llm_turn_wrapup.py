@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 PLACEHOLDER = "（守密人一時語塞，請再說一次剛才的行動）"
 
 
-async def _execute_tool(_name, _args):
+async def execute_tool(_name, _args):
     return {"ok": True}
 
 
@@ -38,7 +38,7 @@ class OpenAIWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"openai": fake_openai_module}), \
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
             result = asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -58,7 +58,7 @@ class OpenAIWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"openai": fake_openai_module}), \
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
             result = asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -89,7 +89,7 @@ class OpenAIWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"openai": fake_openai_module}), \
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
             result = asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -111,7 +111,7 @@ class OpenAIWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"openai": fake_openai_module}), \
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
             result = asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1, enable_wrapup=False,
+                "static", "dynamic", [], [], "hello", execute_tool, 1, enable_wrapup=False,
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -130,7 +130,7 @@ class OpenAIWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"openai": fake_openai_module}), \
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"):
             result = asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 3
+                "static", "dynamic", [], [], "hello", execute_tool, 3
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -156,7 +156,7 @@ class AnthropicWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"):
             result = asyncio.run(anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(anthropic_provider.shutdown_async_client())
 
@@ -176,7 +176,7 @@ class AnthropicWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"):
             result = asyncio.run(anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(anthropic_provider.shutdown_async_client())
 
@@ -203,7 +203,7 @@ class AnthropicWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"):
             result = asyncio.run(anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(anthropic_provider.shutdown_async_client())
 
@@ -220,7 +220,7 @@ class AnthropicWrapupTests(unittest.TestCase):
         with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}), \
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"):
             result = asyncio.run(anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1, enable_wrapup=False,
+                "static", "dynamic", [], [], "hello", execute_tool, 1, enable_wrapup=False,
             ))
             asyncio.run(anthropic_provider.shutdown_async_client())
 
@@ -253,7 +253,7 @@ class GeminiWrapupTests(unittest.TestCase):
             "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
         ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"):
             result = asyncio.run(gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(gemini_provider.shutdown_async_client())
 
@@ -284,7 +284,7 @@ class GeminiWrapupTests(unittest.TestCase):
             "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
         ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"):
             result = asyncio.run(gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(gemini_provider.shutdown_async_client())
 
@@ -318,7 +318,7 @@ class GeminiWrapupTests(unittest.TestCase):
             "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
         ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"):
             result = asyncio.run(gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1
+                "static", "dynamic", [], [], "hello", execute_tool, 1
             ))
             asyncio.run(gemini_provider.shutdown_async_client())
 
@@ -340,7 +340,7 @@ class GeminiWrapupTests(unittest.TestCase):
             "sys.modules", {"google.genai": fake_genai_module, "google.genai.types": fake_types_module}
         ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"):
             result = asyncio.run(gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 1, enable_wrapup=False,
+                "static", "dynamic", [], [], "hello", execute_tool, 1, enable_wrapup=False,
             ))
             asyncio.run(gemini_provider.shutdown_async_client())
 
@@ -383,7 +383,7 @@ class OpenAIHighIterationWatermarkTests(unittest.TestCase):
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"), \
              patch("app.providers.openai_provider.observability.event") as mock_event:
             result = asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+                "static", "dynamic", [], [], "hello", execute_tool, 5,
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -408,7 +408,7 @@ class OpenAIHighIterationWatermarkTests(unittest.TestCase):
              patch("app.providers.openai_provider.OPENAI_API_KEY", "test-key"), \
              patch("app.providers.openai_provider.observability.event") as mock_event:
             asyncio.run(openai_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+                "static", "dynamic", [], [], "hello", execute_tool, 5,
             ))
             asyncio.run(openai_provider.shutdown_async_client())
 
@@ -437,7 +437,7 @@ class AnthropicHighIterationWatermarkTests(unittest.TestCase):
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"), \
              patch("app.providers.anthropic_provider.observability.event") as mock_event:
             result = asyncio.run(anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+                "static", "dynamic", [], [], "hello", execute_tool, 5,
             ))
             asyncio.run(anthropic_provider.shutdown_async_client())
 
@@ -463,7 +463,7 @@ class AnthropicHighIterationWatermarkTests(unittest.TestCase):
              patch("app.providers.anthropic_provider.ANTHROPIC_API_KEY", "test-key"), \
              patch("app.providers.anthropic_provider.observability.event") as mock_event:
             asyncio.run(anthropic_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+                "static", "dynamic", [], [], "hello", execute_tool, 5,
             ))
             asyncio.run(anthropic_provider.shutdown_async_client())
 
@@ -500,7 +500,7 @@ class GeminiHighIterationWatermarkTests(unittest.TestCase):
         ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"), \
              patch("app.providers.gemini_provider.observability.event") as mock_event:
             result = asyncio.run(gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+                "static", "dynamic", [], [], "hello", execute_tool, 5,
             ))
             asyncio.run(gemini_provider.shutdown_async_client())
 
@@ -529,7 +529,7 @@ class GeminiHighIterationWatermarkTests(unittest.TestCase):
         ), patch("app.providers.gemini_provider.GEMINI_API_KEY", "test-key"), \
              patch("app.providers.gemini_provider.observability.event") as mock_event:
             asyncio.run(gemini_provider.run_conversation(
-                "static", "dynamic", [], [], "hello", _execute_tool, 5,
+                "static", "dynamic", [], [], "hello", execute_tool, 5,
             ))
             asyncio.run(gemini_provider.shutdown_async_client())
 

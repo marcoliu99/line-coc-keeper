@@ -132,6 +132,8 @@ MAX_SCENARIO_CHARS = int(os.environ.get("MAX_SCENARIO_CHARS", "240000"))
 # per-summarization LLM cost for less compression buildup in any one
 # campaign_summary pass.
 MAX_LOG_TURNS = int(os.environ.get("MAX_LOG_TURNS", "40"))
+# How many recent KP Assistant out-of-character messages are kept in the log and shown in the dynamic prompt.
+KP_OOC_LOG_MAX_MESSAGES = 20
 
 # Guards against runaway tool-use loops. A turn that spends every iteration
 # on tool calls still gets a real narration (see each provider's forced

@@ -33,7 +33,7 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-from app import config, keeper
+from app import config, prompt_builder
 from app.agents.tool_gateway import tools_for_speaker_role
 from app.models import GroupState
 from app.services import input_budget, prompt_config
@@ -87,9 +87,9 @@ async def run_arm(client, arm: str, turns, tools, max_output: int) -> list[dict]
             character.hp = max(1, (character.hp_max or 10) - (index % 5))
             character.san = max(1, (character.san_max or 50) - (index % 7))
             character.luck = 20 + index
-        static_system = prompt_config.build_executor_static_prompt(keeper._build_static_prompt(state))
+        static_system = prompt_config.build_executor_static_prompt(prompt_builder.build_static_prompt(state))
         dynamic_system = prompt_config.build_executor_dynamic_prompt_with_context(
-            keeper._build_dynamic_prompt(state, owner, None, "player"), "", "")
+            prompt_builder.build_dynamic_prompt(state, owner, None, "player"), "", "")
 
         if arm == "A":
             instructions = f"{static_system}\n\n{dynamic_system}"
@@ -196,11 +196,11 @@ async def main() -> int:
     owner = next((c.owner_id for c in sample_state.active_characters()), "")
     estimates = {
         "static": input_budget.estimate(
-            prompt_config.build_executor_static_prompt(keeper._build_static_prompt(sample_state)),
+            prompt_config.build_executor_static_prompt(prompt_builder.build_static_prompt(sample_state)),
             config.OPENAI_MODEL),
         "dynamic": input_budget.estimate(
             prompt_config.build_executor_dynamic_prompt_with_context(
-                keeper._build_dynamic_prompt(sample_state, owner, None, "player"), "", ""),
+                prompt_builder.build_dynamic_prompt(sample_state, owner, None, "player"), "", ""),
             config.OPENAI_MODEL),
         "tools": input_budget.estimate(provider_tools(tools), config.OPENAI_MODEL),
     }

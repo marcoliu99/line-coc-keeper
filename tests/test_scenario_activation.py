@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app import checkpoints, db, keeper, scenario_activation
+from app import checkpoints, db, scenario_activation, tool_dispatch
 from app.commands.handlers import system
 from app.models import GroupState
 from app.repositories import group_state
@@ -273,7 +273,7 @@ def test_chapter_advance_image_failure_does_not_undo_commit(storage: Path, monke
     monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images",
                         lambda *_: (_ for _ in ()).throw(OSError("image failure")))
 
-    result = keeper._execute_tool(state, "advance_scenario_chapter", {}, [], [])
+    result = tool_dispatch.execute_tool(state, "advance_scenario_chapter", {}, [], [])
 
     assert result["ok"]
     assert "圖片快取刷新失敗" in result["notice"]
@@ -291,7 +291,7 @@ def test_chapter_advance_commit_failure_preserves_images(storage: Path, monkeypa
     monkeypatch.setattr(group_state, "write_state_tx",
                         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("db failed")))
 
-    result = keeper._execute_tool(state, "advance_scenario_chapter", {}, [], [])
+    result = tool_dispatch.execute_tool(state, "advance_scenario_chapter", {}, [], [])
 
     assert not result["ok"]
     assert group_state.load_state("group").active_chapter_id == "first"

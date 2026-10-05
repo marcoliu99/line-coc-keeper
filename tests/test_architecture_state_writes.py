@@ -186,7 +186,8 @@ class ImportSmokeTests(unittest.TestCase):
 
     ENTRY_POINTS = (
         "app.repositories.state_transaction",
-        "app.keeper",
+        "app.tool_dispatch",
+        "app.turn_commit",
         "app.commands.router",
         "app.agents.supervisor",
         "app.discord_bot",

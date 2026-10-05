@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app import config, keeper, observability
+from app import config, memory_maintenance, observability
 from app.commands.types import Reply, SendDM, SendDMImage, SendImage
 from app.repositories.group_state import load_page_image
 
@@ -57,7 +57,7 @@ _pending_maintenance_tasks: set[asyncio.Task] = set()
 
 
 def spawn_post_turn_maintenance(conversation_id: str) -> None:
-    """Fires keeper.run_post_turn_maintenance as an independent background
+    """Fires memory_maintenance.run_post_turn_maintenance as an independent background
     task instead of awaiting it inline. It used to be awaited from *inside*
     the Keeper turn lock (and, on most call paths, the coarser per-
     conversation lock too) — see run_post_turn_maintenance_after_output
@@ -71,16 +71,16 @@ def spawn_post_turn_maintenance(conversation_id: str) -> None:
     take.
 
     Detaching this from the turn-level locks is only safe because
-    keeper.run_post_turn_maintenance was hardened to tolerate running fully
+    memory_maintenance.run_post_turn_maintenance was hardened to tolerate running fully
     unlocked around its own slow LLM/embedding calls: a per-group_id
     in-flight guard keeps two passes for the same conversation from ever
     overlapping, and its persist step re-derives what to trim from a freshly
     reloaded state.log (content-matched against the chunk it actually
     summarized) instead of blindly overwriting with a pre-computed snapshot
-    — otherwise a concurrent turn's _commit_turn_result landing in the gap
+    — otherwise a concurrent turn's commit_turn_result landing in the gap
     while maintenance is mid-flight would have its new log entries silently
     discarded when maintenance's stale snapshot got written back. See
-    keeper.py's run_post_turn_maintenance/_persist_memory_maintenance_state
+    memory_maintenance.py's run_post_turn_maintenance/_persist_memory_maintenance_state
     docstrings for the details; this was found and confirmed by data-loss
     reproduction during PR review, not from first-principles design."""
     task = asyncio.create_task(run_post_turn_maintenance_safely(conversation_id))
@@ -100,7 +100,7 @@ async def run_post_turn_maintenance_safely(conversation_id: str) -> None:
                 slow_threshold_ms=config.LOG_SLOW_OPERATION_MS,
                 slow_event="maintenance.slow",
             ):
-                result = await asyncio.to_thread(keeper.run_post_turn_maintenance, conversation_id)
+                result = await asyncio.to_thread(memory_maintenance.run_post_turn_maintenance, conversation_id)
                 metrics.update(result or {})
         except Exception:
             _logger.exception("post-turn maintenance failed (background) for conversation_id=%s", conversation_id)

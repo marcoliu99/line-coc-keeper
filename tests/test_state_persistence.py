@@ -9,7 +9,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from app import checkpoints, db, keeper, scene_digest
+from app import (
+    checkpoints,
+    db,
+    memory_maintenance,
+    prompt_builder,
+    scene_digest,
+    tool_dispatch,
+)
 from app.commands.handlers import combat as combat_handler
 from app.commands.handlers import system as system_handler
 from app.models import Character, Combatant, EnemyCombatCard, GroupState, SpecialAbility
@@ -82,7 +89,7 @@ class StatePersistenceTests(unittest.TestCase):
     def test_cancelled_mutation_recovery_marker_is_durable(self):
         state = GroupState("recovery-persist")
         group_state.save_state(state)
-        asyncio.run(keeper.record_tool_recovery_marker(
+        asyncio.run(tool_dispatch.record_tool_recovery_marker(
             state, "apply_combat_damage", {"investigator": "Ada", "damage": 4}
         ))
 
@@ -336,10 +343,9 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_maintenance_guard_runs_before_scene_digest(self):
         group_id = "discord-group-maintenance-guard"
-        with patch.object(keeper, "_maintenance_in_flight", {group_id}), patch.object(
-            keeper, "run_scene_digest_maintenance"
+        with patch.object(memory_maintenance, "_maintenance_in_flight", {group_id}), patch.object(memory_maintenance, "run_scene_digest_maintenance"
         ) as digest:
-            keeper.run_post_turn_maintenance(group_id)
+            memory_maintenance.run_post_turn_maintenance(group_id)
         digest.assert_not_called()
 
     def test_character_mirrors_are_scoped_by_group(self):
@@ -483,7 +489,7 @@ class StatePersistenceTests(unittest.TestCase):
                 raise sqlite3.OperationalError("outer commit failed")
 
         with patch.object(db, "_connect", failing_commit), patch.object(group_state.StateCommit, "apply") as publish, self.assertRaises(sqlite3.OperationalError):
-            keeper._persist_memory_maintenance_state(
+            memory_maintenance._persist_memory_maintenance_state(
                 state.group_id, "new summary", state.log, timeline_id=state.timeline_id,
                 base_summary="", source_revision=state.state_revision,
                 idempotency_key="failed-maintenance", embedding=[],
@@ -656,7 +662,7 @@ class StatePersistenceTests(unittest.TestCase):
     def test_keeper_combat_tool_creates_auto_checkpoint(self):
         state = GroupState("discord-group-combat-tool")
         group_state.save_state(state)
-        result = keeper._execute_tool(state, "start_combat", {}, [], [])
+        result = tool_dispatch.execute_tool(state, "start_combat", {}, [], [])
         self.assertTrue(result["ok"])
         entries = checkpoints.list_checkpoints(state.group_id)
         self.assertEqual([entry["reason"] for entry in entries], ["auto_combat_start"])
@@ -669,13 +675,13 @@ class StatePersistenceTests(unittest.TestCase):
         # refuse to create a second one.
         state = GroupState("discord-group-dup-npc")
         group_state.save_state(state)
-        first = keeper._execute_tool(
+        first = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
         self.assertTrue(first["ok"])
         self.assertNotIn("note", first)
 
-        second = keeper._execute_tool(
+        second = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
 
@@ -687,16 +693,16 @@ class StatePersistenceTests(unittest.TestCase):
     def test_add_npc_to_combat_allows_a_second_defeated_monster_of_same_name(self):
         state = GroupState("discord-group-revived-npc")
         group_state.save_state(state)
-        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        tool_dispatch.execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
         enemy = next(c for c in state.combat.order if c.side == "enemy")
         state.combat.enemy_cards[enemy.enemy_card_id].hp = 0
         enemy.defeated = True
-        # _mutate_and_save_state reloads from the DB rather than trusting
+        # mutate_tool_state reloads from the DB rather than trusting
         # this in-memory `state` object, so the defeat above must be
         # persisted before the next tool call will see it.
         group_state.save_state(state)
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
 
@@ -711,9 +717,9 @@ class StatePersistenceTests(unittest.TestCase):
     def test_add_npc_to_combat_allows_two_different_named_enemies(self):
         state = GroupState("discord-group-two-enemies")
         group_state.save_state(state)
-        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        tool_dispatch.execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "老鼠群", "dex": 60, "hp": 5}, [], [],
         )
 
@@ -735,13 +741,13 @@ class StatePersistenceTests(unittest.TestCase):
             {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20},
         ]
         group_state.save_state(state)
-        first = keeper._execute_tool(
+        first = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
         self.assertTrue(first["ok"])
         self.assertNotIn("note", first)
 
-        second = keeper._execute_tool(
+        second = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "Walter Corbitt", "dex": 50, "hp": 20}, [], [],
         )
 
@@ -759,9 +765,9 @@ class StatePersistenceTests(unittest.TestCase):
         # allowed in.
         state = GroupState("discord-group-substring-overlap")
         group_state.save_state(state)
-        keeper._execute_tool(state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [])
+        tool_dispatch.execute_tool(state, "add_npc_to_combat", {"name": "Cultist", "dex": 50, "hp": 10}, [], [])
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "Cultist Leader", "dex": 60, "hp": 20}, [], [],
         )
 
@@ -772,7 +778,7 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_add_npc_to_combat_alias_resolution_does_not_use_fuzzy_matching(self):
         # Second-round review finding: the duplicate guard's alias expansion
-        # originally reused _find_npc_index_entry, which has a difflib fuzzy
+        # originally reused find_npc_index_entry, which has a difflib fuzzy
         # fallback (ratio >= 0.6) meant for the HP-consistency check, where a
         # wrong guess only mis-prices one number. Reused for duplicate
         # detection, a wrong fuzzy match would pull in an unrelated entry's
@@ -786,11 +792,11 @@ class StatePersistenceTests(unittest.TestCase):
             {"name": "深潛者（幼體）", "aliases": [], "hp": 8},
         ]
         group_state.save_state(state)
-        keeper._execute_tool(
+        tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "深潛者（成年頭目）", "dex": 50, "hp": 30}, [], [],
         )
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "深潛者頭目", "dex": 50, "hp": 30}, [], [],
         )
 
@@ -811,11 +817,11 @@ class StatePersistenceTests(unittest.TestCase):
             {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 20},
         ]
         group_state.save_state(state)
-        keeper._execute_tool(
+        tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "  walter   corbitt ", "dex": 50, "hp": 20}, [], [],
         )
 
@@ -837,7 +843,7 @@ class StatePersistenceTests(unittest.TestCase):
         ]
         group_state.save_state(state)
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
 
@@ -854,10 +860,10 @@ class StatePersistenceTests(unittest.TestCase):
         # pointless extra write.
         state = GroupState("discord-group-dup-no-save")
         group_state.save_state(state)
-        keeper._execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
+        tool_dispatch.execute_tool(state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [])
         revision_before = group_state.load_state(state.group_id).state_revision
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "柯比特", "dex": 50, "hp": 20}, [], [],
         )
 
@@ -896,16 +902,16 @@ class StatePersistenceTests(unittest.TestCase):
         # from different directions - same species/stats, but two distinct
         # individuals, not a duplicate call for the same one. The duplicate
         # guard is exact-name-match, so as long as the Keeper follows the
-        # naming instruction added to _build_static_prompt (give each
+        # naming instruction added to build_static_prompt (give each
         # same-species instance in one fight a distinct display name), both
         # must be allowed into combat as separate combatants.
         state = GroupState("discord-group-two-deep-ones")
         group_state.save_state(state)
-        keeper._execute_tool(
+        tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "魚人（左）", "dex": 40, "hp": 15}, [], [],
         )
 
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "add_npc_to_combat", {"name": "魚人（右）", "dex": 40, "hp": 15}, [], [],
         )
 
@@ -916,15 +922,15 @@ class StatePersistenceTests(unittest.TestCase):
 
     def test_static_prompt_instructs_distinct_names_for_same_species_multiples(self):
         state = GroupState("discord-group-prompt-check")
-        prompt = keeper._build_static_prompt(state)
+        prompt = prompt_builder.build_static_prompt(state)
         self.assertIn("Each simultaneously active instance of one enemy type needs a distinct display name", prompt)
 
     def test_fact_metadata_and_successful_item_removal_are_persisted(self):
         state = GroupState("discord-group-5")
         state.characters["u1"] = Character("Ada", "u1", carried_items=["鑰匙"])
         group_state.save_state(state)
-        self.assertTrue(keeper._execute_tool(state, "record_clue", {"clue": "門鎖曾被撬過", "visibility": "public"}, [], [] )["ok"])
-        self.assertTrue(keeper._execute_tool(state, "remove_carried_item", {"investigator": "Ada", "item": "鑰匙"}, [], [] )["ok"])
+        self.assertTrue(tool_dispatch.execute_tool(state, "record_clue", {"clue": "門鎖曾被撬過", "visibility": "public"}, [], [] )["ok"])
+        self.assertTrue(tool_dispatch.execute_tool(state, "remove_carried_item", {"investigator": "Ada", "item": "鑰匙"}, [], [] )["ok"])
         loaded = group_state.load_state(state.group_id)
         self.assertEqual(loaded.known_clues[0]["visibility"], "public")
         self.assertEqual(loaded.consumed_or_removed_items[0]["character_id"], "u1")
@@ -957,7 +963,7 @@ class StatePersistenceTests(unittest.TestCase):
 
         state.log = state.log[-3:]
         group_state.save_state(state)
-        keeper.run_scene_digest_maintenance(state.group_id)
+        memory_maintenance.run_scene_digest_maintenance(state.group_id)
 
         entries = scene_digest.list_digests(state.group_id)
         self.assertEqual(len(entries), 2)

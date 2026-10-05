@@ -5,9 +5,12 @@ import asyncio
 import json
 from unittest.mock import patch
 
+from app import turn_commit
+from app.keeper_tools import registry as tool_registry
+from app.repositories.group_state import load_state
+
 
 async def run_check(provider):
-    from app import keeper
     from app.agents.tool_gateway import make_tool_executor
     from app.commands.handlers import checks as check_commands
     from app.models import Character, GroupState
@@ -19,8 +22,8 @@ async def run_check(provider):
                                           skills={'偵查': 70}, luck=0)
     state.scenario_text = 'A sealed desk contains a faded document. A successful Spot Hidden check reveals the date 1925.'
     group_state.save_state(state)  # the first save assigns the timeline
-    keeper._ensure_turn_timeline(state)
-    check_tool = next(t for t in keeper.TOOLS if t['name'] == 'skill_check')
+    turn_commit.ensure_turn_timeline(state)
+    check_tool = next(t for t in tool_registry.TOOLS if t['name'] == 'skill_check')
     receipts = []
     gateway = make_tool_executor(state, [], [], 'player', [])
 
@@ -39,7 +42,7 @@ async def run_check(provider):
     )
     assert len(receipts) == 1 and receipts[0]['name'] == 'skill_check', 'Expected exactly one check tool'
     assert receipts[0]['result'].get('pending'), 'Check was not registered'
-    persisted = keeper.load_state(state.group_id)
+    persisted = load_state(state.group_id)
     assert 'player' in persisted.pending_checks, 'Pending check was not persisted'
     assert '/coc check' in pending_text, 'Missing player check instruction'
     assert '1925' not in pending_text, 'Premature clue disclosure'
@@ -49,7 +52,7 @@ async def run_check(provider):
                                           state.group_id, 'player', '/coc check')
     assert dice.call_count == 1, 'Player dice were rerolled'
     assert resolved.should_finalize and resolved.resolved_event, 'Resolution did not complete'
-    persisted = keeper.load_state(state.group_id)
+    persisted = load_state(state.group_id)
     assert not persisted.pending_checks and not persisted.pending_luck_decisions, 'Uncleared pending state'
 
     async def no_more_tools(*_args):

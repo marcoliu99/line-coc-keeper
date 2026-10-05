@@ -3,7 +3,7 @@ import unittest
 from copy import deepcopy
 from unittest.mock import AsyncMock, patch
 
-from app import keeper
+from app.keeper_tools import registry as tool_registry
 from app.models import Character, GroupState
 from app.providers import codex_provider
 from app.providers.codex_transport import TOOL_CALL_EXAMPLE, CodexError
@@ -16,7 +16,7 @@ class DecisionContextTests(unittest.TestCase):
         self.state.characters['a'] = Character(name='A', owner_id='a')
         self.state.characters['b'] = Character(name='B', owner_id='b')
         self.state.pending_checks['a'] = {'check_id': 'check-a', 'action_context': 'read document'}
-        self.tools = [t for t in keeper.TOOLS if t['name'] in {
+        self.tools = [t for t in tool_registry.TOOLS if t['name'] in {
             'skill_check', 'sanity_check', 'clear_pending_check', 'add_carried_item'}]
 
     def test_busy_actor_is_excluded_but_other_actor_and_independent_actions_remain(self):

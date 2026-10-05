@@ -1,6 +1,6 @@
 """The restored player turn uses the legacy map hint and no arrival tool."""
 
-from app import keeper
+from app import tool_dispatch
 from app.agents import intent_router
 from app.domain.models import AgentMessage
 from app.models import Character, GroupState
@@ -8,7 +8,7 @@ from app.services import map_service
 
 
 def test_executor_no_longer_offers_the_s2_arrival_tool():
-    offered = {tool['name'] for tool in keeper._tools_for_speaker_role('player')}
+    offered = {tool['name'] for tool in tool_dispatch.tools_for_speaker_role('player')}
     assert 'commit_movement' not in offered
 
 

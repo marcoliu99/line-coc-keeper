@@ -30,13 +30,13 @@ untuned bullet, so there is no consistency cost to weigh against that.
 """
 import unittest
 
-from app import keeper
+from app import prompt_builder
 from app.models import GroupState
 
 
 class CombatRevealBeatPromptTests(unittest.TestCase):
     def test_the_prompt_requires_narrating_the_activation_beat_before_lethal_resolution(self):
-        prompt = keeper._build_static_prompt(GroupState(group_id="combat-reveal-beat"))
+        prompt = prompt_builder.build_static_prompt(GroupState(group_id="combat-reveal-beat"))
         self.assertTrue(
             any(
                 phrase in prompt

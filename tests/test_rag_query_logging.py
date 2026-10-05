@@ -2,7 +2,7 @@
 triggers a scenario/memory RAG search (i.e., every place that can make an
 embeddings API call for a query string):
 
-- app/keeper.py's _execute_tool, for the Keeper explicitly calling the
+- app/keeper.py's execute_tool, for the Keeper explicitly calling the
   search_scenario/search_memory tools.
 - app/agents/context_builder.py's build_context, which runs scenario/memory
   RAG *proactively* once per turn (memory unconditionally whenever the
@@ -20,7 +20,7 @@ per-turn context_builder search instead of any explicit tool call at all."""
 import unittest
 from unittest.mock import patch
 
-from app import keeper, memory_rag, scenario_rag
+from app import memory_rag, scenario_rag, tool_dispatch
 from app.models import Character, GroupState
 from app.services import map_service
 
@@ -36,7 +36,7 @@ class RagQueryLoggingTests(unittest.TestCase):
              patch.object(scenario_rag, "search", return_value=[]), \
              patch.object(scenario_rag, "format_results", return_value="（沒有找到相關內容）"), \
              self.assertLogs("app.keeper", level="INFO") as logs:
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 self._state(), "search_scenario", {"query": "卡西迪"}, [], [], "player"
             )
         self.assertTrue(any("search_scenario" in line and "卡西迪" in line for line in logs.output))
@@ -45,7 +45,7 @@ class RagQueryLoggingTests(unittest.TestCase):
         with patch.object(memory_rag, "search_memory", return_value=[]), \
              patch.object(memory_rag, "format_results", return_value="（沒有找到相關內容）"), \
              self.assertLogs("app.keeper", level="INFO") as logs:
-            keeper._execute_tool(
+            tool_dispatch.execute_tool(
                 self._state(), "search_memory", {"query": "地下室"}, [], [], "player"
             )
         self.assertTrue(any("search_memory" in line and "地下室" in line for line in logs.output))
@@ -58,8 +58,8 @@ class RagQueryLoggingTests(unittest.TestCase):
              patch.object(scenario_rag, "search", return_value=[]), \
              patch.object(scenario_rag, "format_results", return_value="（沒有找到相關內容）"), \
              self.assertLogs("app.keeper", level="INFO") as logs:
-            keeper._execute_tool(self._state(), "search_scenario", {"query": "地窖"}, [], [], "player")
-            keeper._execute_tool(self._state(), "search_scenario", {"query": "地窖"}, [], [], "player")
+            tool_dispatch.execute_tool(self._state(), "search_scenario", {"query": "地窖"}, [], [], "player")
+            tool_dispatch.execute_tool(self._state(), "search_scenario", {"query": "地窖"}, [], [], "player")
         matching = [line for line in logs.output if "search_scenario" in line and "地窖" in line]
         self.assertEqual(len(matching), 2)
 

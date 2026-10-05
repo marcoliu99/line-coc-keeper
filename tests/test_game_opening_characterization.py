@@ -10,7 +10,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app import config, db, keeper, scenario_intro
+from app import config, db, scenario_intro, turn_commit
 from app.commands import router
 from app.commands.handlers import system
 from app.models import BASE_SKILLS, Character, GroupState
@@ -525,6 +525,43 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(one[1], "開場")
         self.assertIn("已經開始過", two[0])
 
+    async def test_bound_source_releases_mutation_lock_during_extraction(self) -> None:
+        self.store(active_scenario_source_hash="source-v1")
+        entered = threading.Event()
+        release = threading.Event()
+        events: list[str] = []
+
+        def extract(_text: str) -> dict:
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("extraction barrier")
+            return {"found": True, "text": "開場", "opening_check": None}
+
+        async def start_reply(value: str) -> None:
+            events.append("readiness" if value.startswith("📋") else "opening")
+
+        async def other_reply(_value: str) -> None:
+            events.append("other")
+
+        with patch.object(scenario_intro, "extract_opening_narration", side_effect=extract):
+            start = asyncio.create_task(router.handle_text_message(
+                self.group, "first", lambda owner: owner, start_reply,
+                AsyncMock(), AsyncMock(), AsyncMock(), "/coc start",
+            ))
+            self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+            other = asyncio.create_task(router.handle_text_message(
+                self.group, "first", lambda owner: owner, other_reply,
+                AsyncMock(), AsyncMock(), AsyncMock(), "/coc status",
+            ))
+            try:
+                await asyncio.wait_for(other, 1)
+                self.assertEqual(events[:2], ["readiness", "other"])
+            finally:
+                release.set()
+                await start
+        self.assertEqual(events, ["readiness", "other", "opening"])
+        self.assertTrue(load_state(self.group).game_started)
+
     async def test_router_serializes_double_fallback_start(self) -> None:
         self.store()
         entered = asyncio.Event()
@@ -681,7 +718,7 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
             self.group, lambda ctx: setattr(ctx.state, "timeline_id", "timeline-new"),
             reason="test_timeline_replacement",
         )
-        self.assertFalse(keeper._commit_turn_result(
+        self.assertFalse(turn_commit.commit_turn_result(
             old, [{"role": "assistant", "content": "舊開場"}],
             timeline_id="timeline-opening", start_game=True,
         ))

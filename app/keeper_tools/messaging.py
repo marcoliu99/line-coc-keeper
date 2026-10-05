@@ -5,15 +5,15 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from app import observability, spoiler_policy
+from app.keeper_tools import support
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
 
 
 def send_private_info(call: ToolCall) -> dict[str, Any]:
-    from app import keeper
 
-    char = keeper.find_character(call.state, call.input.get("investigator", ""))
+    char = support.find_character(call.state, call.input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{call.input.get('investigator')}」"}
     if not spoiler_policy.is_privacy_isolation_enabled():

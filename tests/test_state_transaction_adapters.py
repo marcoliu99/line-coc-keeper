@@ -12,8 +12,9 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from app import checkpoints, keeper, observability
+from app import checkpoints, observability, tool_dispatch, turn_commit
 from app.commands.handlers import character as character_handler
+from app.keeper_tools import support
 from app.models import Character, GroupState
 from app.repositories import group_state, state_transaction
 from app.services import pending_buttons
@@ -47,8 +48,8 @@ class TurnCommitTests(unittest.TestCase):
         conversation = _conversation()
         state = _seed(conversation)
         timeline = state.timeline_id
-        first = keeper._commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-1")
-        retry = keeper._commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-1")
+        first = turn_commit.commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-1")
+        retry = turn_commit.commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-1")
         self.assertTrue(first and retry)
         self.assertEqual(len(group_state.load_state(conversation).log), 2)
 
@@ -56,16 +57,16 @@ class TurnCommitTests(unittest.TestCase):
         conversation = _conversation()
         state = _seed(conversation)
         timeline = state.timeline_id
-        keeper._commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-1")
-        keeper._commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-2")
+        turn_commit.commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-1")
+        turn_commit.commit_turn_result(state, [dict(e) for e in self.ENTRIES], timeline_id=timeline, turn_id="turn-2")
         self.assertEqual(len(group_state.load_state(conversation).log), 4)
 
     def test_same_turn_with_different_entries_is_a_different_action(self):
         conversation = _conversation()
         state = _seed(conversation)
         timeline = state.timeline_id
-        keeper._commit_turn_result(state, [dict(self.ENTRIES[0])], timeline_id=timeline, turn_id="turn-1")
-        keeper._commit_turn_result(state, [dict(self.ENTRIES[1])], timeline_id=timeline, turn_id="turn-1")
+        turn_commit.commit_turn_result(state, [dict(self.ENTRIES[0])], timeline_id=timeline, turn_id="turn-1")
+        turn_commit.commit_turn_result(state, [dict(self.ENTRIES[1])], timeline_id=timeline, turn_id="turn-1")
         self.assertEqual(len(group_state.load_state(conversation).log), 2)
 
     def test_a_turn_from_before_a_reset_is_not_committed_and_the_snapshot_is_refreshed(self):
@@ -75,8 +76,8 @@ class TurnCommitTests(unittest.TestCase):
         state_transaction.mutate(
             conversation, lambda ctx: ctx.replace_state(GroupState(group_id=conversation)), reason="newgame",
         )
-        with patch.object(keeper.observability, "event") as event:
-            committed = keeper._commit_turn_result(
+        with patch.object(observability, "event") as event:
+            committed = turn_commit.commit_turn_result(
                 state, [dict(e) for e in self.ENTRIES], timeline_id=old_timeline, turn_id="turn-old",
             )
         self.assertFalse(committed)
@@ -87,11 +88,11 @@ class TurnCommitTests(unittest.TestCase):
     def test_a_turn_commit_does_not_overwrite_a_tool_change_made_after_the_turn_loaded(self):
         conversation = _conversation()
         state = _seed(conversation, _investigator())
-        keeper._execute_tool(state, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -3}, [], [])
+        tool_dispatch.execute_tool(state, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -3}, [], [])
         stale = group_state.load_state(conversation)
         stale.characters["u1"].hp = 20  # a snapshot that predates the tool call
         stale.state_revision -= 1
-        keeper._commit_turn_result(stale, [dict(e) for e in self.ENTRIES], timeline_id=state.timeline_id, turn_id="t")
+        turn_commit.commit_turn_result(stale, [dict(e) for e in self.ENTRIES], timeline_id=state.timeline_id, turn_id="t")
         stored = group_state.load_state(conversation)
         self.assertEqual(stored.characters["u1"].hp, 17)
         self.assertEqual(len(stored.log), 2)
@@ -101,7 +102,7 @@ class TurnCommitTests(unittest.TestCase):
         conversation = _conversation()
         state = _seed(conversation)
         for _ in range(2):
-            keeper._commit_turn_result(
+            turn_commit.commit_turn_result(
                 state, [dict(e) for e in self.ENTRIES], timeline_id=state.timeline_id, turn_id="owned-by-run_turn",
             )
         self.assertEqual(len(group_state.load_state(conversation).log), 2)
@@ -117,7 +118,7 @@ class KeeperToolAdapterTests(unittest.TestCase):
             local = group_state.load_state(conversation)  # each worker holds its own snapshot
             gate.wait()
             for _ in range(6):
-                result = keeper._execute_tool(
+                result = tool_dispatch.execute_tool(
                     local, "adjust_character", {"investigator": "Ada", "field": field, "delta": -1}, [], [],
                 )
                 assert result["ok"], result
@@ -134,7 +135,7 @@ class KeeperToolAdapterTests(unittest.TestCase):
         state_transaction.mutate(
             conversation, lambda ctx: ctx.replace_state(GroupState(group_id=conversation)), reason="newgame",
         )
-        result = keeper._execute_tool(
+        result = tool_dispatch.execute_tool(
             state, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -1}, [], [],
         )
         self.assertFalse(result["ok"], result)
@@ -144,10 +145,10 @@ class KeeperToolAdapterTests(unittest.TestCase):
         conversation = _conversation()
         snapshot = _seed(conversation, _investigator())
         revision = snapshot.state_revision
-        value = keeper.mutate_tool_state(snapshot, lambda latest: keeper.ToolStateMutation("nothing", should_save=False))
+        value = support.mutate_tool_state(snapshot, lambda latest: support.ToolStateMutation("nothing", should_save=False))
         self.assertEqual(value, "nothing")
         self.assertEqual(group_state.load_state(conversation).state_revision, revision)
-        keeper.mutate_tool_state(snapshot, lambda latest: setattr(latest, "mechanical_round", 2))
+        support.mutate_tool_state(snapshot, lambda latest: setattr(latest, "mechanical_round", 2))
         self.assertEqual(group_state.load_state(conversation).state_revision, revision + 1)
         self.assertEqual(snapshot.state_revision, revision + 1)
 
@@ -156,10 +157,10 @@ class KeeperToolAdapterTests(unittest.TestCase):
         from app import db
         db.set_json("group_states", conversation, GroupState(group_id=conversation).to_dict())
         snapshot = group_state.load_state(conversation)
-        timeline = keeper._ensure_turn_timeline(snapshot)
+        timeline = turn_commit.ensure_turn_timeline(snapshot)
         self.assertTrue(timeline.startswith("timeline-"))
         self.assertEqual(group_state.load_state(conversation).timeline_id, timeline)
-        self.assertEqual(keeper._ensure_turn_timeline(snapshot), timeline)
+        self.assertEqual(turn_commit.ensure_turn_timeline(snapshot), timeline)
 
 
 class HandlerAdapterTests(unittest.TestCase):
@@ -180,7 +181,7 @@ class HandlerAdapterTests(unittest.TestCase):
         def tool_hits() -> None:
             local = group_state.load_state(conversation)
             for _ in range(6):
-                keeper._execute_tool(local, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -1}, [], [])
+                tool_dispatch.execute_tool(local, "adjust_character", {"investigator": "Ada", "field": "hp", "delta": -1}, [], [])
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             tool_future = pool.submit(tool_hits)

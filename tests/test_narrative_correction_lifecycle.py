@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app import config, db, keeper
+from app import config, db, tool_dispatch, turn_commit
 from app.agents import (
     assistant,
     context_builder,
@@ -42,7 +42,7 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         state = self.state()
         for r in state.narrative_corrections:
             r['resolution'] = 'X' * 1000
-        with patch.object(keeper, '_ensure_turn_timeline', return_value=state.timeline_id), \
+        with patch.object(turn_commit, 'ensure_turn_timeline', return_value=state.timeline_id), \
                 patch.object(context_builder, 'build_context', AsyncMock()) as build:
             reply, private, images = await supervisor.run_turn(state, 'p', 'P', 'look', None, 'player', state.group_id)
         build.assert_not_awaited()
@@ -67,8 +67,8 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await narrator.run_narrator(message)
             self.assertIn('correction-0', provider.run_conversation.call_args.args[4])
         with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, openai=provider), \
-                patch.object(keeper, '_ensure_turn_timeline', return_value=state.timeline_id), \
-                patch.object(keeper, '_commit_kp_ooc_turn_result', return_value=True), \
+                patch.object(turn_commit, 'ensure_turn_timeline', return_value=state.timeline_id), \
+                patch.object(turn_commit, 'commit_kp_ooc_turn_result', return_value=True), \
                 patch.object(assistant.guard, 'enforce_narrative_safety', AsyncMock(return_value='ok')):
             await assistant.run_assistant(message)
         self.assertIn('correction-0', provider.run_conversation.call_args.args[4])
@@ -82,7 +82,7 @@ class CorrectionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(corrections.blocking_reply(state, '地下室'))
         report['hold_scope'] = ['地下室', 'basement']
         execute = tool_gateway.make_tool_executor(state, [], [], 'player', [])
-        with patch.object(keeper, '_execute_tool', return_value={'ok': True}) as mutate:
+        with patch.object(tool_dispatch, 'execute_tool', return_value={'ok': True}) as mutate:
             result = await execute('record_established_fact', {'fact': 'basement has enemies'})
             self.assertFalse(result['ok'])
             mutate.assert_not_called()

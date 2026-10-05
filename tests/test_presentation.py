@@ -130,13 +130,13 @@ async def _reply(state: GroupState, narration: str, *, private=()) -> tuple[str,
     executed = MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
                               turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
     with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
-            patch.object(supervisor.keeper, "_ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
             patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
             patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
             patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
             patch.object(supervisor.narrator, "run_narrator", AsyncMock(return_value=(narration, list(private), []))), \
             patch.object(supervisor.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)), \
-            patch.object(supervisor.keeper, "_commit_turn_result", return_value=True):
+            patch.object(supervisor.turn_commit, "commit_turn_result", return_value=True):
         reply, private_messages, _ = await supervisor.run_turn(
             state=state, user_id="u0", display_name="調查員0", text="x", resolved_location=None,
             speaker_role="player", conversation_id=state.group_id)
@@ -203,9 +203,9 @@ async def test_the_narrator_prompt_carries_the_real_party(monkeypatch) -> None:
         "stage_options": lambda self, stage, **kw: {},
     })()
     with patch.object(narrator.ConversationSession, "current", return_value=session), \
-            patch.object(narrator.keeper, "_build_static_prompt", return_value=""), \
-            patch.object(narrator.keeper, "_build_dynamic_prompt", return_value=""), \
-            patch.object(narrator.keeper, "_correction_context_message", return_value=""):
+            patch.object(narrator.prompt_builder, "build_static_prompt", return_value=""), \
+            patch.object(narrator.prompt_builder, "build_dynamic_prompt", return_value=""), \
+            patch.object(narrator.prompt_builder, "correction_context_message", return_value=""):
         await narrator.run_narrator(message)
     assert "共 5 位調查員" in seen[0] and "調查員4" in seen[0]
 

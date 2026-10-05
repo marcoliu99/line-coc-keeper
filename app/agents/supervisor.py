@@ -5,7 +5,15 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, locks, observability, presentation, spoiler_policy
+from app import (
+    config,
+    locks,
+    observability,
+    opening_identity,
+    presentation,
+    spoiler_policy,
+    turn_commit,
+)
 from app.agents import (
     assistant,
     context_builder,
@@ -151,6 +159,9 @@ async def run_turn(
     resolved_check_context: dict[str, Any] | None = None,
     prefetched_retrieval: context_builder.RetrievalPrefetch | None = None,
     handoff: locks.TurnHandoff | None = None,
+    expected_opening_source_hash: str | None = None,
+    expected_opening_context: opening_identity.OpeningContext | None = None,
+    expected_opening_participants: opening_identity.OpeningParticipants | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
@@ -163,7 +174,7 @@ async def run_turn(
     # tools may initialize or persist timeline-bound state; without this
     # early capture, a legacy state with no timeline would later fall back to
     # ``legacy-*`` and the canonical log commit could reject the whole turn.
-    turn_timeline_id = keeper._ensure_turn_timeline(state)
+    turn_timeline_id = turn_commit.ensure_turn_timeline(state)
     # One id for this run of the turn: a retry of its final commit is the same
     # action, a later turn is not.
     turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
@@ -390,15 +401,15 @@ async def run_turn(
 
     # Persistence for GAMEPLAY_ACTION's actual game-state changes (HP/SAN/
     # pending_checks/combat/etc.) already happened inside the Executor's
-    # tool calls, via keeper._execute_tool's own locked
-    # (_mutate_and_save_state) path — see state_reducer.py's docstring.
+    # tool calls, via tool_dispatch.execute_tool's own locked
+    # (mutate_tool_state) path — see state_reducer.py's docstring.
     # What's left here is just committing this turn's log entries: reload
     # the latest state under the state lock (so this can't clobber
     # whatever the tool calls above already saved), append, save, then sync
     # this function's own `state` object so a caller that keeps using it
     # afterward sees the up-to-date snapshot.
     if state.game_started or turn_kind != "player_action":
-        committed = keeper._commit_turn_result(
+        committed = turn_commit.commit_turn_result(
             state,
             [
                 {"role": "user", "content": f"{speaker_role} {display_name}: {text}"},
@@ -406,6 +417,9 @@ async def run_turn(
             ],
             timeline_id=turn_timeline_id,
             start_game=(turn_kind == "opening_fallback"),
+            expected_source_hash=expected_opening_source_hash,
+            expected_opening_context=expected_opening_context,
+            expected_opening_participants=expected_opening_participants,
             invalidate_openai_response_chain=True,
             turn_id=turn_id,
         )
