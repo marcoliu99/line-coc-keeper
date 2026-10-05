@@ -28,7 +28,7 @@ Delivery to Discord and the background maintenance stay with the caller (`router
 
 ## The reply steps
 
-`reply_pipeline.STEPS` is an ordered tuple: `consistency`, `guard`, `consistency_after_guard`, `obligations`, `party_size`, `finalize`, `player_text`. `ORDER_RULES` says, for each adjacent constraint, what must precede what and why, and `validate` is run at import: a list that breaks a rule, lacks a ruled step, or has a step after `finalize` that is not marked `lossless` raises `ValueError`. `player_text` is the one lossless step after `finalize`: it maps tier names and removes internal ids for display and leaves validated claims alone.
+`reply_pipeline.STEPS` is an ordered tuple: `consistency`, `guard`, `consistency_after_guard`, `obligations`, `party_size`, `finalize`, `player_text`. `ORDER_RULES` says, for each adjacent constraint, what must precede what and why, and `validate` is run at import: a list that breaks a rule, lacks a ruled step, or has a step after `finalize` that is not marked `display_only` raises `ValueError`. `player_text` is the one step allowed after `finalize`, marked `display_only`: it maps tier names and removes internal ids for display. **It is not lossless**: a validated line that carried a raw tier name or a labelled id would still be rewritten after validation. That is exactly what ran before the split (`player_text` always followed `finalize`), no projected line does so today (`finalize` labels outcomes itself and `player_text` is idempotent), and validating the mapped text instead would be a behaviour change, not part of this move.
 
 Only the Guard and the obligation gate wait on anything; a test asserts that, so a step that starts to await (a new round trip in the player's turn) is a visible change.
 

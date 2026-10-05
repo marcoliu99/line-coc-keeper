@@ -28,7 +28,7 @@
 
 ## 回覆步驟
 
-`reply_pipeline.STEPS` 是有序的 tuple：`consistency`、`guard`、`consistency_after_guard`、`obligations`、`party_size`、`finalize`、`player_text`。`ORDER_RULES` 逐條寫明誰必須在誰之前與原因；`validate` 在 import 時執行：順序違反規則、缺少規則所指的步驟、或 `finalize` 之後出現沒有標為 `lossless` 的步驟，都會丟出 `ValueError`。`finalize` 之後唯一的無損步驟是 `player_text`：只做顯示用的難度名稱轉換與移除內部 id，不動已驗證的內容。
+`reply_pipeline.STEPS` 是有序的 tuple：`consistency`、`guard`、`consistency_after_guard`、`obligations`、`party_size`、`finalize`、`player_text`。`ORDER_RULES` 逐條寫明誰必須在誰之前與原因；`validate` 在 import 時執行：順序違反規則、缺少規則所指的步驟、或 `finalize` 之後出現沒有標為 `display_only` 的步驟，都會丟出 `ValueError`。`finalize` 之後唯一允許的步驟是 `player_text`，標為 `display_only`：只做顯示用的難度名稱轉換與移除內部 id。**它不是無損的**：若一行已驗證的內容帶有未轉換的難度名稱或附標籤的 id，驗證之後仍會被改寫。這與拆分前完全一致（`player_text` 本來就在 `finalize` 之後），目前沒有任何投影出的行會這樣（`finalize` 自己會轉換結果標籤，`player_text` 是冪等的）；改成「驗證轉換後的文字」是行為變更，不屬於這次搬移。
 
 只有 Guard 與事件義務閘門會等待；測試斷言這點，所以某一步開始 `await`（等於玩家回合多一次往返）會成為看得見的變更。
 

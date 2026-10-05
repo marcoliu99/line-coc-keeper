@@ -52,8 +52,9 @@ class ReplyDraft:
 class Step:
     name: str
     run: Callable[[ReplyContext, ReplyDraft], Awaitable[None] | None]
-    # May run after delivery validated the text: it never changes what validation judged.
-    lossless: bool = False
+    # Rewrites the text for display only and is the last writer by design. It already ran after delivery validation
+    # before this module existed, and this move keeps that; it is the one step allowed to follow ``finalize``.
+    display_only: bool = False
 
 
 def no_mechanics() -> MechanicResult:
@@ -127,8 +128,10 @@ STEPS: tuple[Step, ...] = (
     Step("obligations", _obligations),
     Step("party_size", _party_size),
     Step("finalize", _finalize),
-    # Maps tier names and removes internal ids for display; the validated claims are untouched.
-    Step("player_text", _player_text, lossless=True),
+    # Maps tier names and removes internal ids for display. Not lossless: a validated line that carried a raw tier
+    # name or a labelled id would be rewritten after validation. None does today (``finalize`` labels outcomes itself
+    # and ``player_text`` is idempotent), and validating the mapped text instead is a behaviour change, not a move.
+    Step("player_text", _player_text, display_only=True),
 )
 
 # (earlier, later, why). The reasons are the ones the inline code carried as comments.
@@ -144,7 +147,7 @@ ORDER_RULES: tuple[tuple[str, str, str], ...] = (
 
 
 def validate(steps: Sequence[Step]) -> None:
-    """Raise ValueError when ``steps`` breaks an ordering rule or changes text after delivery validated it."""
+    """Raise ValueError when ``steps`` breaks an ordering rule or rewrites text after delivery validated it other than for display."""
     names = [step.name for step in steps]
     for earlier, later, why in ORDER_RULES:
         if earlier not in names or later not in names:
@@ -153,9 +156,9 @@ def validate(steps: Sequence[Step]) -> None:
             raise ValueError(f"reply pipeline: '{earlier}' must run before '{later}': {why}")
     if "finalize" in names:
         for step in steps[names.index("finalize") + 1:]:
-            if not step.lossless:
+            if not step.display_only:
                 raise ValueError(f"reply pipeline: '{step.name}' runs after delivery validated the text "
-                                 "but is not marked lossless")
+                                 "but is not marked display_only")
 
 
 validate(STEPS)

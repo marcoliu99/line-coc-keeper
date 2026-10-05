@@ -46,14 +46,14 @@ class ReplyPipelineOrderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate([step for step in STEPS if step.name != "party_size"])
 
-    def test_nothing_that_rewrites_text_may_follow_finalize(self):
+    def test_nothing_but_display_mapping_may_follow_finalize(self):
         late = Step("shorten", lambda ctx, draft: None)
         with self.assertRaises(ValueError) as caught:
             validate([*STEPS, late])
         self.assertIn("shorten", str(caught.exception))
 
-    def test_a_lossless_step_may_follow_finalize(self):
-        validate([*STEPS, replace(Step("log", lambda ctx, draft: None), lossless=True)])
+    def test_a_display_only_step_may_follow_finalize(self):
+        validate([*STEPS, replace(Step("log", lambda ctx, draft: None), display_only=True)])
 
 
 if __name__ == "__main__":
