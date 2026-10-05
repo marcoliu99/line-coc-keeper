@@ -2174,6 +2174,20 @@
       "source_revision": "7782690ba47ac651576814983512f868fa152def"
     },
     {
+      "title": "A fallback turn that only looked things up gets its one retry",
+      "zh": "只做了查詢的降級回合也能得到那一次重試",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/agents/supervisor.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/fallback_recovery_after_lookup_design_spec.md",
+      "zh_path": "docs/specs/bug/fallback_recovery_after_lookup_design_spec_zh.md",
+      "source_revision": "0de529b4789fe4858e8a162e5667663fa2eeb04e"
+    },
+    {
       "title": "The turn summary and its report count failed model requests",
       "zh": "回合摘要與它的報表會計入失敗的模型請求",
       "category": "enhancement",
