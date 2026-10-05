@@ -137,6 +137,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 
 - [setup](guides/setup.md)
 - [gameplay](guides/gameplay.md)
+- [configuration: what each switch changes for players](guides/configuration_profiles.md)
 
 ## Historical records
 

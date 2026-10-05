@@ -137,6 +137,7 @@
 
 - [setup](guides/setup_zh.md)
 - [gameplay](guides/gameplay_zh.md)
+- [設定：每個開關對玩家的影響](guides/configuration_profiles_zh.md)
 
 ## Historical records / 歷史紀錄
 

@@ -60,6 +60,10 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/agents/assistant.py`：`OOC_ASSISTANT`（KP 助手場外討論）的獨立 agent，具有自己的 provider／工具／Guard／歷史提交流程，保留明確建立正式事件的規則
 - `app/agents/narrator.py`：生成玩家可見敘事；一般回合不提供工具，檢定結果後續與開場後備則提供各自限定的工具
 - `app/agents/rule_validator.py` + `app/agents/guard.py`：正則規則校驗（洩漏系統字眼、Markdown 代碼區塊沒閉合），沒過且啟用 Guard 時最多進行 2 次修復性 LLM 呼叫，仍不合格則使用後備回覆
+- `app/services/turn_fallback.py`：說明一個行動回合為什麼無法完成（12 種原因，每次發生記一筆 `turn.fallback` 事件），並執行唯一一次有界復原：最多多一次劇本搜尋與一次 Executor 決定，而且在可能重複套用任何東西時不會進行。
+- `app/services/event_obligations.py` + `app/agents/obligation_gate.py`：劇本明寫掛在某個事件上的結果（SAN 損失、傷害、強制檢定），在旁白揭露它的同一回合結算——在 Guard 之後、回覆定稿之前。
+- `app/presentation.py`：玩家讀到的內容——中文的等級與難度標籤（而不是引擎的英文值）、移除內部識別碼、真實的隊伍人數（`DEBUG_SHOW_INTERNAL_IDS` 可為除錯保留識別碼）。
+- `app/services/turn_phases.py`：記錄一個回合的時間花在哪（排隊、檢索、Executor、工具、Narrator、記憶），不重複計算重疊的工作，並為每個玩家等待過的回合寫一行 `turn.summary` 日誌。
 - `app/agents/state_reducer.py`：純記錄用的流水線節點，不做任何狀態套用（真正的狀態變更在 Executor 呼叫工具時就已經完成並落庫）
 - `app/services/prompt_config.py`：Executor／Narrator／Guard 三個真的會呼叫 LLM 的階段共用的提示詞組裝，包在 `prompt_builder.build_static_prompt`／`build_dynamic_prompt`（既有、持續在維護的內容）外面
 - `app/domain/models.py`：流水線內部傳遞用的 `AgentMessage`／`MechanicResult`／`StateDelta`／`TurnResolution` 資料結構
@@ -78,6 +82,8 @@ Discord 頻道 -> app/discord_bot.py -> app/commands/router.py
 - `app/scene_map.py`：把劇本平面圖轉成結構化房間圖（節點＋方位邊），並提供「目前位置＋朝向＋方向＋第幾個門 → 目的地房間」的純程式碼解析（不靠 LLM 猜）
 - `app/scenario_rag.py`：BM25 與可選 embeddings 混合檢索（`SCENARIO_RAG_ENABLED=true` 時啟用），取代「整份劇本塞進 system prompt」，改成 Keeper 用 `search_scenario` 工具按需查詢
 - `app/memory_rag.py`：對已裁切掉的舊對話做語意檢索，補足 `campaign_summary` 滾動摘要「越壓越抽象」的細節遺失
+- `app/scenario_adjacency.py`：劇本搜尋命中的段落如果明顯接續到下一個 chunk，就把那個 chunk 一起帶出（上限 `SCENARIO_RAG_ADJACENT_CHUNKS`），避免觸發條件與它的後果被 chunk 邊界切開。
+- `app/embedding_execution.py` + `app/memory_chunking.py`：讓記憶的 embedding 有界——被裁切的 chunk 依 token 量測分成多個 part、失敗被分類且不帶 provider 的訊息、回補次數有上限。
 - `app/scenario_index.py`：抽取劇本的 NPC／怪物與地點數值索引（`/coc index`，上傳劇本時也會自動跑一次），給 Keeper 一份固定對照表，避免同一隻怪物前後講出不同數值
 - `app/scenario_library.py`：可重用的 PDF／Markdown 劇本庫（`data/scenarios/<劇本ID>/`）——同一份劇本不用每個聊天室各自重新解析一次，支援章節切分與「目前章＋下一章」滑動 Context 視窗、圖片資產搜尋、KP 專用的 `/coc scenario list／use／clean／reparse／cancel`。完整設計見 **[docs/scenario_library_design_spec.md](docs/specs/feature/scenario_library_design_spec_zh.md)**
 - `app/dice.py`：COC7e 規則判定（d100、獎懲骰、成功等級、SAN）
