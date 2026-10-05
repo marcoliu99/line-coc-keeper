@@ -160,7 +160,7 @@ HIGH_ITERATION_WATERMARK = _env_int("HIGH_ITERATION_WATERMARK", 4, minimum=1)
 # Trades away the "whole scenario visible at once" property that lets the
 # Keeper freely connect clues across pages, in exchange for scenarios that
 # would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
-SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+SCENARIO_RAG_ENABLED = _env_bool("SCENARIO_RAG_ENABLED", False)
 SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", "5"))
 # How many contiguous chunks on each side of a text-index hit may be attached when the hit visibly
 # continues into them (see scenario_rag.attach_adjacent). 0 turns the expansion off.
@@ -170,9 +170,7 @@ SCENARIO_RAG_ADJACENT_CHUNKS = _env_int("SCENARIO_RAG_ADJACENT_CHUNKS", 1, minim
 # a player who is also helping as KP can upload/reparse/cancel a scenario while
 # roles are still being arranged. Set SCENARIO_LIFECYCLE_KP_ONLY=true later to
 # require the current KP Assistant for those commands (no Discord role grants it).
-SCENARIO_LIFECYCLE_KP_ONLY = os.environ.get("SCENARIO_LIFECYCLE_KP_ONLY", "false").strip().lower() in (
-    "1", "true", "yes",
-)
+SCENARIO_LIFECYCLE_KP_ONLY = _env_bool("SCENARIO_LIFECYCLE_KP_ONLY", False)
 
 # Hybrid search: BM25 (always on, zero cost) blended with OpenAI embeddings
 # (skipped automatically if OPENAI_API_KEY isn't set — falls back to pure
@@ -195,7 +193,7 @@ SCENARIO_RAG_EMBEDDING_WEIGHT = float(os.environ.get("SCENARIO_RAG_EMBEDDING_WEI
 # requested range; 0.6 sits in the middle.
 KEEPER_TEMPERATURE = float(os.environ.get("KEEPER_TEMPERATURE", "0.6"))
 # Explicit opt-out for deployments whose OpenAI model rejects temperature.
-OPENAI_OMIT_TEMPERATURE = os.environ.get("OPENAI_OMIT_TEMPERATURE", "false").lower() in {"1", "true", "yes"}
+OPENAI_OMIT_TEMPERATURE = _env_bool("OPENAI_OMIT_TEMPERATURE", False)
 
 # Reasoning effort for the Keeper's own narration on OpenAI's Responses API
 # (app/providers/openai_provider.py's run_conversation only — see
@@ -319,14 +317,14 @@ OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 
 # V4 scenario retrieval reserves capacity before the existing provider admission.
 # Internal ids (check_id and the like) and raw result-tier names are removed from what a player reads. Debugging may
 # ask to see them (app/presentation.py).
-DEBUG_SHOW_INTERNAL_IDS = os.environ.get("DEBUG_SHOW_INTERNAL_IDS", "false").strip().lower() in ("1", "true", "yes")
+DEBUG_SHOW_INTERNAL_IDS = _env_bool("DEBUG_SHOW_INTERNAL_IDS", False)
 # A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
 # scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
-TURN_FALLBACK_RECOVERY_ENABLED = os.environ.get("TURN_FALLBACK_RECOVERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+TURN_FALLBACK_RECOVERY_ENABLED = _env_bool("TURN_FALLBACK_RECOVERY_ENABLED", True)
 # The scenario evidence a turn gathered is reused by the continuation that follows its dice roll, while nothing it
 # depended on has changed and no other turn has searched since (app/agents/context_builder.py), instead of searching
 # again for the same scene. A turn may also ask the scenario search tool at most this many times.
-RETRIEVAL_REUSE_FOR_FOLLOWUPS = os.environ.get("RETRIEVAL_REUSE_FOR_FOLLOWUPS", "true").strip().lower() in ("1", "true", "yes")
+RETRIEVAL_REUSE_FOR_FOLLOWUPS = _env_bool("RETRIEVAL_REUSE_FOR_FOLLOWUPS", True)
 RETRIEVAL_REUSE_TTL_SECONDS = _env_float("RETRIEVAL_REUSE_TTL_SECONDS", 900.0, minimum=1.0)
 SCENARIO_SEARCH_MAX_PER_TURN = _env_int("SCENARIO_SEARCH_MAX_PER_TURN", 5, minimum=1)
 SCENARIO_PROACTIVE_TOKEN_BUDGET = _env_int('SCENARIO_PROACTIVE_TOKEN_BUDGET', 3000, minimum=1)
