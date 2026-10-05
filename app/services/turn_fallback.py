@@ -22,7 +22,10 @@ __all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record
 # What the player is told when the turn has no more specific wording; every reason has one.
 _GUIDANCE: dict[str, str] = {
     "no_scenario_evidence": "目前查不到足以裁決這個行動的劇本依據，系統已暫停相關操作；請換個說法，或說明你想對哪個地點、人物或物件做什麼。",
-    "executor_no_action": "守密人沒有為這個行動找到可以執行的處理；請把行動說得更具體（對象、方式）後再試。",
+    "executor_no_action": (
+        "劇本裡沒有足夠的內容可以據以裁決這個行動，守密人沒有替它編造。"
+        "可以改問劇本中已經出現的人物、物件或地點；如果行動很籠統，也可以補上對象與方式再試一次。"
+    ),
     "unresolved_pending_state": "還有尚未完成的檢定、Luck 決定或他人的行動；請先完成它，再宣告新的行動。",
     "invalid_tool_plan": "守密人的裁決沒有通過核對，這次行動沒有執行；請再說一次你的行動。",
     "tool_failure": "處理這個行動的工具失敗了；已完成的變更會保留，請稍後重試或換個做法。",

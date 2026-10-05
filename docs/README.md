@@ -75,6 +75,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [At most three scenario authoring files](specs/enhancement/three_file_scenario_export_design_spec.md) | implemented | [繁體中文](specs/enhancement/three_file_scenario_export_design_spec_zh.md) |
 | [Turn phase timeline and retrieval amplification](specs/enhancement/turn_latency_instrumentation_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) |
 | [One summary line per turn, whatever the logging settings](specs/enhancement/turn_summary_log_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_log_design_spec_zh.md) |
+| [What a player reads when a turn cannot finish, how long a queue is acknowledged, and what a character is called](specs/enhancement/player_facing_wording_design_spec.md) | implemented | [繁體中文](specs/enhancement/player_facing_wording_design_spec_zh.md) |
 
 ## feature
 

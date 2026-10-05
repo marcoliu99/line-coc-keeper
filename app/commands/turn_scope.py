@@ -33,11 +33,15 @@ async def run_post_turn_hook(hook: PostTurnHook | None) -> None:
 
 
 _QUEUE_ACK_DELAY_SECONDS = 10.0
-# Measured conversation-lock waits reach p99 54.7 s and max 63.3 s, so one
-# notice at 10 s leaves a queued player with no signal for the rest of it.
-# Refresh a bounded number of times instead of going silent.
+# Measured conversation-lock waits reached p99 54.7 s and max 63.3 s when this was written, so one notice at 10 s left
+# a queued player with no signal for the rest of it. Real five-player runs since then wait far longer when everyone
+# sends at once (p50 96-108 s, up to 255 s), and three notices at a fixed interval went quiet after about 50 s. The
+# interval now grows by half each time up to a cap, so a long wait keeps being acknowledged without a message every
+# twenty seconds: 10, 30, 60, 105, 165, 225, 285 s, and then it stops rather than talk forever.
 _QUEUE_ACK_REFRESH_SECONDS = 20.0
-_QUEUE_ACK_MAX_NOTICES = 3
+_QUEUE_ACK_GROWTH = 1.5
+_QUEUE_ACK_MAX_INTERVAL_SECONDS = 60.0
+_QUEUE_ACK_MAX_NOTICES = 7
 _QUEUE_ACK_MESSAGE = "🕒 守密人正在處理上一位調查員的行動，你的動作已排入佇列，請稍候……"
 _QUEUE_ACK_MESSAGE_WITH_POSITION = (
     "🕒 守密人正在處理其他調查員的行動，你前面還有 {ahead} 個動作，請稍候……"
@@ -54,9 +58,11 @@ async def _delayed_queue_notice(
     caller cancels this task on acquire.
     """
     delay = _QUEUE_ACK_DELAY_SECONDS
+    refresh = _QUEUE_ACK_REFRESH_SECONDS
     for _ in range(_QUEUE_ACK_MAX_NOTICES):
         await asyncio.sleep(delay)
-        delay = _QUEUE_ACK_REFRESH_SECONDS
+        delay = refresh
+        refresh = min(refresh * _QUEUE_ACK_GROWTH, max(_QUEUE_ACK_MAX_INTERVAL_SECONDS, refresh))
         ahead = turns_ahead() if turns_ahead is not None else 0
         message = (
             _QUEUE_ACK_MESSAGE_WITH_POSITION.format(ahead=ahead) if ahead > 0

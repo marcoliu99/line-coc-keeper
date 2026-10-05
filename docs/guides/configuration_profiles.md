@@ -26,6 +26,7 @@ An unrecognised value for a boolean setting (`ture`) keeps the default and is re
 | `SPOILER_PROTECTION_ENABLED` | `true` | Keeper-only scenario material is withheld from public replies. Turning it off lets the narration reveal it. |
 | `PRIVACY_ISOLATION_ENABLED` | `true` | Private information and secret goals reach only their owner. The bot warns loudly at startup when this is off. |
 | `DEBUG_SHOW_INTERNAL_IDS` | `false` | Shows internal ids (such as `check_id`) in replies, for debugging. Raw result-tier names are never shown. |
+| `CHARACTER_DISPLAY_ALIASES` | empty | A JSON object such as `{"The Tough Guy": "硬漢"}`. Every line a player reads, the Narrator's and the system's ("…的背包已確認…"), writes that registered character name as the alias, so one character is not two names. Saved state, logs and ids keep the registered name. A value that is not a JSON object of text is ignored and reported at startup. |
 | `SCENARIO_LIFECYCLE_KP_ONLY` | `false` | Only the current KP Assistant may use the scenario-choice buttons (new upload vs corrected re-upload) and the `/coc scenario` commands (use, import, merge, reparse, cancel). **Uploading a scenario file is not restricted**: any player may upload one, and the first upload of a conversation applies at once. Keep it off while roles are still being arranged. |
 
 ## Seeing how long players wait
@@ -33,6 +34,7 @@ An unrecognised value for a boolean setting (`ture`) keeps the default and is re
 | Setting | Default | What it changes |
 | --- | --- | --- |
 | `LOG_TEXT_ENABLED` | `true` | Plain text logs, including one `turn.summary` line per player turn (timings and ids only, no player text). |
+| `LOCK_HELD_WARNING_SECONDS` | `LLM_TURN_DEADLINE_SECONDS` + 60 | A conversation, Keeper-turn or narration lock still held this long is reported once as a WARNING on logger `app.locks` (`lock.held_too_long`) and again when it is finally released. It never releases anything. `0` turns it off. |
 | `LOG_ENABLED` | `false` | Structured events with timers, counters and JSON payloads (`turn.phases`, `llm.turn`, …). Adds per-call overhead; turn it on to investigate, not by default. |
 
 ## What is tested

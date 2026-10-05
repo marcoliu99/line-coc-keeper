@@ -8,7 +8,7 @@ context is mapped or removed rather than shown. Everything here is idempotent an
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 
 from app import config, dice
 
@@ -41,8 +41,28 @@ def outcome_label(text: str) -> str:
     return _OUTCOME.sub(replace, text)
 
 
+def _literal(replacement: str) -> Callable[[re.Match[str]], str]:
+    return lambda _match: replacement
+
+
+def character_aliases(text: str) -> str:
+    """Registered character names written the way the table says them (``CHARACTER_DISPLAY_ALIASES``)."""
+    aliases = config.CHARACTER_DISPLAY_ALIASES
+    for name in sorted(aliases, key=len, reverse=True):
+        text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", _literal(aliases[name]), text)
+    return text
+
+
 def player_text(text: str) -> str:
-    """``text`` with raw tier names mapped and internal ids removed, unless debugging asks to see them."""
+    """``text`` with raw tier names mapped and internal ids removed, unless debugging asks to see them.
+
+    Character names get their configured table-language alias last, so every line a player reads, the Narrator's and
+    the system's, calls a character the same thing.
+    """
+    return character_aliases(_map_internal_terms(text))
+
+
+def _map_internal_terms(text: str) -> str:
     text = outcome_label(text)
     text = _LABELLED.sub(
         lambda m: m["label"] + (difficulty_label(m["value"]) if "難度" in m["label"] and m["value"] in DIFFICULTY_ZH
