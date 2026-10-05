@@ -25,6 +25,7 @@ from app.services import (
     mutation_admission,
     prompt_config,
     turn_context,
+    turn_phases,
     turn_resolution,
 )
 
@@ -54,6 +55,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     speaker_role = message.payload["speaker_role"]
     resolved_location = message.payload.get("resolved_location")
     rag_context = message.payload.get("rag_context", "")
+    if recovery_context := message.payload.get("recovery_context", ""):
+        rag_context = (rag_context + "\n\n" if rag_context else "") + "【補查結果】\n" + recovery_context
     memory_context = message.payload.get("memory_context", "")
 
     private_messages: list[tuple[str, str]] = []
@@ -78,6 +81,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         required_evidence_ids=scenario_retrieval.incomplete_roots(rag_context),
         observed_outcomes=observed,
         actor_id=user_id,
+        scenario_search_limit=config.SCENARIO_SEARCH_MAX_PER_TURN,
     )
     combat_status_gate = keeper._CombatStatusToolGate(state)
     # Computed fresh per turn, not a module-level constant — see tool_
@@ -215,13 +219,14 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             '若真正缺依據或工具失敗，保留 incomplete 並解釋原因，不猜值或繞過驗證。',
                     }
                 provider_options['final_feedback'] = final_feedback
-            completion = await provider.run_conversation(
-                static_system, dynamic_system, tools, session.history(state.log), new_message,
-                execute_turn_tool, MAX_TOOL_ITERATIONS,
-                # Reuse the existing completion; never force an extra wrap-up.
-                enable_wrapup=False,
-                **provider_options,
-            )
+            with turn_phases.phase("executor_llm"):
+                completion = await provider.run_conversation(
+                    static_system, dynamic_system, tools, session.history(state.log), new_message,
+                    execute_turn_tool, MAX_TOOL_ITERATIONS,
+                    # Reuse the existing completion; never force an extra wrap-up.
+                    enable_wrapup=False,
+                    **provider_options,
+                )
     except asyncio.CancelledError:
         turn_status = "cancelled"
         raise
@@ -266,4 +271,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                       "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
         events=inventory_events,
         turn_resolution=resolution,
+        tool_calls=tuple((e["name"], bool(e["result"].get("ok"))) for e in tool_events),
+        scenario_evidence=tuple(
+            str(e["result"].get("results", "")) for e in tool_events
+            if e["name"] == "search_scenario" and e["result"].get("ok") and e["result"].get("results")
+        ),
     )

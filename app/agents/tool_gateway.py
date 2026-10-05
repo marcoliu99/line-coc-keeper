@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -14,7 +16,7 @@ from app.config import (
 from app.domain.models import CheckStatus, ObservedOutcome
 from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
-from app.services import mutation_admission, turn_delivery
+from app.services import mutation_admission, turn_delivery, turn_phases
 
 _logger = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ def make_tool_executor(
     observed_outcomes: list[ObservedOutcome] | None = None,
     actor_id: str = "",
     resolved_check_followup: bool = False,
+    scenario_search_limit: int | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Returns the async (tool_name, tool_input) -> dict callback that
     provider.run_conversation expects for its execute_tool parameter.
@@ -92,6 +95,7 @@ def make_tool_executor(
     """
 
     blocked_evidence = set(required_evidence_ids or ())
+    scenario_searches = 0
 
     def rejection(tool_name: str, error: str, message: str) -> dict[str, Any]:
         result = {"ok": False, "error": error, "message": message}
@@ -103,8 +107,17 @@ def make_tool_executor(
         return result
 
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        nonlocal evidence_incomplete
+        nonlocal evidence_incomplete, scenario_searches
         mutation_admission.assert_admitted(state.group_id)
+        if tool_name == "search_scenario" and scenario_search_limit is not None:
+            scenario_searches += 1
+            # A turn's allowance is shared by its retry and its recovery search, not reset by a new gateway.
+            scenario_searches = max(scenario_searches, note_scenario_search() or scenario_searches)
+            if scenario_searches > scenario_search_limit:
+                observability.event("executor.scenario_search.limit_exceeded", level=logging.WARNING,
+                                    limit=scenario_search_limit, attempted=scenario_searches)
+                return rejection(tool_name, "scenario_search_limit_reached",
+                                 "本回合的劇本查詢次數已達上限；請用已取得的依據裁決，或暫緩並請玩家聚焦行動。")
         spec = tool_registry.REGISTRY.get(tool_name)
         if spec is not None and spec.followup_only and not resolved_check_followup:
             return rejection(tool_name, "tool_not_allowed_for_turn", "此工具只供已結算檢定後續使用")
@@ -178,12 +191,13 @@ def make_tool_executor(
             task = asyncio.create_task(asyncio.to_thread(run_owned_tool))
             task.add_done_callback(lambda done: mutation_admission.reject_unstarted(owner) if done.cancelled() else None)
             try:
-                if tool_name in BOUNDED_QUERY_TOOLS:
-                    result = await asyncio.wait_for(
-                        asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
-                    )
-                else:
-                    result = await asyncio.shield(task)
+                with turn_phases.phase("tool_execution"):
+                    if tool_name in BOUNDED_QUERY_TOOLS:
+                        result = await asyncio.wait_for(
+                            asyncio.shield(task), TOOL_EXECUTION_TIMEOUT_SECONDS
+                        )
+                    else:
+                        result = await asyncio.shield(task)
             except asyncio.TimeoutError:
                 mutation_admission.detach(owner)
                 observability.event(
@@ -225,6 +239,27 @@ def make_tool_executor(
         return result
 
     return execute
+
+
+_SEARCHES_MAX_TURNS = 256
+_searches: OrderedDict[str, int] = OrderedDict()
+_searches_lock = threading.Lock()
+
+
+def note_scenario_search(count: int = 1) -> int | None:
+    """Count scenario searches against the current turn, across every Executor attempt and the recovery search.
+
+    Returns the turn's total so far, or None when there is no turn id to count against.
+    """
+    turn_id = observability.current_context().get("turn_id")
+    if not turn_id:
+        return None
+    with _searches_lock:
+        _searches[turn_id] = total = _searches.get(turn_id, 0) + count
+        _searches.move_to_end(turn_id)
+        while len(_searches) > _SEARCHES_MAX_TURNS:
+            _searches.popitem(last=False)
+    return total
 
 
 _CHECK_REGISTRATION_TOOLS = tool_registry.CHECK_REGISTRATION_TOOLS
@@ -309,6 +344,10 @@ def _record_check_status(status: CheckStatus, tool_name: str, result: dict[str, 
         status["cleared"] = True
 
 
+# Opaque handles for the engine. The Narrator is handed these facts to retell, and a model repeats what it is given.
+_INTERNAL_ID_KEYS = frozenset({"check_id", "decision_id", "timeline_id", "event_id", "evidence_ref", "source_check_id"})
+
+
 def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
     if not result.get("ok", True):
         return f"{tool_name} 失敗：{result.get('error', '未知錯誤')}"
@@ -318,7 +357,7 @@ def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
     # public-facing handoff and must never copy a private opposed receipt.
     private_check_fields = {"opposed", "opposed_outcome", "action_basis"} if tool_name == "skill_check" else set()
     details = ", ".join(f"{k}={v}" for k, v in result.items()
-                        if k not in {"ok", "note"} | private_check_fields)
+                        if k not in {"ok", "note"} | private_check_fields | _INTERNAL_ID_KEYS)
     if tool_name == "skill_check" and isinstance(result.get('opposed_outcome'), dict):
         winner = result['opposed_outcome'].get('winner')
         if winner in {'player', 'opponent', 'neither'}:
