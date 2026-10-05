@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, get_args
 
 if TYPE_CHECKING:
     from app.models import Character, GroupState
@@ -9,6 +9,14 @@ if TYPE_CHECKING:
 
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 SpeakerRole = Literal["player", "kp_assistant"]
+# Why a player's action got a generic reply instead of a scenario-grounded one. Stable and queryable:
+# every fallback logs exactly one of these (``app/services/turn_fallback.py`` classifies them).
+FallbackReason = Literal[
+    "no_scenario_evidence", "executor_no_action", "unresolved_pending_state", "invalid_tool_plan",
+    "tool_failure", "tool_result_rejected", "narration_failure", "state_conflict",
+    "unsupported_action", "safety_block", "internal_error", "unknown",
+]
+FALLBACK_REASONS: tuple[str, ...] = get_args(FallbackReason)
 
 
 @dataclass
@@ -94,6 +102,11 @@ class MechanicResult:
     turn_resolution: TurnResolution | None = None
     execution_health: str = "completed"
     observed_outcomes: list[ObservedOutcome] = field(default_factory=list)
+    # Every tool the Executor called this turn, with whether it succeeded; never replayed.
+    tool_calls: tuple[tuple[str, bool], ...] = ()
+    # The scenario passages the Executor's own searches returned this turn.
+    scenario_evidence: tuple[str, ...] = ()
+    fallback_reason: FallbackReason | None = None
 
 
 class TurnPayload(TypedDict, total=False):
@@ -125,6 +138,7 @@ class TurnPayload(TypedDict, total=False):
     intent: str
     resolved_check_context: dict[str, Any]
     mechanic_result: MechanicResult
+    recovery_context: str  # the one targeted search made after a recoverable fallback
     # executor: what its tools produced for the player
     private_messages: list[tuple[str, str]]
     image_requests: list[tuple[str | None, int]]

@@ -106,6 +106,64 @@ async def prefetch_retrieval(
     )
 
 
+def search_scenario_context(
+    state: GroupState, user_id: str, speaker_role: SpeakerRole, text: str, *,
+    label: str = "context_builder.scenario_rag", accept_lexical: bool = False, top_k: int = SCENARIO_RAG_TOP_K,
+) -> tuple[str, str]:
+    """One scenario search for ``text``, formatted for the prompt, with its status.
+
+    See app/keeper.py's search_scenario tool for why this is a plain _logger call, not a structured
+    event field. The proactive per-turn search is distinct from the Keeper explicitly choosing to
+    call the tool, so the log line carries ``label`` to keep the two apart when reading a turn's log.
+
+    A proactive search accepts only a successful semantic source: BM25 remains available to the
+    explicit search tool, so lexical fallback context is dropped unless the caller asks for it
+    (``accept_lexical``; the one targeted recovery search does).
+    """
+    _logger.info("%s query=%r", label, text)
+    metrics: dict[str, Any] = {}
+    with observability.span(
+        "rag.search",
+        rag_kind="scenario",
+        top_k=top_k,
+        embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
+        embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT,
+        metrics=metrics,
+    ):
+        if state.scenario_variant_id and state.scenario_variant_id != "original":
+            from app import config, keeper, scenario_retrieval
+            model = getattr(config, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
+            budget = scenario_retrieval.request_budget(
+                [keeper._build_static_prompt(state), keeper._build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
+                 keeper._tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
+            budget_token = scenario_retrieval.BUDGET.set(min(budget, config.SCENARIO_PROACTIVE_TOKEN_BUDGET))
+            model_token = scenario_retrieval.MODEL.set(model)
+            try:
+                index, results = scenario_templates.search_for_state(state, text, top_k=top_k, metrics=metrics,
+                                                                     principal=f"{speaker_role}:{user_id}")
+            finally:
+                scenario_retrieval.MODEL.reset(model_token)
+                scenario_retrieval.BUDGET.reset(budget_token)
+        else:
+            index, results = scenario_templates.search_for_state(state, text, top_k=top_k, metrics=metrics)
+        metrics.update(
+            evidence_chars=sum(len(row["text"]) for row in results),
+            budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
+            candidate_count=len(getattr(index, "chunks", ())),
+            result_count=len(results),
+            has_embeddings=getattr(index, "has_embeddings", None),
+            index_cache=getattr(index, "index_cache", "unknown"),
+        )
+        if not results:
+            return "", "empty"
+        if not accept_lexical and (
+            metrics.get("has_embeddings") is False
+            or metrics.get("query_embedding_status") == "fallback"
+        ):
+            return "", "fallback"
+        return scenario_rag.format_results(results), "success"
+
+
 async def build_context(
     state: GroupState,
     user_id: str,
@@ -161,60 +219,9 @@ async def build_context(
 
     rag_task = None
     if prefetched is None and SCENARIO_RAG_ENABLED and state.scenario_text and state.scenario_title and not state.combat.active:
-        def _run_scenario_rag() -> tuple[str, str]:
-            # See app/keeper.py's search_scenario tool for why this is a
-            # plain _logger call, not a structured event field. This site
-            # runs proactively once per turn (whenever SCENARIO_RAG_ENABLED)
-            # — distinct from the Keeper explicitly choosing to call the
-            # search_scenario tool — so the log line is tagged accordingly
-            # to keep the two apart when reading a turn's log.
-            _logger.info("context_builder.scenario_rag query=%r", text)
-            metrics: dict[str, Any] = {}
-            with observability.span(
-                "rag.search",
-                rag_kind="scenario",
-                top_k=SCENARIO_RAG_TOP_K,
-                embedding_model=SCENARIO_RAG_EMBEDDING_MODEL,
-                embedding_weight=SCENARIO_RAG_EMBEDDING_WEIGHT,
-                metrics=metrics,
-            ):
-                if state.scenario_variant_id and state.scenario_variant_id != "original":
-                    from app import config, keeper, scenario_retrieval
-                    model = getattr(config, f"{config.LLM_PROVIDER.upper()}_MODEL", "unknown")
-                    budget = scenario_retrieval.request_budget(
-                        [keeper._build_static_prompt(state), keeper._build_dynamic_prompt(state, user_id, speaker_role=speaker_role),
-                         keeper._tools_for_speaker_role(speaker_role), text], state.log, model, config.LLM_PROVIDER)
-                    budget_token = scenario_retrieval.BUDGET.set(min(budget, config.SCENARIO_PROACTIVE_TOKEN_BUDGET))
-                    model_token = scenario_retrieval.MODEL.set(model)
-                    try:
-                        index, results = scenario_templates.search_for_state(state, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics,
-                                                                             principal=f"{speaker_role}:{user_id}")
-                    finally:
-                        scenario_retrieval.MODEL.reset(model_token)
-                        scenario_retrieval.BUDGET.reset(budget_token)
-                else:
-                    index, results = scenario_templates.search_for_state(state, text, top_k=SCENARIO_RAG_TOP_K, metrics=metrics)
-                metrics.update(
-                    evidence_chars=sum(len(row["text"]) for row in results),
-                    budget_omitted=sum(row.get("budget_omitted", 0) for row in results),
-                    candidate_count=len(getattr(index, "chunks", ())),
-                    result_count=len(results),
-                    has_embeddings=getattr(index, "has_embeddings", None),
-                    index_cache=getattr(index, "index_cache", "unknown"),
-                )
-                if not results:
-                    return "", "empty"
-                if (
-                    metrics.get("has_embeddings") is False
-                    or metrics.get("query_embedding_status") == "fallback"
-                ):
-                    # BM25 remains available to the explicit search tool, but
-                    # proactive prompt context only accepts a successful
-                    # semantic source.
-                    return "", "fallback"
-                return scenario_rag.format_results(results), "success"
-
-        rag_task = asyncio.create_task(asyncio.to_thread(_run_scenario_rag))
+        rag_task = asyncio.create_task(asyncio.to_thread(
+            search_scenario_context, state, user_id, speaker_role, text, label="context_builder.scenario_rag",
+        ))
 
     # 2. Memory Context (Past events) — same two-call shape as
     # app/keeper.py's search_memory tool: search_memory -> format_results.

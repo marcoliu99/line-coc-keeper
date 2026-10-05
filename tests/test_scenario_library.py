@@ -160,6 +160,21 @@ class ScenarioLibraryMarkdownSourceTests(unittest.TestCase):
             self.assertFalse((root / "source.pdf").exists())
             self.assertEqual(scenario_library.load_context(scenario_id)["text"], text)
 
+    def test_context_refuses_source_text_that_disagrees_with_full_manifest_hash(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            scenario_library, "SCENARIO_LIBRARY_DIR", Path(temp)
+        ):
+            text = "--- 第 1 頁 ---\n原始內容"
+            scenario_id = scenario_library.save_markdown_scenario(
+                text.encode(), title="來源", filename="scenario_source.md",
+                preview=text, text=text, indexes={"npcs": [], "locations": []}, pregens=[],
+            )
+            (Path(temp) / scenario_id / "scenario.txt").write_text(
+                "--- 第 1 頁 ---\n已更換內容", encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "manifest"):
+                scenario_library.load_context(scenario_id)
+
 
 class ScenarioLibraryReparseTests(unittest.TestCase):
     """Regression tests for the review finding that /coc scenario reparse
