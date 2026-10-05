@@ -75,6 +75,7 @@
 | [外部 AI 中文模板整備與匯入診斷](specs/enhancement/external_template_authoring_design_spec_zh.md) | 已實作；實測待完成 | [English](specs/enhancement/external_template_authoring_design_spec.md) |
 | [回合階段計時與檢索放大](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_latency_instrumentation_design_spec.md) |
 | [無論日誌設定為何，每回合一行摘要](specs/enhancement/turn_summary_log_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_summary_log_design_spec.md) |
+| [不讓劇本搜尋被擠到沒有預算，以及沒有 tokenizer 時誠實地估算中文](specs/enhancement/retrieval_budget_headroom_design_spec_zh.md) | 已實作 | [English](specs/enhancement/retrieval_budget_headroom_design_spec.md) |
 
 ## 功能
 

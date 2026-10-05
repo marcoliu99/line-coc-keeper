@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from typing import Any
@@ -45,7 +46,7 @@ def _encoding(model: str) -> Any:
             _encoding_retry_after[model] = time.monotonic() + ENCODING_RETRY_SECONDS
             attempts = _encoding_failures[model] = _encoding_failures.get(model, 0) + 1
         observability.event("llm.tokenizer.unavailable", level=logging.WARNING,
-                            tokenizer="utf8_bytes_fallback", error_type=type(exc).__name__,
+                            tokenizer=FALLBACK_METHOD, error_type=type(exc).__name__,
                             failed_attempts=attempts, retry_after_seconds=ENCODING_RETRY_SECONDS,
                             remediation="install_declared_tiktoken_dependency_and_check_encoding_cache")
         return None
@@ -69,15 +70,32 @@ def reset_encoding_cache() -> None:
         _encoding_failures.clear()
 
 
+# Chinese, Japanese and Korean text is about one token per character in the tokenizers this project uses (a rare
+# character can cost two or three); the UTF-8 byte count this module used to fall back on bills every one of them
+# three times over, which is what starved the scenario retrieval budget to zero for a Chinese table whenever the
+# tokenizer could not be loaded. The fallback counts a character at the top of that range and everything else
+# (ASCII, JSON punctuation, emoji) at one token per three bytes, so it still never undercounts but is no longer
+# two to three times too high. It is an estimate, labelled as one.
+FALLBACK_METHOD = "fallback_estimate"
+_WIDE = re.compile(r"[\u1100-\u11ff\u3000-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]")
+
+
+def fallback_tokens(text: str) -> int:
+    """An upper-end token estimate that needs no tokenizer: 1.5 per CJK character, one per three other bytes."""
+    wide = len(_WIDE.findall(text))
+    other_bytes = len(_WIDE.sub("", text).encode("utf-8"))
+    return (3 * wide + 1) // 2 + (other_bytes + 2) // 3
+
+
 def tokenizer_method(model: str) -> str:
-    return "tokenizer_estimate" if _encoding(model) is not None else "utf8_bytes_fallback"
+    return "tokenizer_estimate" if _encoding(model) is not None else FALLBACK_METHOD
 
 
 def estimate(value, model: str) -> int:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(',', ':'), default=str)
     encoding = _encoding(model)
     if encoding is None:
-        return len(text.encode('utf-8'))  # conservative fallback, not a measured token count
+        return fallback_tokens(text)  # an upper-end estimate, not a measured token count
     return len(encoding.encode(text, disallowed_special=()))
 
 
@@ -102,7 +120,7 @@ def select_history(history: list[dict], model: str, budget: int, keep_turns: int
     observability.event('llm.history.selected', before_tokens_estimate=before,
                         after_tokens_estimate=after, entries_removed=start, budget=budget,
                         budget_exceeded=after > budget,
-                        tokenizer=getattr(encoding, 'name', 'utf8_bytes_fallback'))
+                        tokenizer=getattr(encoding, 'name', FALLBACK_METHOD))
     return selected
 
 
