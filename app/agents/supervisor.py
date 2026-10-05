@@ -5,7 +5,7 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, locks, observability
+from app import config, keeper, locks, observability, opening_identity
 from app.agents import (
     assistant,
     context_builder,
@@ -72,6 +72,9 @@ async def run_turn(
     resolved_check_context: dict[str, Any] | None = None,
     prefetched_retrieval: context_builder.RetrievalPrefetch | None = None,
     handoff: locks.TurnHandoff | None = None,
+    expected_opening_source_hash: str | None = None,
+    expected_opening_context: opening_identity.OpeningContext | None = None,
+    expected_opening_participants: opening_identity.OpeningParticipants | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]]:
     """
     The main entry point for the Agentic Keeper Supervisor.
@@ -254,6 +257,9 @@ async def run_turn(
             ],
             timeline_id=turn_timeline_id,
             start_game=(turn_kind == "opening_fallback"),
+            expected_source_hash=expected_opening_source_hash,
+            expected_opening_context=expected_opening_context,
+            expected_opening_participants=expected_opening_participants,
             invalidate_openai_response_chain=True,
             turn_id=turn_id,
         )

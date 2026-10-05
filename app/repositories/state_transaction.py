@@ -7,7 +7,7 @@
 2. opens a ``BEGIN IMMEDIATE`` SQLite transaction (which also serialises other
    processes using the same database file),
 3. reads the **latest** stored state inside that transaction,
-4. validates the timeline, then the action ledger, then the revision,
+4. validates the timeline and optional latest-state guard, then the action ledger and revision,
 5. runs the caller's mutation against that latest copy,
 6. checks the local invariants of what the mutation touched,
 7. writes the state row, the character mirrors, the action result and the
@@ -414,6 +414,7 @@ def mutate(
     action_id: str | None = None,
     request_fingerprint: str | None = None,
     expected_revision: int | None = None,
+    latest_state_guard: Callable[[GroupState], str | None] | None = None,
 ) -> TxResult[T]:
     """Apply ``mutation`` to the latest state of ``conversation_id`` atomically.
 
@@ -423,12 +424,13 @@ def mutate(
     (different fingerprint). ``expected_revision`` is for actions computed from
     a snapshot: any other writer in between yields ``conflict`` and the stale
     snapshot is never written back. Deterministic deltas that can be recomputed
-    on the latest state leave it unset.
+    on the latest state leave it unset. ``latest_state_guard`` runs against the
+    latest row under BEGIN IMMEDIATE before action-ledger replay.
     """
     return _mutate(
         conversation_id, mutation, reason=reason, expected_timeline=expected_timeline,
         action_id=action_id, request_fingerprint=request_fingerprint,
-        expected_revision=expected_revision,
+        expected_revision=expected_revision, latest_state_guard=latest_state_guard,
     )[0]
 
 
@@ -441,6 +443,7 @@ def _mutate(
     action_id: str | None,
     request_fingerprint: str | None,
     expected_revision: int | None,
+    latest_state_guard: Callable[[GroupState], str | None] | None,
 ) -> tuple[TxResult[T], GroupState | None]:
     """``mutate`` plus the committed working copy, for snapshot adapters."""
     if _active.get() is not None:
@@ -480,6 +483,14 @@ def _mutate(
                     return _stale_timeline(
                         reason, expected_timeline, timeline_id, action_id or "",
                     ), None
+                if latest_state_guard is not None:
+                    guard_reason = latest_state_guard(latest)
+                    if guard_reason:
+                        return _result(
+                            Outcome.REJECTED, revision=latest.state_revision,
+                            timeline_id=timeline_id, action_id=action_id or "",
+                            reason=guard_reason,
+                        ), None
                 ledger_key = ""
                 if action_id:
                     ledger_key = _ledger_key(conversation_id, timeline_id, action_id)
@@ -664,6 +675,7 @@ def commit_for_snapshot(
     action_id: str | None = None,
     request_fingerprint: str | None = None,
     expected_revision: int | None = None,
+    latest_state_guard: Callable[[GroupState], str | None] | None = None,
 ) -> TxResult[T]:
     """``mutate`` for a caller that holds a snapshot of the conversation.
 
@@ -681,7 +693,7 @@ def commit_for_snapshot(
         state.group_id, mutation, reason=reason,
         expected_timeline=expected,
         action_id=action_id, request_fingerprint=request_fingerprint,
-        expected_revision=expected_revision,
+        expected_revision=expected_revision, latest_state_guard=latest_state_guard,
     )
     if committed is not None:
         sync_snapshot(state, committed)

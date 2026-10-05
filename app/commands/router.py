@@ -790,6 +790,37 @@ async def _handle_text_message_impl(
             return
 
         if sub in _SYSTEM_COMMANDS:
+            if sub == "start":
+                # The Game Opening service owns prepare/extract/apply ordering.
+                # Router alone owns the non-reentrant conversation lock and
+                # post-turn button hook around each mutation phase.
+                class StaleOpeningRequest(Exception):
+                    pass
+
+                first_scope = True
+
+                @asynccontextmanager
+                async def opening_mutation_scope() -> AsyncIterator[None]:
+                    nonlocal first_scope
+                    async with _conversation_lock_with_notice(
+                        conversation_id, reply, post_turn_hook,
+                        route="start", speaker_role="player",
+                    ):
+                        if first_scope:
+                            first_scope = False
+                            if not await _help_revision_matches(conversation_id, expected_revision, reply):
+                                raise StaleOpeningRequest
+                        yield
+
+                try:
+                    await system_handler.handle_system_command(
+                        conversation_id, user_id, reply, send_dm, send_image, send_dm_image,
+                        parts, format_mention, server=server,
+                        opening_mutation_scope=opening_mutation_scope,
+                    )
+                except StaleOpeningRequest:
+                    pass
+                return
             # PDF import/merge/reparse perform long extraction and
             # handle_pdf_upload acquires the conversation lock around each
             # state commit. Keep these top-level operations outside the lock;

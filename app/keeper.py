@@ -31,6 +31,7 @@ from app import (
     luck,
     memory_rag,
     observability,
+    opening_identity,
     scenario_index,
     scenario_library,
     scene_digest,
@@ -511,6 +512,14 @@ async def record_tool_recovery_marker_bounded(
         raise
 
 
+class OpeningStartRejected(Exception):
+    """A source-bound opening lost its final authoritative start race."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _commit_turn_result(
     state: GroupState,
     log_entries: list[dict[str, Any]],
@@ -520,6 +529,9 @@ def _commit_turn_result(
     invalidate_openai_response_chain: bool = False,
     start_game: bool = False,
     turn_id: str | None = None,
+    expected_source_hash: str | None = None,
+    expected_opening_context: opening_identity.OpeningContext | None = None,
+    expected_opening_participants: opening_identity.OpeningParticipants | None = None,
 ) -> bool:
     """Append a turn's log entries to the latest committed state.
 
@@ -536,6 +548,27 @@ def _commit_turn_result(
         "entries": log_entries, "openai_response_id": openai_response_id,
         "invalidate": invalidate_openai_response_chain, "start_game": start_game,
     })
+
+    def opening_guard(latest_state: GroupState) -> str | None:
+        if latest_state.game_started:
+            return "already_started"
+        if latest_state.active_scenario_source_hash != expected_source_hash:
+            return "source_changed"
+        if (expected_opening_context is not None
+                and opening_identity.context_identity(latest_state) != expected_opening_context):
+            return "source_changed"
+        if (expected_opening_participants is not None
+                and opening_identity.participant_identity(latest_state) != expected_opening_participants):
+            return "character_set_changed"
+        if not latest_state.active or not latest_state.scenario_text:
+            return "no_scenario"
+        if not latest_state.characters:
+            return "no_characters"
+        if latest_state.pending_pregen_luck:
+            return "pending_pregen_luck"
+        if resource_bridge.guard_replacement(latest_state):
+            return "combat_unsettled"
+        return None
 
     def append_entries(ctx: state_transaction.TxContext) -> bool:
         latest_state = ctx.state
@@ -562,8 +595,11 @@ def _commit_turn_result(
     result = state_transaction.commit_for_snapshot(
         state, append_entries, reason="turn", expected_timeline=expected_timeline_id,
         action_id=f"turn:{turn_id}:{fingerprint[:16]}", request_fingerprint=fingerprint,
+        latest_state_guard=opening_guard if start_game and expected_source_hash is not None else None,
     )
     if result.outcome is state_transaction.Outcome.STALE_TIMELINE:
+        if start_game and expected_source_hash is not None:
+            raise OpeningStartRejected("timeline_changed")
         observability.event(
             "state.turn_commit_skipped",
             level=logging.WARNING,
@@ -572,6 +608,8 @@ def _commit_turn_result(
             current_timeline_id=result.timeline_id,
         )
         return False
+    if result.outcome is state_transaction.Outcome.REJECTED and start_game and expected_source_hash is not None:
+        raise OpeningStartRejected(result.reason)
     if result.outcome is state_transaction.Outcome.CONFLICT:
         raise state_transaction.StateTransactionFailed(result)
     return result.outcome is state_transaction.Outcome.DUPLICATE or bool(result.value)
