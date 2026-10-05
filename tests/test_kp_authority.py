@@ -15,8 +15,11 @@ from app import discord_bot
 from app.commands import permissions, router
 from app.commands.handlers import correct as correct_handler
 from app.commands.handlers import system as system_handler
+from app.discord_transport import controls, delivery, help_ui, interactions
 from app.models import Character, GroupState
 from app.repositories import state_transaction
+from app.scenario_source_authoring import SourceReadyMessage
+from tests.discord_state import patched_group_state
 
 KP_ONLY = "只有目前的 KP 助手"
 
@@ -151,23 +154,23 @@ class KpOnlyViewsAndButtonsTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_the_pdf_choice_button_is_for_the_kp_only_when_lifecycle_is_kp_only(self):
-        conversation_id = discord_bot._conversation_id(5)
-        button = discord_bot.PdfUploadChoiceButton(conversation_id, "new", "新劇本")
+        conversation_id = interactions.channel_conversation_id(5)
+        button = controls.PdfUploadChoiceButton(conversation_id, "new", "新劇本")
         with patch.object(permissions.config, "SCENARIO_LIFECYCLE_KP_ONLY", True), \
-                patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
-                patch.object(discord_bot, "_send_interaction_message", new_callable=AsyncMock) as sent, \
+                patched_group_state(_state(kp_assistant_user_id="kp")), \
+                patch.object(delivery, "send_interaction_message", new_callable=AsyncMock) as sent, \
                 patch.object(discord_bot.command_router, "handle_pdf_choice_button", new_callable=AsyncMock) as resolve:
             await button.callback(self._interaction(conversation_id))
         self.assertIn(KP_ONLY, sent.await_args.args[1])
         resolve.assert_not_awaited()
 
     async def test_the_source_ready_button_is_for_the_kp_only(self):
-        conversation_id = discord_bot._conversation_id(5)
-        result = discord_bot.SourceReadyMessage("sid", "7")
-        button = discord_bot.SourceReadyButton(conversation_id, result, "source_use", "選用新版英文")
-        with patch.object(discord_bot, "load_group_state", return_value=_state(kp_assistant_user_id="kp")), \
-                patch.object(discord_bot, "_send_interaction_message", new_callable=AsyncMock) as sent, \
-                patch.object(discord_bot, "_finish_help_action", new_callable=AsyncMock) as finish:
+        conversation_id = interactions.channel_conversation_id(5)
+        result = SourceReadyMessage("sid", "7")
+        button = help_ui.SourceReadyButton(conversation_id, result, "source_use", "選用新版英文")
+        with patched_group_state(_state(kp_assistant_user_id="kp")), \
+                patch.object(delivery, "send_interaction_message", new_callable=AsyncMock) as sent, \
+                patch.object(help_ui, "finish_help_action", new_callable=AsyncMock) as finish:
             await button.callback(self._interaction(conversation_id))
         self.assertIn(KP_ONLY, sent.await_args.args[1])
         finish.assert_not_awaited()
@@ -227,7 +230,7 @@ class MentionedMemberTests(unittest.TestCase):
         bot = SimpleNamespace(id=12, bot=True, guild=object())
         stranger = SimpleNamespace(id=13, bot=False)  # a User, not a member of this server
         author = SimpleNamespace(id=7, guild_permissions=SimpleNamespace(manage_guild=True))
-        facts = discord_bot._server_facts(author, [member, bot, stranger])
+        facts = interactions.server_facts(author, [member, bot, stranger])
         self.assertEqual(facts, permissions.ServerFacts(
             can_manage_server=True, member_ids=frozenset({"11", "12"}), bot_user_ids=frozenset({"12"})))
 
@@ -286,24 +289,24 @@ class TransportTests(unittest.TestCase):
         )
 
     def test_manage_server_is_read_from_discord_permissions(self):
-        self.assertTrue(discord_bot._can_manage_server(self._member(manage_guild=True)))
-        self.assertFalse(discord_bot._can_manage_server(self._member(roles=("keeper",))))
-        self.assertFalse(discord_bot._can_manage_server(SimpleNamespace(id=7)))  # a DM user has no server permissions
+        self.assertTrue(interactions.can_manage_server(self._member(manage_guild=True)))
+        self.assertFalse(interactions.can_manage_server(self._member(roles=("keeper",))))
+        self.assertFalse(interactions.can_manage_server(SimpleNamespace(id=7)))  # a DM user has no server permissions
 
     def test_transition_log_fires_only_for_a_human_with_the_role(self):
         state = _state(kp_assistant_user_id="kp")
         with patch.object(discord_bot.observability, "event") as event:
-            discord_bot._note_ignored_keeper_role(self._member(roles=("Keeper",)), state, "sudo")
-            discord_bot._note_ignored_keeper_role(self._member(roles=("keeper",), bot=True), state, "sudo")
-            discord_bot._note_ignored_keeper_role(self._member(roles=("player",)), state, "sudo")
+            interactions.note_ignored_keeper_role(self._member(roles=("Keeper",)), state, "sudo")
+            interactions.note_ignored_keeper_role(self._member(roles=("keeper",), bot=True), state, "sudo")
+            interactions.note_ignored_keeper_role(self._member(roles=("player",)), state, "sudo")
         self.assertEqual([c.args[0] for c in event.call_args_list], ["authz.keeper_role_ignored"])
         self.assertEqual(event.call_args.kwargs["action"], "sudo")
 
     def test_transition_log_skips_the_kp_and_actions_the_role_never_unlocked(self):
         holder = self._member(roles=("keeper",))
         with patch.object(discord_bot.observability, "event") as event:
-            discord_bot._note_ignored_keeper_role(holder, _state(kp_assistant_user_id="7"), "sudo")
-            discord_bot._note_ignored_keeper_role(holder, _state(), None)
+            interactions.note_ignored_keeper_role(holder, _state(kp_assistant_user_id="7"), "sudo")
+            interactions.note_ignored_keeper_role(holder, _state(), None)
         event.assert_not_called()
 
     def test_only_commands_the_role_unlocked_are_named(self):
@@ -314,7 +317,7 @@ class TransportTests(unittest.TestCase):
         }
         for text, expected in cases.items():
             with self.subTest(text=text):
-                self.assertEqual(discord_bot._formerly_role_gated(text.split()), expected)
+                self.assertEqual(interactions.formerly_role_gated(text.split()), expected)
 
 
 class NoRoleAuthorityTests(unittest.TestCase):
@@ -330,13 +333,14 @@ class NoRoleAuthorityTests(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_a_role_name_appears_only_in_the_transition_log(self):
-        source = (pathlib.Path(__file__).resolve().parents[1] / "app" / "discord_bot.py").read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        app_dir = pathlib.Path(__file__).resolve().parents[1] / "app"
         holders = [
-            fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+            fn.name
+            for path in [app_dir / "discord_bot.py", *sorted((app_dir / "discord_transport").glob("*.py"))]
+            for fn in ast.walk(ast.parse(path.read_text(encoding="utf-8"))) if isinstance(fn, ast.FunctionDef)
             and any(isinstance(n, ast.Constant) and n.value == "keeper" for n in ast.walk(fn))
         ]
-        self.assertEqual(holders, ["_note_ignored_keeper_role"])
+        self.assertEqual(holders, ["note_ignored_keeper_role"])
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import discord_bot
+from app.discord_transport import controls, help_ui
 from app.help_registry import HelpAction
 
 CONVERSATION = "discord-channel-1234567890"
@@ -18,11 +18,11 @@ OWNER = "98765"
 
 def _classes():
     return {
-        "check": discord_bot.CheckButton,
-        "luck": discord_bot.LuckSpendButton,
-        "pdfchoice": discord_bot.PdfUploadChoiceButton,
-        "help": discord_bot.HelpButton,
-        "help_run": discord_bot.HelpExecuteButton,
+        "check": controls.CheckButton,
+        "luck": controls.LuckSpendButton,
+        "pdfchoice": controls.PdfUploadChoiceButton,
+        "help": help_ui.HelpButton,
+        "help_run": help_ui.HelpExecuteButton,
     }
 
 
@@ -91,13 +91,13 @@ def test_every_button_the_code_creates_matches_its_own_template_and_fits_discord
 
     action = HelpAction("Help", ("combat", "attack"), "entry")
     created = [
-        ("check", discord_bot.CheckButton(CONVERSATION, OWNER, "擲骰", False, "", "c0123456789ab")),
-        ("check", discord_bot.CheckButton(CONVERSATION, OWNER, "選擇", False, "#0", "")),
-        ("luck", discord_bot.LuckSpendButton(CONVERSATION, OWNER, "花 Luck", "regular", False, "d0123456789ab")),
-        ("luck", discord_bot.LuckSpendButton(CONVERSATION, OWNER, "維持", "skip", True, "")),
-        ("pdfchoice", discord_bot.PdfUploadChoiceButton(CONVERSATION, "new", "新劇本")),
-        ("help", discord_bot.HelpButton(CONVERSATION, action)),
-        ("help_run", discord_bot.HelpExecuteButton(CONVERSATION, next(iter(help_actions.BY_KEY.values())))),
+        ("check", controls.CheckButton(CONVERSATION, OWNER, "擲骰", False, "", "c0123456789ab")),
+        ("check", controls.CheckButton(CONVERSATION, OWNER, "選擇", False, "#0", "")),
+        ("luck", controls.LuckSpendButton(CONVERSATION, OWNER, "花 Luck", "regular", False, "d0123456789ab")),
+        ("luck", controls.LuckSpendButton(CONVERSATION, OWNER, "維持", "skip", True, "")),
+        ("pdfchoice", controls.PdfUploadChoiceButton(CONVERSATION, "new", "新劇本")),
+        ("help", help_ui.HelpButton(CONVERSATION, action)),
+        ("help_run", help_ui.HelpExecuteButton(CONVERSATION, next(iter(help_actions.BY_KEY.values())))),
     ]
     for kind, button in created:
         custom_id = button.item.custom_id

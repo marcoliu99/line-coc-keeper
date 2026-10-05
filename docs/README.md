@@ -74,6 +74,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [External AI template authoring and import diagnostics](specs/enhancement/external_template_authoring_design_spec.md) | implemented; live trials pending | [繁體中文](specs/enhancement/external_template_authoring_design_spec_zh.md) |
 | [At most three scenario authoring files](specs/enhancement/three_file_scenario_export_design_spec.md) | implemented | [繁體中文](specs/enhancement/three_file_scenario_export_design_spec_zh.md) |
 | [Turn phase timeline and retrieval amplification](specs/enhancement/turn_latency_instrumentation_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) |
+| [One summary line per turn, whatever the logging settings](specs/enhancement/turn_summary_log_design_spec.md) | implemented | [繁體中文](specs/enhancement/turn_summary_log_design_spec_zh.md) |
 
 ## feature
 
@@ -110,6 +111,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Historical post-v1.0 integration ledger](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) | historical | [繁體中文](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) |
 | [Turn safety, recoverable results and measured latency](specs/refactor/turn_safety_and_latency_design_spec.md) | partial; S0/S1/S3 implemented, S2 reverted | [繁體中文](specs/refactor/turn_safety_and_latency_design_spec_zh.md) |
 | [Splitting app/keeper.py by responsibility](specs/refactor/keeper_module_split_design_spec.md) | implemented | [繁體中文](specs/refactor/keeper_module_split_design_spec_zh.md) |
+| [Splitting app/discord_bot.py](specs/refactor/discord_transport_split_design_spec.md) | implemented | [繁體中文](specs/refactor/discord_transport_split_design_spec_zh.md) |
 
 ## maintenance
 

@@ -15,6 +15,7 @@ from typing import Any
 from app import observability, scenario_retrieval
 from app.domain.models import FALLBACK_REASONS, FallbackReason, MechanicResult
 from app.models import GroupState
+from app.services import turn_phases
 
 __all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record", "recoverable", "recovery_query"]
 
@@ -156,6 +157,7 @@ def record(
     scene = ""
     if isinstance(resolved_location, dict):
         scene = str(resolved_location.get("name") or resolved_location.get("location") or "")
+    turn_phases.note(fallback=reason)
     observability.event(
         "turn.fallback", level=logging.WARNING if reason in {"tool_failure", "internal_error", "unknown"} else logging.INFO,
         fallback_reason=reason, campaign_id=observability.safe_identifier(state.group_id),

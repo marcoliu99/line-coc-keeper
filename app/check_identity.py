@@ -43,7 +43,7 @@ def new_decision_id() -> str:
 
 
 def _legacy_id(prefix: str, owner_id: str, timeline_id: str, value: dict[str, Any]) -> str:
-    # "_buttons_posted" (app/discord_bot.py's duplicate-post guard) is
+    # "_buttons_posted" (app/discord_transport/controls.py's duplicate-post guard) is
     # internal bookkeeping, not part of the check/decision's own identity —
     # excluding it here matters specifically for legacy entries with no
     # explicit check_id/decision_id (persisted pre-identity checks, and the

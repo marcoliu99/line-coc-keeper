@@ -74,6 +74,7 @@
 | [持續戰鬥效果的推理設定提案](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects_zh.md) | 待實作提案 | [English](specs/enhancement/enhancement-executor-reasoning-effort-for-combat-ongoing-effects.md) |
 | [外部 AI 中文模板整備與匯入診斷](specs/enhancement/external_template_authoring_design_spec_zh.md) | 已實作；實測待完成 | [English](specs/enhancement/external_template_authoring_design_spec.md) |
 | [回合階段計時與檢索放大](specs/enhancement/turn_latency_instrumentation_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_latency_instrumentation_design_spec.md) |
+| [無論日誌設定為何，每回合一行摘要](specs/enhancement/turn_summary_log_design_spec_zh.md) | 已實作 | [English](specs/enhancement/turn_summary_log_design_spec.md) |
 
 ## 功能
 
@@ -110,6 +111,7 @@
 | [歷史 v1.0 後整合紀錄](specs/refactor/main_post_v1.0_into_main_v2_design_spec_zh.md) | 歷史紀錄 | [English](specs/refactor/main_post_v1.0_into_main_v2_design_spec.md) |
 | [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 部分完成；S0／S1／S3 已實作，S2 已撤回 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
 | [依職責拆分 app/keeper.py](specs/refactor/keeper_module_split_design_spec_zh.md) | 已實作 | [English](specs/refactor/keeper_module_split_design_spec.md) |
+| [拆分 app/discord_bot.py](specs/refactor/discord_transport_split_design_spec_zh.md) | 已實作 | [English](specs/refactor/discord_transport_split_design_spec.md) |
 
 ## 維護
 

@@ -42,6 +42,8 @@ class Timeline:
         self.kind, self.turn_id, self.player_id, self.campaign_id, self.origin = kind, turn_id, player_id, campaign_id, origin
         self._lock = threading.Lock()
         self.intervals: list[tuple[str, float, float]] = []
+        # What the one-line turn summary says about the turn besides its timings (the route, a fallback reason).
+        self.notes: dict[str, str] = {}
 
     def add(self, phase: str, start: float, end: float) -> None:
         if phase not in PHASES or phase == "other":
@@ -91,6 +93,12 @@ _current: contextvars.ContextVar[Timeline | None] = contextvars.ContextVar("coc_
 
 def current() -> Timeline | None:
     return _current.get()
+
+
+def note(**fields: str) -> None:
+    """Attach short facts (``route``, ``fallback``) to the current turn's summary line; free when there is no timeline."""
+    if (timeline := _current.get()) is not None:
+        timeline.notes.update({key: value for key, value in fields.items() if value})
 
 
 @contextlib.contextmanager
@@ -149,7 +157,43 @@ def _report(line: Timeline, end: float) -> None:
             "turn.phase", level=logging.DEBUG, phase=name, start_ms=_ms(start - line.origin),
             end_ms=_ms(stop - line.origin), duration_ms=_ms(stop - start), **ids,
         )
-    observability.event("turn.phases", **ids, **line.summary(end))
+    summary = line.summary(end)
+    observability.event("turn.phases", **ids, **summary)
+    if line.kind in _SUMMARISED_KINDS:
+        _log_summary(line, summary)
+
+
+# A maintenance pass is background work; only what a player waited for gets a summary line.
+_SUMMARISED_KINDS = frozenset({"turn", "continuation"})
+_summary_logger = logging.getLogger("app.turn")
+
+
+def _sum(exclusive: dict[str, float], *phases: str) -> float:
+    return round(sum(exclusive.get(phase, 0) for phase in phases), 1)
+
+
+def _log_summary(line: Timeline, summary: dict[str, Any]) -> None:
+    """One plain line per turn, whether or not structured event logging (``LOG_ENABLED``) is on.
+
+    ``LOG_ENABLED`` stays off by default because it adds timers, counters and JSON payloads to every call. This line costs
+    one string format per turn and carries only timings and ids, never player text, so a deployment can always see how long
+    players wait and where the time goes. Every ``*_ms`` is an exclusive time and together they add up to ``wall_ms``:
+    ``retrieval`` and ``memory`` each fold in the phases of that kind, and ``continuation_ms`` is the non-model work of a resolved-check continuation.
+    """
+    exclusive = summary["exclusive_ms"]
+    fields: dict[str, Any] = {
+        "turn_id": line.turn_id, "kind": line.kind, "route": line.notes.get("route", ""),
+        "short_circuit": line.notes.get("short_circuit", ""),
+        "campaign": observability.safe_identifier(line.campaign_id) or "",
+        "wall_ms": summary["wall_ms"], "queue_wait_ms": exclusive.get("queue_wait", 0),
+        "retrieval_ms": _sum(exclusive, "initial_retrieval", "recovery_retrieval"),
+        "memory_ms": _sum(exclusive, "memory_search", "memory_write", "embedding"),
+        "executor_ms": exclusive.get("executor_llm", 0), "tool_ms": exclusive.get("tool_execution", 0),
+        "continuation_ms": exclusive.get("continuation_processing", 0),
+        "narrator_ms": exclusive.get("narrator_llm", 0), "other_ms": exclusive.get("other", 0),
+        "fallback": line.notes.get("fallback", ""),
+    }
+    _summary_logger.info("turn.summary " + " ".join(f"{key}={value}" for key, value in fields.items() if value != ""))
 
 
 def timed_turn(func: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:

@@ -27,6 +27,7 @@ from app.commands.handlers import (
     system,
 )
 from app.commands.handlers import checks as check_commands
+from app.discord_transport import controls, delivery, gateway, lifecycle
 from app.domain.models import (
     AgentMessage,
     MechanicResult,
@@ -380,16 +381,15 @@ def test_background_maintenance_consumes_hold(state, held):
 
 
 def test_private_button_preserves_original_identity_and_recipient(state):
-    from app import discord_bot
     from app.check_identity import compact_identity_token
 
     async def scenario():
         private_channel = SimpleNamespace(id=123)
         public_channel = SimpleNamespace(id=456)
         entry = {"type": "skill", "skill": "偵查", "check_id": "check-private", "visibility": "player_private"}
-        with patch.object(discord_bot.client, "get_user", return_value=private_channel), \
-             patch.object(discord_bot, "_send_direct_message", AsyncMock()) as send:
-            await discord_bot._send_check_button(public_channel, "discord-channel-456", "123", entry, "Ada", state.timeline_id, None)
+        with patch.object(gateway.client, "get_user", return_value=private_channel), \
+             patch.object(delivery, "send_direct_message", AsyncMock()) as send:
+            await controls.send_check_button(public_channel, "discord-channel-456", "123", entry, "Ada", state.timeline_id, None)
         assert send.call_args.args[0] is private_channel
         button = send.call_args.kwargs["view"].children[0]
         assert compact_identity_token("check", "123", "check-private", state.timeline_id) in button.custom_id
@@ -397,16 +397,15 @@ def test_private_button_preserves_original_identity_and_recipient(state):
 
 
 def test_observed_button_entry_reports_hold_without_running_callback(state, held):
-    from app import discord_bot
 
     # The callback's stored conversation lock is authoritative even in a DM.
     async def raw(self, interaction):
         async with locks.get_conversation_lock(state.group_id):
             raise AssertionError("held callback ran")
 
-    callback = discord_bot._observed_interaction(raw)
+    callback = lifecycle.observed_interaction(raw)
     interaction = SimpleNamespace(channel=SimpleNamespace(id=123))
-    with patch.object(discord_bot, "_send_interaction_message", AsyncMock()) as reply:
+    with patch.object(delivery, "send_interaction_message", AsyncMock()) as reply:
         asyncio.run(callback(object(), interaction))
     reply.assert_awaited_once_with(interaction, admission.NOTICE, ephemeral=True)
 
