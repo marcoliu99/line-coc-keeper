@@ -112,6 +112,7 @@
 | [回合正確性、結果恢復與延遲量測](specs/refactor/turn_safety_and_latency_design_spec_zh.md) | 部分完成；S0／S1／S3 已實作，S2 已撤回 | [English](specs/refactor/turn_safety_and_latency_design_spec.md) |
 | [依職責拆分 app/keeper.py](specs/refactor/keeper_module_split_design_spec_zh.md) | 已實作 | [English](specs/refactor/keeper_module_split_design_spec.md) |
 | [拆分 app/discord_bot.py](specs/refactor/discord_transport_split_design_spec_zh.md) | 已實作 | [English](specs/refactor/discord_transport_split_design_spec.md) |
+| [拆分 supervisor.run_turn 並讓回覆步驟的順序可被檢查](specs/refactor/reply_pipeline_design_spec_zh.md) | 已實作 | [English](specs/refactor/reply_pipeline_design_spec.md) |
 | [/coc 系統子指令改為處理函式的對照表](specs/refactor/system_command_table_design_spec_zh.md) | 已實作 | [English](specs/refactor/system_command_table_design_spec.md) |
 
 ## 維護

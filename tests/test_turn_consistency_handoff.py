@@ -15,7 +15,7 @@ from app import (
     scenario_library,
     tool_dispatch,
 )
-from app.agents import executor, supervisor
+from app.agents import executor, reply_pipeline, supervisor
 from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.providers import registry
@@ -648,7 +648,7 @@ def test_supervisor_preserves_failed_executor_private_outputs(state):
     with patch.object(config, 'LLM_PROVIDER', 'openai'), \
          patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=run_conversation)}), \
          patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
-         patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text), \
+         patch.object(reply_pipeline.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text), \
          patch.object(scenario_library, 'search_images', return_value=[{'page': 2, 'type': 'map'}]):
         reply, private, images = asyncio.run(supervisor.run_turn(
             state, 'a', 'Marco', '我調查房間', None, 'player', state.group_id))
@@ -671,7 +671,7 @@ def test_supervisor_failure_after_check_keeps_next_action(state, failure):
          patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
          patch.object(supervisor.context_builder, 'build_context', side_effect=context), \
          patch.object(supervisor.narrator, 'run_narrator', AsyncMock(return_value=('請使用 /coc check。', [], []))), \
-         patch.object(supervisor.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text):
+         patch.object(reply_pipeline.guard, 'enforce_narrative_safety', side_effect=lambda msg, text: text):
         reply, _, _ = asyncio.run(supervisor.run_turn(
             state, 'a', 'Marco', '我偵查房間', None, 'player', state.group_id))
     assert '/coc check' in reply and '尚未完整處理' in reply
