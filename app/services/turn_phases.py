@@ -116,10 +116,16 @@ def seed(name: str, start: float, end: float) -> None:
 @contextlib.contextmanager
 def timeline(
     kind: str, *, turn_id: str, player_id: str, campaign_id: str, queue_wait_ms: float = 0.0,
+    began_at: float | None = None,
 ) -> Iterator[Timeline]:
-    """Open a timeline for one turn (or one maintenance pass) and report it when the block ends."""
+    """Open a timeline for one turn (or one maintenance pass) and report it when the block ends.
+
+    The player's wait began before the timeline did: when the turn queued, and when its retrieval ran before it
+    reached the supervisor. ``began_at`` (a monotonic time) moves the origin back to the earliest of those.
+    """
     now = time.monotonic()
-    line = Timeline(kind, turn_id, player_id, campaign_id, now - max(0.0, queue_wait_ms) / 1000)
+    origin = now - max(0.0, queue_wait_ms) / 1000
+    line = Timeline(kind, turn_id, player_id, campaign_id, min(origin, began_at) if began_at else origin)
     if queue_wait_ms > 0:
         line.add("queue_wait", line.origin, now)
     token = _current.set(line)
@@ -156,14 +162,15 @@ def timed_turn(func: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]
         state = bound.get("state")
         handoff = bound.get("handoff")
         prefetched = bound.get("prefetched_retrieval")
+        started, finished = getattr(prefetched, "started_at", None), getattr(prefetched, "finished_at", None)
         turn_id = observability.current_context().get("turn_id") or observability.new_id("turn")
         with observability.context(turn_id=turn_id), timeline(
             "continuation" if bound.get("turn_kind") == "resolved_check_followup" else "turn",
             turn_id=turn_id, player_id=str(bound.get("user_id", "")),
             campaign_id=str(getattr(state, "group_id", "")),
             queue_wait_ms=float(getattr(handoff, "queue_wait_ms", None) or 0),
+            began_at=started if started and finished else None,
         ):
-            started, finished = getattr(prefetched, "started_at", None), getattr(prefetched, "finished_at", None)
             if started and finished:
                 seed("initial_retrieval", started, finished)
             if bound.get("turn_kind") == "resolved_check_followup":

@@ -362,3 +362,58 @@ def test_the_executor_passes_its_limit_to_the_gateway() -> None:
     source = (Path(__file__).resolve().parents[1] / "app/agents/executor.py").read_text(encoding="utf-8")
     assert "scenario_search_limit=config.SCENARIO_SEARCH_MAX_PER_TURN" in source
     assert ast.parse(source)
+
+
+# --- review: a stale action's evidence, the wait before the timeline, and one allowance per turn ----------
+
+def test_an_unsuccessful_search_drops_the_players_earlier_evidence() -> None:
+    state = make_state()
+    context_builder.remember_grounding(state, "a", action_message())
+    assert context_builder.reusable_grounding(state, "a") is not None
+    context_builder.remember_grounding(state, "a", action_message("empty"))  # the next action found nothing
+    assert context_builder.reusable_grounding(state, "a") is None
+
+
+def test_an_unsuccessful_search_by_someone_else_also_ends_the_reuse() -> None:
+    state = make_state()
+    context_builder.remember_grounding(state, "a", action_message())
+    context_builder.remember_grounding(state, "b", action_message("fallback"))
+    assert context_builder.reusable_grounding(state, "a") is None
+
+
+@aio
+async def test_a_retrieval_that_finished_before_the_turn_reached_the_supervisor_is_counted(events) -> None:
+    @phases.timed_turn
+    async def run_turn(state, user_id, *, turn_kind="player_action", prefetched_retrieval=None, handoff=None):
+        await asyncio.sleep(0.005)
+
+    now = time.monotonic()
+    prefetch = SimpleNamespace(started_at=now - 0.4, finished_at=now - 0.1)
+    await run_turn(SimpleNamespace(group_id="g1"), "u1", prefetched_retrieval=prefetch, handoff=SimpleNamespace(queue_wait_ms=0.0))
+    [summary] = named(events, "turn.phases")
+    assert summary["wall_ms"] >= 400 and summary["exclusive_ms"]["initial_retrieval"] >= 290
+    assert summary["total_ms"]["initial_retrieval"] >= 290
+
+
+@aio
+async def test_a_retry_and_the_recovery_search_share_the_turns_search_allowance(events) -> None:
+    facts: list[str] = []
+    with patch.object(tool_gateway.keeper, "_execute_tool", lambda *a, **k: {"ok": True, "results": "x"}), \
+            observability.context(turn_id="turn-shared-1"):
+        first = tool_gateway.make_tool_executor(make_state(), [], [], "player", facts, scenario_search_limit=3, actor_id="a")
+        assert [(await first("search_scenario", {"query": "q"}))["ok"] for _ in range(2)] == [True, True]
+        tool_gateway.note_scenario_search()  # the recovery search
+        retry = tool_gateway.make_tool_executor(make_state(), [], [], "player", facts, scenario_search_limit=3, actor_id="a")
+        assert (await retry("search_scenario", {"query": "q"}))["error"] == "scenario_search_limit_reached"
+    with observability.context(turn_id="turn-shared-2"):
+        fresh = tool_gateway.make_tool_executor(make_state(), [], [], "player", facts, scenario_search_limit=3, actor_id="a")
+        with patch.object(tool_gateway.keeper, "_execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):
+            assert (await fresh("search_scenario", {"query": "q"}))["ok"]
+
+
+def test_the_counter_of_finished_turns_is_bounded() -> None:
+    for number in range(tool_gateway._SEARCHES_MAX_TURNS + 30):
+        with observability.context(turn_id=f"turn-bound-{number}"):
+            tool_gateway.note_scenario_search()
+    assert len(tool_gateway._searches) == tool_gateway._SEARCHES_MAX_TURNS
+    assert tool_gateway.note_scenario_search() is None  # no turn id: nothing to count against

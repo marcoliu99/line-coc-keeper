@@ -15,6 +15,7 @@ from app.agents import (
     narrator,
     obligation_gate,
     state_reducer,
+    tool_gateway,
 )
 from app.domain.models import (
     AgentMessage,
@@ -114,6 +115,7 @@ async def _recover_blocked_turn(
             or message.payload.get("private_messages") or message.payload.get("image_requests")):
         return result, reason, "not_attempted"
     if rag_status in _DEGRADED_RAG:
+        tool_gateway.note_scenario_search()  # the recovery search spends the same per-turn allowance as the tool
         query = turn_fallback.recovery_query(state, text, message.payload.get("resolved_location"))
         try:
             context, _status = await asyncio.to_thread(

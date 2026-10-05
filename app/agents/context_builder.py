@@ -79,11 +79,15 @@ _grounding_lock = threading.Lock()
 def remember_grounding(state: GroupState, user_id: str, message: AgentMessage) -> None:
     """Keep the scenario evidence an action turn gathered, for the continuation that follows its roll.
 
-    Only a successful scenario search is kept, and every call marks "someone searched in this conversation", which
-    is what makes an older entry stale for everybody else.
+    Only a successful scenario search is kept. Every call marks "someone searched in this conversation", which is
+    what makes an older entry stale for everybody else, and an unsuccessful search also drops this player's own
+    older entry: a continuation must not reuse evidence that belongs to an earlier, different action.
     """
     payload = message.payload
     if payload.get("rag_status") != "success":
+        with _grounding_lock:
+            _grounding_sequence[state.group_id] = _grounding_sequence.get(state.group_id, 0) + 1
+            _grounding.pop((state.group_id, state.timeline_id, user_id), None)
         return
     prefetch = RetrievalPrefetch(
         rag_context=payload.get("rag_context", ""), memory_context=payload.get("memory_context", ""),

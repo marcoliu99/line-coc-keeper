@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -109,6 +111,8 @@ def make_tool_executor(
         mutation_admission.assert_admitted(state.group_id)
         if tool_name == "search_scenario" and scenario_search_limit is not None:
             scenario_searches += 1
+            # A turn's allowance is shared by its retry and its recovery search, not reset by a new gateway.
+            scenario_searches = max(scenario_searches, note_scenario_search() or scenario_searches)
             if scenario_searches > scenario_search_limit:
                 observability.event("executor.scenario_search.limit_exceeded", level=logging.WARNING,
                                     limit=scenario_search_limit, attempted=scenario_searches)
@@ -235,6 +239,27 @@ def make_tool_executor(
         return result
 
     return execute
+
+
+_SEARCHES_MAX_TURNS = 256
+_searches: OrderedDict[str, int] = OrderedDict()
+_searches_lock = threading.Lock()
+
+
+def note_scenario_search(count: int = 1) -> int | None:
+    """Count scenario searches against the current turn, across every Executor attempt and the recovery search.
+
+    Returns the turn's total so far, or None when there is no turn id to count against.
+    """
+    turn_id = observability.current_context().get("turn_id")
+    if not turn_id:
+        return None
+    with _searches_lock:
+        _searches[turn_id] = total = _searches.get(turn_id, 0) + count
+        _searches.move_to_end(turn_id)
+        while len(_searches) > _SEARCHES_MAX_TURNS:
+            _searches.popitem(last=False)
+    return total
 
 
 _CHECK_REGISTRATION_TOOLS = tool_registry.CHECK_REGISTRATION_TOOLS

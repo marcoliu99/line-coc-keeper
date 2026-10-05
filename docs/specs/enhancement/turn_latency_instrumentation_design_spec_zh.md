@@ -10,10 +10,10 @@
 
 ## 契約
 
-1. **每回合一條階段時間軸**（`app/services/turn_phases.py`）。每個回合、每次擲骰後的接續、每次記憶維護都會回報一個 `turn.phases` 事件，以及每段一個 `turn.phase` 事件（DEBUG），帶 `turn_id`、`player_id`、`campaign_id`、開始、結束與時長。階段：`queue_wait`、`initial_retrieval`、`executor_llm`、`tool_execution`、`recovery_retrieval`、`continuation_processing`、`narrator_llm`、`memory_search`、`memory_write`、`embedding`、`other`。各段在工作實際發生的地方記錄（router 的鎖等待、回合排隊時就已跑完的預取、Executor 與 Narrator 的模型呼叫、工具執行、每個 embedding 批次、復原搜尋、記憶提交），並會跟著回合進入 worker thread。
+1. **每回合一條階段時間軸**（`app/services/turn_phases.py`）。每個回合（時間軸從玩家開始等待時起算：排隊，或在回合進入 supervisor 之前就跑完的檢索）、每次擲骰後的接續、每次記憶維護都會回報一個 `turn.phases` 事件，以及每段一個 `turn.phase` 事件（DEBUG），帶 `turn_id`、`player_id`、`campaign_id`、開始、結束與時長。階段：`queue_wait`、`initial_retrieval`、`executor_llm`、`tool_execution`、`recovery_retrieval`、`continuation_processing`、`narrator_llm`、`memory_search`、`memory_write`、`embedding`、`other`。各段在工作實際發生的地方記錄（router 的鎖等待、回合排隊時就已跑完的預取、Executor 與 Narrator 的模型呼叫、工具執行、每個 embedding 批次、復原搜尋、記憶提交），並會跟著回合進入 worker thread。
 2. **不重複計算。** 階段會重疊（工具在 Executor 的模型呼叫裡執行；預取在回合排隊時就在跑）。所以摘要對每個階段回報它自己合併後的區間（`total_ms`）與只有它能解釋的時間（`exclusive_ms`；內層的工作優先於包住它的外層等待），另有 `wall_ms`、`other` 與 `overlap_ms`。各階段的獨占時間加起來等於牆鐘時間。
-3. **擲骰後的接續沿用它那個行動的證據**（`context_builder.remember_grounding`／`reusable_grounding`，開關 `RETRIEVAL_REUSE_FOR_FOLLOWUPS`）。行動回合成功的劇本搜尋，依對話、時間線與玩家保存，交給接續使用，不再為同一個場景再搜一次；除非超過 `RETRIEVAL_REUSE_TTL_SECONDS`（900 秒）、之後這個對話裡有別的回合搜尋過、或搜尋所依據的任何東西改變（劇本、章節範圍、摘要、記憶、時間線、戰鬥狀態、角色）。一次擲骰加接續從兩次主動劇本搜尋降為一次；`rag.followup_grounding` 回報是否沿用。
-4. **有界的搜尋迴圈。** Executor 在一個回合最多呼叫劇本搜尋工具 `SCENARIO_SEARCH_MAX_PER_TURN`（5）次；再呼叫就會被以 `scenario_search_limit_reached` 拒絕，並記錄 `executor.scenario_search.limit_exceeded`。
+3. **擲骰後的接續沿用它那個行動的證據**（`context_builder.remember_grounding`／`reusable_grounding`，開關 `RETRIEVAL_REUSE_FOR_FOLLOWUPS`）。行動回合成功的劇本搜尋，依對話、時間線與玩家保存（沒有成功的搜尋會清掉該玩家先前的紀錄，接續不會沿用先前不同行動的證據），交給接續使用，不再為同一個場景再搜一次；除非超過 `RETRIEVAL_REUSE_TTL_SECONDS`（900 秒）、之後這個對話裡有別的回合搜尋過、或搜尋所依據的任何東西改變（劇本、章節範圍、摘要、記憶、時間線、戰鬥狀態、角色）。一次擲骰加接續從兩次主動劇本搜尋降為一次；`rag.followup_grounding` 回報是否沿用。
+4. **有界的搜尋迴圈。** Executor 在一個回合最多呼叫劇本搜尋工具 `SCENARIO_SEARCH_MAX_PER_TURN`（5）次；這個額度是整個回合共用的（Executor 重試與復原搜尋都算在內），再呼叫就會被以 `scenario_search_limit_reached` 拒絕，並記錄 `executor.scenario_search.limit_exceeded`。
 
 ## 未改動
 
