@@ -6,6 +6,7 @@ import asyncio
 import tempfile
 import threading
 import unittest
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -119,6 +120,42 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.log, [])
         self.assertEqual(saved.state_revision, before.state_revision + 1)
 
+    async def test_readiness_callback_failure_keeps_healing_and_stops_opening(self) -> None:
+        character = _character("first", needs_healing=True)
+        character.hp = 0
+        character.hp_max = 0
+        before = self.store(characters={"first": character})
+        delivered: list[str] = []
+
+        async def fail_readiness(readiness: game_opening.OpeningReadiness) -> None:
+            self.assertEqual(readiness.investigators[0].stats, "HP 10/10, SAN 50/99")
+            self.assertTrue(readiness.investigators[0].notes)
+            with self.assertRaises(FrozenInstanceError):
+                readiness.unclaimed_pregens = 5
+            delivered.append("roster attempted")
+            raise RuntimeError("Discord roster failed")
+
+        with (
+            patch.object(scenario_intro, "extract_opening_narration") as extract,
+            self.assertRaisesRegex(RuntimeError, "Discord roster failed"),
+        ):
+            await game_opening.open_game(self.group, "first", on_readiness=fail_readiness)
+        saved = load_state(self.group)
+        self.assertEqual(delivered, ["roster attempted"])
+        self.assertEqual(saved.state_revision, before.state_revision + 1)
+        self.assertEqual(saved.characters["first"].hp_max, 10)
+        self.assertFalse(saved.game_started)
+        self.assertEqual(saved.pending_checks, {})
+        self.assertEqual(saved.log, [])
+        extract.assert_not_called()
+
+        with patch.object(scenario_intro, "extract_opening_narration", return_value={
+            "found": True, "text": "重試開場", "opening_check": None,
+        }):
+            replies = await self.start()
+        self.assertEqual(replies[-1], "重試開場")
+        self.assertTrue(load_state(self.group).game_started)
+
     async def test_no_healing_means_no_extra_commit(self) -> None:
         before = self.store()
         with patch.object(scenario_intro, "extract_opening_narration", return_value={
@@ -150,7 +187,11 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
     async def test_group_check_blocker_is_atomic_but_prior_healing_remains(self) -> None:
         pending = {"second": {"type": "skill", "skill": "偵查", "check_id": "old", "timeline_id": "timeline-opening"}}
         before = self.store(
-            characters={"first": _character("first", needs_healing=True), "second": _character("second")},
+            characters={
+                "first": _character("first", needs_healing=True),
+                "second": _character("second"),
+                "third": _character("third"),
+            },
             pending_checks=pending,
         )
         with patch.object(scenario_intro, "extract_opening_narration", return_value={
@@ -241,6 +282,153 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(saved.game_started)
         self.assertEqual(len(saved.log), 2)
         self.assertEqual(replies[1], "後備開場")
+
+    async def test_fallback_timeline_change_in_narrator_returns_stale_response(self) -> None:
+        self.store()
+
+        class Provider:
+            async def run_conversation(self, *_args: object, **_kwargs: object) -> str:
+                state_transaction.mutate(
+                    self_group, lambda ctx: setattr(ctx.state, "timeline_id", "timeline-new"),
+                    reason="test_timeline_replacement",
+                )
+                return "舊開場"
+
+        self_group = self.group
+        with (
+            patch.object(scenario_intro, "extract_opening_narration", return_value={"found": False}),
+            patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": Provider()}),
+            patch.object(config, "LLM_PROVIDER", "openai"),
+            patch("app.services.post_turn.spawn_post_turn_maintenance"),
+        ):
+            replies = await self.start()
+        saved = load_state(self.group)
+        self.assertEqual(saved.timeline_id, "timeline-new")
+        self.assertFalse(saved.game_started)
+        self.assertEqual(saved.log, [])
+        self.assertNotIn("舊開場", replies)
+        self.assertIn("舊回覆未送出", replies[-1])
+
+    async def test_real_fallback_narrator_failure_is_retryable(self) -> None:
+        before = self.store(characters={"first": _character("first", needs_healing=True)})
+
+        class Provider:
+            async def run_conversation(self, *_args: object, **_kwargs: object) -> str:
+                raise RuntimeError("provider failed")
+
+        with (
+            patch.object(scenario_intro, "extract_opening_narration", return_value={"found": False}),
+            patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": Provider()}),
+            patch.object(config, "LLM_PROVIDER", "openai"),
+            patch("app.services.post_turn.spawn_post_turn_maintenance"),
+        ):
+            replies = await self.start()
+        saved = load_state(self.group)
+        self.assertEqual(saved.state_revision, before.state_revision + 1)
+        self.assertFalse(saved.game_started)
+        self.assertEqual(saved.log, [])
+        self.assertIn("遊戲尚未開始", replies[-1])
+
+    async def test_scripted_delivery_failure_does_not_undo_start(self) -> None:
+        self.store()
+        delivered: list[str] = []
+
+        async def reply(value: str) -> None:
+            delivered.append(value)
+            if value == "開場":
+                raise RuntimeError("Discord opening failed")
+
+        with (
+            patch.object(scenario_intro, "extract_opening_narration", return_value={
+                "found": True, "text": "開場", "opening_check": {"type": "skill", "skill": "偵查"},
+            }),
+            self.assertRaisesRegex(RuntimeError, "Discord opening failed"),
+        ):
+            await system.handle_system_command(
+                self.group, "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                ["/coc", "start"],
+            )
+        saved = load_state(self.group)
+        self.assertTrue(saved.game_started)
+        self.assertEqual(len(saved.log), 2)
+        self.assertIn("first", saved.pending_checks)
+        self.assertEqual(delivered[1], "開場")
+        self.assertIn("已經開始過", (await self.start())[0])
+
+    async def test_fallback_delivery_failure_does_not_undo_start(self) -> None:
+        self.store()
+
+        class Provider:
+            async def run_conversation(self, *_args: object, **_kwargs: object) -> str:
+                return "後備開場"
+
+        async def reply(value: str) -> None:
+            if value == "後備開場":
+                raise RuntimeError("Discord fallback failed")
+
+        with (
+            patch.object(scenario_intro, "extract_opening_narration", return_value={"found": False}),
+            patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": Provider()}),
+            patch.object(config, "LLM_PROVIDER", "openai"),
+            patch("app.services.post_turn.spawn_post_turn_maintenance"),
+            self.assertRaisesRegex(RuntimeError, "Discord fallback failed"),
+        ):
+            await system.handle_system_command(
+                self.group, "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                ["/coc", "start"],
+            )
+        saved = load_state(self.group)
+        self.assertTrue(saved.game_started)
+        self.assertEqual(len(saved.log), 2)
+        self.assertIn("已經開始過", (await self.start())[0])
+
+    async def test_fallback_output_precedes_private_and_image_delivery(self) -> None:
+        self.store()
+        order: list[str] = []
+
+        async def reply(value: str) -> None:
+            order.append("roster" if value.startswith("📋") else "public")
+
+        async def send_dm(_owner: str, _message: str) -> None:
+            order.append("private")
+
+        async def send_image(_image: bytes, _conversation: str, _page: int) -> None:
+            order.append("image")
+
+        with (
+            patch.object(scenario_intro, "extract_opening_narration", return_value={"found": False}),
+            patch.object(game_opening.supervisor, "run_turn", new_callable=AsyncMock,
+                         return_value=("後備開場", [("first", "秘密")], [(None, 1)])),
+            patch("app.services.post_turn.load_page_image", return_value=b"PNG"),
+            patch("app.services.post_turn.spawn_post_turn_maintenance"),
+        ):
+            await system.handle_system_command(
+                self.group, "first", reply, send_dm, send_image, AsyncMock(),
+                ["/coc", "start"],
+            )
+        self.assertEqual(order, ["roster", "public", "private", "image"])
+
+    async def test_cancel_after_scripted_commit_keeps_start_and_blocks_retry(self) -> None:
+        self.store()
+
+        async def reply(value: str) -> None:
+            if value == "開場":
+                raise asyncio.CancelledError
+
+        with (
+            patch.object(scenario_intro, "extract_opening_narration", return_value={
+                "found": True, "text": "開場", "opening_check": None,
+            }),
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            await system.handle_system_command(
+                self.group, "first", reply, AsyncMock(), AsyncMock(), AsyncMock(),
+                ["/coc", "start"],
+            )
+        saved = load_state(self.group)
+        self.assertTrue(saved.game_started)
+        self.assertEqual(len(saved.log), 2)
+        self.assertIn("已經開始過", (await self.start())[0])
 
     async def test_fallback_failure_keeps_healing_and_is_retryable(self) -> None:
         before = self.store(characters={"first": _character("first", needs_healing=True)})
@@ -389,10 +577,12 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
         self.store(characters={"first": _character("first", needs_healing=True)})
         entered = threading.Event()
         release = threading.Event()
+        finished = threading.Event()
 
         def extract(_text: str) -> dict:
             entered.set()
             release.wait(3)
+            finished.set()
             return {"found": True, "text": "開場", "opening_check": None}
 
         with patch.object(scenario_intro, "extract_opening_narration", side_effect=extract):
@@ -402,7 +592,7 @@ class GameOpeningCharacterization(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
             release.set()
-            await asyncio.sleep(0)
+            self.assertTrue(await asyncio.to_thread(finished.wait, 2))
         saved = load_state(self.group)
         self.assertIn("偵查", saved.characters["first"].skills)
         self.assertFalse(saved.game_started)

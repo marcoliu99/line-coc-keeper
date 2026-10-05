@@ -776,8 +776,10 @@ async def handle_system_command(
                 await reply("這局遊戲已經開始過了，不會重複產生開場白。想重新來一次的話，請用「/coc newgame」開新的一局。")
             elif opening_result.reason == "pending_luck_decision":
                 await reply(f"{opening_result.name} 仍在等待 Luck 決定，請先處理後再開始遊戲。")
-            else:
+            elif opening_result.reason == "pending_check":
                 await reply(f"{opening_result.name} 尚有待處理的檢定，請先完成後再開始遊戲。")
+            else:
+                raise ValueError(f"unsupported opening rejection: {opening_result.reason!r}")
             return
         if opening_result.outcome == "scripted":
             await reply(opening_result.text)

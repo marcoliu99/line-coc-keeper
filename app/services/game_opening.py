@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from app import check_lifecycle, keeper, locks, observability, scenario_intro
 from app.agents import supervisor
+from app.check_identity import PendingCheckBlocker
 from app.keeper_tools import resource_bridge
 from app.models import GroupState
 from app.repositories import state_transaction
@@ -28,12 +29,15 @@ from app.services.character_service import (
 )
 
 OpeningOutcome = Literal["rejected", "scripted", "fallback", "silent"]
+OpeningRejectionReason = Literal[
+    "combat_unsettled", "no_scenario", "no_characters", "pending_pregen_luck", "already_started",
+] | PendingCheckBlocker
 
 
 @dataclass(frozen=True)
 class OpeningResult:
     outcome: OpeningOutcome
-    reason: str = ""
+    reason: OpeningRejectionReason | None = None
     name: str = ""
     text: str = ""
     check_reason: str = ""
@@ -136,8 +140,9 @@ def _commit_scripted(conversation_id: str, opening_data: dict[str, Any]) -> Open
             )
             if blocked:
                 owner_id, reason = blocked
+                assert reason is not None
                 return OpeningResult(
-                    "rejected", reason=str(reason), name=state.characters[owner_id].name,
+                    "rejected", reason=reason, name=state.characters[owner_id].name,
                 )
         if opening_check and opening_check["type"] == "skill":
             for char in state.characters.values():
