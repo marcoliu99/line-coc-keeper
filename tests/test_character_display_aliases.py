@@ -77,6 +77,13 @@ class CharacterAliasTests(unittest.TestCase):
             self.assertEqual(presentation.character_aliases("/coc sudo <@玩家> switch 小明"), "/coc sudo <@玩家> switch 小明")
             self.assertEqual(presentation.character_aliases("可用 /coc check。retire 之後再說"), "可用 /coc check。退場 之後再說")
 
+    def test_a_command_ends_at_ascii_sentence_punctuation_too(self):
+        with patch.object(config, "CHARACTER_DISPLAY_ALIASES", {"status": "狀態"}):
+            self.assertEqual(presentation.character_aliases("/coc create status. status enters the room"),
+                             "/coc create status. 狀態 enters the room")
+            self.assertEqual(presentation.character_aliases("/coc create status; status! status? status"),
+                             "/coc create status; 狀態! 狀態? 狀態")
+
     def test_the_command_words_come_from_the_help_pages(self):
         words = presentation.command_words()
         self.assertLessEqual({"coc", "check", "luck", "roll", "status", "occ", "switch"}, words)
