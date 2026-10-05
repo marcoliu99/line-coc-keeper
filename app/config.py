@@ -315,6 +315,9 @@ OPENAI_NARRATOR_MAX_OUTPUT_TOKENS = _env_int("OPENAI_NARRATOR_MAX_OUTPUT_TOKENS"
 OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 0)
 
 # V4 scenario retrieval reserves capacity before the existing provider admission.
+# Internal ids (check_id and the like) and raw result-tier names are removed from what a player reads. Debugging may
+# ask to see them (app/presentation.py).
+DEBUG_SHOW_INTERNAL_IDS = os.environ.get("DEBUG_SHOW_INTERNAL_IDS", "false").strip().lower() in ("1", "true", "yes")
 # A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
 # scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
 TURN_FALLBACK_RECOVERY_ENABLED = os.environ.get("TURN_FALLBACK_RECOVERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")

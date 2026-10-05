@@ -39,6 +39,7 @@
 | [原子敘事購買與取得來源](specs/bug/purchase_turn_provenance_design_spec_zh.md) | 已實作 | [English](specs/bug/purchase_turn_provenance_design_spec.md) |
 | [Codex OAuth 對話 Provider](specs/enhancement/codex_oauth_provider_design_spec_zh.md) | 實驗分支已實作 | [English](specs/enhancement/codex_oauth_provider_design_spec.md) |
 | [劇本整備最多匯出三個檔案](specs/enhancement/three_file_scenario_export_design_spec_zh.md) | 已實作 | [English](specs/enhancement/three_file_scenario_export_design_spec.md) |
+| [面向玩家的呈現：等級、內部識別碼、隊伍人數](specs/bug/player_facing_presentation_design_spec_zh.md) | 已實作 | [English](specs/bug/player_facing_presentation_design_spec.md) |
 | [有界的長期記憶 embedding](specs/bug/memory_embedding_bounds_design_spec_zh.md) | 已實作 | [English](specs/bug/memory_embedding_bounds_design_spec.md) |
 | [回合 fallback 原因與有界復原](specs/bug/turn_fallback_reasons_design_spec_zh.md) | 已實作 | [English](specs/bug/turn_fallback_reasons_design_spec.md) |
 | [劇本事件在同一回合的機械義務](specs/bug/event_obligations_design_spec_zh.md) | 已實作 | [English](specs/bug/event_obligations_design_spec.md) |

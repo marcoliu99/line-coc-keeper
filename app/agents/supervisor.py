@@ -5,7 +5,7 @@ import logging
 from copy import deepcopy
 from typing import Any
 
-from app import config, keeper, locks, observability, spoiler_policy
+from app import config, keeper, locks, observability, presentation, spoiler_policy
 from app.agents import (
     assistant,
     context_builder,
@@ -373,7 +373,11 @@ async def run_turn(
             public_result = turn_delivery.public_mechanic(mechanic_result, state)
             reply_text = consistent(reply_text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed))
 
+    # The party's size is corrected before delivery validates the reply, so what is validated is what is sent.
+    reply_text = presentation.enforce_party_size(reply_text, len(state.active_characters()))
     reply_text, private_controls = turn_delivery.finalize(message, reply_text)
+    reply_text = presentation.player_text(reply_text)
+    private_messages = [(owner, presentation.player_text(text)) for owner, text in private_messages]
     safety_blocked = reply_text == spoiler_policy.NEUTRAL_FALLBACK_TEXT or (
         getattr(message.payload.get("delivery_envelope"), "status", "passed") == "blocked"
         or (getattr(message.payload.get("delivery_envelope"), "status", "passed") == "projected_fallback"

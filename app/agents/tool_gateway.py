@@ -344,6 +344,10 @@ def _record_check_status(status: CheckStatus, tool_name: str, result: dict[str, 
         status["cleared"] = True
 
 
+# Opaque handles for the engine. The Narrator is handed these facts to retell, and a model repeats what it is given.
+_INTERNAL_ID_KEYS = frozenset({"check_id", "decision_id", "timeline_id", "event_id", "evidence_ref", "source_check_id"})
+
+
 def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
     if not result.get("ok", True):
         return f"{tool_name} 失敗：{result.get('error', '未知錯誤')}"
@@ -353,7 +357,7 @@ def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
     # public-facing handoff and must never copy a private opposed receipt.
     private_check_fields = {"opposed", "opposed_outcome", "action_basis"} if tool_name == "skill_check" else set()
     details = ", ".join(f"{k}={v}" for k, v in result.items()
-                        if k not in {"ok", "note"} | private_check_fields)
+                        if k not in {"ok", "note"} | private_check_fields | _INTERNAL_ID_KEYS)
     if tool_name == "skill_check" and isinstance(result.get('opposed_outcome'), dict):
         winner = result['opposed_outcome'].get('winner')
         if winner in {'player', 'opponent', 'neither'}:

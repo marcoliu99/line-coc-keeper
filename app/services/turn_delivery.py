@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from app import observability, spoiler_policy
+from app import observability, presentation, spoiler_policy
 from app.domain.models import MechanicResult, ObservedOutcome
 from app.models import GroupState
 from app.services import canonical_facts
@@ -36,7 +36,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             text = f"{result.get('investigator', '調查員')} 的背包已確認{'包含' if present else '不含'}「{item}」。"
         elif name in {"skill_check", "sanity_check"} and result.get("resolved"):
             text = (f"{result.get('investigator', '調查員')} 的檢定已結算："
-                    f"骰值 {result.get('roll')}，等級 {result.get('tier')}。")
+                    f"骰值 {result.get('roll')}，等級 {presentation.tier_label(str(result.get('tier')))}。")
         elif name in {"apply_combat_damage", "apply_final_combat_damage", "damage_combatant"} and "final_damage" in result:
             text = f"{result.get('name', result.get('target', '目標'))} 已結算傷害 {result['final_damage']}。"
         elif name == "apply_resolved_check_damage":
@@ -216,7 +216,7 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         private_result = is_private(resolved)
         outcomes.append(ObservedOutcome(
             f"resolved-check:{resolved.get('check_id', 'current')}", "resolved_check", True,
-            f"已結算檢定：骰值 {resolved.get('roll', '未知')}，結果為「{resolved.get('outcome', '未知')}」。",
+            f"已結算檢定：骰值 {resolved.get('roll', '未知')}，結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。",
             "player_private" if private_result else "public",
             message.payload.get("user_id", "") if private_result else "",
         ))
