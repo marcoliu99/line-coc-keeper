@@ -5,7 +5,7 @@ import re
 
 from app import presentation
 from app.domain.models import MechanicResult
-from app.services import opposed_checks
+from app.services import opposed_checks, turn_fallback
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -111,6 +111,7 @@ complete_for_action=true 只代表已知依賴已帶入，仍須檢查未知的�
 中文有命中不代表依據完整。加入敵人前須核對攻擊、護甲、特殊能力、觸發條件、代價、每輪/每戰使用限制；缺少裁決必要依據時，使用 search_scenario 的 source="original"，以原文名稱/別名和缺少的規則合併補查原稿。未查到不等於沒有護甲或能力，不得自行填零或省略；仍無法確認時暫緩受影響的裁決，保留已結算骰子與狀態。
 只有在缺少一項會影響本次判定或眼前後果的具體事實時，才呼叫 search_scenario 補查。工具回傳已回答問題後，採用該結果繼續處理；只有另一項不同且會影響本次判定的事實仍未解答時，才再查一次。
 若本回合沒有可用的【劇本相關內容】，遇到必須依劇本決定的事實時仍可照常搜尋。若上下文與搜尋結果都沒有說明該事實，保留未知，不要自行補造。
+玩家的行動若在劇本依據裡已有明寫的直接後果（按鈴、開門、移動物件、進入房間、說出觸發語、觸碰或揭露物件、跨越場景邊界），照該後果處理；劇本沒有要求檢定時，不得改以偵查、聆聽、幸運等臨時檢定取代。依據只寫了觸發物件、沒寫後果時，用「目前場景＋玩家動作＋被互動的物件或 NPC」做一次聚焦的 search_scenario；不要問「接下來會發生什麼」這類寬泛問題。
 這些規則只決定如何重用劇本資訊，不會自行建立檢定、擲骰、改變角色狀態或推進場景；仍須依玩家實際行動與完整規則決定必要機制。"""
 
 
@@ -370,7 +371,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult) -> str
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
             if status.get("scenario_evidence_blocked"):
                 return f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
-            return f"{warning}請先確認目前狀態或更正原本的行動。"
+            return f"{warning}{turn_fallback.guidance(result.fallback_reason)}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
             return f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"

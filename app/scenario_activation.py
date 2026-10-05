@@ -27,6 +27,7 @@ def install_context_fields(
     )
     state.scenario_title = context["manifest"]["title"]
     state.scenario_text = context["text"]
+    state.active_scenario_source_hash = context["manifest"].get("content_hash", "")
     state.active_chapter_id = context["active_chapter_id"]
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])

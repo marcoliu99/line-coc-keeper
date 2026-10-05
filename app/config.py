@@ -160,6 +160,9 @@ HIGH_ITERATION_WATERMARK = _env_int("HIGH_ITERATION_WATERMARK", 4, minimum=1)
 # would blow past MAX_SCENARIO_CHARS entirely. See README's 限制 section.
 SCENARIO_RAG_ENABLED = os.environ.get("SCENARIO_RAG_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 SCENARIO_RAG_TOP_K = int(os.environ.get("SCENARIO_RAG_TOP_K", "5"))
+# How many contiguous chunks on each side of a text-index hit may be attached when the hit visibly
+# continues into them (see scenario_rag.attach_adjacent). 0 turns the expansion off.
+SCENARIO_RAG_ADJACENT_CHUNKS = _env_int("SCENARIO_RAG_ADJACENT_CHUNKS", 1, minimum=0)
 
 # Scenario lifecycle authorization. Keep this off during the initial lobby so
 # a player who is also helping as KP can upload/reparse/cancel a scenario while
@@ -309,6 +312,9 @@ OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = _env_int("OPENAI_DEFAULT_MAX_OUTPUT_TOKENS", 
 # Internal ids (check_id and the like) and raw result-tier names are removed from what a player reads. Debugging may
 # ask to see them (app/presentation.py).
 DEBUG_SHOW_INTERNAL_IDS = os.environ.get("DEBUG_SHOW_INTERNAL_IDS", "false").strip().lower() in ("1", "true", "yes")
+# A gameplay turn whose Executor left no mark on the game and ended in a recoverable fallback may search the
+# scenario once more and decide once more before the player sees the blocker (app/agents/supervisor.py).
+TURN_FALLBACK_RECOVERY_ENABLED = os.environ.get("TURN_FALLBACK_RECOVERY_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 SCENARIO_PROACTIVE_TOKEN_BUDGET = _env_int('SCENARIO_PROACTIVE_TOKEN_BUDGET', 3000, minimum=1)
 SCENARIO_RETRIEVAL_TOKEN_BUDGET = _env_int('SCENARIO_RETRIEVAL_TOKEN_BUDGET', 6000, minimum=1)
 SCENARIO_CONTEXT_TOKEN_CEILING = _env_int('SCENARIO_CONTEXT_TOKEN_CEILING', 32000, minimum=1)

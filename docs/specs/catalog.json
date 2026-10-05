@@ -1798,6 +1798,39 @@
       "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
     },
     {
+      "title": "Game Opening deep module",
+      "zh": "遊戲開場深模組",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/services/game_opening.py",
+        "app/commands/handlers/system.py",
+        "app/services/character_service.py",
+        "tests/test_game_opening_characterization.py",
+        "tests/test_unified_keeper_turn_flow.py",
+        "docs/architecture/game-opening-refactor.md"
+      ],
+      "path": "docs/specs/refactor/game_opening_module_design_spec.md",
+      "zh_path": "docs/specs/refactor/game_opening_module_design_spec_zh.md",
+      "source_revision": "b0e875ccb268966599a19f3823d377a7b4c7630f"
+    },
+    {
+      "title": "Stable active scenario source identity",
+      "zh": "穩定的啟用中劇本來源身分",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/models.py",
+        "app/scenario_library.py",
+        "app/scenario_activation.py",
+        "app/services/scenario_lifecycle.py",
+        "tests/test_scenario_lifecycle_characterization.py"
+      ],
+      "path": "docs/specs/refactor/active_scenario_source_identity_design_spec.md",
+      "zh_path": "docs/specs/refactor/active_scenario_source_identity_design_spec_zh.md",
+      "source_revision": "c5a19912c2f1faf5454eb262693ddbc7dc3d0e4d"
+    },
+    {
       "title": "Correction lifecycle",
       "zh": "更正生命週期",
       "category": "refactor",
@@ -1829,6 +1862,54 @@
       "path": "docs/specs/refactor/scenario_source_store_design_spec.md",
       "zh_path": "docs/specs/refactor/scenario_source_store_design_spec_zh.md",
       "source_revision": "7ab07965eeebfa8e7ed638c67cc8e471f4c4626e"
+    },
+    {
+      "title": "Adjacent scenario trigger retrieval",
+      "zh": "相鄰劇本觸發的檢索",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_adjacency.py",
+        "app/scenario_rag.py",
+        "app/services/prompt_config.py",
+        "app/config.py",
+        "tests/test_scenario_adjacency.py"
+      ],
+      "path": "docs/specs/bug/adjacent_scenario_trigger_design_spec.md",
+      "zh_path": "docs/specs/bug/adjacent_scenario_trigger_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
+      "title": "Turn fallback reasons and bounded recovery",
+      "zh": "回合 fallback 原因與有界復原",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/agents/supervisor.py",
+        "app/agents/context_builder.py",
+        "app/domain/models.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/turn_fallback_reasons_design_spec.md",
+      "zh_path": "docs/specs/bug/turn_fallback_reasons_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
+    },
+    {
+      "title": "Same-turn mechanical obligations of a scenario event",
+      "zh": "劇本事件在同一回合的機械義務",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/event_obligations.py",
+        "app/agents/obligation_gate.py",
+        "app/agents/supervisor.py",
+        "app/agents/executor.py",
+        "tests/test_event_obligations.py"
+      ],
+      "path": "docs/specs/bug/event_obligations_design_spec.md",
+      "zh_path": "docs/specs/bug/event_obligations_design_spec_zh.md",
+      "source_revision": "aa79f22c1db67c00992ea9bc878eea8836788b1f"
     },
     {
       "title": "Player-facing presentation: tiers, internal ids, party size",
