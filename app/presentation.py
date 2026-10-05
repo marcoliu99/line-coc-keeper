@@ -60,14 +60,20 @@ def player_text(text: str) -> str:
 
 _NUMERALS = {"二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 _CHINESE_DIGIT = {value: key for key, value in _NUMERALS.items() if key != "兩"}
-_PARTY = re.compile(r"(?P<n>[二兩三四五六七八九十]|\d{1,2})(?P<unit>\s*[位名個])(?P<noun>調查員|探員|隊員|冒險者|隊友|夥伴)")
+# Only a count the text ties to the player party: a cue that names the party, optionally a totalizing word, then the
+# number. "敵方有六名探員" and "你們看到有六名探員" name some other group and are left alone.
+_PARTY = re.compile(
+    r"(?P<cue>(?:你們|我們|全隊|團隊|隊伍|小隊|調查小組|調查團|一行)(?:一共有|總共有|共有|一共|總共|總計|合計|全部|共|有|為|是|由)?\s*)"
+    r"(?P<n>[二兩三四五六七八九十]|\d{1,2})(?P<unit>\s*[位名個])(?P<noun>調查員|探員|隊員|冒險者|隊友|夥伴)"
+)
 
 
 def enforce_party_size(text: str, actual: int) -> str:
     """Correct a claim that the party is larger than it is.
 
     The runtime knows how many investigators are playing; a scenario's pre-generated sheets or the model's own prose
-    must not set it. Only a number above the real count is changed: a smaller one may be a subgroup ("兩位調查員留下").
+    must not set it. Only a count tied to the player party ("你們六位調查員", "隊伍共有六名隊員") is considered, and
+    only a number above the real count is changed: a smaller one may be a subgroup ("你們兩位調查員留下").
     """
     if actual < 1:
         return text
@@ -78,7 +84,7 @@ def enforce_party_size(text: str, actual: int) -> str:
         if claimed <= actual:
             return match.group(0)
         number = str(actual) if raw.isdigit() else _CHINESE_DIGIT.get(actual, str(actual))
-        return f"{number}{match['unit']}{match['noun']}"
+        return f"{match['cue']}{number}{match['unit']}{match['noun']}"
 
     return _PARTY.sub(fix, text)
 

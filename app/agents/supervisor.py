@@ -233,8 +233,10 @@ async def run_turn(
     reply_text = consistent(reply_text)
     reply_text = await guard.enforce_narrative_safety(message, reply_text)
     reply_text = consistent(reply_text)
+    # The party's size is corrected before delivery validates the reply, so what is validated is what is sent.
+    reply_text = presentation.enforce_party_size(reply_text, len(state.active_characters()))
     reply_text, private_controls = turn_delivery.finalize(message, reply_text)
-    reply_text = presentation.enforce_party_size(presentation.player_text(reply_text), len(state.active_characters()))
+    reply_text = presentation.player_text(reply_text)
     private_messages = [(owner, presentation.player_text(text)) for owner, text in private_messages]
     private_messages.extend(item for item in private_controls if item not in private_messages)
 

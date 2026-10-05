@@ -155,19 +155,21 @@ async def test_the_final_reply_is_cleaned_whatever_the_model_wrote() -> None:
 
 @pytest.mark.parametrize(("narration", "fixed"), [
     ("你們六位調查員走進營地。", "你們五位調查員走進營地。"),
-    ("營地共有 6 名探員。", "營地共有 5 名探員。"),
-    ("七位冒險者圍坐在營火旁。", "五位冒險者圍坐在營火旁。"),
-    ("十位隊員中，沒有人說話。", "五位隊員中，沒有人說話。"),
+    ("你們一共有 6 名探員。", "你們一共有 5 名探員。"),
+    ("隊伍共七位隊員，圍坐在營火旁。", "隊伍共五位隊員，圍坐在營火旁。"),
+    ("你們一行十位冒險者上了船。", "你們一行五位冒險者上了船。"),
 ])
 def test_a_party_larger_than_the_real_one_is_corrected(narration: str, fixed: str) -> None:
     assert presentation.enforce_party_size(narration, 5) == fixed
 
 
 @pytest.mark.parametrize("narration", [
-    "你們五位調查員走進營地。", "兩位調查員留在原地看守。", "三名探員去查看谷倉。", "營地很安靜。",
+    "你們五位調查員走進營地。", "你們兩位調查員留在原地看守。", "三名探員去查看谷倉。", "營地很安靜。",
     "六個人影在霧中晃動。", "他說這裡有六位老師。",
+    "敵方有六名探員。", "營地共有 6 名探員。", "你們看到有六名探員站在門口。", "歷史上曾有七位調查員失蹤。",
+    "七位冒險者圍坐在營火旁。",
 ])
-def test_a_true_count_a_subgroup_and_other_numbers_are_left_alone(narration: str) -> None:
+def test_a_true_count_a_subgroup_another_group_and_other_numbers_are_left_alone(narration: str) -> None:
     assert presentation.enforce_party_size(narration, 5) == narration
 
 
@@ -206,3 +208,23 @@ async def test_the_narrator_prompt_carries_the_real_party(monkeypatch) -> None:
             patch.object(narrator.keeper, "_correction_context_message", return_value=""):
         await narrator.run_narrator(message)
     assert "共 5 位調查員" in seen[0] and "調查員4" in seen[0]
+
+
+@aio
+async def test_another_groups_count_in_the_same_reply_is_left_alone() -> None:
+    reply, _ = await _reply(_state(5), "敵方有六名探員守在門口，你們六位調查員屏住呼吸。")
+    assert "敵方有六名探員" in reply and "你們五位調查員" in reply
+
+
+@aio
+async def test_the_party_is_corrected_before_delivery_validates_the_reply() -> None:
+    seen: list[str] = []
+    original = turn_delivery.finalize
+
+    def spy(message, narrative):
+        seen.append(narrative)
+        return original(message, narrative)
+
+    with patch.object(supervisor.turn_delivery, "finalize", spy):
+        reply, _ = await _reply(_state(5), "你們六位調查員站在營地入口。")
+    assert seen == ["你們五位調查員站在營地入口。"] and "五位" in reply
