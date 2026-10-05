@@ -40,6 +40,7 @@
 | [Codex OAuth 對話 Provider](specs/enhancement/codex_oauth_provider_design_spec_zh.md) | 實驗分支已實作 | [English](specs/enhancement/codex_oauth_provider_design_spec.md) |
 | [劇本整備最多匯出三個檔案](specs/enhancement/three_file_scenario_export_design_spec_zh.md) | 已實作 | [English](specs/enhancement/three_file_scenario_export_design_spec.md) |
 | [回合 fallback 原因與有界復原](specs/bug/turn_fallback_reasons_design_spec_zh.md) | 已實作 | [English](specs/bug/turn_fallback_reasons_design_spec.md) |
+| [相鄰劇本觸發的檢索](specs/bug/adjacent_scenario_trigger_design_spec_zh.md) | 已實作 | [English](specs/bug/adjacent_scenario_trigger_design_spec.md) |
 
 ## 功能強化
 
