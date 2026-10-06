@@ -22,4 +22,4 @@
 
 ## 後續：未宣告的攻擊方式
 
-實跑（《The Haunting》的老鼠，兩個 `engaged` 攻擊）通過來源檢查後，卡在「NPC attack mode is not explicit/supported」，因為只有單一 `engaged` 攻擊才預設為近戰。現在敵人攻擊的 `attack_mode` 沒寫或不支援一律視為近戰（明確寫 `single_shot` 的仍照彈藥與距離檢查），卡片層級的 `extreme_rule` 也套用到每個攻擊，除非該攻擊自己有設定。接受的取捨：模型沒標 `single_shot` 的遠程攻擊會當近戰處理，總比戰鬥卡死好。
+實跑（《The Haunting》的老鼠，兩個 `engaged` 攻擊）通過來源檢查後，卡在「NPC attack mode is not explicit/supported」，因為只有單一 `engaged` 攻擊才預設為近戰。現在敵人攻擊的 `attack_mode` 沒寫或不支援一律視為近戰（攻擊或卡片上明確寫 `single_shot` 的仍照彈藥與距離檢查），卡片層級的 `extreme_rule` 也套用到每個攻擊，除非該攻擊自己有設定。目前戰鬥沒有距離的概念，所以不用 `range_band` 區分遠程與近戰。接受的取捨：模型沒標 `single_shot` 的遠程攻擊會當近戰處理，總比戰鬥卡死好。

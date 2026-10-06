@@ -56,6 +56,19 @@ def test_an_attack_with_no_declared_mode_is_melee_whatever_its_range_band():
     assert run["phase"] == "PLAYER_CHOICE", run
 
 
+def test_a_card_level_single_shot_is_not_turned_into_melee():
+    _scenario_battle(["鼠群"])
+    given = {"url": "u", "revision": "r", "sha256": "s", "attack_mode": "single_shot", "extreme_rule": "maximum"}
+    result = _tool("add_npc_to_combat", {"name": "鼠群", "dex": 99, "hp": 9, "source": given,
+                                         "attacks": [BITE, {**BITE, "id": "spit"}]})
+    assert result["ok"], result
+    state = _load()
+    state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.side == "enemy")
+    _save(state)
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "NEEDS_RULING" and "ammunition" in run["error"], run
+
+
 def test_an_enemy_the_index_does_not_name_still_pauses_for_a_ruling():
     _scenario_battle(["別的怪物"])
     enemy = _add("鼠群")

@@ -638,7 +638,7 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
         dice.max_expression_value(attack.damage)
     except ValueError:
         return _error('NPC attack damage expression is invalid')
-    attack_metadata = {'extreme_rule': source.get('extreme_rule'),
+    attack_metadata = {'extreme_rule': source.get('extreme_rule'), 'attack_mode': source.get('attack_mode'),
                        **source.get('attacks', {}).get(attack.id, source if len(card.attacks) == 1 else {})}
     mode = attack_metadata.get('attack_mode')
     if mode not in ('melee', 'single_shot'):
