@@ -47,3 +47,34 @@ def test_only_the_current_actor_can_skip():
     result = _tool("advance_combat_turn", {"actor_id": state.combat.order[1].combatant_id, "event_id": "e2", "skip": True}, actor=other)
     assert result["ok"] is False
     assert _load().combat.order[_load().combat.current_index].combatant_id == cur.combatant_id
+
+
+def test_another_player_cannot_skip_the_current_investigators_turn():
+    state = _battle("p1", "p2", enemies=(("Rat swarm", 30),), first_enemy=False)
+    cur, _ = _current(state)
+    other = next(o for o, c in state.characters.items() if c.character_id != cur.character_id)
+    result = _tool("advance_combat_turn", {"actor_id": cur.combatant_id, "event_id": "e3", "skip": True}, actor=other)
+    assert result["ok"] is False
+    assert _load().combat.order[_load().combat.current_index].combatant_id == cur.combatant_id
+
+
+def test_nobody_can_skip_an_enemys_turn():
+    state = _battle("p1", "p2", enemies=(("Rat swarm", 99),), first_enemy=True)
+    cur = state.combat.order[state.combat.current_index]
+    assert cur.side == "enemy"
+    result = _tool("advance_combat_turn", {"actor_id": cur.combatant_id, "event_id": "e4", "skip": True}, actor="p1")
+    assert result["ok"] is False
+    assert _load().combat.order[_load().combat.current_index].combatant_id == cur.combatant_id
+
+
+def test_a_successful_skip_counts_as_evidence_for_the_turn_resolution():
+    from app.services import turn_resolution
+
+    state = _battle("p1", "p2", enemies=(("Rat swarm", 30),), first_enemy=False)
+    cur, owner = _current(state)
+    result = _tool("advance_combat_turn", {"actor_id": cur.combatant_id, "event_id": "e5", "skip": True}, actor=owner)
+    event = {"name": "advance_combat_turn", "arguments": {"skip": True}, "result": result}
+    mutation, _ = turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")
+    assert mutation is True
+    plain = {"name": "advance_combat_turn", "arguments": {}, "result": result}
+    assert turn_resolution._mutation_evidence(_load(), [plain], ["tool:1"], "x")[0] is False

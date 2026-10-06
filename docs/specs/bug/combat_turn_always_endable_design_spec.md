@@ -16,7 +16,7 @@ The engine only knows attacks: `declare_combat_action` takes a weapon, and `adva
 
 ## Change
 
-`advance_combat_turn` takes an optional `skip` flag. With `skip=true` and nothing unresolved, the current actor's turn is recorded as taken (a completed, rule-less action for the round: no dice, no resource change) and initiative advances exactly as before, including starting the next enemy's turn. Without `skip` nothing changes. A skip is refused when an action or interaction is unresolved, and only the current actor can skip. The Keeper prompt gets one sentence: an action with no combat mechanic (guard, take cover, retreat) is narrated and the turn ended with `skip=true`, instead of answering "cannot".
+`advance_combat_turn` takes an optional `skip` flag. With `skip=true` and nothing unresolved, the current actor's turn is recorded as taken (a completed, rule-less action for the round: no dice, no resource change) and initiative advances exactly as before, including starting the next enemy's turn. Without `skip` nothing changes. A skip is refused when an action or interaction is unresolved, and only the investigator whose turn it is can skip (not an enemy's turn, not another player's); a successful skip counts as verifiable evidence for the turn resolution. The Keeper prompt gets one sentence: an action with no combat mechanic (guard, take cover, retreat) is narrated and the turn ended with `skip=true`, instead of answering "cannot".
 
 ## Not done
 

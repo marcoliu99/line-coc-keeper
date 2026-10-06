@@ -102,6 +102,9 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             combat_completed = combat_completed or bool(
                 retained.get('status') == 'committed' and retained.get('settlement_id') == receipt.get('settlement_id')
             )
+        if result.get('ok') and f'tool:{i}' in refs and name == 'advance_combat_turn' and event.get('arguments', {}).get('skip'):
+            # The engine records a ``skip`` action only for the investigator who gave up the turn.
+            combat_completed = combat_completed or any(a.get('kind') == 'skip' for a in state.combat.actions.values())
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
