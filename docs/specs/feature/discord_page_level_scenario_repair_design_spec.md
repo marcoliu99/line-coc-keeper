@@ -2,7 +2,17 @@
 
 [繁體中文](discord_page_level_scenario_repair_design_spec_zh.md)
 
-Status: **backlog** (design only; nothing is implemented). Base: `main_v2` at `3fbec39`.
+Status: **partial** (phase 1a of 4 is implemented; the rest is design). Base: `main_v2` at `3fbec39`.
+
+## Implementation progress
+
+Phases ship as separate pull requests with their own review (section 30), so no single review has to hold the whole design; phase 1 is itself split in two. The status becomes `implemented` with phase 4.
+
+1. **Phase 1a, cross-process publication lock (implemented).** `scenario_library.publication_lock()` takes an exclusive `fcntl.flock` on `<library>/.publication.lock` at the outermost acquisition only (nested acquisitions on a thread only bump a depth counter, so `scenario_source_review.publish()` → `publish_derived()` does not deadlock), and `_save_scenario_source()` and `clean_scenario()` now go through it instead of taking the private `RLock` directly. Tests: nested acquisition, release on error, a real second process waiting for the first, and both mutation paths.
+2. **Phase 1b, deterministic core.** Audit API, shared page helpers, parser, lossless merge, numeric report, digest, image-description helper, partial-page publication with the template. Not started.
+3. **Phase 2, derived artifact rebuild.** Not started.
+4. **Phase 3, Discord upload.** Not started.
+5. **Phase 4, activation into the running game.** Not started.
 
 ## 1. Problem
 

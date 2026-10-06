@@ -2241,7 +2241,7 @@
       "title": "Page-level scenario repair from a Discord upload",
       "zh": "從 Discord 上傳進行頁面級劇本修復",
       "category": "feature",
-      "status": "backlog",
+      "status": "partial",
       "evidence": [
         "app/scenario_source_review.py",
         "app/scenario_library.py",

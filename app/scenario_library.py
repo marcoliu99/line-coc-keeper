@@ -5,8 +5,10 @@ small current/next-chapter context window in GroupState.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -26,6 +28,8 @@ _ASSET_RE = re.compile(r"front cover|title page|table of contents|credits|handou
 _SAFE_RE = re.compile(r"[^a-z0-9]+")
 PAGE_MARKER_RE = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 _LIBRARY_LOCK = threading.RLock()
+_LOCK_STATE = threading.local()
+_LOCK_FILE_NAME = ".publication.lock"
 
 
 def _now() -> str:
@@ -50,9 +54,33 @@ def scenario_path(scenario_id: str) -> Path:
 
 @contextmanager
 def publication_lock() -> Iterator[None]:
-    """Serialize source review and library publication as one transaction."""
+    """Serialize source review and library publication as one transaction.
+
+    Thread-safe (RLock) and process-safe (an exclusive flock on a lock file in
+    the library directory). It stays reentrant: nested acquisitions on one
+    thread only bump a depth counter, because a second flock on a separately
+    opened descriptor would block even inside the same process. The flock is
+    taken and released at the outermost acquisition only.
+    """
     with _LIBRARY_LOCK:
-        yield
+        depth = getattr(_LOCK_STATE, "depth", 0)
+        if depth:
+            _LOCK_STATE.depth = depth + 1
+            try:
+                yield
+            finally:
+                _LOCK_STATE.depth -= 1
+            return
+        SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+        fd = os.open(SCENARIO_LIBRARY_DIR / _LOCK_FILE_NAME, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            _LOCK_STATE.depth = 1
+            try:
+                yield
+            finally:
+                _LOCK_STATE.depth = 0
+                fcntl.flock(stream, fcntl.LOCK_UN)
 
 
 @contextmanager
@@ -366,7 +394,7 @@ def _save_scenario_source(
     chapter construction falls back to page markers or one main chapter, and
     no synthetic PDF is created.
     """
-    with _LIBRARY_LOCK:
+    with publication_lock():
         SCENARIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if scenario_id is None and reparse_candidate_id and content_similar(reparse_candidate_id, text):
@@ -542,7 +570,7 @@ def copy_context_images(scenario_id: str, pages: set[int], save_image: Callable[
 
 def clean_scenario(scenario_id: str) -> None:
     from app import scenario_source_authoring
-    with scenario_source_authoring._scenario_locked(scenario_id), _LIBRARY_LOCK:
+    with scenario_source_authoring._scenario_locked(scenario_id), publication_lock():
         target = _path(scenario_id)
         if not target.exists():
             raise FileNotFoundError(scenario_id)
