@@ -225,7 +225,7 @@ _STAT_LABELS = {
 # The names of the other fields a sheet prints beside the Luck: its characteristics (above) and the usual derived ones.
 _OTHER_FIELD = re.compile(
     r"(?i)(?<![a-z])(?:" + "|".join(_STAT_LABELS.values())
-    + r"|sanity|san|hit points|hp|magic points|mp|move|mov|build|age|name)(?![a-z])|理智|生命|魔法|姓名|年齡")
+    + r"|sanity|san|hit points|hp|magic points|mp|move|mov|build|damage bonus|db|age|name)(?![a-z])|理智|生命|魔法|傷害加值|姓名|年齡")
 # How far from the quoted Luck a sheet's own characteristics may sit, in characters of
 # whitespace-squashed text, and how many of them must be found to identify the sheet.
 _STAT_WINDOW = 500

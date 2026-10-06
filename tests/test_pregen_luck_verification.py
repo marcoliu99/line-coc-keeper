@@ -174,6 +174,8 @@ def test_a_quote_with_headings_but_no_number_is_still_dropped(caplog):
     ("Luck | Starting | Hit Points 12", 12),
     ("幸運 起始 當前 力量 60", 60),                 # a Chinese characteristic after an empty Luck box
     ("Luck Starting 敏捷 70", 70),
+    ("Luck | Damage Bonus +1D4", 1),                # a damage bonus after an empty Luck box
+    ("Luck | DB +1D4", 1),
 ])
 def test_a_number_that_belongs_to_another_field_is_not_taken_as_the_luck(quote, value, caplog):
     with caplog.at_level("WARNING", logger="app.pregen_extractor"):
