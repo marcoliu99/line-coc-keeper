@@ -173,3 +173,30 @@ def test_a_held_conversation_gets_the_hold_notice_and_nothing_changes():
         replies = upload(page(2, "new two"), state=None)
     assert replies == [mutation_admission.NOTICE]
     assert group_state.load_state("g").scenario_text == TEXT
+
+
+def test_the_repair_survives_newgame_and_loading_the_same_scenario_again(tmp_path):
+    """/coc newgame wipes the game, so the repair has to come back with the scenario, as role cards do."""
+    from app import scenario_library
+    from app.commands.handlers import system
+    from app.services import scenario_lifecycle
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(scenario_library, "SCENARIO_LIBRARY_DIR", tmp_path / "library")
+        sid = scenario_library.save_markdown_scenario(
+            TEXT.encode(), title="T", filename="s.md", preview="p", text=TEXT, indexes={}, pregens=[])
+
+        async def play():
+            replies: list[str] = []
+
+            async def reply(message):
+                replies.append(message)
+
+            await scenario_lifecycle.submit_published_scenario("g", sid, source_format="markdown")
+            await scenario_ingestion.handle_page_repair_upload("g", reply, page(2, "new two"), "repair_x.md")
+            await system._handle_newgame("g", reply)
+            assert group_state.load_state("g").scenario_text == ""
+            await scenario_lifecycle.submit_published_scenario("g", sid, source_format="markdown")
+            return group_state.load_state("g").scenario_text
+
+        text = asyncio.run(play())
+        assert "new two" in text and "old two" not in text and "keep three" in text

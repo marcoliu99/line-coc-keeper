@@ -624,4 +624,4 @@ async def handle_page_repair_upload(
     note = f"已替換第 {now} 頁，" if now else ""
     if later:
         note += f"第 {'、'.join(map(str, later))} 頁不在目前載入的章節裡，已先存下，載入到那一頁時會套用，"
-    await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本也會套用。")
+    await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本、或 /coc newgame 後再上傳同一份劇本，也都會套用。")

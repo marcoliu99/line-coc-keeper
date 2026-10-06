@@ -23,5 +23,5 @@ Each page starts with the same marker line the scenario text uses, followed by t
 
 ## Good to know
 
-- The repair belongs to this conversation and this scenario, like a `role_*.md` card: loading the scenario again from the library (`/coc scenario use`) lays the saved pages over the original text. It is dropped only when the library entry itself changes (a reparse or a new upload of the PDF).
+- The repair belongs to this conversation and this scenario, like a `role_*.md` card: loading the scenario again from the library (`/coc scenario use`), or uploading the same scenario again after `/coc newgame`, lays the saved pages over the original text. It is dropped only when the library entry itself changes (a reparse or a new upload of the PDF).
 - Only one `repair_` file per message.
