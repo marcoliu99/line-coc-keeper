@@ -24,7 +24,11 @@ def roll_player_luck() -> int:
 
 _logger = logging.getLogger(__name__)
 _PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
-_LUCK_ON_SHEET = re.compile(r"(?i)(?:\bLUCK\b|幸運)\s*(?:\([^)]{0,20}\))?\s*[:：]?\s*(\d{1,3})(?!\d)")
+# The printed sheet puts small column headings between the label and the value ("Luck  Starting  Current  50"), and
+# OCR keeps them in reading order, so a verbatim quote of the Luck box contains them.
+_LUCK_HEADINGS = r"(?:(?:starting|start|current|initial|maximum|max|起始|目前|當前|初始)\s*)*"
+_LUCK_ON_SHEET = re.compile(
+    r"(?i)(?:\bLUCK\b|幸運)\s*(?:\([^)]{0,20}\))?\s*" + _LUCK_HEADINGS + r"[:：]?\s*(\d{1,3})(?!\d)")
 
 _REPORT_TOOL = {
     "name": "report_pregens",
