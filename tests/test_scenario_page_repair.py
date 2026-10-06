@@ -244,3 +244,15 @@ def test_a_game_saved_before_the_state_kept_the_source_hash_binds_to_the_library
         replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash=""))
         upload(page(2, "new two"), state=None)
         assert page_repairs.load("g", sid, library_hash) == {2: "new two"}
+
+
+def test_a_repair_binds_to_the_source_the_game_is_running_not_to_a_pending_reparse(tmp_path):
+    from app import scenario_library
+    from app.repositories import page_repairs
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(scenario_library, "SCENARIO_LIBRARY_DIR", tmp_path / "library")
+        sid = scenario_library.save_markdown_scenario(
+            TEXT.encode(), title="T", filename="s.md", preview="p", text=TEXT, indexes={}, pregens=[])
+        replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash="running-hash"))
+        upload(page(2, "new two"), state=None)
+        assert page_repairs.load("g", sid, "running-hash") == {2: "new two"}
