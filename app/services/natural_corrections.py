@@ -99,6 +99,7 @@ def submit(state: GroupState, user_id: str, text: str, *, target_message_id: str
         narrative_corrections.save(state)
         result = add_carried_item(ToolCall(
             state, {"investigator": character.name, "item": item}, [], [], "player", "add_carried_item",
+            system_origin="correction",
         ))
         report = next(row for row in state.narrative_corrections if row.get("id") == report["id"])
         if result.get("ok"):

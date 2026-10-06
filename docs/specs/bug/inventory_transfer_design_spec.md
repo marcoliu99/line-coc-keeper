@@ -2,7 +2,17 @@
 
 [繁體中文](inventory_transfer_design_spec_zh.md)
 
-Status: **backlog** (design only; no code in this change). Base: `main_v2` at `0de529b`.
+Status: **partial** (step 1 of 5 is implemented; the rest is design). Base: `main_v2` at `0de529b`.
+
+## Implementation progress
+
+The change lands in steps, each its own PR with its own review, so no single review has to hold the whole design. The status becomes `implemented` with the last step.
+
+1. **Plumbing (implemented).** `actor_id` now reaches `add_carried_item` and `remove_carried_item` through `tool_gateway`, and `ToolCall.system_origin` (`SystemOrigin = Literal["kp_assistant", "correction"]`, `app/domain/models.py`) exists. Only turn code sets it: both correction paths pass `"correction"`, and `execute_tool` derives `"kp_assistant"` from the speaker role. A tool argument can never set it. No gate reads either value yet, so behaviour is unchanged (`tests/test_inventory_actor_plumbing.py`).
+2. **`transfer_item`**, exact endpoint lookup, quantity validation, `inventory_transfers` on `GroupState`, the registry entry with the KP Assistant flags. Not started.
+3. **Removal** `quantity` and `reason` (`RemovalKind`), the removal record. Not started.
+4. **Turn intent check and admission gate** (`inventory_intents` in `TurnPayload`, rule 7). Not started.
+5. **Operation ids and ledger replay**, the `observe_tool` receipt projection, fallback guidance and the prompt text. Not started.
 
 ## Problem
 

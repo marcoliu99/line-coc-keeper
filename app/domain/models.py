@@ -9,6 +9,9 @@ if TYPE_CHECKING:
 
 PlayerTurnKind = Literal["player_action", "resolved_check_followup", "opening_fallback"]
 SpeakerRole = Literal["player", "kp_assistant"]
+# Who a tool call acts for when it is not an ordinary player's own action. Set only by turn code (never read from a
+# tool argument, which a model could forge): the KP Assistant's turn, and a verified narrative correction.
+SystemOrigin = Literal["kp_assistant", "correction"]
 # Why a player's action got a generic reply instead of a scenario-grounded one. Stable and queryable:
 # every fallback logs exactly one of these (``app/services/turn_fallback.py`` classifies them).
 FallbackReason = Literal[

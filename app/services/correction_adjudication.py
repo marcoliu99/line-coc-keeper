@@ -327,7 +327,7 @@ async def _apply(conversation_id: str, timeline_id: str, report_id: str, ruling:
                 investigator, item = ruling.item_repair
                 receipt = add_carried_item(ToolCall(
                     state, {"investigator": investigator, "item": item}, [], [],
-                    "player", "add_carried_item",
+                    "player", "add_carried_item", system_origin="correction",
                 ))
                 if receipt.get("ok"):
                     report = _pending_report(state, report_id)
