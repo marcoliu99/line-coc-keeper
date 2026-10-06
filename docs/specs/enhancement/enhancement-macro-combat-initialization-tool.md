@@ -22,7 +22,7 @@ This edition describes the current contract. Proposed work is explicitly identif
    - **Duplicate identity:** entries in the same batch are separate individuals even if their names normalize alike or use scenario-index aliases. Existing active enemies are reused and explicitly reported. No broader idempotency guarantee is added.
    - `add_npc_to_combat` stays as the path for a single NPC joining an already-active fight; `initialize_combat` is only for starting combat with N enemies at once.
 
-5. The tool is recognized as safe encounter setup by turn-resolution handoff and as a generic public combat outcome without exposing enemy sheets. The static combat routing selects it for two or more already-active, scenario-supported enemies; dormant enemies await their written trigger.
+5. The tool is recognized as safe encounter setup by turn-resolution handoff and as a generic public combat outcome without exposing enemy sheets. The static combat routing selects it for one or more already-active, scenario-supported enemies (a single enemy is a list of one, so opening a fight takes one call and fits a turn whose tool budget searches have mostly used); dormant enemies await their written trigger.
 
 ## Flow and interfaces
 

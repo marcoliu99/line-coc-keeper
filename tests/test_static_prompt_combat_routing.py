@@ -1,6 +1,7 @@
 """Required combat tool choices in the consolidated Keeper prompt."""
 
 from app import prompt_builder
+from app.keeper_tools import registry
 from app.models import GroupState
 
 
@@ -21,9 +22,9 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
     assert "failed check, or a harmless scuffle does not establish combat" in routing
     assert "usage limits, and triggers" in routing
     assert "all of them before final narration or turn handoff" in routing
-    assert "two or more already-active enemies" in routing
-    assert "For one active enemy, call `start_combat`" in routing
-    assert "then `add_npc_to_combat` in the same tool sequence" in routing
+    assert "one or more already-active enemies" in routing
+    assert "a single enemy is a list of one" in routing
+    assert "call `start_combat`" not in routing
     assert "A dormant enemy does not activate merely because it is present" in routing
     assert "preserve the scenario's threat/touch/attack trigger" in routing
     assert "the first narration dealing damage or defeat MUST show that wake/rise moment" in routing
@@ -41,3 +42,10 @@ def test_combat_routing_preserves_each_mechanical_boundary() -> None:
     assert 'must not substitute for adjudicating a weapon attack' in routing
     assert 'never duplicate a managed runner' in routing
     assert 'the engine owns its ticks and medical checks' in routing
+
+
+def test_tool_descriptions_agree_with_the_single_enemy_route() -> None:
+    descriptions = {tool["name"]: tool["description"] for tool in registry.TOOLS}
+    assert "initialize_combat" in descriptions["start_combat"]
+    assert "不要為單一敵人呼叫這個工具" not in descriptions["initialize_combat"]
+    assert "一隻或多隻" in descriptions["initialize_combat"]

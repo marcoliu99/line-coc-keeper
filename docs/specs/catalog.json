@@ -1064,9 +1064,11 @@
         "app/keeper.py",
         "app/keeper_tools/combat.py",
         "app/keeper_tools/registry.py",
+        "app/prompt_builder.py",
         "app/services/turn_delivery.py",
         "app/services/turn_resolution.py",
-        "tests/test_initialize_combat.py"
+        "tests/test_initialize_combat.py",
+        "tests/test_static_prompt_combat_routing.py"
       ],
       "path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool.md",
       "zh_path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md",
