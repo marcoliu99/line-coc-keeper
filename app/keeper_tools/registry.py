@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.domain.models import SpeakerRole
+from app.domain.models import SpeakerRole, SystemOrigin
 from app.keeper_tools import character as character_handlers
 from app.keeper_tools import checks as check_handlers
 from app.keeper_tools import combat as combat_handlers
@@ -28,6 +28,9 @@ class ToolCall:
     speaker_role: SpeakerRole
     name: str
     actor_id: str = ""
+    # Set by turn code only, never from ``input``: lets the KP Assistant and a verified correction act on a character
+    # that is not the acting player's own. None for an ordinary player's call.
+    system_origin: SystemOrigin | None = None
 
 
 def _summary_dispatch_rejected(call: ToolCall) -> dict[str, Any]:

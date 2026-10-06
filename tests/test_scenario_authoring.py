@@ -282,7 +282,7 @@ def test_unrelated_complete_search_cannot_release_mechanical_hold(monkeypatch):
         from app.agents.tool_gateway import make_tool_executor
         from app.models import GroupState
         calls = []
-        def tool(state, name, data, *args):
+        def tool(state, name, data, *args, **kwargs):
             calls.append(name)
             return {'ok': True, **data}
         monkeypatch.setattr(tool_dispatch, 'execute_tool', tool)

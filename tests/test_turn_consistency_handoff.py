@@ -719,12 +719,12 @@ def test_truncated_continuation_keeps_successful_private_output_queues(state, mo
 def test_cash_and_keys_evidence_gate_and_real_inventory_handoff(state, complete):
     """Search results are mocked; acquisition, persistence and validation are real."""
     original_tool = tool_dispatch.execute_tool
-    def tool(s, name, data, *args):
+    def tool(s, name, data, *args, **kwargs):
         if name == 'search_scenario':
             return {'ok': True, 'results': '房東提供二十美元預付款與鑰匙。',
                     'complete_for_action': True if complete else None,
                     'evidence_record_ids': ['intro'] if complete else []}
-        return original_tool(s, name, data, *args)
+        return original_tool(s, name, data, *args, **kwargs)
 
     async def provider(*args, **kwargs):
         callback = args[5]
@@ -780,14 +780,14 @@ def test_followup_search_reuses_delivered_evidence_and_budgets_wire_receipts(sta
         if len(seen_budgets) > 1:
             assert 'current_turn_state' in str(context)
         return 1800
-    def tool(s, name, data, *args):
+    def tool(s, name, data, *args, **kwargs):
         if name == 'search_scenario':
             rows = scenario_retrieval.project(records, ['intro', 'address'], data['query'])
             assert rows[0]['complete_for_action']
             assert 'intro#kp_only' in rows[0]['reused_fragment_ids']
             return {'ok': True, 'results': scenario_rag.format_results(rows),
                     'complete_for_action': True, 'evidence_record_ids': ['intro', 'address']}
-        return original_tool(s, name, data, *args)
+        return original_tool(s, name, data, *args, **kwargs)
     async def provider(*args, **kwargs):
         for query in ('address', 'address again'):
             await args[5]('search_scenario', {'query': query})

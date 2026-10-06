@@ -22,6 +22,7 @@ from app.config import (
     PROVIDER_SHUTDOWN_GRACE_SECONDS,
     SCENARIO_RAG_ENABLED,
 )
+from app.domain.models import SystemOrigin
 from app.keeper_tools import registry as tool_registry
 from app.keeper_tools import support
 from app.keeper_tools.registry import ToolCall
@@ -177,6 +178,7 @@ def execute_tool(
     image_requests: list[tuple[str | None, int]],
     speaker_role: str = "player",
     actor_id: str = "",
+    system_origin: SystemOrigin | None = None,
 ) -> dict:
     mutation_admission.assert_admitted(state.group_id, timeline_id=state.timeline_id)
     try:
@@ -199,6 +201,7 @@ def execute_tool(
             image_requests=image_requests,
             speaker_role=cast(tool_registry.SpeakerRole, speaker_role), name=name,
             actor_id=actor_id,
+            system_origin=system_origin or ("kp_assistant" if speaker_role == "kp_assistant" else None),
         ))
     except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
         return {"ok": False, "error": str(exc)}

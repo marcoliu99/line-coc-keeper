@@ -293,7 +293,7 @@ def test_evidence_status_tracks_remaining_roots_and_narrator_reason():
         status, calls = {}, []
         execute = make_tool_executor(GroupState(group_id='g'), [], [], 'player', [], status)
 
-        def tool(state, name, data, *args):
+        def tool(state, name, data, *args, **kwargs):
             calls.append(name)
             return {'ok': True, **data}
 

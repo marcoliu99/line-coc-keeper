@@ -2,7 +2,17 @@
 
 [English](inventory_transfer_design_spec.md)
 
-狀態：**待辦（backlog）**（只有設計，這次變更沒有程式）。基準：`main_v2` 的 `0de529b`。
+狀態：**部分實作**（五個步驟中的第 1 步已實作，其餘仍是設計）。基準：`main_v2` 的 `0de529b`。
+
+## 實作進度
+
+這個變更分成幾個步驟，每一步是各自的 PR、各自審查，不用讓單一次審查扛下整個設計。最後一步完成時，狀態才變成 `implemented`。
+
+1. **管線（已實作）。** `actor_id` 現在經由 `tool_gateway` 傳到 `add_carried_item` 與 `remove_carried_item`，並新增 `ToolCall.system_origin`（`SystemOrigin = Literal["kp_assistant", "correction"]`，`app/domain/models.py`）。只有回合程式碼會設定它：兩條更正路徑傳 `"correction"`，`execute_tool` 依發言者角色推導 `"kp_assistant"`，工具參數永遠無法設定它。目前沒有任何檢查讀取這兩個值，所以行為不變（`tests/test_inventory_actor_plumbing.py`）。
+2. **`transfer_item`**、精確的端點查找、數量驗證、`GroupState` 的 `inventory_transfers`、帶 KP Assistant 旗標的 registry 項目。尚未開始。
+3. **移除**的 `quantity` 與 `reason`（`RemovalKind`）、移除紀錄。尚未開始。
+4. **回合意圖檢查與准入閘門**（`TurnPayload` 的 `inventory_intents`，規則 7）。尚未開始。
+5. **操作 id 與帳本重播**、`observe_tool` 的收據投影、降級訊息與提示文字。尚未開始。
 
 ## 問題
 
