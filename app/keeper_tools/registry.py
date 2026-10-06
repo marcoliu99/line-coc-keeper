@@ -1247,7 +1247,10 @@ for _spec in _SPECS:
         _properties['skills'] = {'type': 'object', 'additionalProperties': {'type': 'integer', 'minimum': 0},
                                  'description': '已核對NPC技能值，例如dodge；不得推測預設閃避'}
     if _spec.schema['name'] == 'advance_combat_turn':
-        _spec.schema['input_schema']['properties'].update({'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'}})
+        _spec.schema['input_schema']['properties'].update({
+            'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'},
+            'skip': {'type': 'boolean', 'description': '目前行動者這回合沒有引擎能結算的行動（護住自己、躲藏、撤退等）時設 true：不擲骰、不改資源，直接結束他的回合'},
+        })
     if _spec.schema['name'] in {'adjust_character', 'adjust_ammo', 'add_status_tag', 'remove_status_tag'}:
         _spec.schema['input_schema']['properties'].update({
             'event_id': {'type': 'string', 'description': '穩定操作識別；重試沿用，相同數值的新操作須用新ID'},

@@ -241,10 +241,18 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
+            if call.input.get('skip'):
+                # Only the investigator whose turn it is can give it up: not an enemy's, not another player's.
+                skipper = combat.find_combatant(target_state, call.input.get('actor_id', ''))
+                owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None
+                if owner is None or not call.actor_id or owner.owner_id != call.actor_id:
+                    return support.ToolStateMutation(
+                        {'ok': False, 'error': 'Only the acting investigator can skip their own turn'}, should_save=False)
             before = deepcopy(target_state.to_dict())
             result = combat_engine.handle(target_state, act.Advance(
                 actor_id=call.input.get('actor_id', ''),
                 event_id=resource_bridge.mutation_id(call.name, call.input),
+                skip=bool(call.input.get('skip')),
             ))
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))

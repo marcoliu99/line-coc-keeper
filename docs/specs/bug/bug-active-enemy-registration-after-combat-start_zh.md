@@ -18,4 +18,4 @@
 
 用相同劇本序列重現並檢查 Executor 工具呼叫、工具回執及最終戰鬥狀態，分辨原因是檢索額度、來源證據、工具範圍、模型路由判斷，還是 Python 交接。修法須保留工具數限制對 AI 自行推進劇情的防護，同時允許已觸發、有劇本依據的敵人完成原子登記；不可提前登記未觸發的敵人。本次整合增加的路由提醒是防護文字，不能單憑它宣稱此間歇缺陷已解決。
 
-[PR #148](https://github.com/marcoliu99/line-coc-keeper/pull/148) 已提出一次呼叫完成多名敵人登記的 `initialize_combat(enemies)`。須先解決其 review 意見及主提示詞路由，再用本劇本序列重跑，才能判定本缺陷是否關閉；目前無須另開重複的實作 PR。
+[PR #148](https://github.com/marcoliu99/line-coc-keeper/pull/148) 已合併：`initialize_combat(enemies)` 一次呼叫就開戰並登記全部敵人，守密人提示在兩隻以上有劇本依據的敵人已在場時會導向它。工具已經存在，但守密人並不一定使用。在 `6de8b31` 上的四人《陰宅》實跑中，第 143 回合先呼叫三次 `search_scenario`，再單獨呼叫 `start_combat`；鼠群到第 148 回合才登記（先 `close_legacy_combat`，再 `add_npc_to_combat`），在那之前這場沒有敵人的戰鬥一直扣住整桌人（見 [combat_turn_always_endable_design_spec](combat_turn_always_endable_design_spec_zh.md)）。用該序列重跑、敵人在開場回合就完成登記之前，本缺陷維持開啟。

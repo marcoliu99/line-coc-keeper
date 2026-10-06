@@ -73,6 +73,7 @@ class Advance(Action[Result]):
 
     actor_id: str = ""
     event_id: str = ""
+    skip: bool = False  # end the turn without an action (guard, cover, retreat: nothing the engine resolves)
 
 
 @dataclass(frozen=True)

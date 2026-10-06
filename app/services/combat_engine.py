@@ -120,7 +120,7 @@ def _obligations(state: GroupState, action: act.Obligations, mode: Mode) -> list
 
 def _advance(state: GroupState, action: act.Advance, mode: Mode) -> dict[str, Any]:
     if mode is Mode.MANAGED:
-        return combat_flow.advance_combat(state, actor_id=action.actor_id, event_id=action.event_id)
+        return combat_flow.advance_combat(state, actor_id=action.actor_id, event_id=action.event_id, skip=action.skip)
     return combat.advance_turn(state, ops=_ops(mode))
 
 
