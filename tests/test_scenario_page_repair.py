@@ -370,7 +370,7 @@ def test_a_json_block_that_json_cannot_decode_is_a_repair_error_not_a_crash():
 
 
 def test_a_lone_surrogate_escape_is_a_repair_error():
-    data = ('```json\n{"repair_version": 1, "target": {"title": "T", "page_count": 3}, "patches": '
-            '[{"page": 2, "text": "\\ud800", "page_kind": "text", "review_note": "n"}]}\n```').encode()
+    data = (b'```json\n{"repair_version": 1, "target": {"title": "T", "page_count": 3}, "patches": '
+            b'[{"page": 2, "text": "\\ud800", "page_kind": "text", "review_note": "n"}]}\n```')
     with pytest.raises(repair.RepairError):
         repair.parse_markdown_bytes(data)
