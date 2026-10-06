@@ -75,15 +75,17 @@ def mechanics_contexts(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
-_EXACT_DIFF_CELLS = 4_000_000  # above this many comparisons the diff may treat very frequent pairs as junk
+# Above this many comparisons the remainder is reported whole instead of aligned: difflib is quadratic on unique
+# sequences too, so no heuristic setting bounds it, while a page with this many changed numbers is unreadable anyway.
+_EXACT_DIFF_CELLS = 1_000_000
 
 
 def ordered_diff(old: list[tuple[str, str]], new: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """What an ordered comparison removes from ``old`` and adds in ``new``; a block of swapped values is both.
 
     The common head and tail are matched first, so a page with a few changes costs little however many tokens it has.
-    The remainder is compared exactly when it is small and with difflib's frequent-element heuristic when it is large:
-    that can make the reported blocks less minimal but never hides a change, because only truly equal runs are matched.
+    A remainder small enough is aligned exactly. A larger one is reported whole, which is conservative: it may list
+    tokens that did not change, never hides one that did, and its cost is linear.
     """
     head = 0
     while head < min(len(old), len(new)) and old[head] == new[head]:
@@ -92,10 +94,11 @@ def ordered_diff(old: list[tuple[str, str]], new: list[tuple[str, str]]) -> tupl
     while tail < min(len(old), len(new)) - head and old[-1 - tail] == new[-1 - tail]:
         tail += 1
     middle_old, middle_new = old[head:len(old) - tail], new[head:len(new) - tail]
-    exact = len(middle_old) * len(middle_new) <= _EXACT_DIFF_CELLS
+    if len(middle_old) * len(middle_new) > _EXACT_DIFF_CELLS:
+        return middle_old, middle_new
     removed: list[tuple[str, str]] = []
     added: list[tuple[str, str]] = []
-    for tag, a0, a1, b0, b1 in SequenceMatcher(None, middle_old, middle_new, autojunk=not exact).get_opcodes():
+    for tag, a0, a1, b0, b1 in SequenceMatcher(None, middle_old, middle_new, autojunk=False).get_opcodes():
         if tag != 'equal':
             removed.extend(middle_old[a0:a1])
             added.extend(middle_new[b0:b1])

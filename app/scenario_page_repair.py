@@ -234,12 +234,18 @@ def _fail(scenario_id: str, *issues: RepairIssue) -> RepairCheck:
     return RepairCheck(False, scenario_id, "", "", "", (), tuple(issues), ())
 
 
+MAX_LISTED_TOKENS = 200  # per side and page in the audit; the totals are always recorded
+MAX_REPORTED_TOKENS = 40  # per side and page in a private report line
+
+
 def _change(patch: PageRepair, old_body: str, new_body: str) -> dict[str, Any]:
     removed, added = scenario_numbers.ordered_diff(
         scenario_numbers.mechanics_contexts(old_body), scenario_numbers.mechanics_contexts(new_body))
     return {"page": patch.page, "page_kind": patch.page_kind, "review_note": patch.review_note,
             "before_sha256": _sha(old_body), "after_sha256": _sha(new_body),
-            "removed": [list(pair) for pair in removed], "added": [list(pair) for pair in added]}
+            "removed": [list(pair) for pair in removed[:MAX_LISTED_TOKENS]],
+            "added": [list(pair) for pair in added[:MAX_LISTED_TOKENS]],
+            "removed_total": len(removed), "added_total": len(added)}
 
 
 def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
@@ -320,18 +326,19 @@ def repaired_quality(parent: dict[str, Any], proposal: RepairProposal, candidate
 
 def describe_changes(changes: tuple[dict[str, Any], ...]) -> list[str]:
     """One line per page for the private numeric report. Quotes numbers and their labels, never page prose."""
-    def show(pairs: list[list[str]]) -> str:
-        return "、".join(f"{context} {token}".strip() for context, token in pairs)
+    def show(pairs: list[list[str]], total: int) -> str:
+        listed = "、".join(f"{context} {token}".strip() for context, token in pairs[:MAX_REPORTED_TOKENS])
+        return listed + (f"…另有 {total - MAX_REPORTED_TOKENS} 項" if total > MAX_REPORTED_TOKENS else "")
 
     lines = []
     for change in changes:
-        if not change["removed"] and not change["added"]:
+        if not change["removed_total"] and not change["added_total"]:
             lines.append(f"第 {change['page']} 頁：數值沒有變動")
             continue
         parts = []
-        if change["removed"]:
-            parts.append(f"移除 {show(change['removed'])}")
-        if change["added"]:
-            parts.append(f"新增 {show(change['added'])}")
+        if change["removed_total"]:
+            parts.append(f"移除 {show(change['removed'], change['removed_total'])}")
+        if change["added_total"]:
+            parts.append(f"新增 {show(change['added'], change['added_total'])}")
         lines.append(f"第 {change['page']} 頁：" + "；".join(parts))
     return lines

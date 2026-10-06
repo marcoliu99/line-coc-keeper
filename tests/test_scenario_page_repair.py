@@ -356,7 +356,7 @@ def test_a_page_with_thousands_of_repeated_tokens_is_diffed_quickly_and_still_re
     start = time.monotonic()
     removed, added = removed_added(scattered, changed)
     assert time.monotonic() - start < 5
-    assert removed and added  # a large block may be reported whole, never hidden
+    assert removed and added  # a large block is reported whole, never hidden
 
 
 def test_one_very_long_line_does_not_rescan_a_growing_prefix():
@@ -379,3 +379,35 @@ def test_page_image_inventory_is_read_through_the_library(create):
     sid = create(images=(1, 3))
     assert library.has_page_image(sid, 3) and library.has_page_image(sid, 1)
     assert not library.has_page_image(sid, 2)
+
+
+def test_unique_token_sequences_are_bounded_too():
+    import time
+    old = [("n", str(i)) for i in range(8000)]
+    new = list(old)
+    for i in range(0, 8000, 2):
+        new[i], new[i + 1] = new[i + 1], new[i]
+    start = time.monotonic()
+    removed, added = numbers.ordered_diff(old, new)
+    assert time.monotonic() - start < 2
+    assert set(removed) == set(old) == set(added)  # reported whole: nothing that moved is hidden
+
+
+def test_small_remainders_are_still_aligned_exactly():
+    old = [("n", str(i)) for i in range(20)]
+    new = list(old)
+    new[5], new[6] = new[6], new[5]
+    removed, added = numbers.ordered_diff(old, new)
+    assert 1 <= len(removed) == len(added) <= 2  # exact alignment, not the whole 20-token block
+
+
+def test_the_audit_and_the_report_cap_what_they_list_but_keep_the_totals(create):
+    count = 300
+    sid = create(pages=("Start.", "".join(f"HP {i} " for i in range(count)), "End."), images=())
+    body = "".join(f"HP {i + 1000} " for i in range(count))
+    result = repair.check(proposal([patch(2, body)], page_count=3), sid)
+    (change,) = result.changes
+    assert change["removed_total"] == change["added_total"] == count
+    assert len(change["removed"]) == repair.MAX_LISTED_TOKENS
+    (line,) = repair.describe_changes(result.changes)
+    assert f"…另有 {count - repair.MAX_REPORTED_TOKENS} 項" in line
