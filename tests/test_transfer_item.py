@@ -208,3 +208,12 @@ def test_a_two_copy_transfer_reports_each_actual_spelling():
         receipt = _transfer(state, {"from": "Ann", "to": "Bea", "item": "old book", "quantity": 2})
     assert receipt["ok"] and sorted(receipt["moved_items"]) == ["Old Book", "old book"]
     assert _items()["Bea"] == receipt["moved_items"]
+
+
+def test_the_persisted_record_names_both_characters_by_id():
+    state = _state(Ann=["手電筒"])
+    with _in_turn("turn-1"):
+        receipt = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+    record = state.inventory_transfers[-1]
+    assert record["from_id"] == receipt["from_id"] and record["to_id"] == receipt["to_id"]
+    assert record["from_id"] != record["to_id"] and record["moved_items"] == ["手電筒"]

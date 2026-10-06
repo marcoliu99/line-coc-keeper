@@ -194,7 +194,8 @@ def transfer_item(call: ToolCall) -> dict[str, Any]:
             target_state.inventory_transfers.append({
                 "id": uuid4().hex, "operation_id": operation_id or "",
                 "turn_id": str(observability.current_context().get("turn_id", "")),
-                "from": giver.name, "to": receiver.name, "item": moved[0], "quantity": quantity,
+                "from": giver.name, "to": receiver.name, "from_id": _character_key(giver), "to_id": _character_key(receiver),
+                "item": moved[0], "moved_items": list(moved), "quantity": quantity,
                 "source_event_id": tool_input.get("source_event_id") or "",
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             })
