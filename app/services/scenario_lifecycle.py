@@ -343,7 +343,7 @@ async def resolve_pending_submission(
             _repair(state, context)
         scenario_activation.install_context_fields(
             state, scenario_id, context, preserve_maps=(choice != "new"),
-            preserve_pregens=(choice != "new"),
+            preserve_pregens=(choice != "new"), preserve_indexes=(choice != "new"),
         )
         state.pending_pdf_upload = None
         claimed = [p for p in old_pool if p.get("claimed_by")] if choice != "new" else []

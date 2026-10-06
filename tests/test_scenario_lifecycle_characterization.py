@@ -274,6 +274,31 @@ def test_same_id_repair_rebinds_active_source_without_changing_timeline(
     assert active_v2.scenario_text != active_v1.scenario_text
 
 
+def test_correction_with_an_empty_index_keeps_the_running_index(storage: None) -> None:
+    def publish(text: str, locations: list) -> str:
+        return scenario_library.save_markdown_scenario(
+            text.encode(), title="同一劇本", filename="scenario_same.md",
+            preview=text, text=text, indexes={"npcs": [], "locations": locations},
+            pregens=[], scenario_id="same-index",
+        )
+
+    places = [{"name": f"loc{n}", "page": 1} for n in range(9)]
+    scenario_id = publish("--- 第 1 頁 ---\n版本一", places)
+    asyncio.run(scenario_lifecycle.submit_published_scenario("keep-index", scenario_id, source_format="markdown"))
+    assert len(group_state.load_state("keep-index").scenario_location_index) == 9
+
+    publish("--- 第 1 頁 ---\n版本二", [])  # an incomplete extraction is stored as an empty index
+    staged = asyncio.run(scenario_lifecycle.submit_published_scenario(
+        "keep-index", scenario_id, source_format="markdown",
+    ))
+    assert staged.outcome == "pending"
+    repaired = asyncio.run(scenario_lifecycle.resolve_pending_submission("keep-index", "fix"))
+    assert repaired.outcome == "activated"
+    active = group_state.load_state("keep-index")
+    assert "版本二" in active.scenario_text
+    assert len(active.scenario_location_index) == 9
+
+
 def test_reparse_keeps_active_hash_until_pending_choice_is_committed(
     storage: None, extraction: None,
 ) -> None:
