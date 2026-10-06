@@ -148,11 +148,18 @@ Markdown，恰好包含一個有圍欄的 `json` 區塊（`authoring.parse_markd
 不支援局部修改。合併只拼接被選頁面的本文：
 
 ```python
-spans = locate_page_body_spans(parent_text)      # lossless offsets of each physical page body
+spans = locate_page_body_spans(parent_text)      # lossless offsets of each physical page body, all taken from the ORIGINAL text
 
-for patch in patches:
-    splice(parent_text, spans[patch.page - 1], patch.text)   # only the selected spans are re-serialized
+pieces, cursor = [], 0
+for patch in sorted(patches, key=lambda p: p.page):          # ascending source offsets
+    start, end = spans[patch.page - 1]
+    pieces += [parent_text[cursor:start], patch.text]        # untouched text up to the span, then the replacement
+    cursor = end
+pieces.append(parent_text[cursor:])
+candidate = "".join(pieces)                                  # one pass: no offset is ever recomputed or invalidated
 ```
+
+所有偏移量都來自原始文字，結果是從左到右一次走過「被複製的間隔」與「替換內容」組出來的，所以比原頁面更長或更短的替換都不會讓後面的區段位移，檔案裡補丁的順序也不影響結果（先依頁碼排序）。不允許「在原文上就地修改，卻繼續使用只算過一次的偏移量」。測試會在打亂的檔案順序下，對三個不相鄰的頁面做更長、更短與以空行補齊的替換，並與獨立組出的預期文字比對。
 
 頁面本文是該頁標記行到下一個標記之間的文字，只去掉恰好一個開頭換行，以及（後面還有標記時）恰好一個 `\n\n` 分隔。不要重用會把每頁本文 strip 再重建所有標記的切分器：既有來源審查流程發布的未修改頁面會刻意保留審查過的前後空白。合併是確定性的、對未被修改的頁面逐位元組保留，也不做模糊比對。
 
@@ -221,7 +228,7 @@ removed, added = ordered_diff(old, new)               # difflib opcodes over the
 repair 只改頁面文字，其他都不變，所以子劇本保留來自 PDF 圖片的東西，只讓從舊文字萃取的內容失效：
 
 - **失效：** `indexes`（NPC 與地點索引）與 `pregens`，它們是從文字萃取的，下面會重建。
-- **原樣從父劇本複製：** `scene_maps`（地圖拓撲來自頁面圖片，圖片沒有改變，而且第 15 節說 repair 絕不編輯它）、頁面圖片檔（原本的位元組與解析度），以及圖片資源的中繼資料：哪些頁面被標成公開講義或地圖，以及它們的類型與章節分類。唯一的例外是**被修復頁面**的每個資源的 `description`：`_build_image_assets()` 從舊頁面文字推導它，`search_images()` 會搜尋它，所以用同一個函式從修正後的文字重新產生，而可見性、類型與章節仍沿用父劇本的。否則圖片查詢會繼續比對到已被移除的詞，找不到修正後的詞。所以之後 `/coc scenario use <repaired-id>` 載入的子劇本，房間導覽仍然正常，地圖也一樣清楚。
+- **原樣從父劇本複製：** `scene_maps`（地圖拓撲來自頁面圖片，圖片沒有改變，而且第 15 節說 repair 絕不編輯它）、頁面圖片檔（原本的位元組與解析度），以及圖片資源的中繼資料：哪些頁面被標成公開講義或地圖，以及它們的類型與章節分類。唯一的例外是**被修復頁面**的每個資源的 `description`：`scenario_library` 從頁面文字推導它，`search_images()` 會搜尋它，所以從修正後的文字重新產生，而可見性、類型與章節仍沿用父劇本的。否則圖片查詢會繼續比對到已被移除的詞，找不到修正後的詞。這個推導目前在私有的 `_build_image_assets()` 裡，其他模組不得呼叫（私有名稱規則，也會觸發 SLF001），所以第 1 階段在 `scenario_library` 新增公開的 `image_asset_description(text, page)`，回傳單一頁面的描述（與 `_build_image_assets()` 相同的頁面範圍擷取與 500 字元截斷，並讓 `_build_image_assets()` 改為呼叫它，使定義只有一份），repair 發布路徑對每個被修復的頁面只呼叫它；類型、可見性與章節欄位絕不重新計算。所以之後 `/coc scenario use <repaired-id>` 載入的子劇本，房間導覽仍然正常，地圖也一樣清楚。
 
 `trusted_scenario_source.publish_derived()` 不夠用：它會以 110 DPI 重新渲染每一頁、把圖片資源換成 `kp_only_image_assets`，並寫入空的 `scene_maps`。repair 的發布路徑改成複製父劇本的 `images/`、`image_assets` 與 `scene_maps`（該輔助函式的 `reuse_parent_assets` 模式，既有的來源審查呼叫者不變）。
 
@@ -255,7 +262,7 @@ async def activate_repair_version(
 
 ```text
 LOCK: authorize, capture parent id/hash and revision/timeline, check no conflicting pending operation   UNLOCK
-parse, validate, build candidate, publish the immutable derived scenario, await the index and pregen rebuild until `artifacts` is `ready`
+parse, validate, build candidate, publish the immutable derived scenario, await the index and pregen rebuild until `artifacts` is `ready` or `inherited` (either is activatable; `pending` is the only state that waits, and a rebuild always ends in one of the two)
 LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activate if still valid      UNLOCK
 ```
 
@@ -366,7 +373,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 - **綁定：** 解析器保留 `target.title` 並在檢查時比對，標題不符在解析與綁定測試中被拒絕；沒有載入劇本；只有 Markdown 的劇本；頁數不符；頁數相同的另一份劇本會因標題不符被拒絕；標題對修復後的子劇本仍然相符。
 - **數值報告（私下）：** 詳細報告只用私訊傳給 KP Assistant，對話裡的回覆不含任何移除或新增的 token；沒有登記 KP Assistant 時留在稽核裡；玩家送出內容任意的補丁，無法從任何回覆讀回只給 KP 看的數字；互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10`）與互換的重複標籤（`Rat / HP 10; Ogre / HP 20`）會被回報；`1D40 → 1D4` 的變動會以移除與新增的 token 列出；`+10% → -10%`、`SAN 1/1d6 → SAN 1 1d6` 與 `STR+10 → STR-10` 都會被列出；沒變的文字什麼都不報；沒改動的帶連字號標籤不產生變動；一頁的報告不影響另一頁。
 - **重疊：** repair A 然後 repair B 改同一頁，再上傳 A：回覆指出第 10 頁被 repair B 改過而這次覆蓋了它，稽核也記錄；先前沒有 repair 碰過的頁面沒有這個提示。
-- **合併：** 在世系較早處套用過的檔案，在較晚、互不重疊的 repair 之後再上傳，會被回答為已套用，而不是被當成沒有變化而拒絕；只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；沒有任何變化的 repair 被拒絕；同一份 repair 具冪等性：套用到已載入的劇本之後再上傳同一個檔案，回覆「已經套用」，絕不走到沒有變化的拒絕。
+- **合併：** 在世系較早處套用過的檔案，在較晚、互不重疊的 repair 之後再上傳，會被回答為已套用，而不是被當成沒有變化而拒絕；只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；頁面已經是補丁內容的 repair 不是錯誤：得到第 F 階段的回答（在 repair 世系內是 `這份修復已經套用，沒有重複建立版本。`，否則是 `這些頁面的內容已經與修復檔相同，沒有變動。`），測試斷言沒有發布任何東西、沒有建立稽核紀錄或私訊；同一份 repair 具冪等性：套用到已載入的劇本之後再上傳同一個檔案，回覆「已經套用」，絕不走到沒有變化的拒絕。
 - **地圖與影像：** 有標籤的地圖頁被接受並清除低文字量警告；地圖 repair 不改變場景地圖圖形；存在原生文字時 `image` 被拒絕，沒有時被接受。
 - **Discord：** 上傳者的顯示名稱、對話 ID 與請求 ID 從路由器一路傳到 `publish` 與稽核（關閉日誌時稽核仍有這三者），不回頭呼叫 Discord；`repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
 - **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用在父劇本仍載入時靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`，切換劇本之後不建議重新上傳；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
@@ -393,7 +400,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 
 這個順序確保遊戲永遠不會被切到衍生產物缺失的子劇本：重建在啟用之前完成，而在啟用上線之前，上傳只做發布。
 
-1. **確定性核心。** 從 `scenario_source_review` 抽出共用的頁面輔助函式；實作解析器、嚴格 schema、無損合併、數值報告、候選摘要，以及會複製父劇本圖片、圖片資源與場景地圖的不可變部分頁面發布，附單元測試與範本。發布的子劇本在 manifest 記錄 `artifacts: "pending"`。
+1. **確定性核心。** 從 `scenario_source_review` 抽出共用的頁面輔助函式；實作解析器、嚴格 schema、無損合併、數值報告、候選摘要、公開的 `scenario_library.image_asset_description()`，以及會複製父劇本圖片、圖片資源與場景地圖的不可變部分頁面發布，附單元測試與範本。發布的子劇本在 manifest 記錄 `artifacts: "pending"`。
 2. **衍生產物重建。** 以既有的建構器，依子劇本的來源雜湊，從它的新文字建出 NPC 與地點索引和預製角色池，以雜湊檢查提交，並設為 `artifacts: "ready"`；RAG 預熱另外排程。既有的建構器是 fail-soft 的：沒有設定分析 provider 或呼叫失敗時，`scenario_index.extract_scenario_index()` 回傳空清單、`pregen_extractor.extract_pregens()` 回傳空池。所以重建要回報擷取是否**成功**，並把來自失敗或不可用 provider 的空結果當成沒建好：此時子劇本會得到從父劇本複製來的索引與預製角色檔（repair 只改幾頁，父劇本的清單是手邊最好的），標記是 `inherited` 而不是 `ready`。`inherited` 可以啟用，回覆會說索引之後會更新，下次有 provider 時再重試重建。擷取成功而且真的是空的才是 `ready`。`artifacts: "pending"` 的子劇本不能被選去啟用。測試：父劇本仍是使用中的劇本時，重建也會填入索引與預製角色並把子劇本標成 `ready`；沒有 provider 時子劇本是 `inherited` 並帶著父劇本非空的檔案，絕不是空的；過時的重建不能覆寫較新的 repair；裝進進行中的遊戲要求子劇本是使用中的；pending 的子劇本被拒絕。
 3. **Discord 上傳。** `repair_*.md` 路由、`handle_uploads` 的 `user_id`、劇本生命週期權限檢查、repair 服務、第 2 階段的重建、結果與拒絕訊息、路由測試、說明項目與指南文字。在第 4 階段之前，回覆只說新版本已建立、尚未套用到進行中的遊戲，所以上傳不會改變遊戲。
 4. **使用中遊戲的更正。** 要求 `artifacts` 為 `ready` 或 `inherited` 的 `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置、目前章節與玩家狀態、整合測試，以及說明遊戲已切換的結果訊息。
