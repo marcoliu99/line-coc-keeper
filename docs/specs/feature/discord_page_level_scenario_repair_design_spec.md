@@ -472,7 +472,7 @@ The actual delta MUST exactly equal `expected_numeric_delta`.
 
 Otherwise reject the entire repair atomically.
 
-`mechanics_counts` is a stricter tokenizer than the existing `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional leading sign (`+`, `-`, `−`) that is not glued to a preceding word character, and joins numeric operands that are separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant, and `expected_numeric_delta` keys are these canonical tokens. The existing `counts` is left unchanged for its other users.
+`mechanics_counts` is a stricter tokenizer than the existing `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional sign (`+`, `-`, `−`) written directly before the number, **including when it is glued to a word** (`STR+10` and `STR-10` are different tokens, `+10` and `-10`), and joins numeric operands that are separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant, and `expected_numeric_delta` keys are these canonical tokens. A hyphenated label such as `A-10` yields the token `-10`; this only matters when that text changes, because identical text produces no delta. The existing `counts` is left unchanged for its other users.
 
 This catches accidental changes to:
 
@@ -641,6 +641,10 @@ For external AI usability, it is acceptable for the export template to include `
 2. be stripped by a dedicated export/import schema.
 
 Preferred implementation: keep the import JSON strict and place existing text in Markdown reference sections outside the JSON block.
+
+The importer takes exactly one fenced `json` block from the whole file, and reference text is arbitrary extracted page text that may itself contain a Markdown fence. Every line of a reference section is therefore written as a blockquote (prefixed with `> `), so a fence inside it never starts at the beginning of a line and is never mistaken for the payload. A test exports a page whose text contains a `json` fence and imports the result.
+
+Delivery: the workfile is sent as a private file attachment. The Discord transport today has `SendDM(owner_id, text)` and `SendDMImage(owner_id, png_bytes, conversation_id, page_number)` only, and `delivery.send_dm()` sends text, so phase 4 adds a `SendDMFile(owner_id, filename, data)` callback beside `SendDMImage` in `app/commands/types.py`, threads it through the handler IO the same way, and implements it in `delivery` with a `discord.File`. The handler never falls back to posting the file or its text in the shared channel; if the private send fails, the KP is told to open their DMs and retry.
 
 ## 18. Example repair file
 

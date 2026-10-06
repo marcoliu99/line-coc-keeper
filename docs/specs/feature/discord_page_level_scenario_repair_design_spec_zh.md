@@ -472,7 +472,7 @@ actual_added = new_counts - old_counts
 
 否則整份 repair 以原子方式被拒絕。
 
-`mechanics_counts` 是比現有 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留開頭的正負號（`+`、`-`、`−`，且前面不能緊接字詞字元），並把以 `/`、`-`、`–`、`−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）；token 內的空格與 tab 不重要，`expected_numeric_delta` 的鍵就是這些標準化後的 token。現有的 `counts` 不變，其他使用者不受影響。
+`mechanics_counts` 是比現有 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留直接寫在數字前面的正負號（`+`、`-`、`−`），**包括緊貼在字詞後面的情況**（`STR+10` 與 `STR-10` 是不同的 token：`+10` 與 `-10`），並把以 `/`、`-`、`–`、`−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）；token 內的空格與 tab 不重要，`expected_numeric_delta` 的鍵就是這些標準化後的 token。像 `A-10` 這樣帶連字號的標籤會得到 token `-10`；只有那段文字被改動時才有影響，文字相同就不會產生差異。現有的 `counts` 不變，其他使用者不受影響。
 
 這能抓到對下列內容的意外變更：
 
@@ -641,6 +641,10 @@ repair_the-haunting-scenario-trimmed_<short-hash>.md
 2. 被專屬的匯出／匯入 schema 剝除。
 
 偏好的實作：讓匯入 JSON 保持嚴格，把既有文字放在 JSON 區塊之外的 Markdown 參考段落。
+
+匯入器會從整個檔案取恰好一個有圍欄的 `json` 區塊，而參考文字是任意擷取出來的頁面文字，本身可能含有 Markdown 圍欄。因此參考段落的每一行都以引用區塊的形式寫出（行首加 `> `），裡面的圍欄就不會出現在行首，也不會被當成 payload。測試會匯出一頁含 `json` 圍欄的文字，再把結果匯入。
+
+傳送：工作檔以私人檔案附件傳送。目前 Discord 傳輸層只有 `SendDM(owner_id, text)` 與 `SendDMImage(owner_id, png_bytes, conversation_id, page_number)`，`delivery.send_dm()` 送的是文字，所以階段 4 要在 `app/commands/types.py` 的 `SendDMImage` 旁新增 `SendDMFile(owner_id, filename, data)` 回呼，以同樣的方式穿過處理器的 IO，並在 `delivery` 用 `discord.File` 實作。處理器絕不退而求其次把檔案或其文字貼在共用頻道；私訊送不出去時，告訴 KP 開啟私訊後重試。
 
 ## 18. Repair 檔範例
 
