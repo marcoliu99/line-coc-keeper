@@ -248,13 +248,13 @@ Rules:
 
 This differs intentionally from ordinary initial scenario upload.
 
-A `repair_*.md` file changes the trusted source used by the active campaign. Therefore only a user satisfying:
+A `repair_*.md` file changes the trusted source used by the active campaign. Therefore only the group's KP Assistant may submit it:
 
 ```python
-permissions.may_manage_scenario_lifecycle(state, user_id)
+permissions.is_kp(state, user_id)
 ```
 
-may submit it.
+Do **not** use `permissions.may_manage_scenario_lifecycle`: with the default `SCENARIO_LIFECYCLE_KP_ONLY=false` it is true for every user, which would let an ordinary player publish or activate a modified trusted source. The refusal uses `permissions.kp_only(...)`, like the existing source and template management handlers.
 
 `handle_uploads()` currently does not receive the upload actor ID. Extend it:
 
@@ -393,15 +393,15 @@ unified diff
 Merge algorithm:
 
 ```python
-pages = split_physical_pages(parent_text)
+spans = locate_page_body_spans(parent_text)      # lossless: offsets of each physical page body
 
 for patch in validated_patches:
-    pages[patch.page - 1] = patch.text
-
-candidate_text = join_with_physical_page_markers(pages)
+    splice(parent_text, spans[patch.page - 1], patch.text)   # only the selected spans are re-serialized
 ```
 
-This makes the result deterministic and avoids fuzzy matching.
+The split is **lossless**. A page body is the text between its marker line and the next marker, with exactly one leading newline and, when a next marker follows, exactly one `\n\n` separator removed; the base page hash (rule below) and the untouched-page invariant are over that raw body. Do not reuse a splitter that strips each body and rebuilds every marker: an untouched page published by the existing source-review workflow deliberately keeps its reviewed leading or trailing whitespace, and re-joining would change it.
+
+This makes the result deterministic, byte-preserving for untouched pages, and avoids fuzzy matching.
 
 ## 12. Base binding and stale repair protection
 
@@ -463,8 +463,8 @@ Instead, every patch carries an explicit expected numeric delta:
 The bot computes:
 
 ```python
-old_counts = scenario_numbers.counts(old_text)
-new_counts = scenario_numbers.counts(new_text)
+old_counts = scenario_numbers.mechanics_counts(old_text)
+new_counts = scenario_numbers.mechanics_counts(new_text)
 
 actual_removed = old_counts - new_counts
 actual_added = new_counts - old_counts
@@ -473,6 +473,8 @@ actual_added = new_counts - old_counts
 The actual delta MUST exactly equal `expected_numeric_delta`.
 
 Otherwise reject the entire repair atomically.
+
+`mechanics_counts` is a stricter tokenizer than the existing `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional leading sign (`+`, `-`, `−`) that is not glued to a preceding word character, and joins numeric operands that are separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant, and `expected_numeric_delta` keys are these canonical tokens. The existing `counts` is left unchanged for its other users.
 
 This catches accidental changes to:
 
@@ -595,7 +597,7 @@ and:
 /coc repair export 2,4,6,7,8,10,14,16,17
 ```
 
-Help UI should expose the same actions.
+Both commands are KP-only (`permissions.is_kp`, refusal via `permissions.kp_only`) and deliver the workfile by direct message (`send_dm`) only, never in the shared channel: the file contains the scenario's full page text, which includes Keeper-only content. This is the same protection as the existing `/coc scenario source export` and template export handlers. The Help UI entry may be shown to everyone, but invoking it as anyone else is refused.
 
 ### `warnings`
 
@@ -784,7 +786,7 @@ Build the complete candidate source by replacing only listed pages.
 Verify:
 
 - physical page markers remain 1..N exactly once;
-- untouched page bodies are byte-for-byte unchanged;
+- untouched page bodies are byte-for-byte unchanged (raw bodies as defined in rule 11);
 - patched page count equals requested patch count;
 - candidate differs from parent;
 - candidate digest is deterministic.
@@ -1197,6 +1199,8 @@ Both CLI source review and Discord repair should use the same:
 - numeric counting;
 - published-page serialization;
 - candidate hashing.
+
+Two deliberate differences from the review CLI: page repair splits the parent lossless (rule 11) and compares numbers with the mechanics-aware tokens (rule 13). The stripping splitter and `scenario_numbers.counts` stay for their existing callers.
 
 Do not maintain two subtly different validators.
 

@@ -248,13 +248,13 @@ repairs = [
 
 這裡刻意與一般的初次劇本上傳不同。
 
-`repair_*.md` 會改變使用中戰役所信任的來源。因此只有符合下列條件的使用者：
+`repair_*.md` 會改變使用中戰役所信任的來源。因此只有該群組的 KP Assistant 可以提交：
 
 ```python
-permissions.may_manage_scenario_lifecycle(state, user_id)
+permissions.is_kp(state, user_id)
 ```
 
-才可以提交。
+**不要**使用 `permissions.may_manage_scenario_lifecycle`：在預設的 `SCENARIO_LIFECYCLE_KP_ONLY=false` 之下它對每個使用者都是 true，一般玩家就能發布或啟用被修改過的可信來源。拒絕訊息與既有的來源／範本管理處理器一樣，使用 `permissions.kp_only(...)`。
 
 `handle_uploads()` 目前拿不到上傳者的 ID。把它擴充為：
 
@@ -393,15 +393,15 @@ unified diff
 合併演算法：
 
 ```python
-pages = split_physical_pages(parent_text)
+spans = locate_page_body_spans(parent_text)      # lossless: offsets of each physical page body
 
 for patch in validated_patches:
-    pages[patch.page - 1] = patch.text
-
-candidate_text = join_with_physical_page_markers(pages)
+    splice(parent_text, spans[patch.page - 1], patch.text)   # only the selected spans are re-serialized
 ```
 
-這讓結果是確定性的，並避免模糊比對。
+這個切分是**無損**的。頁面本文是該頁標記行到下一個標記之間的文字，只去掉恰好一個開頭換行，以及（後面還有標記時）恰好一個 `\n\n` 分隔；基準頁面雜湊（見下一規則）與「未被修改頁面」的不變條件都針對這份原始本文。不要重用會把每頁本文 strip 再重建所有標記的切分器：既有來源審查流程發布的未修改頁面會刻意保留審查過的前後空白，重新串接會改動它。
+
+這讓結果是確定性的、對未被修改的頁面逐位元組保留，並避免模糊比對。
 
 ## 12. 基準綁定與過時 repair 的防護
 
@@ -463,8 +463,8 @@ base_page_sha256 = sha256(current_published_page_body.encode("utf-8")).hexdigest
 Bot 計算：
 
 ```python
-old_counts = scenario_numbers.counts(old_text)
-new_counts = scenario_numbers.counts(new_text)
+old_counts = scenario_numbers.mechanics_counts(old_text)
+new_counts = scenario_numbers.mechanics_counts(new_text)
 
 actual_removed = old_counts - new_counts
 actual_added = new_counts - old_counts
@@ -473,6 +473,8 @@ actual_added = new_counts - old_counts
 實際差異**必須**與 `expected_numeric_delta` 完全相等。
 
 否則整份 repair 以原子方式被拒絕。
+
+`mechanics_counts` 是比現有 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留開頭的正負號（`+`、`-`、`−`，且前面不能緊接字詞字元），並把以 `/`、`-`、`–`、`−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）；token 內的空格與 tab 不重要，`expected_numeric_delta` 的鍵就是這些標準化後的 token。現有的 `counts` 不變，其他使用者不受影響。
 
 這能抓到對下列內容的意外變更：
 
@@ -595,7 +597,7 @@ library.PAGE_MARKER_RE
 /coc repair export 2,4,6,7,8,10,14,16,17
 ```
 
-說明介面應該提供相同的動作。
+兩個指令都只有 KP 可用（`permissions.is_kp`，拒絕訊息用 `permissions.kp_only`），而且只以私訊（`send_dm`）傳送工作檔，絕不貼在共用頻道：檔案含有劇本的完整頁面文字，其中有只給 KP 看的內容。保護方式與既有的 `/coc scenario source export` 和範本匯出處理器相同。說明介面可以顯示這個項目給所有人，但由其他人呼叫會被拒絕。
 
 ### `warnings`
 
@@ -784,7 +786,7 @@ parse_repair_markdown(data: bytes) -> RepairProposal
 驗證：
 
 - 實體頁面標記維持 1..N 且各出現一次；
-- 未被修改的頁面本文逐位元組不變；
+- 未被修改的頁面本文逐位元組不變（指規則 11 定義的原始本文）；
 - 被修補的頁數等於要求的補丁數；
 - 候選與父劇本不同；
 - 候選摘要是確定性的。
@@ -1195,6 +1197,8 @@ CLI 來源審查與 Discord repair 都應該使用相同的：
 - 數值計數；
 - 已發布頁面的序列化；
 - 候選雜湊。
+
+與審查 CLI 有兩處刻意的差異：頁面 repair 以無損方式切分父劇本（規則 11），並用感知機制的 token 比對數值（規則 13）。會 strip 的切分器與 `scenario_numbers.counts` 保留給既有的呼叫者。
 
 不要維護兩份有細微差異的驗證器。
 
