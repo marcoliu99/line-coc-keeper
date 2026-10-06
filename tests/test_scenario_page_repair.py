@@ -12,6 +12,7 @@ from app import scenario_page_repair as repair
 
 PAGES = ("Armor 2.\n17", "Damage 1D40.\n18", "", "Map labels\nCellar", "Plain page.")
 TITLE = "The Test Scenario"
+PAGE_COUNT = len(PAGES)
 
 
 @pytest.fixture
@@ -41,7 +42,7 @@ def patch(page, text, *, kind="text", note="Checked against PDF page."):
     return {"page": page, "text": text, "page_kind": kind, "review_note": note}
 
 
-def payload(patches, *, title=TITLE, page_count=len(PAGES), **extra):
+def payload(patches, *, title=TITLE, page_count=PAGE_COUNT, **extra):
     return {"repair_version": 1, "target": {"title": title, "page_count": page_count}, "patches": patches, **extra}
 
 
