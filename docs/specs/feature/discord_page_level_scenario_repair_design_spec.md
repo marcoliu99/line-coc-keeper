@@ -6,58 +6,34 @@ Status: **backlog** (design only; nothing is implemented). Base: `main_v2` at `3
 
 ## 1. Problem
 
-Current scenario ingestion has two distinct paths:
+Scenario ingestion has two paths today:
 
-1. PDF upload:
-   - parses the whole PDF;
-   - creates a new scenario library entry;
-   - may be applied as a new scenario or as a correction.
+1. PDF upload parses the whole PDF and creates a new library entry, applied as a new scenario or as a correction.
+2. `scenario*.md` upload treats the whole Markdown file as the complete scenario source. It does **not** patch selected pages into the loaded PDF scenario.
 
-2. `scenario*.md` upload:
-   - treats the complete Markdown file as the complete authoritative scenario source;
-   - does **not** patch selected pages into the current PDF scenario.
-
-There is already a safe administrator workflow in `app.scenario_source_review`:
+`app.scenario_source_review` already has a safe administrator workflow (`prepare → edit proposal.md → check → publish`) that binds work to an immutable PDF source snapshot, validates physical page numbers, reports numeric changes, publishes a derived scenario instead of overwriting the original, and records an audit. But it needs filesystem/CLI access and a proposal that covers every page, so it does not fit the normal Discord flow:
 
 ```text
-prepare → edit proposal.md → check → publish
+⚠️ 第 2、4、6、7、8、10、14、16、17 頁有解析品質待核對項目
 ```
 
-That workflow correctly:
+The Keeper has an externally reviewed Markdown file for just those pages and wants to upload it.
 
-- binds review work to a specific immutable PDF/source snapshot;
-- validates physical PDF page numbers;
-- checks evidence regions;
-- reports numeric-token changes;
-- creates a derived scenario instead of overwriting the original;
-- records audit metadata;
-- invalidates derived artifacts that may now be stale.
+### Desired experience
 
-However, it currently requires filesystem/CLI access and a full-page proposal covering the entire PDF. It is not suitable for the normal Discord workflow where the Keeper sees:
+Like a `role_*.md` upload: the Keeper (or anyone) uploads one file and the bot merges it.
 
 ```text
-第 2、4、6、7、8、10、14、16、17 頁有解析品質待核對項目
+1. Fill in the page-repair template (docs/references/scenario_page_repair_template.md)
+   from the original PDF, with ChatGPT or another reviewer.
+2. Upload repair_<name>.md to the conversation.
+3. The bot checks it, replaces only the listed physical pages of the loaded PDF scenario,
+   publishes a new immutable scenario version, and, when that scenario is still the one being
+   played, switches the running game to it without resetting anything.
+4. The reply lists exactly what changed on each page, including every number that changed.
 ```
 
-and wants to correct only those pages with an externally reviewed Markdown file.
-
-### Desired UX
-
-The Keeper should be able to:
-
-```text
-1. Export a repair workfile for selected warning pages.
-2. Give that file + original PDF to ChatGPT / another reviewer.
-3. Receive repair_<scenario>_01.md.
-4. Upload repair_<scenario>_01.md directly to Discord.
-5. Bot validates the repair deterministically.
-6. Bot replaces only the specified physical pages.
-7. Bot publishes an immutable derived scenario version.
-8. If the repaired source is still the active source, Bot applies it as a correction
-   while preserving the current game state.
-```
-
-No PDF OCR rerun should be required.
+There is no export command and no hash to copy: the file only needs the page numbers and the corrected page texts. No PDF OCR is rerun.
 
 ## 2. Goals
 
@@ -67,184 +43,61 @@ The implementation MUST:
 
 1. Recognize Markdown attachments whose filename begins with `repair_`.
 2. Treat the file as a **page patch**, never as a complete scenario.
-3. Bind every repair to one exact scenario source version.
-4. Replace only explicitly listed physical PDF pages.
-5. Require the full corrected text for every replaced page.
-6. Reject stale repair files.
-7. Detect unexpected numeric/dice changes deterministically.
-8. Reuse the original PDF bytes and rendered page evidence.
-9. Create a new immutable scenario library entry.
-10. Never overwrite the parent scenario.
-11. Record parent/child provenance and a repair audit.
-12. Clear parse warnings only for pages that were explicitly reviewed.
-13. Preserve unresolved warnings on untouched pages.
-14. Preserve the running game when applying a repair to the active scenario.
-15. Avoid rebuilding the original PDF OCR pipeline.
-16. Be idempotent: re-uploading the same valid repair must not create endless duplicate versions.
-17. Remain compatible with the existing `scenario_source_review` CLI workflow.
+3. Apply it to the PDF-derived scenario that is loaded in the conversation, and reject it when the page count differs.
+4. Replace only the explicitly listed physical PDF pages, each with its complete corrected text.
+5. Compute, deterministically, every number that changed on each replaced page and report it in the reply.
+6. Reuse the original PDF bytes and page images.
+7. Create a new immutable scenario library entry and never overwrite the parent.
+8. Record parent/child provenance and an audit.
+9. Clear parse warnings only for pages that were explicitly replaced and keep warnings on untouched pages.
+10. Preserve the running game when applying the repair to the active scenario.
+11. Be idempotent: uploading the same file again must not create more versions.
+12. Remain compatible with the existing `scenario_source_review` CLI workflow.
 
-### 2.2 UX goals
-
-The normal Keeper workflow should not require shell access.
-
-The preferred path is:
-
-```text
-/coc repair export warnings
-        ↓
-repair_<scenario>_<id>.md
-        ↓
-external review
-        ↓
-upload repair_*.md to Discord
-        ↓
-validation
-        ↓
-published + applied
-```
-
-A specific-page export should also be supported:
-
-```text
-/coc repair export 2,4,6,7,8,10,14,16,17
-```
-
-## 3. Non-goals
+### 2.2 Non-goals
 
 Version 1 MUST NOT:
 
-- accept arbitrary unified diffs;
-- accept line-number patches;
-- fuzzy-match replacement text;
-- infer which active scenario the repair “probably” belongs to;
-- mutate the parent scenario in place;
-- change the original PDF;
-- replace arbitrary map graph topology through the repair Markdown;
-- treat a free-form Markdown document as a valid repair;
-- silently accept missing numeric changes;
-- automatically rewrite translation variants;
+- accept diffs, line-number patches or search-and-replace;
+- fuzzy-match replacement text or guess which scenario or page a file is "probably" for;
+- mutate the parent scenario in place or change the original PDF;
+- replace map graph topology through the repair file (the existing map pipeline and `map_*.yaml` own it);
+- treat a free-form Markdown document as a repair;
+- rewrite translation variants automatically;
 - rerun OCR over the whole PDF;
-- let an upload edit a published scenario source in place (a repair only ever creates a new version).
+- offer an export command or require the Keeper to copy hashes from the bot.
 
-Map topology repair remains owned by the existing map pipeline / `map_*.yaml` path unless a later spec explicitly merges the two systems.
+## 3. Existing architecture to reuse
 
-## 4. Existing architecture to reuse
+`app/scenario_source_review.py` (page split, full-page review, immutable derived publication, audit), `app/scenario_library.py`, `app/trusted_scenario_source.py` (`publish_derived`), `app/services/scenario_lifecycle.py` (`_repair` is the running-game semantics for a source correction), `app/services/scenario_ingestion.py`, `app/commands/handlers/uploads.py` and `app/scenario_numbers.py`. The new feature must not invent a second meaning of "repair".
 
-The implementation should reuse rather than duplicate the safety properties already present in:
-
-- `app/scenario_source_review.py`
-- `app/scenario_library.py`
-- `app/trusted_scenario_source.py`
-- `app/services/scenario_lifecycle.py`
-- `app/services/scenario_ingestion.py`
-- `app/commands/handlers/uploads.py`
-- `app/scenario_numbers.py`
-
-Important existing behavior:
-
-### `scenario_source_review`
-
-Already provides the correct conceptual source-repair model:
-
-- physical-page source splitting;
-- immutable source binding;
-- full-page reviewed text;
-- evidence bounding-box validation;
-- numeric-token before/after accounting;
-- candidate digest;
-- immutable derived publication;
-- parent scenario provenance.
-
-### `scenario_lifecycle._repair`
-
-Already defines the desired running-game semantics for a source correction:
-
-- update scenario title/text/index references;
-- do not create a new game timeline;
-- do not clear ordinary game progress as `_new_upload()` does.
-
-The new feature should not invent a second concept of “repair”.
-
-## 5. Architectural decision
-
-Add a dedicated module:
-
-```text
-app/scenario_page_repair.py
-```
-
-and a service adapter:
-
-```text
-app/services/scenario_repair.py
-```
-
-Responsibilities:
+## 4. Architectural decision
 
 ```text
 Discord upload router
         ↓
-scenario_repair.handle_repair_upload()
+scenario_repair.handle_repair_upload()       app/services/scenario_repair.py
         ↓
-scenario_page_repair.parse()
-        ↓
-scenario_page_repair.validate()
-        ↓
+scenario_page_repair.parse_markdown_bytes()  app/scenario_page_repair.py
+scenario_page_repair.check()
 scenario_page_repair.publish()
         ↓
 scenario_lifecycle.activate_repair_version()
 ```
 
-Do not put repair parsing or publication logic directly in `discord_bot.py`.
+Parsing and publication logic does not live in `discord_bot.py`.
 
-## 6. Attachment routing
+## 5. Attachment routing
 
-Modify:
-
-```text
-app/commands/handlers/uploads.py
-```
-
-Current order includes:
+In `app/commands/handlers/uploads.py`, add `repair_*.md` before the generic Markdown comparison path:
 
 ```text
-PDF
-scenario*.md
-map_*.yaml
-role_*.md
-generic .txt/.md comparison
+PDF → scenario*.md → repair_*.md → map_*.yaml → role_*.txt/.md → generic .txt/.md compare
 ```
 
-Add `repair_*.md` before the generic Markdown comparison path.
+Exactly one repair file per message in v1; more than one is rejected with a specific message. A repair file never falls through to `handle_scenario_compare_upload()`.
 
-Recommended order:
-
-```text
-PDF
-scenario*.md
-repair_*.md
-map_*.yaml
-role_*.txt/.md
-generic .txt/.md compare
-```
-
-Example:
-
-```python
-repairs = [
-    u for u in uploads
-    if u.filename.lower().startswith("repair_")
-    and u.filename.lower().endswith(".md")
-]
-```
-
-Rules:
-
-- exactly one repair file per Discord message in v1;
-- more than one → reject with a specific message;
-- a repair file must never fall through to `handle_scenario_compare_upload()`.
-
-## 7. Permission model
+## 6. Permission model
 
 Anyone in the conversation may upload a `repair_*.md`, the same as a PDF or `scenario*.md` upload today. The check is the existing scenario-lifecycle policy:
 
@@ -252,774 +105,123 @@ Anyone in the conversation may upload a `repair_*.md`, the same as a PDF or `sce
 permissions.may_manage_scenario_lifecycle(state, user_id)
 ```
 
-which is true for everyone by default and is restricted to the KP Assistant when `SCENARIO_LIFECYCLE_KP_ONLY` is turned on; the refusal is `permissions.kp_only(...)`. The safety of an open upload does not rest on who sends the file: a repair only applies when its target hashes and every base page hash match the current source, its numeric changes are declared, and it creates a new immutable version instead of editing the parent. The repair workfile **export** is different: it carries the scenario's full page text, so it stays KP-only and DM-only (see the export workflow).
+which is true for everyone by default and is restricted to the KP Assistant when `SCENARIO_LIFECYCLE_KP_ONLY` is on; the refusal is `permissions.kp_only(...)`. Open upload is safe because a repair is page-bound, reports every number it changes, creates a new immutable version and leaves the parent untouched and selectable.
 
-`handle_uploads()` currently does not receive the upload actor ID. Extend it:
+`handle_uploads()` does not receive the uploader today. Add `user_id` to its signature and update the caller in `discord_bot._handle_message()`. The authoritative reviewer identity is the Discord user ID and display name, the conversation, the request ID and a timestamp, never a field inside the file.
 
-```python
-async def handle_uploads(
-    conversation_id: str,
-    user_id: str,
-    uploads: list[Upload],
-    reply: Reply,
-    ...
-) -> bool:
-```
+## 7. Repair file format
 
-and update the caller in `discord_bot._handle_message()`.
-
-Do not trust a `reviewer` field inside the uploaded file.
-
-The authoritative reviewer identity is:
-
-```text
-Discord user ID
-Discord display name, if available
-conversation/channel identity
-request ID
-timestamp
-```
-
-## 8. Repair workfile format
-
-Use Markdown containing exactly one JSON payload, compatible with the existing `authoring.parse_markdown()` conventions.
-
-Top-level schema:
+Markdown containing exactly one fenced `json` block (the `authoring.parse_markdown()` convention). Only these keys are valid, anywhere:
 
 ```json
 {
   "repair_version": 1,
-  "target": {
-    "scenario_id": "the-haunting-scenario-trimmed-46c3c49c",
-    "content_hash": "<exact parent source content hash>",
-    "pdf_sha256": "<exact original PDF sha256>",
-    "page_count": 27
-  },
-  "patches": []
-}
-```
-
-Only these top-level keys are valid:
-
-```text
-repair_version
-target
-patches
-```
-
-Unknown top-level fields MUST be rejected.
-
-## 9. Page patch schema
-
-Each patch is a **complete replacement of one physical PDF page body**.
-
-Example:
-
-```json
-{
-  "page": 10,
-  "base_page_sha256": "a33d...",
-  "text": "THE BASEMENT\n\nROOM 1: Storage\n...",
-  "page_kind": "text",
-  "review_note": "Checked against PDF page 10; repaired two-column order and retained all dice expressions.",
-  "evidence": [
+  "target": { "page_count": 27 },
+  "patches": [
     {
-      "bbox": [0.0, 0.0, 504.0, 720.0],
-      "note": "Full physical PDF page reviewed."
+      "page": 10,
+      "text": "THE BASEMENT\n\nROOM 1: Storage\n...",
+      "page_kind": "text",
+      "review_note": "Checked against PDF page 10; repaired two-column order and the dice expression."
     }
-  ],
-  "expected_numeric_delta": {
-    "removed": {},
-    "added": {}
-  }
+  ]
 }
 ```
 
-Allowed page keys:
+- `repair_version` is `1`.
+- `target.page_count` is the PDF's physical page count, a sanity check that the file was made for this PDF.
+- `patches` has 1 to 100 entries, one per page, in any order.
+- `page` is the **physical PDF page**, 1-based, never the printed book page.
+- `text` is the **complete** corrected text of that page and replaces the whole page. It must not contain a physical page marker (`library.PAGE_MARKER_RE`); the system owns the markers. Leading and trailing whitespace is trimmed.
+- `page_kind` is `text`, `map` or `image`.
+- `review_note` states what was checked against the page and what was corrected; it cannot be empty.
 
-```text
-page
-base_page_sha256
-text
-page_kind
-review_note
-evidence
-expected_numeric_delta
-```
+Unknown keys, a duplicate page, a page outside `1..page_count` and a wrong type are rejected. The file is UTF-8 or UTF-8 with BOM, CRLF is normalized, the size is bounded by the authoring file-size limit, and no YAML or other permissive parser is used. A template ships with the format (see "Template and help").
 
-No additional page keys in v1.
+### 7.1 `page_kind`
 
-## 10. `page` semantics
+- `text`: normal prose, rules or handouts. `text` must not be empty.
+- `map`: a page that is mainly a floor plan or diagram. Transcribe the readable labels and do not invent room descriptions; low text volume is not a parse failure, so this kind may clear a `low_text` warning. The map graph itself is never edited here.
+- `image`: only when the page truly has no readable text. `text` must then be empty, and the kind is rejected when the PDF page has native readable text (the existing `scenario_source_review.image_only` rule). The published body is the existing image placeholder.
 
-`page` is always the **physical PDF page number**, 1-based.
+## 8. Full-page replacement, lossless
 
-It is NOT:
-
-- the printed book page number;
-- the page number shown in the footer;
-- a chapter-relative number.
-
-Example:
-
-```text
-PDF physical page 7
-printed page 23
-```
-
-Repair uses:
-
-```json
-"page": 7
-```
-
-This is identical to `scenario_source_review` behavior and prevents accidental replacement of the wrong page.
-
-## 11. Full-page replacement, not fragment merge
-
-A patch's `text` MUST contain the complete authoritative source text for that physical page.
-
-Do not support:
-
-```text
-append this paragraph
-replace lines 30–50
-replace this sentence
-search-and-replace
-unified diff
-```
-
-Merge algorithm:
+Do not support partial edits. The merge splices only the selected page bodies:
 
 ```python
-spans = locate_page_body_spans(parent_text)      # lossless: offsets of each physical page body
+spans = locate_page_body_spans(parent_text)      # lossless offsets of each physical page body
 
-for patch in validated_patches:
+for patch in patches:
     splice(parent_text, spans[patch.page - 1], patch.text)   # only the selected spans are re-serialized
 ```
 
-The split is **lossless**. A page body is the text between its marker line and the next marker, with exactly one leading newline and, when a next marker follows, exactly one `\n\n` separator removed; the base page hash (rule below) and the untouched-page invariant are over that raw body. Do not reuse a splitter that strips each body and rebuilds every marker: an untouched page published by the existing source-review workflow deliberately keeps its reviewed leading or trailing whitespace, and re-joining would change it.
+A page body is the text between its marker line and the next marker, with exactly one leading newline and, when a next marker follows, exactly one `\n\n` separator removed. Do not reuse a splitter that strips every body and rebuilds every marker: an untouched page published by the existing source-review workflow deliberately keeps its reviewed leading or trailing whitespace. The merge is deterministic, byte-preserving for untouched pages, and uses no fuzzy matching.
 
-This makes the result deterministic, byte-preserving for untouched pages, and avoids fuzzy matching.
+## 9. Binding to the loaded scenario
 
-## 12. Base binding and stale repair protection
+The repair applies to the PDF-derived scenario the conversation has loaded (`scenario_library_id`). It is rejected when:
 
-A repair MUST bind to the exact source version it was prepared from.
+- no scenario is loaded, or the loaded scenario has no PDF source (a Markdown-only scenario has no physical page identity);
+- `target.page_count` differs from the PDF's page count;
+- a patch's `page` is outside the PDF.
 
-Validate all of:
+The parent's identity (scenario id, content hash, PDF SHA) is captured by the server when the upload is accepted and re-checked before publication and again before activation, so a source that changed in between is never half-applied.
 
-```text
-target.scenario_id
-target.content_hash
-target.pdf_sha256
-target.page_count
-```
+## 10. Numeric and mechanics report
 
-against the parent trusted snapshot.
-
-For each page also validate:
-
-```text
-base_page_sha256
-```
-
-where:
+Source repair is exactly where OCR-corrupted mechanics can enter the canonical source, so every changed number is surfaced instead of trusted. For each replaced page the bot computes
 
 ```python
-base_page_sha256 = sha256(current_published_page_body.encode("utf-8")).hexdigest()
+old_counts = scenario_numbers.mechanics_counts(old_page)
+new_counts = scenario_numbers.mechanics_counts(new_page)
+
+removed = old_counts - new_counts
+added   = new_counts - old_counts
 ```
 
-A mismatch means the repair is stale.
+and lists them in the reply and in the audit, for example `第 10 頁：移除 1d40 ×1、18 ×1；新增 1d4 ×1`. A page whose numbers are unchanged says so. Nothing is rejected for a numeric change: the file is the reviewer's correction, and the report is what lets the Keeper see that a `1D4` became a `1D6` before the next session. The parent stays selectable, so a wrong repair is undone by selecting it again.
 
-Reject with:
+`mechanics_counts` is a stricter tokenizer than `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional sign (`+`, `-`, `−`) written directly before the number, **including when it is glued to a word** (`STR+10` and `STR-10` are the tokens `+10` and `-10`), and joins numeric operands separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant. A hyphenated label such as `A-10` yields the token `-10`; this only matters when that text changes, because identical text produces no change. The existing `counts` is left unchanged for its other users.
 
-```text
-這份 repair 是針對較舊的劇本來源製作的，沒有套用。
-請重新匯出 repair 工作檔後再修正。
-```
+The report proves only that the changed tokens are known, not that the change is right; the external review remains the evidence.
 
-Never “best effort” merge a stale repair.
+## 11. Validation phases
 
-## 13. Numeric/mechanics safety
+Any failure aborts the whole repair and nothing is published.
 
-This is a critical requirement.
+- **A, envelope:** file name, UTF-8, schema version, exact keys, patch count.
+- **B, target:** a PDF-derived scenario is loaded, and `page_count` matches.
+- **C, pages:** page range, uniqueness, no injected page markers.
+- **D, contents:** non-empty `review_note`; `text` rules for the page kind; the `image` rule against native text.
+- **E, candidate:** build the candidate by splicing only the listed pages.
+- **F, invariants:** the physical markers are still `1..N` once each; untouched page bodies are byte-for-byte unchanged (raw bodies as in section 8); the number of replaced pages equals the number of patches; the candidate differs from the parent; the candidate digest is deterministic.
 
-The source repair feature is specifically allowed to fix OCR mistakes, including numeric mistakes. Therefore simply rejecting every numeric change is wrong.
+## 12. Publication
 
-Instead, every patch carries an explicit expected numeric delta:
+Never update the parent directory. Use the immutable derived-source pattern of `scenario_source_review.publish()` through `trusted_scenario_source.publish_derived`.
 
-```json
-"expected_numeric_delta": {
-  "removed": {
-    "1d40": 1
-  },
-  "added": {
-    "1d4": 1
-  }
-}
-```
+- Derived ID: `<parent-prefix>-repair-<candidate_digest[:16]>`. If it already exists and its audit digest matches, return it as an idempotent success; if it exists with different content, fail.
+- `candidate_digest` covers the parent identity, the normalized patches (sorted by page) and the candidate text.
+- The manifest gains `source_repair` (version, parent id and content hash, candidate digest, repaired pages, reviewer user id and display name, uploaded file name, time).
+- The audit is stored in the existing audit slot (`source_review.json`) with `kind: page_repair`: parent and candidate digests, before and after content hashes, the PDF SHA, the reviewer, and per page the before and after SHA-256, the review note, the page kind and the removed and added numeric tokens. Full before and after texts are optional; the page hashes plus the immutable parent and child recover the diff.
 
-The bot computes:
+## 13. Parse-quality update
 
-```python
-old_counts = scenario_numbers.mechanics_counts(old_text)
-new_counts = scenario_numbers.mechanics_counts(new_text)
+Do not replace the parse-quality history with one clean result. Untouched pages keep their existing quality rows and warnings. A repaired page gets `method = "operator-reviewed-discord"`, `warnings = []`, `selected_sha256` of its new body and its `page_kind`. The top level becomes `version: "source-repair-v1"` with `parent_parse_quality_version`, `repaired_pages`, and `review_pages` reduced by the repaired pages. After repairing pages 2 and 4 of `2、4、6、7、8` the load message lists `6、7、8` only.
 
-actual_removed = old_counts - new_counts
-actual_added = new_counts - old_counts
-```
+## 14. Derived artifacts
 
-The actual delta MUST exactly equal `expected_numeric_delta`.
+`scenario_source_review.publish()` invalidates `indexes`, `pregens` and `scene_maps` because they were extracted from the old text. The repair child does the same: it does not copy the parent's NPC and location index, pregen extraction or scene-map inference.
 
-Otherwise reject the entire repair atomically.
+For the running game, continuity matters: keep the current player characters, claimed pregens, HP, SAN, Luck, inventory, timeline and room positions, and keep the runtime `scene_maps` (the PDF image did not change). Mark the derived source artifacts for rebuild and rebuild them asynchronously against the new source hash: NPC and location index, RAG prewarm, pregen candidates if needed. A rebuild may replace derived artifacts only if the repaired scenario is still the active source when it finishes; a slow rebuild for an old hash never overwrites a newer repair.
 
-`mechanics_counts` is a stricter tokenizer than the existing `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional sign (`+`, `-`, `−`) written directly before the number, **including when it is glued to a word** (`STR+10` and `STR-10` are different tokens, `+10` and `-10`), and joins numeric operands that are separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant, and `expected_numeric_delta` keys are these canonical tokens. A hyphenated label such as `A-10` yields the token `-10`; this only matters when that text changes, because identical text produces no delta. The existing `counts` is left unchanged for its other users.
+## 15. Map pages
 
-This catches accidental changes to:
+For `page_kind: map` the bot may record that low text is expected and the visible labels were reviewed, and clear that page's text-quality warning. It never changes the room graph, adjacency, entry room, secret edges, `visual_basis` or map coordinates. A wrong topology uses the existing map repair path.
 
-- dice expressions;
-- percentages;
-- HP;
-- SAN loss;
-- skill values;
-- dates;
-- money;
-- page references;
-- stat blocks;
-- durations;
-- attack thresholds.
+## 16. Applying to the running game
 
-Important: matching numeric delta proves only that the declared changes match the file. It does **not** prove semantic correctness. The external review remains the evidence source.
-
-## 14. `page_kind`
-
-Supported values:
-
-```text
-text
-map
-image
-```
-
-### `text`
-
-Normal scenario prose/rules/handouts.
-
-Requirements:
-
-- `text` must not be empty.
-
-### `map`
-
-A page whose primary content is a floor plan or diagram.
-
-Requirements:
-
-- transcribe readable labels;
-- do not manufacture room descriptions that are not printed on the page;
-- low text volume is not itself a parse failure;
-- `page_kind=map` may resolve `low_text` style warnings for that page.
-
-Example:
-
-```text
-Corbitt House Map (Keeper Version)
-Upper Story
-Ground Floor
-Basement
-Scale: 1/4 inch equals 3 feet.
-```
-
-Map graph topology itself is NOT edited by this file in v1.
-
-### `image`
-
-Use only when the source page genuinely contains no meaningful readable text.
-
-If the PDF page contains native/readable labels or rules, `image` MUST be rejected, mirroring the current `scenario_source_review.image_only` safety rule.
-
-## 15. Page markers
-
-Replacement `text` MUST NOT contain:
-
-```text
---- 第 N 頁 ---
-```
-
-or anything matched by:
-
-```python
-library.PAGE_MARKER_RE
-```
-
-The system owns physical page markers.
-
-This prevents one patch from injecting or replacing adjacent pages.
-
-## 16. Evidence
-
-`evidence` uses the same physical PDF coordinate concept as `scenario_source_review`.
-
-Each entry:
-
-```json
-{
-  "bbox": [x0, y0, x1, y1],
-  "note": "Full page verified against the rendered PDF."
-}
-```
-
-Validation:
-
-- one to 100 entries;
-- finite numeric coordinates;
-- rectangle entirely inside the real PDF page bounds;
-- non-empty note.
-
-For the default exported workfile, the Bot should populate one full-page rectangle automatically.
-
-External reviewers can narrow it, but do not require that for normal use.
-
-The evidence PNG does not need to be uploaded back to Discord: the server already owns the original PDF and can render the target page itself.
-
-## 17. Export workflow
-
-Add:
-
-```text
-/coc repair export warnings
-```
-
-and:
-
-```text
-/coc repair export 2,4,6,7,8,10,14,16,17
-```
-
-Both commands are KP-only (`permissions.is_kp`, refusal via `permissions.kp_only`) and deliver the workfile by direct message (`send_dm`) only, never in the shared channel: the file contains the scenario's full page text, which includes Keeper-only content. This is the same protection as the existing `/coc scenario source export` and template export handlers. The Help UI entry may be shown to everyone, but invoking it as anyone else is refused.
-
-### `warnings`
-
-Select the current scenario's unresolved parse-quality warning pages.
-
-If there are no warning pages:
-
-```text
-目前這份劇本沒有需要人工修復的解析頁面。
-```
-
-### Explicit page list
-
-Validate:
-
-- integers only;
-- 1 ≤ page ≤ page_count;
-- unique;
-- sorted before export.
-
-### Exported file
-
-Suggested filename:
-
-```text
-repair_the-haunting-scenario-trimmed_<short-hash>.md
-```
-
-The workfile should contain:
-
-- repair instructions;
-- exact target source identity;
-- page number;
-- current page text;
-- base page SHA;
-- full-page evidence bbox;
-- current parse warnings;
-- empty replacement/review fields to fill.
-
-For external AI usability, it is acceptable for the export template to include `base_text` and `current_warnings`, but these fields must either:
-
-1. be outside the import JSON payload; or
-2. be stripped by a dedicated export/import schema.
-
-Preferred implementation: keep the import JSON strict and place existing text in Markdown reference sections outside the JSON block.
-
-The importer takes exactly one fenced `json` block from the whole file, and reference text is arbitrary extracted page text that may itself contain a Markdown fence. Every line of a reference section is therefore written as a blockquote (prefixed with `> `), so a fence inside it never starts at the beginning of a line and is never mistaken for the payload. A test exports a page whose text contains a `json` fence and imports the result.
-
-Delivery: the workfile is sent as a private file attachment. The Discord transport today has `SendDM(owner_id, text)` and `SendDMImage(owner_id, png_bytes, conversation_id, page_number)` only, and `delivery.send_dm()` sends text, so phase 4 adds a `SendDMFile(owner_id, filename, data)` callback beside `SendDMImage` in `app/commands/types.py`, threads it through the handler IO the same way, and implements it in `delivery` with a `discord.File`. The handler never falls back to posting the file or its text in the shared channel; if the private send fails, the KP is told to open their DMs and retry.
-
-## 18. Example repair file
-
-````markdown
-# Scenario page repair
-
-This file replaces only the listed physical PDF pages.
-Do not change target identity fields.
-
-```json
-{
-  "repair_version": 1,
-  "target": {
-    "scenario_id": "the-haunting-scenario-trimmed-46c3c49c",
-    "content_hash": "abc123...",
-    "pdf_sha256": "def456...",
-    "page_count": 27
-  },
-  "patches": [
-    {
-      "page": 6,
-      "base_page_sha256": "111aaa...",
-      "text": "LOCATION 9: THE OLD CORBITT PLACE\n\n...",
-      "page_kind": "text",
-      "review_note": "Checked against physical PDF page 6. Corrected the broken page reference from page @@ to page 33.",
-      "evidence": [
-        {
-          "bbox": [0.0, 0.0, 504.0, 720.0],
-          "note": "Full page checked against source image."
-        }
-      ],
-      "expected_numeric_delta": {
-        "removed": {},
-        "added": {
-          "33": 1
-        }
-      }
-    },
-    {
-      "page": 7,
-      "base_page_sha256": "222bbb...",
-      "text": "Corbitt House Map (Keeper Version)\nUpper Story\nGround Floor\nBasement\nScale: 1/4 inch equals 3 feet.",
-      "page_kind": "map",
-      "review_note": "Verified as a floor-plan page. Low source text is intentional; visible labels were transcribed.",
-      "evidence": [
-        {
-          "bbox": [0.0, 0.0, 504.0, 720.0],
-          "note": "Full map reviewed."
-        }
-      ],
-      "expected_numeric_delta": {
-        "removed": {},
-        "added": {}
-      }
-    }
-  ]
-}
-```
-````
-
-## 19. Parsing rules
-
-Add:
-
-```python
-parse_repair_markdown(data: bytes) -> RepairProposal
-```
-
-Requirements:
-
-- UTF-8 or UTF-8 BOM;
-- normalize CRLF to LF;
-- enforce existing max authoring file size;
-- exactly one JSON payload;
-- no duplicate page numbers;
-- strict field sets;
-- max number of patches: recommended `100`;
-- max replacement text per page: bounded by existing authoring file-size policy;
-- no symlink/filesystem assumptions for Discord bytes.
-
-Do not use a permissive YAML parser.
-
-## 20. Validation phases
-
-Validation must be separated into deterministic phases.
-
-### Phase A — envelope
-
-Validate:
-
-- file name;
-- UTF-8;
-- schema version;
-- exact keys;
-- patch count.
-
-### Phase B — target identity
-
-Validate:
-
-- scenario exists;
-- scenario is PDF-derived;
-- content hash matches;
-- PDF SHA matches;
-- page count matches.
-
-A repair cannot target a Markdown-only scenario in v1 because there is no authoritative physical PDF page identity.
-
-### Phase C — page identity
-
-Validate:
-
-- page range;
-- uniqueness;
-- base page SHA;
-- no physical page marker injection.
-
-### Phase D — evidence
-
-Validate all rectangles against real PDF page bounds.
-
-### Phase E — page contents
-
-Validate:
-
-- non-empty review note;
-- page-kind requirements;
-- image-page rules;
-- replacement text requirements.
-
-### Phase F — numeric delta
-
-Compute and exactly compare numeric changes.
-
-### Phase G — candidate construction
-
-Build the complete candidate source by replacing only listed pages.
-
-### Phase H — candidate invariants
-
-Verify:
-
-- physical page markers remain 1..N exactly once;
-- untouched page bodies are byte-for-byte unchanged (raw bodies as defined in rule 11);
-- patched page count equals requested patch count;
-- candidate differs from parent;
-- candidate digest is deterministic.
-
-Any failure aborts the entire repair.
-
-No partial publication.
-
-## 21. Publication model
-
-Never update the parent scenario directory.
-
-Use the same immutable-derived-source pattern as `scenario_source_review.publish()`.
-
-Suggested derived ID:
-
-```text
-<parent-prefix>-repair-<candidate_digest[:16]>
-```
-
-If the same derived ID already exists and its audit digest matches, return it as an idempotent success.
-
-If it exists with different content, hard fail.
-
-Suggested manifest addition:
-
-```json
-{
-  "source_repair": {
-    "version": 1,
-    "parent_scenario_id": "...",
-    "parent_content_hash": "...",
-    "candidate_digest": "...",
-    "pages": [2, 4, 6],
-    "reviewer_user_id": "...",
-    "reviewer_display_name": "...",
-    "uploaded_filename": "repair_....md",
-    "reviewed_at": "..."
-  }
-}
-```
-
-Do not rely on reviewer identity supplied by the repair file.
-
-## 22. Repair audit
-
-Store a private audit file alongside the derived scenario:
-
-```text
-source_repair_audit.json
-```
-
-Recommended structure:
-
-```json
-{
-  "version": 1,
-  "parent_scenario_id": "...",
-  "source_hash_before": "...",
-  "source_hash_after": "...",
-  "pdf_sha256": "...",
-  "candidate_digest": "...",
-  "reviewer": {
-    "discord_user_id": "...",
-    "display_name": "..."
-  },
-  "uploaded_filename": "...",
-  "pages": [
-    {
-      "page": 6,
-      "before_sha256": "...",
-      "after_sha256": "...",
-      "review_note": "...",
-      "page_kind": "text",
-      "evidence": [],
-      "numeric_removed": {},
-      "numeric_added": {}
-    }
-  ]
-}
-```
-
-Storing the full before/after text is optional if privacy/storage size is a concern; page hashes plus the immutable parent/child scenarios are sufficient to recover the diff.
-
-## 23. Parse-quality update
-
-Do not replace all parse-quality history with a single clean result.
-
-For untouched pages:
-
-```text
-preserve existing page quality metadata and warnings
-```
-
-For repaired pages:
-
-```text
-method = "operator-reviewed-discord"
-warnings = []
-selected_sha256 = hash(replacement_text)
-page_kind = text/map/image
-```
-
-Top-level:
-
-```json
-{
-  "version": "source-repair-v1",
-  "parent_parse_quality_version": "...",
-  "repaired_pages": [2,4,6,...]
-}
-```
-
-This makes the next load message accurate.
-
-Example:
-
-Before:
-
-```text
-⚠️ 第 2、4、6、7、8、10、14、16、17 頁有解析品質待核對項目
-```
-
-After repairing all nine:
-
-```text
-(no warning)
-```
-
-If only pages 2 and 4 were repaired:
-
-```text
-⚠️ 第 6、7、8、10、14、16、17 頁仍有解析品質待核對項目
-```
-
-Do not hide warnings on untouched pages.
-
-## 24. Derived artifacts
-
-Existing `scenario_source_review.publish()` deliberately invalidates:
-
-```text
-indexes
-pregens
-scene_maps
-```
-
-because source repair can invalidate data extracted from the old text.
-
-The Discord feature should retain the same library safety property.
-
-### Library version
-
-The new derived scenario MUST NOT blindly copy old:
-
-- NPC index;
-- location index;
-- pregen extraction;
-- scene-map inference.
-
-### Active runtime
-
-When applying the repair to the currently running game, continuity matters.
-
-Use repair semantics:
-
-- preserve current player characters;
-- preserve claimed pregens;
-- preserve current HP/SAN/Luck/inventory;
-- preserve the timeline;
-- preserve current room positions where possible;
-- preserve current runtime `scene_maps` in v1 because the underlying PDF image has not changed;
-- mark derived source artifacts for rebuild.
-
-Then asynchronously rebuild:
-
-```text
-NPC/location index
-RAG/prewarm
-pregen candidates, if required
-```
-
-against the new source hash.
-
-The rebuild result may replace derived artifacts only if the repaired scenario is still the active source version when the rebuild finishes.
-
-Never allow a slow background rebuild from an old source hash to overwrite a newer repair.
-
-## 25. Map-page behavior
-
-This feature must solve the false-warning problem without pretending it repaired map topology.
-
-For:
-
-```json
-"page_kind": "map"
-```
-
-the Bot may record:
-
-```text
-low text is expected
-visible labels reviewed
-```
-
-and clear the page's text-quality warning.
-
-It MUST NOT change:
-
-- room graph;
-- adjacency;
-- entry room;
-- secret edges;
-- visual_basis;
-- existing map coordinates.
-
-If map topology is wrong, use the existing map repair path.
-
-A future v2 may add:
-
-```text
-logical_map_id
-map_variant
-paired_page
-```
-
-but these fields should not be accepted in v1.
-
-## 26. Active-scenario application
-
-Add a lifecycle API rather than abusing `pending_pdf_upload`:
+Add a lifecycle API instead of abusing `pending_pdf_upload`:
 
 ```python
 async def activate_repair_version(
@@ -1033,68 +235,29 @@ async def activate_repair_version(
 ) -> LifecycleResult:
 ```
 
-Preconditions under conversation lock:
+Under the conversation lock: the actor is still authorized; the active `scenario_library_id` equals the parent; the active source hash still equals the parent's; `timeline_id` is unchanged; `state_revision` satisfies the repair transaction policy; there is no other pending scenario submission or pending pregen Luck decision; and `resource_bridge.guard_replacement(state)` permits replacement. Apply with correction semantics. Do **not** call `_new_upload()`, reset `game_started`, clear the timeline, wipe characters, reset rooms or clear campaign history. `scenario_library_id` and `scenario_text` change in one transaction, never one before the other.
 
-1. actor remains authorized;
-2. active `scenario_library_id == parent_scenario_id`;
-3. active source hash still equals repair target hash;
-4. `timeline_id` is unchanged;
-5. `state_revision` satisfies the repair transaction policy;
-6. no other pending scenario submission;
-7. no pending pregen Luck decision;
-8. `resource_bridge.guard_replacement(state)` permits replacement.
+## 17. Two-phase concurrency
 
-Apply with correction semantics, not new-scenario semantics.
-
-Do NOT call `_new_upload()`.
-
-Do NOT:
-
-- reset `game_started`;
-- clear the timeline;
-- wipe characters;
-- reset current rooms;
-- clear normal campaign history.
-
-## 27. Two-phase concurrency model
-
-External review validation can involve file parsing, PDF inspection, hashing, and artifact publication. Do not hold the conversation lock for the entire operation.
-
-Use:
+Parsing, hashing, page checks and publication must not hold the conversation lock.
 
 ```text
-LOCK
-  authorize
-  capture parent scenario ID/hash
-  capture revision/timeline
-  verify no conflicting pending operation
-UNLOCK
-
-parse + validate + construct candidate
-publish immutable derived scenario
-
-LOCK
-  re-check authorization
-  re-check parent scenario ID/hash
-  re-check timeline
-  re-check replacement guard
-  activate as repair if still valid
-UNLOCK
+LOCK: authorize, capture parent id/hash and revision/timeline, check no conflicting pending operation   UNLOCK
+parse, validate, build candidate, publish the immutable derived scenario
+LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activate if still valid      UNLOCK
 ```
 
-If state changed after publication:
+If the state changed after publication, the new version stays in the library and is not applied:
 
 ```text
 新版已建立，但遊戲狀態在修復期間已變更，因此沒有自動套用。
 ```
 
-The immutable derived scenario may remain in the library.
+A valid published source is never rolled back or deleted just because activation became stale.
 
-Do not roll back or delete a valid published source merely because activation became stale.
+## 18. Result messages
 
-## 28. Result messages
-
-### Success: published and activated
+Every refusal says what to do next and names the template when the file could not be read as a repair.
 
 ```text
 ✅ 劇本來源修復完成
@@ -1103,169 +266,41 @@ Do not roll back or delete a valid published source merely because activation be
 修復頁面：2、4、6、7、8、10、14、16、17
 新版來源：<new scenario id>
 
+第 2 頁：數值沒有變動
+第 10 頁：移除 1d40 ×1、18 ×1；新增 1d4 ×1
+…
+
 已只替換指定頁面，其餘頁面保持不變。
-數值／骰式差異已通過 repair 檔宣告比對。
 目前遊戲已切換到修正版，角色、進度與目前位置沒有重置。
-
-NPC／地點索引會依修正版來源重新整理。
+舊版仍在劇本庫，必要時可切回。
 ```
 
-### Success: published but activation became stale
+Published but not applied: the version id plus the stale-state notice of section 17. Idempotent re-upload: `這份修復已經套用，沒有重複建立版本。` A wrong page count, no PDF-derived scenario loaded, an invalid page, an `image` page that has readable text, or an unreadable file each get one specific message and apply nothing.
 
-```text
-✅ 修正版已建立：<new scenario id>
+## 19. Free-form repair Markdown
 
-⚠️ 上傳期間目前遊戲狀態已變更，因此沒有自動切換來源。
-請由 KP 重新確認後選用這個版本。
-```
+Do not auto-import free-form files such as `# PDF page 2 ... # PDF page 4 ...`. They are useful reviewed material but carry no page kind, review note or page-count check. The template is the conversion path: copy the reviewed page texts into it.
 
-### Stale repair
+## 20. Refactor of `scenario_source_review`
 
-```text
-❌ 沒有套用 repair。
+Avoid two subtly different validators. Extract the reusable public helpers: `split_source_pages`, `published_page_text`, `candidate_text` and `validate_evidence` (the review CLI keeps its evidence rectangles; page repair does not use them). Two deliberate differences: page repair splits the parent lossless (section 8) and reports numbers with the mechanics tokens (section 10). The stripping splitter and `scenario_numbers.counts` stay for their existing callers.
 
-這份檔案是依較舊的劇本來源製作：
-expected content hash: ...
-current content hash: ...
+## 21. Files
 
-請重新匯出 repair 工作檔後再修正。
-```
+New: `app/scenario_page_repair.py`, `app/services/scenario_repair.py`, `tests/test_scenario_page_repair.py`, `tests/test_discord_scenario_repair_upload.py`, `docs/references/scenario_page_repair_template(.md|_zh.md)`, and this spec. Modified: `app/commands/handlers/uploads.py`, `app/discord_bot.py`, `app/services/scenario_lifecycle.py`, `app/scenario_source_review.py`, `app/scenario_numbers.py`, `app/help_registry.py`, the load confirmation in `app/services/scenario_ingestion.py`, and the reference and guide documents.
 
-### Unexpected number change
-
-```text
-❌ 第 10 頁的數值差異與 repair 宣告不一致，整份修復沒有套用。
-
-實際新增：1D4+2 × 1
-repair 宣告：無
-
-請重新核對原 PDF 後再上傳。
-```
-
-## 29. Existing free-form repair Markdown
-
-Do NOT attempt to auto-import free-form files such as:
-
-```text
-# PDF page 2
-...
-# PDF page 4
-...
-```
-
-Those files are useful human-reviewed source material, but they are not safely bound to:
-
-- scenario ID;
-- parent content hash;
-- PDF hash;
-- page-body hash;
-- numeric delta;
-- evidence.
-
-Provide a conversion path:
-
-```text
-/coc repair export 2,4,6,7,8,10,14,16,17
-```
-
-Then copy the reviewed content into the generated workfile.
-
-This prevents a repair prepared for one version of The Haunting from being silently applied to another import of the same title.
-
-## 30. Refactor of `scenario_source_review`
-
-Avoid duplicating page-validation logic.
-
-Extract reusable public helpers from private functions where practical.
-
-Suggested:
-
-```python
-scenario_source_review.split_source_pages(...)
-scenario_source_review.validate_reviewed_page(...)
-scenario_source_review.numeric_delta(...)
-scenario_source_review.build_candidate_text(...)
-```
-
-Or move common logic into:
-
-```text
-app/scenario_source_repair_common.py
-```
-
-Both CLI source review and Discord repair should use the same:
-
-- page splitting;
-- page-marker protection;
-- bbox validation;
-- numeric counting;
-- published-page serialization;
-- candidate hashing.
-
-Two deliberate differences from the review CLI: page repair splits the parent lossless (rule 11) and compares numbers with the mechanics-aware tokens (rule 13). The stripping splitter and `scenario_numbers.counts` stay for their existing callers.
-
-Do not maintain two subtly different validators.
-
-## 31. Proposed files
-
-### New
-
-```text
-app/scenario_page_repair.py
-app/services/scenario_repair.py
-tests/test_scenario_page_repair.py
-tests/test_discord_scenario_repair_upload.py
-docs/specs/feature/discord_page_level_scenario_repair_design_spec.md
-docs/specs/feature/discord_page_level_scenario_repair_design_spec_zh.md
-```
-
-If the project keeps English/Traditional-Chinese mirrored specs, add both.
-
-### Modified
-
-Likely:
-
-```text
-app/commands/handlers/uploads.py
-app/discord_bot.py
-app/services/scenario_lifecycle.py
-app/scenario_source_review.py
-app/scenario_library.py
-app/help_service.py
-app/discord_transport/help_ui.py
-tests/test_pdf_scenario_lifecycle_integration.py
-```
-
-Potentially:
-
-```text
-app/trusted_scenario_source.py
-app/scenario_templates.py
-```
-
-depending on publication and translation invalidation handling.
-
-## 32. Suggested API
-
-### `scenario_page_repair`
+## 22. API
 
 ```python
 @dataclass(frozen=True)
-class RepairTarget:
-    scenario_id: str
-    content_hash: str
-    pdf_sha256: str
-    page_count: int
+class RepairTarget: page_count: int
 
 @dataclass(frozen=True)
 class PageRepair:
     page: int
-    base_page_sha256: str
     text: str
     page_kind: Literal["text", "map", "image"]
     review_note: str
-    evidence: tuple[EvidenceRegion, ...]
-    expected_numeric_delta: NumericDelta
 
 @dataclass(frozen=True)
 class RepairProposal:
@@ -1276,439 +311,107 @@ class RepairProposal:
 @dataclass(frozen=True)
 class RepairCheck:
     ready: bool
+    scenario_id: str
     candidate_digest: str
     candidate_text: str
     repaired_pages: tuple[int, ...]
-    issues: tuple[str, ...]
-    changes: tuple[dict, ...]
-```
+    issues: tuple[RepairIssue, ...]
+    changes: tuple[dict, ...]      # per page: hashes, kind, note, removed and added numeric tokens
 
-Functions:
-
-```python
 parse_markdown_bytes(data: bytes) -> RepairProposal
-
-check(
-    proposal: RepairProposal,
-    *,
-    scenario_id: str | None = None,
-) -> RepairCheck
-
-publish(
-    check: RepairCheck,
-    *,
-    reviewer_user_id: str,
-    reviewer_display_name: str,
-    uploaded_filename: str,
-) -> str
+check(proposal: RepairProposal, scenario_id: str) -> RepairCheck
+publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded_filename) -> str
 ```
 
-## 33. Atomicity
+## 23. Atomicity and idempotency
 
-The operation has two independent atomic boundaries:
+Source publication is all or nothing; a failed page publishes nothing. Activation is all or nothing under the state transaction; state never points at a partial candidate. The derived ID is deterministic from the candidate digest. Re-uploading the same file against the same parent returns the same ID and ensures activation is correct; if the derived version is already active it says so; against a newer parent the page-count and page checks apply as for any file, and a page whose text now already equals the repair is reported as unchanged.
 
-### Source publication
+## 24. Translation variants and RAG
 
-All-or-nothing.
+A source repair changes the canonical source identity. Translated or template variants bound to the old source stay with the old scenario, are unavailable for the repaired one, and the Keeper is told when the active source had one; translations migrate later through `scenario_source_review.rebind()`. Never copy translated records by id. Any RAG cache keyed to the parent hash is stale and is never authoritative for the child; schedule a rebuild for the new hash, use safe fallback retrieval from the new canonical text meanwhile, and do not block play on a rebuild.
 
-If any patched page fails validation:
+## 25. Performance
 
-```text
-publish nothing
-```
+A 9-page patch reruns none of PaddleOCR, Tesseract, PyMuPDF4LLM extraction or AI PDF repair. Upload latency is parse, hash, page check, numeric report, derived publication and state commit, normally a few seconds, plus the optional asynchronous index and RAG rebuild.
 
-### Active game activation
+## 26. Security and trust boundaries
 
-All-or-nothing under the conversation/state transaction.
+Treat the file as untrusted input: reject path traversal and file paths, embedded page markers, unsupported keys or versions, huge payloads, duplicate pages, invalid UTF-8 and wrong page counts. Never execute Markdown, never reference other local files, never use file-supplied reviewer identity, and never let a repair edit the parent.
 
-Do not update:
+## 27. Tests
 
-```text
-scenario_text
-```
+- **Parser:** a valid one-page repair; BOM accepted; unknown top-level, target or patch keys; duplicate or zero or out-of-range pages; marker injection; invalid `page_kind`; missing review note; an unfilled template is rejected.
+- **Binding:** no scenario loaded; Markdown-only scenario; wrong page count.
+- **Numeric report:** a `1D40 → 1D4` change is reported with removed and added tokens; `+10% → -10%`, `SAN 1/1d6 → SAN 1 1d6` and `STR+10 → STR-10` are reported; unchanged text reports nothing; an unchanged hyphenated label causes no change; one page's report does not affect another.
+- **Merge:** only the listed pages change; untouched pages keep their exact bytes including whitespace; markers stay ordered once each; patch order does not change the result; a no-op repair is rejected; the same repair is idempotent.
+- **Map and image:** a map page with labels is accepted and clears its low-text warning; a map repair does not change the scene-map graph; `image` is rejected when native text exists and accepted when it does not.
+- **Discord:** `repair_*.md` routes to the repair handler and never to compare; any user may upload by default and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it; more than one repair attachment is rejected; a pending source replacement follows the admission policy; a state that changed after publication publishes but does not activate.
+- **Lifecycle:** activation preserves timeline, `game_started`, claimed PCs, HP/SAN/Luck/inventory and room positions; it never calls `_new_upload()`; the new source becomes active only after the whole transaction; the old scenario stays readable.
+- **Parse quality:** repaired pages cleared, untouched pages kept, the load message lists only the remaining pages.
+- **Artifacts:** parent indexes are not copied; rebuild is keyed to the child hash; a stale rebuild cannot overwrite a newer repair.
 
-before:
+## 28. Acceptance test: The Haunting
 
-```text
-scenario_library_id
-```
+Base: `The_Haunting_Scenario_trimmed`, 27 physical PDF pages, warning pages 2, 4, 6, 7, 8, 10, 14, 16, 17. A reviewer fills the template for those nine pages from the PDF; the file is uploaded as `repair_the-haunting-trimmed_01.md`. Expected: the page count matches; only the nine pages differ in the 27-page candidate; a new immutable scenario id is created and the original is unchanged; the reply lists the numeric changes per page; the nine warning pages no longer appear in the parse-quality warning; the timeline, characters, state and room positions are unchanged; the new source hash gets a new RAG and index build; uploading the same file again creates no other version.
 
-or vice versa.
-
-State must never point at a partial candidate.
-
-## 34. Idempotency
-
-Calculate:
-
-```text
-candidate_digest =
-digest(
-  parent scenario identity
-  normalized repair proposal
-  candidate page text
-)
-```
-
-Derived scenario ID is deterministic from this digest.
-
-Re-upload behavior:
-
-### Same repair, already published, parent still active
-
-Return the same derived ID and ensure activation is correct.
-
-### Same repair, derived version already active
-
-Reply:
-
-```text
-這份修復已經套用，沒有重複建立版本。
-```
-
-### Same file against a newer parent
-
-Reject stale.
-
-## 35. Translation variants
-
-Source repair changes canonical source identity.
-
-Existing translated/template variants bound to the old source must not silently become valid for the repaired source.
-
-Behavior:
-
-- preserve old variant data under the old scenario;
-- mark it unavailable for the new repaired scenario;
-- inform the Keeper if the active source had a translated variant;
-- use existing `scenario_source_review.rebind()` flow later if translation migration is desired.
-
-Do not auto-copy translated records by record ID.
-
-## 36. RAG behavior
-
-The repaired source creates a new source hash.
-
-Any RAG cache keyed to the parent hash is stale.
-
-Requirements:
-
-1. never reuse a RAG index whose source hash is the parent hash as authoritative for the repaired scenario;
-2. schedule rebuild/prewarm for the new hash;
-3. while the rebuild is unavailable, use safe fallback retrieval from the new canonical scenario text;
-4. do not block game start purely because a derived RAG index is rebuilding, consistent with the project requirement that import enhancements must not prevent play.
-
-## 37. Performance
-
-Expected repair size is small.
-
-A 9-page patch should not rerun:
-
-```text
-PaddleOCR
-Tesseract
-PyMuPDF4LLM full-document extraction
-AI PDF repair
-```
-
-Expected expensive work:
-
-```text
-none for source merge
-optional asynchronous index/RAG rebuild afterward
-```
-
-Primary upload latency should be dominated by:
-
-```text
-Markdown parse
-hashing
-PDF page bound checks
-numeric diff
-derived publication
-state commit
-```
-
-Target: normally sub-second to a few seconds before any optional background index rebuild.
-
-## 38. Security / trust boundaries
-
-Treat repair Markdown as untrusted input.
-
-Reject:
-
-- path traversal;
-- filesystem paths from the file;
-- embedded page markers;
-- unsupported schema keys;
-- huge payloads;
-- duplicate pages;
-- NaN/Infinity evidence values;
-- evidence outside the source PDF;
-- wrong hashes;
-- wrong PDF;
-- wrong page count;
-- invalid UTF-8;
-- unsupported repair versions.
-
-Do not execute Markdown.
-
-Do not use file-provided reviewer identity.
-
-Do not allow repair Markdown to reference another local file.
-
-## 39. Tests
-
-### Parser tests
-
-1. valid one-page repair.
-2. UTF-8 BOM accepted.
-3. unknown top-level key rejected.
-4. unknown patch key rejected.
-5. duplicate page rejected.
-6. zero page rejected.
-7. page > PDF page count rejected.
-8. physical page marker injection rejected.
-9. malformed evidence rejected.
-10. invalid `page_kind` rejected.
-
-### Binding tests
-
-11. wrong scenario ID rejected.
-12. wrong content hash rejected.
-13. wrong PDF SHA rejected.
-14. wrong page count rejected.
-15. wrong base-page SHA rejected.
-16. repair made against parent A cannot apply to child B.
-
-### Numeric safety tests
-
-17. undeclared added number rejected.
-18. undeclared removed number rejected.
-19. declared `1D40 → 1D4` change accepted.
-20. extra percentage change causes full rejection.
-21. number delta on one page does not affect another page.
-
-### Merge tests
-
-22. only patched pages change.
-23. untouched page bytes remain identical.
-24. physical markers remain ordered exactly once.
-25. patch order in JSON does not affect candidate result.
-26. no-op repair rejected.
-27. same valid repair is idempotent.
-
-### Map tests
-
-28. map page with readable labels and `page_kind=map` accepted.
-29. map page can clear low-text quality warning.
-30. map repair does not mutate scene-map graph.
-31. `page_kind=image` rejected when native/readable text exists.
-
-### Discord tests
-
-32. `repair_*.md` routes to repair handler, not compare handler.
-33. an ordinary player can submit a repair, and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it to the KP Assistant when enabled.
-34. KP can submit repair.
-35. more than one repair attachment rejected.
-36. repair upload during pending source replacement follows admission policy.
-37. stale game revision after validation publishes library version but does not auto-activate.
-
-### Lifecycle tests
-
-38. active repair preserves timeline ID.
-39. active repair preserves game_started.
-40. active repair preserves claimed PCs.
-41. active repair preserves HP/SAN/Luck/inventory.
-42. active repair preserves current map position.
-43. active repair does not call `_new_upload()`.
-44. new source ID becomes active only after complete transaction.
-45. old scenario remains readable from library.
-
-### Parse-quality tests
-
-46. repaired page warnings cleared.
-47. untouched page warnings retained.
-48. load confirmation lists only remaining warning pages.
-
-### Artifact tests
-
-49. parent indexes are not copied as authoritative into child.
-50. prewarm/rebuild is keyed to child source hash.
-51. stale background rebuild cannot overwrite a newer repair.
-
-## 40. Acceptance test: The Haunting
-
-Base:
-
-```text
-The_Haunting_Scenario_trimmed
-27 physical PDF pages
-warning pages:
-2, 4, 6, 7, 8, 10, 14, 16, 17
-```
-
-Steps:
-
-```text
-/coc repair export 2,4,6,7,8,10,14,16,17
-```
-
-External reviewer completes the generated file.
-
-Upload:
-
-```text
-repair_the-haunting-scenario-trimmed_01.md
-```
-
-Expected:
-
-1. target source identity matches;
-2. 9 page hashes match;
-3. all evidence boxes valid;
-4. numeric deltas match declared changes;
-5. candidate contains 27 pages;
-6. only the 9 target pages differ;
-7. new immutable scenario ID is created;
-8. original scenario remains unchanged;
-9. repaired warning pages no longer appear in parse-quality warning output;
-10. active campaign timeline is unchanged;
-11. player characters and state are unchanged;
-12. current room positions remain unchanged;
-13. new source hash receives a new RAG/index build;
-14. re-uploading the same file does not create another version.
-
-## Template and help
+## 29. Template and help
 
 A new upload format ships with its documentation, in the same pull request as the behavior it describes:
 
-- **Template.** `docs/references/scenario_page_repair_template(.md|_zh.md)` is the blank authoring template, linked from `docs/README.md` and `docs/README_zh.md` under References, like `role_card_template`. It states the rules (physical pages, full-page text, hashes, `page_kind`, evidence, the numeric delta tokens) and carries the JSON skeleton. A test keeps its keys identical to the parser's accepted keys, so the template cannot drift, and checks that an unfilled template is rejected. The export (phase 4) renders a filled workfile from the same field set.
-- **Help.** The conversation help (`app/help_registry.py`, rendered by `help_service` and the Help UI) gets an entry for uploading a `repair_*.md` (shown when a scenario is loaded; says that anyone may upload, that the file must come from an export or the template, and that the numeric changes must be declared) and, with the export, an entry for `/coc repair export` marked KP-only. `docs/references/player_command_reference(.md|_zh.md)` and `docs/guides/gameplay(.md|_zh.md)` get matching lines, and the load confirmation that lists parse-quality warning pages points at the repair flow.
-- **Messages.** Every refusal in rule 28 says what to do next (re-export, declare the number, ask the KP), and names the template when the file could not be read as a repair.
+- **Template.** `docs/references/scenario_page_repair_template(.md|_zh.md)` is the authoring template, linked from `docs/README.md` and `docs/README_zh.md` under References, like `role_card_template`. It states the rules and carries the JSON skeleton. A test keeps its keys identical to the parser's accepted keys so it cannot drift, and checks that an unfilled template is rejected.
+- **Help.** The conversation help (`app/help_registry.py`, rendered by `help_service` and the Help UI) gets an entry for uploading `repair_*.md`, shown when a scenario is loaded: anyone may upload, what the file contains, and that the reply lists the number changes. `docs/references/player_command_reference(.md|_zh.md)` and `docs/guides/gameplay(.md|_zh.md)` get matching lines, and the load confirmation that lists parse-quality warning pages points at the repair flow and the template.
+- **Messages.** Every refusal says what to do next and names the template when the file could not be read.
 
 ## Delivery
 
-Each implementation phase below ships as its own pull request with its own review; the status stays `partial` until phase 5 lands. The existing `scenario_source_review.publish` requires a proposal that covers every page and writes a fully clean parse-quality record, so phase 1 extracts the shared page logic and adds a partial-page publication path rather than reusing `publish` unchanged.
+Each implementation phase below ships as its own pull request with its own review; the status stays `partial` until phase 4 lands. The existing `scenario_source_review.publish` requires a proposal that covers every page and writes a fully clean parse-quality record, so phase 1 extracts the shared page logic and adds a partial-page publication path rather than reusing `publish` unchanged.
 
-## 41. Implementation order
+## 30. Implementation order
 
-Recommended sequence:
+1. **Deterministic core.** Extract the shared page helpers from `scenario_source_review`; implement the parser, strict schema, lossless merge, numeric report, candidate digest and immutable partial-page publication, with unit tests and the template.
+2. **Discord upload.** `repair_*.md` routing, `user_id` in `handle_uploads`, the scenario-lifecycle permission check, the repair service, result and refusal messages, routing tests, help entries and guide lines.
+3. **Active-game correction.** `scenario_lifecycle.activate_repair_version()`, correction semantics, the stale revision and timeline checks, preservation of map position and player state, integration tests.
+4. **Derived artifacts.** Schedule the index and RAG rebuild against the new source hash, protect the rebuild commit with a hash check, and report the status after a repair.
 
-### Phase 1 — deterministic library repair
+## 31. Merge criteria
 
-1. Extract shared page validation from `scenario_source_review`.
-2. Implement `scenario_page_repair` parser.
-3. Implement strict schema validation.
-4. Implement source/hash/page binding.
-5. Implement numeric-delta verification.
-6. Implement deterministic candidate merge.
-7. Implement immutable derived publication.
-8. Add unit tests.
-
-### Phase 2 — Discord upload
-
-9. Add `repair_*.md` routing.
-10. Pass `user_id` into upload handling.
-11. Add KP/Host authorization.
-12. Add repair service handler.
-13. Add success/error messages.
-14. Add Discord routing tests.
-
-### Phase 3 — active-game correction
-
-15. Add `scenario_lifecycle.activate_repair_version()`.
-16. Reuse correction semantics.
-17. Add stale revision/timeline checks.
-18. Preserve map position/player state.
-19. Add lifecycle integration tests.
-
-### Phase 4 — export UX
-
-20. Add `/coc repair export warnings`.
-21. Add explicit page-list export.
-22. Add Help UI entry.
-23. Attach generated workfile to Keeper/DM where supported.
-24. Add export tests.
-
-### Phase 5 — derived artifact refresh
-
-25. Schedule index/RAG rebuild against new source hash.
-26. Protect rebuild commit with hash/version check.
-27. Improve post-repair status reporting.
-
-## 42. Merge criteria
-
-This feature is mergeable only when all of the following are true:
-
-- repair cannot target the wrong source silently;
-- the upload check follows the scenario-lifecycle policy, and the export is KP-only and DM-only;
-- full-page replacement is deterministic;
-- undeclared numeric changes hard-fail;
-- parent scenario is immutable;
-- partial repairs cannot publish;
-- active game correction does not reset campaign state;
+- a repair cannot be applied to a scenario whose page count differs, to a Markdown-only scenario, or when none is loaded;
+- full-page replacement is deterministic and untouched pages keep their exact bytes;
+- every changed number is reported in the reply and the audit;
+- the parent scenario is immutable and a partial repair cannot publish;
+- active-game correction does not reset campaign state;
 - untouched page warnings remain visible;
-- `repair_*.md` never routes to generic compare;
+- `repair_*.md` never routes to the generic compare;
+- the upload check follows the scenario-lifecycle policy;
 - idempotent re-upload is proven by tests;
-- no OCR/API call is required for the page merge itself;
-- existing `scenario_source_review` tests remain green;
-- existing PDF/Markdown upload behavior remains unchanged;
+- no OCR or API call is needed for the page merge;
+- existing `scenario_source_review` tests stay green and existing PDF and Markdown upload behavior is unchanged;
 - the template, help entries and guide lines ship with the behavior they describe.
 
-## 43. Explicit design choices
+## 32. Explicit design choices
 
-### Why not directly accept the free-form repair file?
+- **Why not accept any free-form repair file?** It would carry no page kind, review note or page-count check.
+- **Why bind to the loaded scenario and not to hashes?** The file is written by an external reviewer who has the PDF and the template but not the bot's internal hashes. The loaded scenario, the page count and the reported number changes give the safety that matters without asking the Keeper to copy anything; the immutable parent makes a wrong repair reversible.
+- **Why replace the whole page?** It gives deterministic provenance and avoids fuzzy alignment.
+- **Why report numbers instead of rejecting them?** Source repair is allowed to fix numbers, and a correction is by definition a numeric change; what must not happen is a change nobody notices.
+- **Why a child scenario and not an overwrite?** Repairs must be reversible, auditable and safe for existing campaigns.
+- **Why keep the game state?** This fixes the source; it is not a new scenario.
 
-Because a free-form file is not cryptographically bound to the source it was reviewed against.
-
-A title such as:
-
-```text
-The Haunting Scenario trimmed
-```
-
-is not enough to prove source identity.
-
-### Why replace the whole page instead of merging paragraphs?
-
-Because physical page replacement gives deterministic provenance and avoids fuzzy text alignment.
-
-### Why require numeric deltas?
-
-Because source-repair is exactly where OCR-corrupted mechanics can enter the canonical source. A repair system must make numeric mutations explicit.
-
-### Why create a child scenario instead of overwriting?
-
-Because repairs must be reversible, auditable, reproducible, and safe for existing campaigns.
-
-### Why preserve the current game state?
-
-Because this operation fixes the scenario source; it does not represent starting a new scenario.
-
-## 44. Final expected Keeper experience
-
-After implementation, the entire flow should feel like:
+## 33. Expected Keeper experience
 
 ```text
 Bot:
 ⚠️ 第 2、4、6、7、8、10、14、16、17 頁需要核對。
 
 Keeper:
-/coc repair export warnings
-
-Bot:
-已產生 repair_the-haunting-xxxx.md。
-請連同原 PDF 交給外部工具核對，完成後把 repair_*.md 上傳回來。
-
-Keeper:
-[uploads repair_the-haunting-xxxx_01.md]
+(fills docs/references/scenario_page_repair_template.md with ChatGPT from the original PDF)
+[uploads repair_the-haunting_01.md]
 
 Bot:
 ✅ 修復完成。
 已核對並替換第 2、4、6、7、8、10、14、16、17 頁。
+第 10 頁：移除 1d40 ×1、18 ×1；新增 1d4 ×1
 建立新版劇本來源：the-haunting-...-repair-xxxxxxxxxxxxxxxx
 目前遊戲已使用修正版；角色、進度與位置未重置。
 ```
-
-That is the intended v1 contract.
