@@ -10,10 +10,11 @@ NUMBER = re.compile(r'(?i)(?<![a-z0-9_])(?:\d+d\d+(?:[ \t]*[+-][ \t]*\d+)?|\d+(?
 
 
 _CORE = r'(?:\d+d\d+(?:[ \t]*[+-][ \t]*\d+)?|\d+(?:\.\d+)?%?)'
-# A mechanics token keeps a leading sign (not glued to a word) and joins operands separated by / - en dash or minus,
-# so "+10%" differs from "-10%" and "1/1d6" from "1 1d6", which `NUMBER` cannot tell apart.
+# A mechanics token keeps a sign written directly before the number, even glued to a word ("STR+10"), and joins operands
+# separated by / - en dash or minus, so "+10%" differs from "-10%" and "1/1d6" from "1 1d6", which `NUMBER` cannot tell
+# apart. A hyphenated label such as "A-10" therefore yields "-10"; unchanged text never produces a delta.
 MECHANICS = re.compile(
-    r'(?i)(?:(?<![a-z0-9_])[+\-\u2212])?(?<![a-z0-9_])' + _CORE
+    r'(?i)(?:[+\-\u2212])?(?<![a-z0-9_])' + _CORE
     + r'(?:[ \t]*[/\-\u2013\u2212][ \t]*' + _CORE + r')*(?![a-z0-9_])')
 
 

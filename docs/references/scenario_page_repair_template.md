@@ -26,7 +26,8 @@ template only if you need to write one by hand.
 - `evidence` lists rectangles of the physical page you checked, `[x0, y0, x1, y1]` inside the page bounds, each with a note.
   The export fills in one full-page rectangle; keep it unless you want to narrow it.
 - `expected_numeric_delta` declares every number you changed on that page, as counts of tokens removed and added.
-  A token keeps its sign and joins operands written with `/` or `-`: `+10%` and `-10%` differ, `1/1d6` and `1 1d6`
+  A token keeps its sign, even when glued to a word, and joins operands written with `/` or `-`: `STR+10` and `STR-10`
+  differ, `+10%` and `-10%` differ, `1/1d6` and `1 1d6`
   differ, `1-3` is one token. Lower-case, no spaces: `1d4+1`. Anything changed but not declared, or declared but not
   changed, rejects the whole repair. Use `{}` when you changed no numbers.
 

@@ -290,9 +290,23 @@ def test_signs_and_separators_are_part_of_the_numeric_contract(scenario, before,
     assert checked(sid, [patch(sid, 1, after, removed=removed, added=added)]).ready
 
 
-def test_page_numbers_and_hyphenated_words_do_not_trigger_phantom_signs(scenario):
+def test_signs_glued_to_a_mechanic_identifier_are_kept(scenario):
+    sid = scenario(pages=('STR+10 bonus.', 'Two.', 'Three.', 'Four.'))
+    assert codes(checked(sid, [patch(sid, 1, 'STR-10 bonus.')])) == {'numeric'}
+    assert checked(sid, [patch(sid, 1, 'STR-10 bonus.', removed={'+10': 1}, added={'-10': 1})]).ready
+
+
+def test_unchanged_hyphenated_labels_cause_no_numeric_delta(scenario):
     sid = scenario(pages=('Room A-10 on page 3.', 'Two.', 'Three.', 'Four.'))
     assert checked(sid, [patch(sid, 1, 'Room A-10 on page 3, east wing.')]).ready
+
+
+def test_a_quoted_reference_fence_does_not_break_the_workfile(scenario):
+    sid = scenario()
+    raw = workfile(sid, good(sid)).decode()
+    quoted = '> ```json\n> {"not": "the repair"}\n> ```\n\n'
+    proposal = repair.parse_markdown_bytes((quoted + raw).encode())
+    assert [p.page for p in proposal.patches] == [2]
 
 
 def test_untouched_pages_keep_their_exact_bytes_including_whitespace(scenario):
