@@ -187,7 +187,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         "evidence_ref": f"tool:{len(tool_events) + 1}",
                     }))
                 if result.get("ok") and name == "transfer_item" and not result.get("replayed"):
-                    moved = [str(result.get("item", ""))] * int(result.get("quantity", 1))
+                    listed = result.get("moved_items")
+                    moved = ([str(entry) for entry in listed] if isinstance(listed, list) and listed
+                             else [str(result.get("item", ""))] * int(result.get("quantity", 1)))
                     for who, key in ((result.get("from"), "removed"), (result.get("to"), "added")):
                         inventory_events.append(GameEvent("inventory_change", {
                             "investigator": who, "operation": name, "added": moved if key == "added" else [],

@@ -49,7 +49,9 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
         if name == 'transfer_item':
             # The receipt carries its own before/after lists and character ids, so it verifies on its own even when
             # two investigators share a display name or the call is a replay of one this turn already recorded.
-            moved = Counter([result.get('item')] * int(result.get('quantity') or 1))
+            listed = result.get('moved_items')
+            moved = Counter(listed if isinstance(listed, list) and listed
+                            else [result.get('item')] * int(result.get('quantity') or 1))
             lists = [result.get(key) for key in ('from_before', 'to_before', 'from_carried_items', 'to_carried_items')]
             if (not all(isinstance(entries, list) for entries in lists) or not result.get('from_id')
                     or not result.get('to_id') or result.get('from_id') == result.get('to_id')):

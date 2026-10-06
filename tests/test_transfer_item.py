@@ -200,3 +200,11 @@ def test_without_a_turn_there_is_no_replay_protection_and_no_id():
     first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
     second = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
     assert first["operation_id"] == "" and second["ok"] and not second.get("replayed")
+
+
+def test_a_two_copy_transfer_reports_each_actual_spelling():
+    state = _state(Ann=["Old Book", "old book"])
+    with _in_turn("turn-1"):
+        receipt = _transfer(state, {"from": "Ann", "to": "Bea", "item": "old book", "quantity": 2})
+    assert receipt["ok"] and sorted(receipt["moved_items"]) == ["Old Book", "old book"]
+    assert _items()["Bea"] == receipt["moved_items"]

@@ -201,7 +201,7 @@ def transfer_item(call: ToolCall) -> dict[str, Any]:
             return {
                 "ok": True, "from": giver.name, "to": receiver.name,
                 "from_id": _character_key(giver), "to_id": _character_key(receiver),
-                "item": moved[0], "quantity": quantity, "operation_id": operation_id or "",
+                "item": moved[0], "moved_items": list(moved), "quantity": quantity, "operation_id": operation_id or "",
                 "giver_remaining": sum(1 for entry in giver.carried_items if _same_item(entry, item)),
                 "from_before": from_before, "to_before": to_before,
                 "from_carried_items": list(giver.carried_items), "to_carried_items": list(receiver.carried_items),
