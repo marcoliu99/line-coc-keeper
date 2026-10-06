@@ -2224,12 +2224,14 @@
       "status": "partial",
       "evidence": [
         "app/keeper_tools/inventory.py",
+        "app/keeper_tools/operation_ids.py",
         "app/keeper_tools/registry.py",
         "app/services/turn_resolution.py",
         "app/providers/codex_provider.py",
         "app/agents/tool_gateway.py",
         "tests/test_keeper_tool_registry.py",
-        "tests/test_inventory_actor_plumbing.py"
+        "tests/test_inventory_actor_plumbing.py",
+        "tests/test_transfer_item.py"
       ],
       "path": "docs/specs/bug/inventory_transfer_design_spec.md",
       "zh_path": "docs/specs/bug/inventory_transfer_design_spec_zh.md",
@@ -2251,6 +2253,19 @@
       "path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec.md",
       "zh_path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec_zh.md",
       "source_revision": "3fbec39fc941c366ef11a4f1cb43888b98810bce"
+    },
+    {
+      "title": "A Luck printed under column headings is kept, not dropped",
+      "zh": "印在欄位標題下方的幸運值要保留，不是丟掉",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/pregen_extractor.py",
+        "tests/test_pregen_luck_verification.py"
+      ],
+      "path": "docs/specs/bug/pregen_luck_form_headings_design_spec.md",
+      "zh_path": "docs/specs/bug/pregen_luck_form_headings_design_spec_zh.md",
+      "source_revision": "6f7a6d97a1981b7411952fa229a29fe646e9b812"
     }
   ]
 }
