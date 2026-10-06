@@ -238,14 +238,31 @@ MAX_LISTED_TOKENS = 200  # per side and page in the audit; the totals are always
 MAX_REPORTED_TOKENS = 40  # per side and page in a private report line
 
 
-def _change(patch: PageRepair, old_body: str, new_body: str) -> dict[str, Any]:
-    removed, added = scenario_numbers.ordered_diff(
-        scenario_numbers.mechanics_contexts(old_body), scenario_numbers.mechanics_contexts(new_body))
+MAX_REPAIR_TOKENS = 50_000  # numeric tokens compared across every replaced page, old and new text together
+
+
+def _change(patch: PageRepair, old_body: str, new_body: str,
+            old_pairs: list[tuple[str, str]], new_pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    removed, added = scenario_numbers.ordered_diff(old_pairs, new_pairs)
     return {"page": patch.page, "page_kind": patch.page_kind, "review_note": patch.review_note,
             "before_sha256": _sha(old_body), "after_sha256": _sha(new_body),
             "removed": [list(pair) for pair in removed[:MAX_LISTED_TOKENS]],
             "added": [list(pair) for pair in added[:MAX_LISTED_TOKENS]],
             "removed_total": len(removed), "added_total": len(added)}
+
+
+def _changes(patches: tuple[PageRepair, ...], old_pages: list[str], new_pages: list[str]) -> tuple[dict[str, Any], ...] | RepairIssue:
+    """The per-page numeric changes, or the issue that the pages hold too many numbers to compare within the budget."""
+    budget, rows = MAX_REPAIR_TOKENS, []
+    for patch in patches:
+        old, new = old_pages[patch.page - 1], new_pages[patch.page - 1]
+        old_pairs = scenario_numbers.mechanics_contexts(old, budget)
+        new_pairs = scenario_numbers.mechanics_contexts(new, budget - len(old_pairs))
+        budget -= len(old_pairs) + len(new_pairs)
+        if budget < 0:
+            return RepairIssue("content", patch.page, f"數字太多，整份修復合計最多比對 {MAX_REPAIR_TOKENS:,} 個數字，請分成較小的修復檔。")
+        rows.append(_change(patch, old, new, old_pairs, new_pairs))
+    return tuple(rows)
 
 
 def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
@@ -288,7 +305,9 @@ def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
             or any(new_pages[n - 1] != published_body(patch) for n, patch in by_page.items())):
         return _fail(scenario_id, RepairIssue("content", None, "候選文字的頁面沒有通過還原檢查，沒有套用任何內容。"))
     quality = library.read_parse_quality(scenario_id)
-    changes = tuple(_change(patch, old_pages[patch.page - 1], new_pages[patch.page - 1]) for patch in proposal.patches)
+    changes = _changes(proposal.patches, old_pages, new_pages)
+    if isinstance(changes, RepairIssue):
+        return _fail(scenario_id, changes)
     text_unchanged = candidate == snapshot.text
     noop = text_unchanged and all(
         _quality_in_place(quality, patch, new_pages[patch.page - 1]) for patch in proposal.patches)

@@ -63,10 +63,16 @@ def mechanics_counts(text: str) -> Counter[str]:
 _LABEL_WINDOW = 120  # a label is at most two words on one line; looking further back is never needed
 
 
-def mechanics_contexts(text: str) -> list[tuple[str, str]]:
-    """Every mechanics token in order of appearance, paired with its casefolded label ('' when it has none)."""
-    pairs = []
+def mechanics_contexts(text: str, limit: int | None = None) -> list[tuple[str, str]]:
+    """Every mechanics token in order of appearance, paired with its casefolded label ('' when it has none).
+
+    With a ``limit`` the scan stops after ``limit + 1`` tokens, so a caller can tell "too many" from "exactly the limit"
+    without ever holding an unbounded inventory.
+    """
+    pairs: list[tuple[str, str]] = []
     for match in MECHANICS.finditer(text):
+        if limit is not None and len(pairs) > limit:
+            break
         window_start = max(0, match.start() - _LABEL_WINDOW)
         line_start = max(text.rfind('\n', window_start, match.start()) + 1, window_start)
         label = _LABEL.search(text, line_start, match.start())

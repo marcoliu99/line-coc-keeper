@@ -411,3 +411,14 @@ def test_the_audit_and_the_report_cap_what_they_list_but_keep_the_totals(create)
     assert len(change["removed"]) == repair.MAX_LISTED_TOKENS
     (line,) = repair.describe_changes(result.changes)
     assert f"…另有 {count - repair.MAX_REPORTED_TOKENS} 項" in line
+
+
+def test_token_extraction_is_capped_before_anything_is_built(create, monkeypatch):
+    assert len(numbers.mechanics_contexts("1 " * 100, 10)) == 11  # stops one past the limit
+    assert len(numbers.mechanics_contexts("1 " * 5, 10)) == 5
+    monkeypatch.setattr(repair, "MAX_REPAIR_TOKENS", 30)
+    sid = create(pages=("Start.", "HP 10 " * 20, "End."), images=())
+    refused = repair.check(proposal([patch(2, "HP 11 " * 20)], page_count=3), sid)
+    assert not refused.ready and codes(refused) == {"content"} and refused.issues[0].page == 2
+    assert "30" in str(refused.issues[0])
+    assert repair.check(proposal([patch(2, "HP 11 " * 5)], page_count=3), sid).ready
