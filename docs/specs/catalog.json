@@ -2327,6 +2327,7 @@
       "evidence": [
         "app/keeper_tools/support.py",
         "app/keeper_tools/combat.py",
+        "app/combat_flow.py",
         "tests/test_enemy_source_from_index.py"
       ],
       "path": "docs/specs/bug/enemy_attack_provenance_from_scenario_design_spec.md",

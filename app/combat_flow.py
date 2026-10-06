@@ -638,13 +638,11 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
         dice.max_expression_value(attack.damage)
     except ValueError:
         return _error('NPC attack damage expression is invalid')
-    attack_metadata = source.get('attacks', {}).get(attack.id, source if len(card.attacks) == 1 else {})
-    mode = attack_metadata.get('attack_mode', 'melee' if attack.range_band == 'engaged' and len(card.attacks) == 1 else None)
+    attack_metadata = {'extreme_rule': source.get('extreme_rule'), 'attack_mode': source.get('attack_mode'),
+                       **source.get('attacks', {}).get(attack.id, source if len(card.attacks) == 1 else {})}
+    mode = attack_metadata.get('attack_mode')
     if mode not in ('melee', 'single_shot'):
-        action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
-                  'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
-        state.combat.actions[identity] = action
-        return _ruling(state, action, 'NPC attack mode is not explicit/supported')
+        mode = 'melee'
     if mode == 'single_shot' and (attack.ammo_or_uses is None or attack.ammo_or_uses < 1
                                   or attack_metadata.get('distance_yards') is None or attack_metadata.get('base_range_yards') is None):
         action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,

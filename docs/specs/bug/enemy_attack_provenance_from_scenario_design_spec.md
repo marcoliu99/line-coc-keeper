@@ -19,3 +19,7 @@ No provenance for enemies the index lacks; no change to attack modes, ranges or 
 ## Tests
 
 `tests/test_enemy_source_from_index.py`: an indexed enemy gets the provenance and its attack reaches the defender's choice, an unindexed one still pauses, the model's own source wins, `initialize_combat` does the same, and a looser name matches while an unrelated one does not.
+
+## Follow-up: undeclared attack mode
+
+A real run (the Haunting rats, two `engaged` attacks) passed provenance and then stalled on "NPC attack mode is not explicit/supported", because only a single `engaged` attack defaulted to melee. An enemy attack whose `attack_mode` is missing or unsupported is now melee (a `single_shot` declared on the attack or on the card keeps its ammunition and range checks), and the card-level `extreme_rule` applies to every attack unless that attack sets its own. There is no distance concept in combat yet, so `range_band` is not used to tell ranged from melee. Accepted trade-off: a ranged attack the model never marked `single_shot` plays as melee, which is better than a fight that cannot continue.
