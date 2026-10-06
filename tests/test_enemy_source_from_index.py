@@ -76,12 +76,3 @@ def test_a_looser_name_still_finds_the_indexed_enemy_but_an_unrelated_one_does_n
     assert other["ok"], other
     card = next(c for c in _load().combat.order if c.display_name == "深潛者")
     assert not _load().combat.enemy_cards[card.enemy_card_id].source
-
-
-def test_an_attack_left_to_the_engines_default_is_not_vouched_for():
-    for attacks in ([{}], [{"id": "bite"}], [{"id": "bite", "damage": "1d3"}]):
-        _scenario_battle(["鼠群"])
-        result = _tool("add_npc_to_combat", {"name": "鼠群", "dex": 99, "hp": 9, "attacks": attacks})
-        assert result["ok"], result
-        enemy = next(c for c in _load().combat.order if c.side == "enemy")
-        assert not _load().combat.enemy_cards[enemy.enemy_card_id].source, attacks

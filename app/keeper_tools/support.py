@@ -197,15 +197,10 @@ _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-
 ENEMY_SOURCE_FUZZY_THRESHOLD = 0.5
 
 
-def enemy_source(
-    state: GroupState, given: dict | None, index_entry: dict | None, attacks: list | None,
-) -> dict | None:
+def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None) -> dict | None:
     """The provenance an enemy's attacks need. What the model gave stays; for an enemy the scenario's own NPC index
-    names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote. Only when every
-    attack states its own hit chance and damage: an attack left to the engine's 25% / 1D3 default is not the scenario's."""
-    explicit = bool(attacks) and all(
-        isinstance(a, dict) and a.get("skill_value") is not None and a.get("damage") for a in attacks)
-    if index_entry is None or not state.active_scenario_source_hash or not explicit:
+    names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote."""
+    if index_entry is None or not state.active_scenario_source_hash:
         return given
     return {
         "url": f"scenario:{state.scenario_library_id}", "revision": state.active_chapter_id or "scenario",
