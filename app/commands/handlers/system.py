@@ -828,6 +828,8 @@ async def _index_command(call: _Call) -> None:
             "可以再執行一次 /coc index。"
         )
         return
+    # The maps already name their locations; the underflow check above judged the text extraction alone.
+    index_data["locations"] = scenario_index.merge_scene_map_locations(index_data["locations"], state.scene_maps)
     state.scenario_npc_index = index_data["npcs"]
     state.scenario_location_index = index_data["locations"]
     state_transaction.commit_snapshot(state)

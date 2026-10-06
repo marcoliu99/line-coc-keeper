@@ -15,6 +15,7 @@ import yaml
 from app import (
     intent_parser,
     locks,
+    scenario_index,
     scenario_rag,
 )
 from app import scene_map as scene_map_engine
@@ -248,6 +249,8 @@ async def handle_map_upload(
     async with locks.get_conversation_lock(conversation_id):
         state = load_state(conversation_id)
         state.scene_maps[key] = data
+        state.scenario_location_index = scenario_index.merge_scene_map_locations(
+            state.scenario_location_index, state.scene_maps)
         state_transaction.commit_snapshot(state)
 
     entry_room = scene_map_engine.get_room(data, data.get("entry_room_id", ""))

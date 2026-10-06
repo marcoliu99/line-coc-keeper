@@ -125,6 +125,22 @@ def detect_numbered_location_sequence(text: str) -> list[int] | None:
     return numbers if len(numbers) >= 2 and numbers == list(range(1, len(numbers) + 1)) else None
 
 
+def merge_scene_map_locations(locations: list[dict[str, Any]], scene_maps: dict[str, Any]) -> list[dict[str, Any]]:
+    """``locations`` plus one entry per scene map ``location_name`` the index does not already hold (by name or alias,
+    ``strip`` + ``casefold``). Existing entries are kept as they are; a repeated merge adds nothing."""
+    def key(name: Any) -> str:
+        return str(name or "").strip().casefold()
+
+    merged = list(locations)
+    known = {key(name) for loc in merged for name in (loc.get("name"), *(loc.get("aliases") or []))}
+    for scene in scene_maps.values():
+        name = str(scene.get("location_name") or "").strip() if isinstance(scene, dict) else ""
+        if name and key(name) not in known:
+            merged.append({"name": name, "aliases": [], "summary": "", "page": 0})
+            known.add(key(name))
+    return merged
+
+
 def location_index_underflow(scenario_text: str, locations: list[dict[str, Any]], *, previous_count: int,
                              source: str) -> tuple[int, int] | None:
     """``(expected, extracted)`` when the scenario's numbered location headings show a fresh extraction missed
