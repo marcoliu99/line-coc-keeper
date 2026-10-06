@@ -44,6 +44,14 @@ def test_the_gateway_hands_the_acting_player_to_the_inventory_tools() -> None:
     assert all(call.system_origin is None for call in seen)
 
 
+def test_the_gateway_hands_the_acting_player_to_a_combat_skip() -> None:
+    seen: list[registry.ToolCall] = []
+    with _recording("advance_combat_turn", seen):
+        execute = tool_gateway.make_tool_executor(_state(), [], [], "player", [], actor_id="u1")
+        asyncio.run(execute("advance_combat_turn", {"actor_id": "pc:a", "event_id": "e", "skip": True}))
+    assert [call.actor_id for call in seen] == ["u1"]
+
+
 def test_an_ordinary_player_call_has_no_system_origin() -> None:
     seen: list[registry.ToolCall] = []
     with _recording("add_carried_item", seen):

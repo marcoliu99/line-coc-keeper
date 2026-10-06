@@ -1064,9 +1064,11 @@
         "app/keeper.py",
         "app/keeper_tools/combat.py",
         "app/keeper_tools/registry.py",
+        "app/prompt_builder.py",
         "app/services/turn_delivery.py",
         "app/services/turn_resolution.py",
-        "tests/test_initialize_combat.py"
+        "tests/test_initialize_combat.py",
+        "tests/test_static_prompt_combat_routing.py"
       ],
       "path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool.md",
       "zh_path": "docs/specs/enhancement/enhancement-macro-combat-initialization-tool_zh.md",
@@ -2283,6 +2285,21 @@
       "path": "docs/specs/bug/index_location_underflow_design_spec.md",
       "zh_path": "docs/specs/bug/index_location_underflow_design_spec_zh.md",
       "source_revision": "6de8b31021b1a6e699c2b6939a253aa47fc3a058"
+    },
+    {
+      "title": "A combat turn can always be ended",
+      "zh": "戰鬥回合一定能結束",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "app/keeper_tools/combat.py",
+        "app/prompt_builder.py",
+        "tests/test_combat_skip_turn.py"
+      ],
+      "path": "docs/specs/bug/combat_turn_always_endable_design_spec.md",
+      "zh_path": "docs/specs/bug/combat_turn_always_endable_design_spec_zh.md",
+      "source_revision": "37e16bd6b0841c11c2a7120f4ca013ec40117ff5"
     },
     {
       "title": "A scene map's location name is added to the location index",

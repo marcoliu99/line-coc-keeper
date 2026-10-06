@@ -102,6 +102,12 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             combat_completed = combat_completed or bool(
                 retained.get('status') == 'committed' and retained.get('settlement_id') == receipt.get('settlement_id')
             )
+        if result.get('ok') and f'tool:{i}' in refs and name == 'advance_combat_turn' and event.get('arguments', {}).get('skip'):
+            # Bound to this very call: it added a ``skip`` action (a replayed event id adds none).
+            known = ((event.get('gameplay_before') or {}).get('combat') or {}).get('actions') or {}
+            now = ((event.get('gameplay_after') or {}).get('combat') or {}).get('actions') or {}
+            combat_completed = combat_completed or any(
+                a.get('kind') == 'skip' for action_id, a in now.items() if action_id not in known)
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}

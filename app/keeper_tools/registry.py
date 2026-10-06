@@ -732,8 +732,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                 "name": "start_combat",
                 "description": (
                     "開始一場正式戰鬥，會依照目前登記角色的 DEX 建立先攻順位。"
-                    "只有一隻敵人啟動時，開戰後用 add_npc_to_combat 登記；兩隻以上同時啟動改用 "
-                    "initialize_combat 一次開戰並登記。之後用 advance_combat_turn 依序推進回合。"
+                    "有敵人啟動時（一隻也一樣）請改用 initialize_combat 一次開戰並登記，不要只開戰；"
+                    "戰鬥中途才加入的敵人用 add_npc_to_combat。之後用 advance_combat_turn 依序推進回合。"
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
@@ -794,10 +794,10 @@ _SPECS: tuple[ToolSpec, ...] = (
                 "name": "initialize_combat",
                 "description": (
                     "開啟戰鬥並一次登錄本次遭遇的所有敵方 NPC，並依 DEX 計算先攻順位——用於戰鬥剛開始、"
-                    "一次有多隻敵人同時登場的情況，取代連續呼叫 start_combat 加多次 add_npc_to_combat。"
+                    "一隻或多隻敵人已登場的情況（一隻就是只有一筆的 enemies），取代連續呼叫 start_combat 加 add_npc_to_combat。"
                     "同種怪物每一隻都要給不同的顯示名稱（例如「魚人（左）」／「魚人（右）」），不要用同一個"
                     "名字填多筆——系統只會在偵測到同名時才自動編號，那是最後手段，不是預設做法。"
-                    "戰鬥中途只有一隻新敵人加入時，改用 add_npc_to_combat，不要為單一敵人呼叫這個工具。"
+                    "戰鬥已在進行、中途才加入的新敵人，改用 add_npc_to_combat。"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -1247,7 +1247,10 @@ for _spec in _SPECS:
         _properties['skills'] = {'type': 'object', 'additionalProperties': {'type': 'integer', 'minimum': 0},
                                  'description': '已核對NPC技能值，例如dodge；不得推測預設閃避'}
     if _spec.schema['name'] == 'advance_combat_turn':
-        _spec.schema['input_schema']['properties'].update({'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'}})
+        _spec.schema['input_schema']['properties'].update({
+            'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'},
+            'skip': {'type': 'boolean', 'description': '目前行動者這回合沒有引擎能結算的行動（護住自己、躲藏、撤退等）時設 true：不擲骰、不改資源，直接結束他的回合'},
+        })
     if _spec.schema['name'] in {'adjust_character', 'adjust_ammo', 'add_status_tag', 'remove_status_tag'}:
         _spec.schema['input_schema']['properties'].update({
             'event_id': {'type': 'string', 'description': '穩定操作識別；重試沿用，相同數值的新操作須用新ID'},
