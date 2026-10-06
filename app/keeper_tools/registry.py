@@ -732,8 +732,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                 "name": "start_combat",
                 "description": (
                     "開始一場正式戰鬥，會依照目前登記角色的 DEX 建立先攻順位。"
-                    "只有一隻敵人啟動時，開戰後用 add_npc_to_combat 登記；兩隻以上同時啟動改用 "
-                    "initialize_combat 一次開戰並登記。之後用 advance_combat_turn 依序推進回合。"
+                    "有敵人啟動時（一隻也一樣）請改用 initialize_combat 一次開戰並登記，不要只開戰；"
+                    "戰鬥中途才加入的敵人用 add_npc_to_combat。之後用 advance_combat_turn 依序推進回合。"
                 ),
                 "input_schema": {"type": "object", "properties": {}},
             },
