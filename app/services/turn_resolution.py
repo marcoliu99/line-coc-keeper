@@ -40,11 +40,15 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     latest: dict[str, list[str]] = {}
     ended = False
     combat_completed = False
+    # Either receipt of one logical transfer is evidence for it, so a re-emission may be the one the decision cites.
+    cited_operations = {e['result'].get('operation_id') for i, e in enumerate(events, 1)
+                        if e['name'] == 'transfer_item' and f'tool:{i}' in refs and e['result'].get('operation_id')}
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
         replay_of_seen = bool(result.get('replayed')) and result.get('operation_id') in committed_operations
         if (name in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
-                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen))):
+                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen
+                                                    and result.get('operation_id') not in cited_operations))):
             return False, False
         if name == 'transfer_item':
             # The receipt carries its own before/after lists and character ids, so it verifies on its own even when

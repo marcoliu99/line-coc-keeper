@@ -243,3 +243,13 @@ def test_an_unrelated_inventory_edit_does_not_turn_a_retry_into_a_new_transfer()
         retry = _transfer(state, call_input)
     assert first["ok"] and added["ok"] and retry.get("replayed")
     assert _items()["Bea"].count("鑰匙") == 1
+
+
+def test_a_key_that_comes_back_through_a_transfer_makes_the_next_handoff_new():
+    state = _state(Ann=["鑰匙"])
+    with _in_turn("turn-1"):
+        first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "鑰匙"}, actor="u1")
+        back = _transfer(state, {"from": "Bea", "to": "Ann", "item": "鑰匙"}, actor="u2")
+        again = _transfer(state, {"from": "Ann", "to": "Bea", "item": "鑰匙"}, actor="u1")
+    assert first["ok"] and back["ok"] and again["ok"] and not again.get("replayed")
+    assert _items()["Bea"] == ["鑰匙"] and _items()["Ann"] == []

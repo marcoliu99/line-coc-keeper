@@ -205,6 +205,7 @@ def transfer_item(call: ToolCall) -> dict[str, Any]:
             for entry in moved:
                 giver.carried_items.remove(entry)
             receiver.carried_items.extend(moved)
+            _note_inventory_edit(target_state, receiver, moved[0])  # acquiring through a hand-off counts, giving does not
             target_state.inventory_transfers.append({
                 "id": uuid4().hex, "operation_id": operation_id or "",
                 "turn_id": str(observability.current_context().get("turn_id", "")),

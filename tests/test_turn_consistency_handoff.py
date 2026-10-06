@@ -910,3 +910,17 @@ def test_add_and_transfer_in_one_turn_verify_in_chronological_order(state, order
     with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
+
+
+def test_a_replay_cited_instead_of_the_original_transfer_still_verifies(state):
+    async def provider(*args, **kwargs):
+        await args[5]('transfer_item', {'from': 'Marco', 'to': 'Ken', 'item': '一瓶煤油'})
+        again = await args[5]('transfer_item', {'from': 'marco', 'to': 'Ken', 'item': '一瓶煤油 '})
+        assert again['replayed']
+        return decision(state, 'resolved_without_check', evidence_refs=['tool:2'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+            patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
+            patch('app.observability.current_context', return_value={'turn_id': 'turn-cite'}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
