@@ -205,7 +205,7 @@ removed, added = ordered_diff(old, new)               # difflib opcodes over the
 - **B，目標：** 已載入來自 PDF 的劇本，且 `page_count` 相符。
 - **C，頁面：** 頁碼範圍、唯一性、沒有注入頁面標記。
 - **D，內容：** `review_note` 不為空；頁面種類對 `text` 的要求；`image` 對原生文字的規則。
-- **D2，是否已套用：** 如果已載入的劇本本身就是 repair 子劇本（它的 manifest 有 `source_repair`），就對這個子劇本記錄的父劇本重建這些補丁的候選，並把摘要與子劇本的 `source_repair.candidate_digest` 比對。相符表示同一個檔案就是最後一次套用的 repair，回覆 `這份修復已經套用，沒有重複建立版本。` 並停止：什麼都不發布。不相符表示這個檔案與最後一次 repair 不同，照常對已載入的劇本繼續。在世系較早處套用過的檔案，在較晚、互不重疊的 repair 之後再上傳，這裡同樣不會相符，但它的候選會與已載入的劇本完全相同，F 階段用同樣的方式回答，而不是把它當成無效的 repair。
+- **D2，是否已套用：** 如果已載入的劇本本身就是 repair 子劇本（它的 manifest 有 `source_repair`），就對這個子劇本記錄的父劇本重建這些補丁的候選，並把摘要與子劇本的 `source_repair.candidate_digest` 比對。相符表示同一個檔案就是最後一次套用的 repair，回覆 `這份修復已經套用，沒有重複建立版本。` 並停止：不發布新東西（額外只有上面的報告重送，以及實作階段第 2 項的 `inherited` 產物重試）。不相符表示這個檔案與最後一次 repair 不同，照常對已載入的劇本繼續。在世系較早處套用過的檔案，在較晚、互不重疊的 repair 之後再上傳，這裡同樣不會相符，但它的候選會與已載入的劇本完全相同，F 階段用同樣的方式回答，而不是把它當成無效的 repair。
 - **E，候選：** 只拼接列出的頁面，建出候選。
 - **F，不變條件：** 實體標記仍是 `1..N` 且各出現一次；未被修改的頁面本文逐位元組不變（指第 8 節的原始本文）；被替換的頁數等於補丁數；候選摘要是確定性的。候選與已載入的劇本完全相同不是錯誤：每個被要求的頁面已經正好是提議的文字，所以已載入的劇本是 repair 世系成員時回覆 `這份修復已經套用，沒有重複建立版本。`，否則回覆 `這些頁面的內容已經與修復檔相同，沒有變動。`，並且什麼都不發布。在世系較早處套用過的檔案，也是這樣回答。
 
@@ -254,7 +254,7 @@ async def activate_repair_version(
 ) -> LifecycleResult:
 ```
 
-在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；子劇本的 `artifacts` 標記是 `ready` 或 `inherited`（NPC 與地點索引、預製角色池還沒建好的子劇本會被拒絕，而 fail-soft 的空結果絕不算建好，所以空的衍生檔案絕不會被裝進進行中的遊戲）；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
+在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；子劇本的 `artifacts` 標記是 `ready` 或 `inherited`（`pending` 會被拒絕）。`ready` 會把子劇本重建好的 NPC 與地點索引、預製角色池裝進進行中的遊戲。`inherited` **不裝入任何**衍生產物：遊戲維持目前的執行期索引與預製角色原樣（它們可能已另外重建過，是唯一確定可用的），只切換來源文字與資料庫 ID。所以 fail-soft 的空擷取絕不會取代進行中遊戲裡的任何東西；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
 
 ## 17. 兩階段並行
 
@@ -378,7 +378,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 - **Discord：** 上傳者的顯示名稱、對話 ID 與請求 ID 從路由器一路傳到 `publish` 與稽核（關閉日誌時稽核仍有這三者），不回頭呼叫 Discord；`repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
 - **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用在父劇本仍載入時靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`，切換劇本之後不建議重新上傳；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
 - **解析品質：** 被修復頁面的警告清除、未被修改頁面的保留、載入訊息只列出剩下的頁面。
-- **產物：** 被修復頁面的圖片描述會從修正後的文字重新產生，可見性、類型與章節仍沿用父劇本的，圖片搜尋找得到修正後的詞、找不到已被移除的詞；子劇本保留父劇本的 `scene_maps`、圖片位元組與圖片資源中繼資料（公開講義仍然公開），`/coc scenario use <child>` 載入的地圖正常運作；父劇本的索引與預製角色不會被複製；重建以子劇本的雜湊為鍵；過時的重建不能覆寫較新的 repair。
+- **產物：** 被修復頁面的圖片描述會從修正後的文字重新產生，可見性、類型與章節仍沿用父劇本的，圖片搜尋找得到修正後的詞、找不到已被移除的詞；子劇本保留父劇本的 `scene_maps`、圖片位元組與圖片資源中繼資料（公開講義仍然公開），`/coc scenario use <child>` 載入的地圖正常運作；重建成功（`ready`）後子劇本的索引與預製角色來自它自己的文字，不複製父劇本的；`inherited` 時子劇本的檔案是父劇本的逐字複本，而且不會裝進任何東西到進行中的遊戲；重建以子劇本的雜湊為鍵；過時的重建不能覆寫較新的 repair。
 
 ## 28. 驗收測試：The Haunting
 
@@ -401,9 +401,9 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 這個順序確保遊戲永遠不會被切到衍生產物缺失的子劇本：重建在啟用之前完成，而在啟用上線之前，上傳只做發布。
 
 1. **確定性核心。** 從 `scenario_source_review` 抽出共用的頁面輔助函式；實作解析器、嚴格 schema、無損合併、數值報告、候選摘要、公開的 `scenario_library.image_asset_description()`，以及會複製父劇本圖片、圖片資源與場景地圖的不可變部分頁面發布，附單元測試與範本。發布的子劇本在 manifest 記錄 `artifacts: "pending"`。
-2. **衍生產物重建。** 以既有的建構器，依子劇本的來源雜湊，從它的新文字建出 NPC 與地點索引和預製角色池，以雜湊檢查提交，並設為 `artifacts: "ready"`；RAG 預熱另外排程。既有的建構器是 fail-soft 的：沒有設定分析 provider 或呼叫失敗時，`scenario_index.extract_scenario_index()` 回傳空清單、`pregen_extractor.extract_pregens()` 回傳空池。所以重建要回報擷取是否**成功**，並把來自失敗或不可用 provider 的空結果當成沒建好：此時子劇本會得到從父劇本複製來的索引與預製角色檔（repair 只改幾頁，父劇本的清單是手邊最好的），標記是 `inherited` 而不是 `ready`。`inherited` 可以啟用，回覆會說索引之後會更新，下次有 provider 時再重試重建。擷取成功而且真的是空的才是 `ready`。`artifacts: "pending"` 的子劇本不能被選去啟用。測試：父劇本仍是使用中的劇本時，重建也會填入索引與預製角色並把子劇本標成 `ready`；沒有 provider 時子劇本是 `inherited` 並帶著父劇本非空的檔案，絕不是空的；過時的重建不能覆寫較新的 repair；裝進進行中的遊戲要求子劇本是使用中的；pending 的子劇本被拒絕。
+2. **衍生產物重建。** 以既有的建構器，依子劇本的來源雜湊，從它的新文字建出 NPC 與地點索引和預製角色池，以雜湊檢查提交，並設為 `artifacts: "ready"`；RAG 預熱另外排程。既有的建構器是 fail-soft 的：沒有設定分析 provider 或呼叫失敗時，`scenario_index.extract_scenario_index()` 回傳空清單、`pregen_extractor.extract_pregens()` 回傳空池。所以重建要回報擷取是否**成功**，並把來自失敗或不可用 provider 的空結果當成沒建好：此時子劇本的資料庫檔案是父劇本索引與預製角色檔的逐字複本（不假設父劇本的檔案非空，也不對它們的內容做任何宣稱），標記是 `inherited` 而不是 `ready`。`inherited` 可以啟用，但啟用不會把任何衍生產物裝進進行中的遊戲（第 16 節），所以遊戲維持目前的執行期索引與預製角色；回覆會說索引沒有重建。重試的方式是**重新上傳同一個檔案**：已套用的分支（階段 D2 與 F）會先讀子劇本的標記，若為 `inherited` 而且現在有分析 provider，就再跑一次重建，以子劇本的來源雜湊做 compare-and-set，把檔案與標記從 `inherited` 設為 `ready`，並且如果子劇本是目前載入的劇本，就透過同一個有守門的啟用交易（重新檢查修訂、時間線與替換守門）把重建好的產物裝進進行中的遊戲；回覆會說索引已更新。沒有 provider 時，回答仍是一般的已套用，並註明索引仍未重建。擷取成功而且真的是空的才是 `ready`。`artifacts: "pending"` 的子劇本不能被選去啟用。測試：父劇本仍是使用中的劇本時，重建也會填入索引與預製角色並把子劇本標成 `ready`；沒有 provider 時子劇本是 `inherited`，檔案是父劇本的逐字複本，即使父劇本的檔案是空的，啟用它也不會動到進行中遊戲的索引與預製角色；之後有 provider 時重新上傳同一個檔案會重建、把標記改為 `ready` 並把重建好的產物裝進進行中的遊戲，沒有 provider 的重新上傳什麼都不改；過時的重建不能覆寫較新的 repair；裝進進行中的遊戲要求子劇本是使用中的；pending 的子劇本被拒絕。
 3. **Discord 上傳。** `repair_*.md` 路由、`handle_uploads` 的 `user_id`、劇本生命週期權限檢查、repair 服務、第 2 階段的重建、結果與拒絕訊息、路由測試、說明項目與指南文字。在第 4 階段之前，回覆只說新版本已建立、尚未套用到進行中的遊戲，所以上傳不會改變遊戲。
-4. **使用中遊戲的更正。** 要求 `artifacts` 為 `ready` 或 `inherited` 的 `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置、目前章節與玩家狀態、整合測試，以及說明遊戲已切換的結果訊息。
+4. **使用中遊戲的更正。** 要求 `artifacts` 為 `ready` 或 `inherited`（只有 `ready` 才裝入衍生產物）的 `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置、目前章節與玩家狀態、整合測試，以及說明遊戲已切換的結果訊息。
 
 ## 31. 合併條件
 
