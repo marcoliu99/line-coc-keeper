@@ -2277,8 +2277,7 @@
         "app/scenario_index.py",
         "app/commands/handlers/system.py",
         "app/services/scenario_ingestion.py",
-        "app/services/scenario_lifecycle.py",
-        "app/scenario_activation.py",
+        "app/scenario_library.py",
         "tests/test_location_index_guard.py"
       ],
       "path": "docs/specs/bug/index_location_underflow_design_spec.md",

@@ -17,12 +17,9 @@ _T = TypeVar("_T")
 def install_context_fields(
     state: GroupState, scenario_id: str, context: dict[str, Any], *,
     variant_id: str | None = None, preserve_maps: bool = False,
-    preserve_pregens: bool = False, preserve_indexes: bool = False,
+    preserve_pregens: bool = False,
 ) -> None:
-    """Install a library chapter while leaving transition policy to the caller.
-
-    ``preserve_indexes`` keeps the running NPC/location index when the chapter's own index is empty (what an upload
-    stores after an incomplete or failed extraction), as a correction of the running scenario does."""
+    """Install a library chapter while leaving transition policy to the caller."""
     state.scenario_library_id = scenario_id
     state.scenario_variant_id = (
         variant_id if variant_id is not None
@@ -34,10 +31,8 @@ def install_context_fields(
     state.active_scenario_source_hash = source_hash
     state.active_chapter_id = context["active_chapter_id"]
     state.context_chapter_ids = context["context_chapter_ids"]
-    npcs, locations = context["indexes"].get("npcs", []), context["indexes"].get("locations", [])
-    if not preserve_indexes or npcs or locations:
-        state.scenario_npc_index = npcs
-        state.scenario_location_index = locations
+    state.scenario_npc_index = context["indexes"].get("npcs", [])
+    state.scenario_location_index = context["indexes"].get("locations", [])
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
     if not preserve_maps:

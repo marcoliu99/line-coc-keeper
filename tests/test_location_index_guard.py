@@ -4,10 +4,10 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from app import scenario_activation, scenario_index, scenario_page_repair
+from app import scenario_index, scenario_page_repair
 from app.commands.handlers import system as system_handler
 from app.models import GroupState
-from app.services import scenario_ingestion, scenario_lifecycle
+from app.services import scenario_ingestion
 
 
 def _text(count: int, *, heading: str = "LOCATION {n}: PLACE {n}") -> str:
@@ -167,45 +167,26 @@ class UploadIndexTests(unittest.TestCase):
         self.assertEqual(notice, "")
 
 
-class CorrectionTests(unittest.TestCase):
-    def _repair(self, indexes: dict) -> GroupState:
-        state = GroupState("group-index-guard")
-        state.scenario_npc_index = [{"name": "old npc"}]
-        state.scenario_location_index = _locations(9)
-        scenario_lifecycle._repair(state, {"manifest": {"title": "t"}, "text": "new text", "indexes": indexes,
-                                           "pregens": []})
-        return state
+class RepublishTests(unittest.TestCase):
+    def test_an_empty_index_never_replaces_the_one_the_library_entry_has(self):
+        import tempfile
+        from pathlib import Path
 
-    def test_a_correction_with_an_empty_index_keeps_the_running_index(self):
-        state = self._repair({"npcs": [], "locations": []})
-        self.assertEqual(state.scenario_text, "new text")
-        self.assertEqual(len(state.scenario_location_index), 9)
-        self.assertEqual(state.scenario_npc_index, [{"name": "old npc"}])
+        from app import scenario_library
 
-    def test_a_correction_with_an_index_replaces_it(self):
-        state = self._repair({"npcs": [], "locations": _locations(9)})
-        self.assertEqual(state.scenario_npc_index, [])
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", Path(directory)):
+            def publish(indexes: dict) -> dict:
+                scenario_id = scenario_library.save_markdown_scenario(
+                    b"x", title="t", filename="s.md", preview="p", text="--- 第 1 頁 ---\nx", indexes=indexes,
+                    pregens=[], scenario_id="same-entry")
+                return scenario_library.load_context(scenario_id)["indexes"]
 
-    def _install(self, indexes: dict, **kwargs) -> GroupState:
-        state = GroupState("group-index-guard")
-        state.scenario_npc_index = [{"name": "old npc"}]
-        state.scenario_location_index = _locations(9)
-        context = {"manifest": {"title": "t"}, "text": "new text", "indexes": indexes, "active_chapter_id": "",
-                   "context_chapter_ids": [], "scene_maps": {}, "pregens": []}
-        with patch.object(scenario_activation.page_repairs, "apply_saved", side_effect=lambda g, s, h, t: t), \
-                patch.object(scenario_activation.scenario_templates, "preferred_variant", return_value=""):
-            scenario_activation.install_context_fields(state, "sid", context, **kwargs)
-        return state
-
-    def test_installing_a_correction_keeps_the_running_index_when_the_new_one_is_empty(self):
-        state = self._install({"npcs": [], "locations": []}, preserve_indexes=True)
-        self.assertEqual(len(state.scenario_location_index), 9)
-        self.assertEqual(state.scenario_npc_index, [{"name": "old npc"}])
-
-    def test_installing_replaces_the_index_otherwise(self):
-        self.assertEqual(self._install({"npcs": [], "locations": []}).scenario_location_index, [])
-        state = self._install({"npcs": [], "locations": _locations(2)}, preserve_indexes=True)
-        self.assertEqual(len(state.scenario_location_index), 2)
+            places = [{"name": "a", "page": 1}]
+            self.assertEqual(publish({}), {"npcs": [], "locations": []})  # nothing to keep on first publish
+            self.assertEqual(publish({"npcs": [], "locations": places})["locations"], places)
+            self.assertEqual(publish({"npcs": [], "locations": []})["locations"], places)
+            self.assertEqual(publish({"npcs": [], "locations": [{"name": "b", "page": 1}]})["locations"][0]["name"], "b")
 
 
 if __name__ == "__main__":
