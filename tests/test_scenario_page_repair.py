@@ -422,3 +422,12 @@ def test_token_extraction_is_capped_before_anything_is_built(create, monkeypatch
     assert not refused.ready and codes(refused) == {"content"} and refused.issues[0].page == 2
     assert "30" in str(refused.issues[0])
     assert repair.check(proposal([patch(2, "HP 11 " * 5)], page_count=3), sid).ready
+
+
+def test_a_json_block_that_json_cannot_decode_is_a_repair_error_not_a_crash():
+    huge = ('```json\n{"repair_version": 1, "target": {"title": "T", "page_count": 3}, '
+            '"patches": [{"page": ' + "9" * 5000 + ', "text": "x", "page_kind": "text", "review_note": "n"}]}\n```').encode()
+    deep = ("```json\n" + "[" * 100_000 + "\n```").encode()
+    for data in (huge, deep):
+        with pytest.raises(repair.RepairError):
+            repair.parse_markdown_bytes(data)

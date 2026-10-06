@@ -137,7 +137,7 @@ def parse_markdown_bytes(data: bytes) -> RepairProposal:
         raise RepairError(f"修復檔必須把 JSON 放在 ```json 區塊裡。{TEMPLATE_HINT}")
     try:
         payload = authoring.parse_markdown(content.replace("\r\n", "\n"))
-    except authoring.Diagnostics as exc:
+    except (authoring.Diagnostics, ValueError, RecursionError) as exc:  # json.loads: a huge integer, deep nesting
         raise RepairError(f"修復檔必須剛好含有一個 json 區塊。{TEMPLATE_HINT}") from exc
     payload = _exact(payload, TOP_KEYS, "修復檔")
     if not _plain_int(payload["repair_version"]) or payload["repair_version"] != VERSION:
