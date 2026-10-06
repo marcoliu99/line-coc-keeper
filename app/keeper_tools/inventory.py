@@ -1,12 +1,13 @@
 """Keeper inventory, ammunition, and status-tag handlers."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from app import combat_resources, observability
-from app.keeper_tools import resource_bridge, support
+from app.keeper_tools import operation_ids, resource_bridge, support
 from app.models import GroupState
 
 if TYPE_CHECKING:
@@ -149,8 +150,26 @@ def _validated_transfer(state: GroupState, call: ToolCall, item: str, quantity: 
     return giver, receiver, held[:quantity]
 
 
+def _character_key(char: Any) -> str:
+    return char.character_id or char.owner_id
+
+
+def _transfer_fingerprint(state: GroupState, call: ToolCall, item: str, quantity: int) -> str:
+    """Identifies the operation for replay: server-resolved ids where both ends resolve, normalised text otherwise."""
+    ends = []
+    for field_name in ("from", "to"):
+        raw = str(call.input.get(field_name, ""))
+        char, _ = support.resolve_active_character_exactly(state, raw)
+        ends.append(_character_key(char) if char is not None else "?" + raw.strip().casefold())
+    return json.dumps([*ends, item.strip().casefold(), quantity], ensure_ascii=False)
+
+
 def transfer_item(call: ToolCall) -> dict[str, Any]:
-    """Move ``quantity`` entries from one investigator to another in one committed step, or write nothing."""
+    """Move ``quantity`` entries from one investigator to another in one committed step, or write nothing.
+
+    The same hand-off re-emitted in the same turn (a lost reply, a provider retry) returns the stored receipt marked
+    ``replayed`` and moves nothing more.
+    """
     state = call.state
     tool_input = call.input
     item = str(tool_input.get("item", "")).strip()
@@ -163,30 +182,38 @@ def transfer_item(call: ToolCall) -> dict[str, Any]:
 
     try:
         quantity = _transfer_quantity(tool_input.get("quantity"))
+        fingerprint = _transfer_fingerprint(state, call, item, quantity)
+        operation_id = operation_ids.allocate("transfer", fingerprint)
 
-        def _mutate_transfer(target_state: GroupState) -> Any:
+        def _mutate_transfer(target_state: GroupState) -> dict[str, Any]:
             giver, receiver, moved = _validated_transfer(target_state, call, item, quantity)
+            from_before, to_before = list(giver.carried_items), list(receiver.carried_items)
             for entry in moved:
                 giver.carried_items.remove(entry)
             receiver.carried_items.extend(moved)
             target_state.inventory_transfers.append({
-                "id": uuid4().hex, "turn_id": str(observability.current_context().get("turn_id", "")),
+                "id": uuid4().hex, "operation_id": operation_id or "",
+                "turn_id": str(observability.current_context().get("turn_id", "")),
                 "from": giver.name, "to": receiver.name, "item": moved[0], "quantity": quantity,
                 "source_event_id": tool_input.get("source_event_id") or "",
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             })
-            return support.ToolStateMutation((
-                giver.name, receiver.name, moved[0], list(giver.carried_items), list(receiver.carried_items),
-            ))
-        giver_name, receiver_name, moved_item, giver_items, receiver_items = support.mutate_tool_state(state, _mutate_transfer)
+            return {
+                "ok": True, "from": giver.name, "to": receiver.name,
+                "from_id": _character_key(giver), "to_id": _character_key(receiver),
+                "item": moved[0], "quantity": quantity, "operation_id": operation_id or "",
+                "giver_remaining": sum(1 for entry in giver.carried_items if _same_item(entry, item)),
+                "from_before": from_before, "to_before": to_before,
+                "from_carried_items": list(giver.carried_items), "to_carried_items": list(receiver.carried_items),
+            }
+        receipt, replayed = support.mutate_tool_state_once(
+            state, _mutate_transfer, action_id=operation_id, request_fingerprint=fingerprint)
     except _TransferRefused as exc:
         return refused(exc)
+    if replayed:
+        return {**receipt, "replayed": True}
     observability.event("inventory.transfer", quantity=quantity)
-    return {
-        "ok": True, "from": giver_name, "to": receiver_name, "item": moved_item, "quantity": quantity,
-        "giver_remaining": sum(1 for entry in giver_items if _same_item(entry, item)),
-        "from_carried_items": giver_items, "to_carried_items": receiver_items,
-    }
+    return receipt
 
 
 def add_status_tag(call: ToolCall) -> dict[str, Any]:

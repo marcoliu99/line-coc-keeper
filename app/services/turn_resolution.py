@@ -34,28 +34,37 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     """
     inventory = []
     transfers = []
+    committed_operations: set[str] = set()
+    counted_operations: set[str] = set()
+    final_by_id: dict[str, list[str]] = {}
     latest = {}
     ended = False
     combat_completed = False
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
+        replay_of_seen = bool(result.get('replayed')) and result.get('operation_id') in committed_operations
         if (name in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
-                and (not result.get('ok') or f'tool:{i}' not in refs)):
+                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen))):
             return False, False
         if name == 'transfer_item':
-            giver, receiver = result.get('from'), result.get('to')
-            before = event.get('inventory_before', {})
+            # The receipt carries its own before/after lists and character ids, so it verifies on its own even when
+            # two investigators share a display name or the call is a replay of one this turn already recorded.
             moved = Counter([result.get('item')] * int(result.get('quantity') or 1))
-            from_after, to_after = result.get('from_carried_items'), result.get('to_carried_items')
-            if (giver not in before or receiver not in before or not isinstance(from_after, list)
-                    or not isinstance(to_after, list)
-                    or Counter(before[giver]) - Counter(from_after) != moved
-                    or Counter(from_after) - Counter(before[giver]) != Counter()
-                    or Counter(to_after) - Counter(before[receiver]) != moved
-                    or Counter(before[receiver]) - Counter(to_after) != Counter()):
+            lists = [result.get(key) for key in ('from_before', 'to_before', 'from_carried_items', 'to_carried_items')]
+            if (not all(isinstance(entries, list) for entries in lists) or not result.get('from_id')
+                    or not result.get('to_id') or result.get('from_id') == result.get('to_id')):
                 return False, False
-            transfers.append(event)
-            latest[giver], latest[receiver] = from_after, to_after
+            from_before, to_before, from_after, to_after = lists
+            if (Counter(from_before) - Counter(from_after) != moved or Counter(from_after) - Counter(from_before)
+                    or Counter(to_after) - Counter(to_before) != moved or Counter(to_before) - Counter(to_after)):
+                return False, False
+            operation = result.get('operation_id') or f'tool:{i}'
+            if not result.get('replayed'):
+                committed_operations.add(operation)
+            if operation not in counted_operations:
+                counted_operations.add(operation)
+                transfers.append(event)
+            final_by_id[result['from_id']], final_by_id[result['to_id']] = from_after, to_after
         if name in {'add_carried_item', 'remove_carried_item'}:
             owner = result.get('investigator')
             before = event.get('inventory_before', {}).get(owner)
@@ -81,6 +90,12 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     chars = {c.name: c for c in state.active_characters()}
     if any(owner not in chars or chars[owner].carried_items != items for owner, items in latest.items()):
         return False, False
+    by_id = {(c.character_id or c.owner_id): c for c in state.active_characters()}
+    for key, after in final_by_id.items():
+        char = by_id.get(key)
+        # A later add/remove event on the same character is verified against the final state above.
+        if char is None or (char.name not in latest and char.carried_items != after):
+            return False, False
     actor_involved = any(e['result'].get('investigator') == actor_name for e in inventory)
     transfer = False
     if len(inventory) == 2 and {e['name'] for e in inventory} == {'remove_carried_item', 'add_carried_item'}:

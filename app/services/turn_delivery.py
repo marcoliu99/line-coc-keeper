@@ -34,7 +34,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             item = args["item"].strip()
             present = item in result.get("carried_items", [])
             text = f"{result.get('investigator', '調查員')} 的背包已確認{'包含' if present else '不含'}「{item}」。"
-        elif name == "transfer_item" and result.get("item"):
+        elif name == "transfer_item" and result.get("item") and not result.get("replayed"):
             quantity = int(result.get("quantity") or 1)
             amount = f" {quantity} 份" if quantity > 1 else ""
             text = f"{result.get('from', '調查員')} 已把{amount}「{result['item']}」交給 {result.get('to', '調查員')}。"

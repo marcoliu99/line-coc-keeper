@@ -9,10 +9,10 @@
 這個變更分成幾個步驟，每一步是各自的 PR、各自審查，不用讓單一次審查扛下整個設計。最後一步完成時，狀態才變成 `implemented`。
 
 1. **管線（已實作）。** `actor_id` 現在經由 `tool_gateway` 傳到 `add_carried_item` 與 `remove_carried_item`，並新增 `ToolCall.system_origin`（`SystemOrigin = Literal["kp_assistant", "correction"]`，`app/domain/models.py`）。只有回合程式碼會設定它：兩條更正路徑傳 `"correction"`，`execute_tool` 依發言者角色推導 `"kp_assistant"`，工具參數永遠無法設定它。目前沒有任何檢查讀取這兩個值，所以行為不變（`tests/test_inventory_actor_plumbing.py`）。
-2. **`transfer_item`（已實作）。** 一次工具呼叫在同一個 `mutate_tool_state` 裡於兩位調查員之間移動 `quantity` 筆項目，寫入之前先對最新已提交的狀態驗證：兩端以角色 id 或現役調查員中完全相符（不分大小寫）的名字解析（`support.resolve_active_character_exactly`，絕不用子字串；兩位調查員共用的名字會被當成歧義拒絕）、給出者必須是行動玩家的角色（KP Assistant 的呼叫除外）、接收者必須是另一個人、`quantity` 是至少為 1 的整數（省略視為 1），而且給出者要以不分大小寫的完全相符持有那麼多筆。拒絕時什麼都不寫入，並帶穩定的 `refusal` 代碼（`inventory.transfer.refused`）；成功時追加一筆 `inventory_transfers` 紀錄（會存檔，舊存檔預設為空）並發出 `inventory.transfer`。registry 項目帶 `kp_assistant` 與 `kp_canonical_game`；`turn_resolution._mutation_evidence` 依收據對照最終狀態驗證交接（舊的先移除再加入配對仍保留）；`observe_tool` 投影一行公開文字；Executor 與政策提示文字指名這個工具。這一步刻意沒做：`source_event_id` 照給定值存入紀錄、操作 id 與帳本重播（第 5 步）、意圖閘門（第 4 步），以及 `add_carried_item` 與 `remove_carried_item` 的 `kp_assistant` 旗標（要等第 3、4 步給它們閘門之後才有意義）。
+2. **`transfer_item`（已實作）。** 一次工具呼叫在同一個 `mutate_tool_state` 裡於兩位調查員之間移動 `quantity` 筆項目，寫入之前先對最新已提交的狀態驗證：兩端以角色 id 或現役調查員中完全相符（不分大小寫）的名字解析（`support.resolve_active_character_exactly`，絕不用子字串；兩位調查員共用的名字會被當成歧義拒絕）、給出者必須是行動玩家的角色（KP Assistant 的呼叫除外）、接收者必須是另一個人、`quantity` 是至少為 1 的整數（省略視為 1），而且給出者要以不分大小寫的完全相符持有那麼多筆。拒絕時什麼都不寫入，並帶穩定的 `refusal` 代碼（`inventory.transfer.refused`）；每次呼叫由回合程式碼配發操作 id（`app/keeper_tools/operation_ids.py`，`transfer:<turn_id>:<n>`，依伺服器解析後的指紋配發，絕不由模型給），並透過狀態帳本提交（`support.mutate_tool_state_once`），所以重新發出的相同呼叫會回傳存下的收據（標記 `replayed`）且不移動任何東西；收據帶有兩位角色的 id 與前後清單，即使兩位調查員共用顯示名稱，回合檢查也能依 id 驗證；成功時追加一筆 `inventory_transfers` 紀錄（會存檔，舊存檔預設為空）並發出 `inventory.transfer`。registry 項目帶 `kp_assistant` 與 `kp_canonical_game`；`turn_resolution._mutation_evidence` 依收據對照最終狀態驗證交接（舊的先移除再加入配對仍保留）；`observe_tool` 投影一行公開文字；Executor 與政策提示文字指名這個工具。這一步刻意沒做：`source_event_id` 照給定值存入紀錄、意圖閘門（第 4 步），以及 `add_carried_item` 與 `remove_carried_item` 的 `kp_assistant` 旗標（要等第 3、4 步給它們閘門之後才有意義）。
 3. **移除**的 `quantity` 與 `reason`（`RemovalKind`）、移除紀錄。尚未開始。
 4. **回合意圖檢查與准入閘門**（`TurnPayload` 的 `inventory_intents`，規則 7）。尚未開始。
-5. **操作 id 與帳本重播**、`observe_tool` 的收據投影、降級訊息與提示文字。尚未開始。
+5. **其餘重播工作**：意圖分配之前的 gateway 重播分類、說出已提交交接的降級訊息、移除的帳本。尚未開始。
 
 ## 問題
 

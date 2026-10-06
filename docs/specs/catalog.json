@@ -2224,6 +2224,7 @@
       "status": "partial",
       "evidence": [
         "app/keeper_tools/inventory.py",
+        "app/keeper_tools/operation_ids.py",
         "app/keeper_tools/registry.py",
         "app/services/turn_resolution.py",
         "app/providers/codex_provider.py",

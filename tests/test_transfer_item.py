@@ -135,3 +135,56 @@ def test_the_tool_is_declared_for_the_kp_assistant_and_recorded_as_game_canon():
     assert spec.kp_assistant and spec.kp_canonical_game
     assert "transfer_item" in registry.KP_ASSISTANT_ALLOWED_TOOL_NAMES
     assert set(spec.schema["input_schema"]["required"]) == {"from", "to", "item"}
+
+
+def _in_turn(turn_id: str):
+    return patch.object(observability, "current_context", return_value={"turn_id": turn_id})
+
+
+def test_the_same_hand_off_re_sent_in_one_turn_replays_the_receipt_and_moves_nothing_more():
+    state = _state(Ann=["手電筒", "手電筒", "鑰匙"])
+    with _in_turn("turn-1"):
+        first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+        again = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+        respelled = _transfer(state, {"from": "ann", "to": "BEA", "item": " 手電筒 "})
+    assert first["ok"] and not first.get("replayed")
+    assert again["replayed"] and respelled["replayed"]
+    assert {again["operation_id"], respelled["operation_id"]} == {first["operation_id"]}
+    assert again["from_carried_items"] == first["from_carried_items"]  # the stored receipt, not a re-derived one
+    assert _items() == {"Ann": ["手電筒", "鑰匙"], "Bea": ["手電筒"], "Anna": []}
+    assert len(group_state.load_state("g").inventory_transfers) == 1
+
+
+def test_a_different_hand_off_in_the_same_turn_is_a_new_operation():
+    state = _state(Ann=["手電筒", "手電筒"])
+    with _in_turn("turn-1"):
+        first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+        other = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒", "quantity": 1 + 0, "source_event_id": "x"})
+        different_receiver = _transfer(state, {"from": "Ann", "to": "Anna", "item": "手電筒"})
+    assert other["replayed"] and not different_receiver.get("replayed")
+    assert different_receiver["operation_id"] != first["operation_id"]
+    assert _items() == {"Ann": [], "Bea": ["手電筒"], "Anna": ["手電筒"]}
+
+
+def test_the_same_hand_off_in_a_later_turn_is_not_a_replay():
+    state = _state(Ann=["手電筒", "手電筒"])
+    with _in_turn("turn-1"):
+        _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+    with _in_turn("turn-2"):
+        second = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+    assert second["ok"] and not second.get("replayed")
+    assert _items()["Bea"] == ["手電筒", "手電筒"]
+
+
+def test_a_model_supplied_operation_id_is_ignored():
+    state = _state(Ann=["手電筒", "手電筒"])
+    with _in_turn("turn-1"):
+        first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒", "operation_id": "mine"})
+    assert first["operation_id"] == "transfer:turn-1:1"
+
+
+def test_without_a_turn_there_is_no_replay_protection_and_no_id():
+    state = _state(Ann=["手電筒", "手電筒"])
+    first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+    second = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+    assert first["operation_id"] == "" and second["ok"] and not second.get("replayed")
