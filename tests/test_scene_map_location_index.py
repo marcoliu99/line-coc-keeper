@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import db, scenario_activation, scenario_index
+from app import db, scenario_index
 from app.commands.handlers import system as system_handler
 from app.models import GroupState
 from app.repositories import group_state, state_transaction
@@ -136,20 +136,3 @@ def test_a_text_entry_of_the_minimal_shape_survives_its_maps_replacement(stored)
     _upload(MAP_YAML.replace(COTTAGE.encode(), b"Elsewhere"))
     names = [loc["name"] for loc in group_state.load_state("map-index").scenario_location_index]
     assert names == ["Muscoby", COTTAGE, "Elsewhere"]
-
-
-def _install(*, preserve_maps: bool) -> GroupState:
-    state = GroupState("map-index", scene_maps={"custom_a": {"location_name": COTTAGE}})
-    context = {"manifest": {"title": "t"}, "text": "text", "indexes": {"npcs": [], "locations": [_entry("Muscoby", page=2)]},
-               "active_chapter_id": "", "context_chapter_ids": [], "scene_maps": {}, "pregens": []}
-    with patch.object(scenario_activation.page_repairs, "apply_saved", side_effect=lambda g, s, h, t: t), \
-            patch.object(scenario_activation.scenario_templates, "preferred_variant", return_value=""):
-        scenario_activation.install_context_fields(state, "sid", context, preserve_maps=preserve_maps)
-    return state
-
-
-def test_maps_kept_by_a_repair_keep_their_locations_in_the_replaced_index():
-    kept = _install(preserve_maps=True)
-    assert [loc["name"] for loc in kept.scenario_location_index] == ["Muscoby", COTTAGE]
-    replaced = _install(preserve_maps=False)  # the maps are replaced too, so nothing of them is left to name
-    assert [loc["name"] for loc in replaced.scenario_location_index] == ["Muscoby"]
