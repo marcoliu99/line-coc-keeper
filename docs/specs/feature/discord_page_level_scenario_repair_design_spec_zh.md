@@ -110,7 +110,7 @@ permissions.may_manage_scenario_lifecycle(state, user_id)
 
 **私下送出的埠。** 數值報告需要 `delivery.send_dm()`，它在 `app/discord_transport/delivery.py`。服務不匯入它：`discord_bot` 用新的原始操作 `delivery.send_dm_message()` 建出 `send_private(user_id: str, text: str) -> Awaitable[None]` 回呼；該操作只送出恰好一則訊息：不做顯示別名展開、不切塊，文字超過一則 Discord 訊息就丟出例外（所以一頁絕不會變成多次送出，也不會被 `_chunk_text()` 的十塊上限靜默截斷）。報告引用的是劇本文字而不是角色顯示名，所以略過 `shown()` 沒有損失；日後若需要轉換，必須在分頁**之前**執行。回呼由該操作建出，而不是 `send_dm`，經由路由器與 `handle_uploads()` 傳進 `services/scenario_repair`，做法與既有指令處理器取得送出回呼的方式相同。服務把這個回呼的失敗交給送達狀態邏輯（第 10 節），不做其他事。測試注入會記錄訊息或丟出例外的假回呼。
 
-**載入確認顯示頁數。** `target.page_count` 被承諾會顯示在 Bot 的載入訊息裡，但 `_pdf_upload_confirmation_text()` 目前只印標題與字數。它新增 `page_count` 參數（儲存文字中的實體頁面標記數），並在標題旁印出 `共 N 頁（實體頁數）`；立即與延後兩條上傳路徑都傳入。測試為 27 頁的文字建立確認訊息並檢查 `27` 出現，範本的說明也指向那一行。
+**載入確認顯示頁數。** `target.page_count` 被承諾會顯示在 Bot 的載入訊息裡，但 `_pdf_upload_confirmation_text()` 目前只印標題與字數。它新增 `page_count` 參數（儲存文字中的實體頁面標記數），並在標題旁印出 `共 N 頁（實體頁數）`；立即與延後兩條上傳路徑都傳入。`/coc scenario use <id>` 的確認訊息（`app/commands/handlers/system.py`）對 PDF 衍生的條目也顯示同樣的 `共 N 頁（實體頁數）`，取自條目儲存的頁數，因為從劇本庫開始的 KP 同樣必須能填 `target.page_count`。測試為 27 頁的文字建立確認訊息並檢查 `27` 出現，另一個測試選用一個劇本庫條目並檢查同一行，範本的說明也指向那一行。
 
 ## 7. Repair 檔格式
 
@@ -318,7 +318,7 @@ LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activ
 
 ## 21. 檔案
 
-新增：`app/scenario_page_repair.py`、`app/services/scenario_repair.py`、`tests/test_scenario_page_repair.py`、`tests/test_discord_scenario_repair_upload.py`、`docs/references/scenario_page_repair_template(.md|_zh.md)`，以及這份規格。修改：`app/commands/handlers/uploads.py`、`app/discord_bot.py`、`app/commands/router.py`（`handle_uploads()` 接收並轉送 `user_id`、顯示名稱與 `send_private`）、`app/discord_transport/delivery.py`、`app/services/scenario_lifecycle.py`、`app/scenario_source_review.py`、`app/scenario_numbers.py`、`app/scenario_index.py`、`app/pregen_extractor.py`、`app/models.py`（持久化的 `GroupState` 欄位 `installed_artifacts_generation`，連同序列化與舊存檔的預設值）、`app/scenario_activation.py`（凡是裝入產物的地方都設定該欄位，所以經由 `activate_existing_scenario()` 的一般劇本庫選用也會設定它）、`app/scenario_library.py`、`app/trusted_scenario_source.py`、`app/help_registry.py`、`app/services/scenario_ingestion.py` 中的載入確認，以及參考與指南文件。
+新增：`app/scenario_page_repair.py`、`app/services/scenario_repair.py`、`tests/test_scenario_page_repair.py`、`tests/test_discord_scenario_repair_upload.py`、`docs/references/scenario_page_repair_template(.md|_zh.md)`，以及這份規格。修改：`app/commands/handlers/uploads.py`、`app/discord_bot.py`、`app/commands/handlers/system.py`（劇本庫選用的確認訊息）、`app/commands/router.py`（`handle_uploads()` 接收並轉送 `user_id`、顯示名稱與 `send_private`）、`app/discord_transport/delivery.py`、`app/services/scenario_lifecycle.py`、`app/scenario_source_review.py`、`app/scenario_numbers.py`、`app/scenario_index.py`、`app/pregen_extractor.py`、`app/models.py`（持久化的 `GroupState` 欄位 `installed_artifacts_generation`，連同序列化與舊存檔的預設值）、`app/scenario_activation.py`（凡是裝入產物的地方都設定該欄位，所以經由 `activate_existing_scenario()` 的一般劇本庫選用也會設定它）、`app/scenario_library.py`、`app/trusted_scenario_source.py`、`app/help_registry.py`、`app/services/scenario_ingestion.py` 中的載入確認，以及參考與指南文件。
 
 ## 22. API
 
