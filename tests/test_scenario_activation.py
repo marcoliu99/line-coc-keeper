@@ -363,3 +363,33 @@ def test_rollback_image_failure_retains_committed_state(storage: Path, monkeypat
 
     assert restored.scenario_title == "Old"
     assert group_state.load_state("group").scenario_title == "Old"
+
+
+def test_a_benign_write_during_image_copy_does_not_discard_the_refresh_when_pages_are_repaired(
+    storage: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The installed text is the library text with this conversation's saved pages laid over it."""
+    from app.repositories import page_repairs
+    raw = "--- 第 1 頁 ---\nold one"
+    with db.transaction() as conn:
+        page_repairs.save(conn, "group", "A", "hash", {1: "new one"})
+    group_state.save_state(GroupState(
+        group_id="group", scenario_library_id="A", scenario_text="--- 第 1 頁 ---\nnew one",
+        active_scenario_source_hash="hash"))
+
+    copies = 0
+
+    def copy_images(_scenario_id: str, _pages: set[int], save) -> None:
+        nonlocal copies
+        copies += 1
+        save(1, b"image")
+        if copies == 1:
+            benign = group_state.load_state("group")
+            benign.game_started = True  # another process commits an unrelated write, advancing the revision
+            group_state.save_state(benign)
+
+    monkeypatch.setattr(scenario_activation.scenario_library, "copy_context_images", copy_images)
+    scenario_activation.refresh_context_images(
+        "group", "A", {"page_numbers": {1}, "text": raw, "manifest": {"content_hash": "hash"}},
+    )
+    assert group_state.load_page_image("group", 1) == b"image"

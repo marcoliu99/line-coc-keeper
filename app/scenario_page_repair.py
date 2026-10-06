@@ -19,11 +19,14 @@ class PageRepairError(ValueError):
 
 def parse_pages(content: str) -> dict[int, str]:
     """``{physical page: complete corrected text}``; anything before the first marker (a heading, a note) is ignored."""
-    lines = content.lstrip("﻿").replace("\r\n", "\n").strip().split("\n")
-    if lines and _FENCE.match(lines[0].strip()):  # the whole answer pasted inside a code block
-        lines = lines[1:]
-        if lines and _FENCE.match(lines[-1].strip()):
-            lines = lines[:-1]
+    lines = content.lstrip("\ufeff").replace("\r\n", "\n").strip().split("\n")
+    first = next((i for i, line in enumerate(lines) if library.PAGE_MARKER_RE.match(line)), None)
+    if first is not None:  # the whole answer pasted inside a code block, possibly after a heading or a note
+        opening = next((i for i in range(first - 1, -1, -1) if lines[i].strip()), None)
+        if opening is not None and _FENCE.match(lines[opening].strip()):
+            del lines[opening]
+            if lines and _FENCE.match(lines[-1].strip()):
+                lines.pop()
     text = "\n".join(lines)
     marks = list(library.PAGE_MARKER_RE.finditer(text))
     if not marks:

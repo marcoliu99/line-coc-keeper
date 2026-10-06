@@ -225,3 +225,9 @@ def test_a_legacy_entry_without_a_content_hash_still_saves_the_pages():
     with db.transaction() as conn:
         page_repairs.save(conn, "g", "legacy", "", {4: "new four"})
     assert page_repairs.load("g", "legacy", "") == {2: "new two", 4: "new four"}
+
+
+def test_an_outer_fence_after_a_heading_or_note_is_stripped_with_its_closing_fence():
+    content = "# 修復\n說明\n```markdown\n" + page(2, "new two") + "```\n"
+    assert repair.parse_pages(content) == {2: "new two"}
+    assert repair.parse_pages("# 修復\n" + page(2, "intro\n```py\nx\n```")) == {2: "intro\n```py\nx\n```"}
