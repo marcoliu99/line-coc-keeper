@@ -143,6 +143,7 @@
 - [prep_persistence](references/prep_persistence_zh.md)
 - [role_card_template](references/role_card_template_zh.md)
 - [rules_reference](references/rules_reference_zh.md)
+- [scenario_page_repair_template](references/scenario_page_repair_template_zh.md)
 - [scenario_template_reference_review](references/scenario_template_reference_review_zh.md)
 - [scenario_zh_external_preparation](references/scenario_zh_external_preparation_zh.md)
 

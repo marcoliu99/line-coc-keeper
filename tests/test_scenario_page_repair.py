@@ -303,3 +303,18 @@ def test_untouched_pages_keep_their_exact_bytes_including_whitespace(scenario):
     assert result.candidate_text.startswith(original.split('--- 第 2 頁 ---')[0])
     assert result.candidate_text.endswith('--- 第 3 頁 ---' + original.split('--- 第 3 頁 ---')[1])
     assert repair.page_bodies(result.candidate_text, 4)[2] == '  Reviewed   spacing.  \n\n'
+
+
+# the shipped templates stay in step with the parser
+
+@pytest.mark.parametrize('name', ['scenario_page_repair_template.md', 'scenario_page_repair_template_zh.md'])
+def test_the_published_template_has_exactly_the_keys_the_parser_accepts(name):
+    from pathlib import Path
+
+    from app import scenario_authoring as authoring
+    payload = authoring.parse_markdown((Path(__file__).parent.parent / 'docs' / 'references' / name).read_text())
+    assert set(payload) == repair._TOP_KEYS and set(payload['target']) == repair._TARGET_KEYS
+    assert all(set(row) == repair._PATCH_KEYS for row in payload['patches'])
+    # an unfilled template must never be accepted as a repair
+    with pytest.raises(repair.RepairError):
+        repair.parse_markdown_bytes((Path(__file__).parent.parent / 'docs' / 'references' / name).read_bytes())
