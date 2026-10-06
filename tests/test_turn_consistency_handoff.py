@@ -875,3 +875,21 @@ def test_a_transfer_item_without_proof_does_not_complete_the_turn(state, mode):
     assert result.turn_resolution.disposition == 'incomplete'
     assert result.turn_resolution.validation_code == (
         'inventory_or_combat_not_verified' if mode == 'no_evidence_ref' else 'invalid_evidence_reference')
+
+
+def test_a_replayed_transfer_item_completes_once_and_adds_no_second_inventory_event(state):
+    async def provider(*args, **kwargs):
+        first = await args[5]('transfer_item', {'from': 'Marco', 'to': 'Ken', 'item': '一瓶煤油'})
+        again = await args[5]('transfer_item', {'from': 'marco', 'to': 'Ken', 'item': '一瓶煤油 '})
+        assert first['ok'] and again['ok'] and again['replayed'], (first, again)
+        return decision(state, 'resolved_without_check', evidence_refs=['tool:1'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), \
+            patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}), \
+            patch('app.observability.current_context', return_value={'turn_id': 'turn-replay'}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check'
+    stored = group_state.load_state(state.group_id)
+    assert stored.get_active_character('b').carried_items == ['一瓶煤油']
+    assert len(stored.inventory_transfers) == 1
+    assert [e for e in result.events if e.type == 'inventory_change' and e.payload.get('added')].__len__() == 1

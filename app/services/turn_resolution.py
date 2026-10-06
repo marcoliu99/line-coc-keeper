@@ -64,7 +64,8 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             if operation not in counted_operations:
                 counted_operations.add(operation)
                 transfers.append(event)
-            final_by_id[result['from_id']], final_by_id[result['to_id']] = from_after, to_after
+            if not replay_of_seen:
+                final_by_id[result['from_id']], final_by_id[result['to_id']] = from_after, to_after
         if name in {'add_carried_item', 'remove_carried_item'}:
             owner = result.get('investigator')
             before = event.get('inventory_before', {}).get(owner)

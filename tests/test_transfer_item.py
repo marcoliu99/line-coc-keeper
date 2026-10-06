@@ -180,7 +180,19 @@ def test_a_model_supplied_operation_id_is_ignored():
     state = _state(Ann=["手電筒", "手電筒"])
     with _in_turn("turn-1"):
         first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒", "operation_id": "mine"})
-    assert first["operation_id"] == "transfer:turn-1:1"
+    assert first["operation_id"].startswith("transfer:turn-1:") and first["operation_id"] != "mine"
+
+
+def test_the_operation_id_is_stable_and_a_refused_call_consumes_nothing():
+    state = _state(Ann=["手電筒", "手電筒"])
+    with _in_turn("turn-1"):
+        refused = _transfer(state, {"from": "Ann", "to": "Bea", "item": "刀"})
+        first = _transfer(state, {"from": "Ann", "to": "Bea", "item": "手電筒"})
+    assert not refused["ok"]
+    with _in_turn("turn-1"):
+        again = _transfer(state, {"from": "Ann", "to": "Bea", "item": " 手電筒 "})
+    assert again.get("replayed") and again["operation_id"] == first["operation_id"]
+    assert _items()["Bea"] == ["手電筒"]
 
 
 def test_without_a_turn_there_is_no_replay_protection_and_no_id():
