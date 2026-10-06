@@ -10,7 +10,7 @@ A real four-player run of *The Haunting* on `main_v2` `5c57ab3` got through init
 
 ## Change
 
-When `add_npc_to_combat` or `initialize_combat` registers an enemy and the scenario's NPC index names it, the missing provenance comes from the loaded scenario: `url` `scenario:<library id>`, `revision` the active chapter, `sha256` the active source hash, `extreme_rule` `maximum`. Anything the model gave itself wins. The name is matched like the indexed-HP correction (exact, then fuzzy) but with a lower threshold (0.5 instead of 0.6) because the Keeper's name for a creature need not be the index's: 老鼠 against 鼠群 scores exactly 0.5. The HP correction keeps its 0.6. An enemy the index does not name gets nothing and still pauses for a ruling, so a model-invented stat block is not vouched for.
+When `add_npc_to_combat` or `initialize_combat` registers an enemy and the scenario's NPC index names it, the missing provenance comes from the loaded scenario: `url` `scenario:<library id>`, `revision` the active chapter, `sha256` the active source hash, `extreme_rule` `maximum`. Anything the model gave itself wins. The name is matched like the indexed-HP correction (exact, then fuzzy) but with a lower threshold (0.5 instead of 0.6) because the Keeper's name for a creature need not be the index's: 老鼠 against 鼠群 scores exactly 0.5. The HP correction keeps its 0.6. Accepted trade-off (decided by the project owner): a model-invented enemy that merely shares one character with an indexed NPC (鼠王 against 鼠群) also scores 0.5 and gets the provenance; tighten to an exact or indexed-alias match if real runs show misfires. An enemy the index does not name gets nothing and still pauses for a ruling, so a model-invented stat block is not vouched for.
 
 ## Not done
 
