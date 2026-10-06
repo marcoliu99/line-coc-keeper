@@ -599,10 +599,12 @@ async def handle_page_repair_upload(
         if state.scenario_library_id:  # a loaded chapter window holds only some of the scenario's pages
             try:
                 manifest = scenario_library.source_manifest(state.scenario_library_id)
-                total = max(total, int(manifest.get("page_count") or 0))
                 # The running source's own hash (a pending reparse may already have published another one); the
-                # library's only backfills a game saved before the state kept a hash.
+                # library's only backfills a game saved before the state kept a hash, and only its own source's page
+                # count describes the running game.
                 source_hash = source_hash or manifest.get("content_hash", "")
+                if manifest.get("content_hash", "") == source_hash:
+                    total = max(total, int(manifest.get("page_count") or 0))
             except (OSError, ValueError):
                 pass
         beyond = sorted(page for page in pages if page > total)

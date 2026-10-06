@@ -256,3 +256,15 @@ def test_a_repair_binds_to_the_source_the_game_is_running_not_to_a_pending_repar
         replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash="running-hash"))
         upload(page(2, "new two"), state=None)
         assert page_repairs.load("g", sid, "running-hash") == {2: "new two"}
+
+
+def test_while_a_reparse_is_pending_only_the_running_source_decides_which_pages_exist(tmp_path):
+    from app import scenario_library
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(scenario_library, "SCENARIO_LIBRARY_DIR", tmp_path / "library")
+        long_text = "\n\n".join(f"--- 第 {n} 頁 ---\nbody {n}" for n in range(1, 13))
+        sid = scenario_library.save_markdown_scenario(
+            long_text.encode(), title="T", filename="s.md", preview="p", text=long_text, indexes={}, pregens=[])
+        # the game still runs another source (hash) with only the four pages of TEXT
+        replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash="older"))
+        assert "只有 4 頁" in upload(page(9, "x"), state=None)[0]
