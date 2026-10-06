@@ -24,16 +24,24 @@ def roll_player_luck() -> int:
 
 _logger = logging.getLogger(__name__)
 _PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
-# A quote states the Luck when the reported value appears after the label, whatever sits in between: the printed
-# form puts column headings there ("Luck Starting Current 50") and a page read as a table adds "|", dashes or colons
-# ("Luck | Starting: 50"). Which investigator it belongs to is decided separately.
+# A quote states the Luck when the reported value is the first number after the label, whatever sits in between: the
+# printed form puts column headings there ("Luck Starting Current 50") and a page read as a table adds "|", dashes or
+# colons ("Luck | Starting: 50"). Another field's name in between means the Luck box was empty and the number is that
+# field's ("Luck Starting Current Sanity 60"). Which investigator it belongs to is decided separately.
 _LUCK_LABEL = re.compile(r"(?i)\bLUCK\b|幸運")
+_OTHER_FIELD = re.compile(
+    r"(?i)\b(?:sanity|san|hit points|hp|magic points|mp|str|con|siz|dex|app|int|pow|edu|move|mov|build|age|name)\b"
+    r"|理智|生命|魔法|姓名|年齡")
+_NUMBER = re.compile(r"(?<!\d)\d{1,3}(?!\d)")
 
 
 def _luck_label_at(quote: str, value: int) -> int | None:
-    """Where the label sits in a quote that states the value after it, else None."""
+    """Where the label sits in a quote that states the value right after it, else None."""
     label = _LUCK_LABEL.search(quote)
-    if label is None or re.search(rf"(?<!\d){value}(?!\d)", quote[label.end():]) is None:
+    if label is None:
+        return None
+    number = _NUMBER.search(quote, label.end())
+    if number is None or int(number.group()) != value or _OTHER_FIELD.search(quote[label.end():number.start()]):
         return None
     return label.start()
 

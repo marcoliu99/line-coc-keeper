@@ -166,3 +166,15 @@ def test_a_quote_with_headings_but_no_number_is_still_dropped(caplog):
                           [_card("Alice", 50, 1, "Luck Starting Current")])
     assert result == {"Alice": None}
     assert "excerpt_does_not_state_the_value" in caplog.text
+
+
+@pytest.mark.parametrize("quote,value", [
+    ("Luck Starting Current Sanity 60", 60),       # the Luck box was empty; 60 is the next field's number
+    ("Luck 50 Sanity 60", 60),                     # not the first number after the label
+    ("Luck | Starting | Hit Points 12", 12),
+])
+def test_a_number_that_belongs_to_another_field_is_not_taken_as_the_luck(quote, value, caplog):
+    with caplog.at_level("WARNING", logger="app.pregen_extractor"):
+        result = _extract(f"--- 第 1 頁 ---\nName: Alice\n{quote}\n", [_card("Alice", value, 1, quote)])
+    assert result == {"Alice": None} or all(v is None for v in result.values())
+    assert "excerpt_does_not_state_the_value" in caplog.text

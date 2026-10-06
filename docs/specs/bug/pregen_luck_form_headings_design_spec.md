@@ -18,7 +18,7 @@ The guard itself is right: a Luck the model reports must be quoted from the shee
 
 ## Change
 
-- A quote states the Luck when the reported value appears after the `Luck`/`幸運` label, whatever sits in between: the form's column headings (`Starting`, `Current`), `|`, dashes or colons. The earlier pattern (#213) listed the headings and separators it knew, and each new page layout needed another entry: the second Haunting load quoted `Luck | Starting: 50`, `Luck — Starting | 60` and `Luck | 55`. The quote must still appear on the cited page and still belong to this investigator by the sheet's own characteristics, the nearest name, or being the only investigator.
+- A quote states the Luck when the reported value is the first number after the `Luck`/`幸運` label, whatever sits in between (a different field's name in between, as in `Luck Starting Current Sanity 60`, means the box was empty and the number is that field's): the form's column headings (`Starting`, `Current`), `|`, dashes or colons. The earlier pattern (#213) listed the headings and separators it knew, and each new page layout needed another entry: the second Haunting load quoted `Luck | Starting: 50`, `Luck — Starting | 60` and `Luck | 55`. The quote must still appear on the cited page and still belong to this investigator by the sheet's own characteristics, the nearest name, or being the only investigator.
 - A quote that has the headings but no number is still dropped.
 - The warning that reports a dropped Luck now includes the value the model reported, the cited page and the first 160 characters of its excerpt, so the next mismatch can be read from the log instead of guessed.
 
