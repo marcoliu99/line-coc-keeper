@@ -33,7 +33,7 @@ Like a `role_*.md` upload: the Keeper (or anyone) uploads one file and the bot m
 4. The reply lists exactly what changed on each page, including every number that changed.
 ```
 
-There is no export command and no hash to copy: the file only needs the page numbers and the corrected page texts. No PDF OCR is rerun.
+There is no export command and no hash to copy, and nothing to compute. The template names every field: the scenario title and page count (both shown in the bot's load message), and for each repaired page its physical page number, the complete corrected text, the page kind (`text`, `map` or `image`) and a short review note. Everything else, including hashes and number changes, is worked out by the bot. No PDF OCR is rerun.
 
 ## 2. Goals
 
@@ -209,7 +209,7 @@ Never update the parent directory. Use the immutable derived-source pattern of `
 - `candidate_digest` covers the parent identity, the normalized patches (sorted by page) and the candidate text.
 - The manifest gains `source_repair` (version, parent id and content hash, candidate digest, repaired pages, reviewer user id and display name, uploaded file name, time).
 - The identity that `trusted_scenario_source.publish_derived()` verifies on an existing destination (`candidate_digest` and `parent_scenario_id`) is written where its verifier reads it, in the audit and in `manifest["source_review"]`, exactly as for a source-review child; `source_repair` carries the repair-specific detail above. Both are written, so the helper's idempotent `target.exists()` path returns the existing ID instead of rejecting the destination as changed, which is what makes an ordinary retry and the stale-activation recovery work.
-- The audit is stored in the existing audit slot (`source_review.json`) with `kind: page_repair`: parent and candidate digests, before and after content hashes, the PDF SHA, the reviewer, and per page the before and after SHA-256, the review note, the page kind and the removed and added numeric tokens. Full before and after texts are optional; the page hashes plus the immutable parent and child recover the diff.
+- The audit is stored in the existing audit slot (`source_review.json`) with `kind: page_repair`: the conversation id and request id (both passed explicitly by the upload route into `publish`, never recovered from the observability context, which is empty when logging is off), parent and candidate digests, before and after content hashes, the PDF SHA, the reviewer, and per page the before and after SHA-256, the review note, the page kind and the removed and added numeric tokens. Full before and after texts are optional; the page hashes plus the immutable parent and child recover the diff.
 
 ## 13. Parse-quality update
 
@@ -341,7 +341,8 @@ class RepairCheck:
 
 parse_markdown_bytes(data: bytes) -> RepairProposal
 check(proposal: RepairProposal, scenario_id: str) -> RepairCheck
-publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded_filename) -> str
+publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded_filename,
+        conversation_id, request_id) -> str
 ```
 
 ## 23. Atomicity and idempotency
@@ -368,7 +369,7 @@ Treat the file as untrusted input: reject path traversal and file paths, embedde
 - **Overlap:** repair A then repair B on the same page, then A uploaded again: the reply names page 10 and repair B as overwritten, and the audit records it; a page no earlier repair touched has no such notice.
 - **Merge:** only the listed pages change; untouched pages keep their exact bytes including whitespace; markers stay ordered once each; patch order does not change the result; a no-op repair is rejected; the same repair is idempotent: uploading the same file again after it was applied to the loaded scenario is answered `已經套用` and never reaches the no-op rejection.
 - **Map and image:** a map page with labels is accepted and clears its low-text warning; a map repair does not change the scene-map graph; `image` is rejected when native text exists and accepted when it does not.
-- **Discord:** the uploader's display name reaches `publish` and the audit from the router, with no call back into Discord; `repair_*.md` routes to the repair handler and never to compare; any user may upload by default and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it; more than one repair attachment is rejected; a pending source replacement follows the admission policy; a state that changed after publication publishes but does not activate.
+- **Discord:** the uploader's display name, the conversation id and the request id reach `publish` and the audit from the router (logging off, the audit still has all three), with no call back into Discord; `repair_*.md` routes to the repair handler and never to compare; any user may upload by default and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it; more than one repair attachment is rejected; a pending source replacement follows the admission policy; a state that changed after publication publishes but does not activate.
 - **Lifecycle:** activation preserves the active chapter in a multi-chapter campaign; a stale activation is recovered by re-uploading the same file with repair semantics while the parent is still loaded, never by `/coc scenario use`, and no re-upload is advised after a scenario switch; activation preserves timeline, `game_started`, claimed PCs, HP/SAN/Luck/inventory and room positions; it never calls `_new_upload()`; the new source becomes active only after the whole transaction; the old scenario stays readable.
 - **Parse quality:** repaired pages cleared, untouched pages kept, the load message lists only the remaining pages.
 - **Artifacts:** the child keeps the parent's `scene_maps`, image bytes and image-asset metadata (a public handout stays public) and `/coc scenario use <child>` loads working maps; parent indexes and pregens are not copied; rebuild is keyed to the child hash; a stale rebuild cannot overwrite a newer repair.

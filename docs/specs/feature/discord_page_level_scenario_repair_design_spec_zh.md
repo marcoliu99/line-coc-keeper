@@ -32,7 +32,7 @@ KP 手上有只針對這幾頁、由外部審查過的 Markdown 檔，想直接�
 4. 回覆會列出每一頁實際改了什麼，包括每個有變動的數字。
 ```
 
-沒有匯出指令，也沒有要複製的雜湊：檔案只需要頁碼與修正後的頁面文字。不需要重跑 PDF OCR。
+沒有匯出指令，沒有要複製的雜湊，也沒有要計算的東西。範本寫明每個欄位：劇本標題與頁數（兩者都在 Bot 的載入訊息裡），以及每個被修復的頁面的實體頁碼、完整的修正後文字、頁面種類（`text`、`map` 或 `image`）與簡短的審查備註。其他一切，包括雜湊與數值變動，都由 Bot 算出來。不需要重跑 PDF OCR。
 
 ## 2. 目標
 
@@ -208,7 +208,7 @@ removed, added = ordered_diff(old, new)               # difflib opcodes over the
 - `candidate_digest` 涵蓋父劇本身分、正規化後的補丁（依頁碼排序）與候選文字。
 - manifest 新增 `source_repair`（版本、父劇本 ID 與內容雜湊、候選摘要、被修復的頁面、審查者使用者 ID 與顯示名稱、上傳的檔名、時間）。
 - `trusted_scenario_source.publish_derived()` 對既有目的地驗證的身分（`candidate_digest` 與 `parent_scenario_id`）要寫在它的驗證器讀取的地方，也就是稽核與 `manifest["source_review"]`，和來源審查的子劇本完全一樣；`source_repair` 帶上面那些 repair 專屬的細節。兩者都寫，所以輔助函式冪等的 `target.exists()` 路徑會回傳既有的 ID，而不是把目的地當成已改變而拒絕，這樣一般的重試與狀態過時後的復原才能運作。
-- 稽核存在既有的稽核位置（`source_review.json`），帶 `kind: page_repair`：父劇本與候選的摘要、前後內容雜湊、PDF SHA、審查者，以及每頁的前後 SHA-256、審查備註、頁面種類與移除／新增的數值 token。完整的前後文字是選用的；頁面雜湊加上不可變的父子劇本就能還原差異。
+- 稽核存在既有的稽核位置（`source_review.json`），帶 `kind: page_repair`：對話 ID 與請求 ID（由上傳路由明確傳進 `publish`，絕不從可觀測性的語境回推，因為關閉日誌時它是空的）、父劇本與候選的摘要、前後內容雜湊、PDF SHA、審查者，以及每頁的前後 SHA-256、審查備註、頁面種類與移除／新增的數值 token。完整的前後文字是選用的；頁面雜湊加上不可變的父子劇本就能還原差異。
 
 ## 13. 解析品質更新
 
@@ -340,7 +340,8 @@ class RepairCheck:
 
 parse_markdown_bytes(data: bytes) -> RepairProposal
 check(proposal: RepairProposal, scenario_id: str) -> RepairCheck
-publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded_filename) -> str
+publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded_filename,
+        conversation_id, request_id) -> str
 ```
 
 ## 23. 原子性與冪等性
@@ -367,7 +368,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 - **重疊：** repair A 然後 repair B 改同一頁，再上傳 A：回覆指出第 10 頁被 repair B 改過而這次覆蓋了它，稽核也記錄；先前沒有 repair 碰過的頁面沒有這個提示。
 - **合併：** 只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；沒有任何變化的 repair 被拒絕；同一份 repair 具冪等性：套用到已載入的劇本之後再上傳同一個檔案，回覆「已經套用」，絕不走到沒有變化的拒絕。
 - **地圖與影像：** 有標籤的地圖頁被接受並清除低文字量警告；地圖 repair 不改變場景地圖圖形；存在原生文字時 `image` 被拒絕，沒有時被接受。
-- **Discord：** 上傳者的顯示名稱從路由器一路傳到 `publish` 與稽核，不回頭呼叫 Discord；`repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
+- **Discord：** 上傳者的顯示名稱、對話 ID 與請求 ID 從路由器一路傳到 `publish` 與稽核（關閉日誌時稽核仍有這三者），不回頭呼叫 Discord；`repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
 - **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用在父劇本仍載入時靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`，切換劇本之後不建議重新上傳；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
 - **解析品質：** 被修復頁面的警告清除、未被修改頁面的保留、載入訊息只列出剩下的頁面。
 - **產物：** 子劇本保留父劇本的 `scene_maps`、圖片位元組與圖片資源中繼資料（公開講義仍然公開），`/coc scenario use <child>` 載入的地圖正常運作；父劇本的索引與預製角色不會被複製；重建以子劇本的雜湊為鍵；過時的重建不能覆寫較新的 repair。
