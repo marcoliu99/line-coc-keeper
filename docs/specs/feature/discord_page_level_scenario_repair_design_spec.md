@@ -1575,6 +1575,14 @@ Expected:
 13. new source hash receives a new RAG/index build;
 14. re-uploading the same file does not create another version.
 
+## Template and help
+
+A new upload format ships with its documentation, in the same pull request as the behavior it describes:
+
+- **Template.** `docs/references/scenario_page_repair_template(.md|_zh.md)` is the blank authoring template, linked from `docs/README.md` and `docs/README_zh.md` under References, like `role_card_template`. It states the rules (physical pages, full-page text, hashes, `page_kind`, evidence, the numeric delta tokens) and carries the JSON skeleton. A test keeps its keys identical to the parser's accepted keys, so the template cannot drift, and checks that an unfilled template is rejected. The export (phase 4) renders a filled workfile from the same field set.
+- **Help.** The conversation help (`app/help_registry.py`, rendered by `help_service` and the Help UI) gets an entry for uploading a `repair_*.md` (shown when a scenario is loaded; says that anyone may upload, that the file must come from an export or the template, and that the numeric changes must be declared) and, with the export, an entry for `/coc repair export` marked KP-only. `docs/references/player_command_reference(.md|_zh.md)` and `docs/guides/gameplay(.md|_zh.md)` get matching lines, and the load confirmation that lists parse-quality warning pages points at the repair flow.
+- **Messages.** Every refusal in rule 28 says what to do next (re-export, declare the number, ask the KP), and names the template when the file could not be read as a repair.
+
 ## Delivery
 
 Each implementation phase below ships as its own pull request with its own review; the status stays `partial` until phase 5 lands. The existing `scenario_source_review.publish` requires a proposal that covers every page and writes a fully clean parse-quality record, so phase 1 extracts the shared page logic and adds a partial-page publication path rather than reusing `publish` unchanged.
@@ -1641,7 +1649,8 @@ This feature is mergeable only when all of the following are true:
 - idempotent re-upload is proven by tests;
 - no OCR/API call is required for the page merge itself;
 - existing `scenario_source_review` tests remain green;
-- existing PDF/Markdown upload behavior remains unchanged.
+- existing PDF/Markdown upload behavior remains unchanged;
+- the template, help entries and guide lines ship with the behavior they describe.
 
 ## 43. Explicit design choices
 

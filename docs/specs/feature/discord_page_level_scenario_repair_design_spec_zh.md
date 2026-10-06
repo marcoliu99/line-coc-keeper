@@ -1573,6 +1573,14 @@ repair_the-haunting-scenario-trimmed_01.md
 13. 新的來源雜湊取得新的 RAG／索引建置；
 14. 重新上傳同一個檔案不會再建立另一個版本。
 
+## 範本與說明
+
+新的上傳格式要連同文件一起，與它所描述的行為放在同一個 pull request：
+
+- **範本。** `docs/references/scenario_page_repair_template(.md|_zh.md)` 是空白的撰寫範本，在 `docs/README.md` 與 `docs/README_zh.md` 的「References」下連結，和 `role_card_template` 一樣。它寫明規則（實體頁碼、整頁文字、雜湊、`page_kind`、證據、數值差異 token），並附 JSON 骨架。測試讓它的鍵與解析器接受的鍵完全一致，所以範本不會漂移，也檢查沒填的範本會被拒絕。匯出（階段 4）用同一組欄位產生填好的工作檔。
+- **說明。** 對話說明（`app/help_registry.py`，由 `help_service` 與 Help UI 呈現）新增上傳 `repair_*.md` 的項目（已載入劇本時顯示；說明任何人都能上傳、檔案要來自匯出或範本、數值變化必須宣告），並在匯出完成時新增標明只限 KP 的 `/coc repair export` 項目。`docs/references/player_command_reference(.md|_zh.md)` 與 `docs/guides/gameplay(.md|_zh.md)` 加上對應的說明，列出解析品質警告頁的載入確認訊息也要指向 repair 流程。
+- **訊息。** 規則 28 的每個拒絕訊息都要說明下一步怎麼做（重新匯出、宣告數字、請 KP 處理），檔案無法被讀成 repair 時要指出範本。
+
 ## 交付方式
 
 下列每個實作階段各自是一個 pull request、各自審查；在第 5 階段完成之前，狀態維持 `partial`。既有的 `scenario_source_review.publish` 需要涵蓋每一頁的提案，並寫入完全乾淨的解析品質紀錄，所以第 1 階段要抽出共用的頁面邏輯，並新增部分頁面的發布路徑，而不是原封不動地重用 `publish`。
@@ -1639,7 +1647,8 @@ repair_the-haunting-scenario-trimmed_01.md
 - 冪等的重新上傳有測試證明；
 - 頁面合併本身不需要 OCR／API 呼叫；
 - 既有的 `scenario_source_review` 測試維持綠燈；
-- 既有的 PDF／Markdown 上傳行為不變。
+- 既有的 PDF／Markdown 上傳行為不變；
+- 範本、說明項目與指南文字隨它所描述的行為一起提供。
 
 ## 43. 明確的設計選擇
 
