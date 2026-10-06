@@ -17,6 +17,7 @@ against instead of re-reading and re-guessing every time.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app import observability
@@ -111,6 +112,39 @@ def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]
     if not result:
         return {"npcs": [], "locations": []}
     return {"npcs": result.get("npcs") or [], "locations": result.get("locations") or []}
+
+
+# A heading line only: prose such as "Proceed to Location 2, 3 or 4" or "see Location 5" never matches.
+_NUMBERED_LOCATION_HEADING = re.compile(r"^[ \t]*(?:#{1,6}[ \t]*)?LOCATION[ \t]+(\d+)[ \t]*:", re.MULTILINE | re.IGNORECASE)
+
+
+def detect_numbered_location_sequence(text: str) -> list[int] | None:
+    """The heading numbers when the text has top-level ``LOCATION 1:`` ... ``LOCATION N:`` headings numbered exactly
+    1..N (at least two); None for any other text, so the check built on it stays out of the way."""
+    numbers = [int(m.group(1)) for m in _NUMBERED_LOCATION_HEADING.finditer(text)]
+    return numbers if len(numbers) >= 2 and numbers == list(range(1, len(numbers) + 1)) else None
+
+
+def location_index_underflow(scenario_text: str, locations: list[dict[str, Any]], *, previous_count: int,
+                             source: str) -> tuple[int, int] | None:
+    """``(expected, extracted)`` when the scenario's numbered location headings show a fresh extraction missed
+    locations, else None. The LLM extraction is not stable from run to run, so a result with fewer locations than the
+    text has headings must not replace an index that may be complete."""
+    sequence = detect_numbered_location_sequence(scenario_text)
+    extracted = len(locations)
+    if sequence is None:
+        status, reason = "skip", "no_numbered_location_sequence"
+    elif extracted < len(sequence):
+        status, reason = "reject", "numbered_location_underflow"
+    else:
+        status, reason = "pass", ""
+    observability.event(
+        "scenario.index.validation", level=logging.WARNING if status == "reject" else logging.INFO,
+        status=status, reason=reason, source=source, heading_numbers=sequence or [],
+        expected_location_count=len(sequence) if sequence else None,
+        extracted_location_count=extracted, previous_location_count=previous_count,
+    )
+    return (len(sequence), extracted) if status == "reject" and sequence else None
 
 
 def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:

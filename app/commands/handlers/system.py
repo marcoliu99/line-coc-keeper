@@ -814,6 +814,20 @@ async def _index_command(call: _Call) -> None:
         await reply("目前還沒有載入劇本，上傳 PDF 之後才能抽取 NPC／怪物與地點索引。")
         return
     index_data = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+    # An unstable extraction that found fewer locations than the text's numbered headings must not replace the
+    # previous index; the commit below is conditional on the loaded revision, so the check holds against newer state.
+    underflow = scenario_index.location_index_underflow(
+        state.scenario_text, index_data["locations"],
+        previous_count=len(state.scenario_location_index), source="index_command",
+    )
+    if underflow is not None:
+        expected, extracted = underflow
+        kept = "已保留上一版索引。" if state.scenario_npc_index or state.scenario_location_index else "未寫入這份不完整索引。"
+        await reply(
+            f"⚠️ 索引重建結果不完整：劇本文字明確包含 LOCATION 1–{expected}，但本次只抽出 {extracted} 個地點；{kept}"
+            "可以再執行一次 /coc index。"
+        )
+        return
     state.scenario_npc_index = index_data["npcs"]
     state.scenario_location_index = index_data["locations"]
     state_transaction.commit_snapshot(state)
