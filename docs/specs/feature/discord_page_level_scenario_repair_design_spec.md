@@ -30,7 +30,7 @@ Like a `role_*.md` upload: the Keeper (or anyone) uploads one file and the bot m
 3. The bot checks it, replaces only the listed physical pages of the loaded PDF scenario,
    publishes a new immutable scenario version, and, when that scenario is still the one being
    played, switches the running game to it without resetting anything.
-4. The reply lists exactly what changed on each page, including every number that changed.
+4. The conversation reply says which pages were replaced; the KP gets, by direct message, exactly what changed on each page including every number that changed (the detail is never put in the conversation, see section 10).
 ```
 
 There is no export command and no hash to copy, and nothing to compute. The template names every field: the scenario title and page count (both shown in the bot's load message), and for each repaired page its physical page number, the complete corrected text, the page kind (`text`, `map` or `image`) and a short review note. Everything else, including hashes and number changes, is worked out by the bot. No PDF OCR is rerun.
@@ -45,7 +45,7 @@ The implementation MUST:
 2. Treat the file as a **page patch**, never as a complete scenario.
 3. Apply it to the PDF-derived scenario that is loaded in the conversation, and reject it when the page count differs.
 4. Replace only the explicitly listed physical PDF pages, each with its complete corrected text.
-5. Compute, deterministically, every number that changed on each replaced page and report it in the reply.
+5. Compute, deterministically, every number that changed on each replaced page and report it privately to the KP and in the audit, never in the conversation reply.
 6. Reuse the original PDF bytes and page images.
 7. Create a new immutable scenario library entry and never overwrite the parent.
 8. Record parent/child provenance and an audit.
@@ -162,7 +162,7 @@ A page body is the text between its marker line and the next marker, with exactl
 The repair applies to the PDF-derived scenario the conversation has loaded (`scenario_library_id`). It is rejected when:
 
 - no scenario is loaded, or the loaded scenario has no PDF source (a Markdown-only scenario has no physical page identity);
-- `target.title` does not match the loaded scenario's title (compared case-insensitively, ignoring punctuation and spacing, and ignoring the suffixes the library adds to derived versions such as `[page repaired]` and `[source reviewed]`, so a repair file keeps working against a repaired child);
+- `target.title` does not match the loaded scenario's title (compared exactly as the load message shows it, apart from letter case, runs of whitespace collapsed to one space, and the suffixes the library adds to derived versions such as `[page repaired]` and `[source reviewed]`, so a repair file keeps working against a repaired child; punctuation is significant, so `Scenario: Alpha` and `Scenario Alpha` are different titles and nothing is matched fuzzily);
 - `target.page_count` differs from the PDF's page count;
 - a patch's `page` is outside the PDF.
 
@@ -226,7 +226,7 @@ A repair changes page text and nothing else, so the child keeps what comes from 
 
 `trusted_scenario_source.publish_derived()` is not enough for this: it re-renders every page at 110 DPI, replaces the image assets with `kp_only_image_assets` and writes empty `scene_maps`. The repair publication path copies the parent's `images/`, `image_assets` and `scene_maps` instead (a `reuse_parent_assets` mode of the helper, with the existing source-review callers unchanged).
 
-For the running game, continuity matters: keep the current player characters, claimed pregens, HP, SAN, Luck, inventory, timeline, room positions and the **active chapter** (`active_chapter_id` and `context_chapter_ids`), and keep the runtime `scene_maps`. Mark the derived source artifacts for rebuild and rebuild them asynchronously against the new source hash: NPC and location index, RAG prewarm, pregen candidates if needed. The rebuild is guarded in two layers. Committing the rebuilt artifacts to the **library entry** is guarded by the child's own manifest and source hash (and its `artifacts` marker moving from `pending` to `ready` as one compare-and-set), so it works on the first upload while the parent is still the active scenario and a slow rebuild for an old hash never overwrites a newer repair. Only **installing** the rebuilt artifacts into the running game's state requires the child to be the active source at that moment.
+For the running game, continuity matters: keep the current player characters, claimed pregens, HP, SAN, Luck, inventory, timeline, room positions and the **active chapter** (`active_chapter_id` and `context_chapter_ids`), and keep the runtime `scene_maps`. Mark the derived source artifacts for rebuild and rebuild them against the new source hash. The NPC and location index and the pregen pool are rebuilt **inside the upload flow and awaited**, before the activation lock is taken, so a normal first upload cannot reach activation while they are still `pending` and nothing depends on a retry that never comes; only the RAG prewarm may stay asynchronous. The rebuild is guarded in two layers. Committing the rebuilt artifacts to the **library entry** is guarded by the child's own manifest and source hash (and its `artifacts` marker moving from `pending` to `ready` as one compare-and-set), so it works on the first upload while the parent is still the active scenario and a slow rebuild for an old hash never overwrites a newer repair. Only **installing** the rebuilt artifacts into the running game's state requires the child to be the active source at that moment.
 
 ## 15. Map pages
 
@@ -256,7 +256,7 @@ Parsing, hashing, page checks and publication must not hold the conversation loc
 
 ```text
 LOCK: authorize, capture parent id/hash and revision/timeline, check no conflicting pending operation   UNLOCK
-parse, validate, build candidate, publish the immutable derived scenario
+parse, validate, build candidate, publish the immutable derived scenario, await the index and pregen rebuild until `artifacts` is `ready`
 LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activate if still valid      UNLOCK
 ```
 
@@ -376,14 +376,14 @@ Treat the file as untrusted input: reject path traversal and file paths, embedde
 
 ## 28. Acceptance test: The Haunting
 
-Base: `The_Haunting_Scenario_trimmed`, 27 physical PDF pages, warning pages 2, 4, 6, 7, 8, 10, 14, 16, 17. A reviewer fills the template for those nine pages from the PDF; the file is uploaded as `repair_the-haunting-trimmed_01.md`. Expected: the page count matches; only the nine pages differ in the 27-page candidate; a new immutable scenario id is created and the original is unchanged; the reply lists the numeric changes per page; the nine warning pages no longer appear in the parse-quality warning; the timeline, characters, state and room positions are unchanged; the new source hash gets a new RAG and index build; uploading the same file again creates no other version.
+Base: `The_Haunting_Scenario_trimmed`, 27 physical PDF pages, warning pages 2, 4, 6, 7, 8, 10, 14, 16, 17. A reviewer fills the template for those nine pages from the PDF; the file is uploaded as `repair_the-haunting-trimmed_01.md`. Expected: the page count matches; only the nine pages differ in the 27-page candidate; a new immutable scenario id is created and the original is unchanged; the KP receives the numeric changes per page by direct message and the conversation reply carries none of them; the nine warning pages no longer appear in the parse-quality warning; the timeline, characters, state and room positions are unchanged; the new source hash gets a new RAG and index build; uploading the same file again creates no other version.
 
 ## 29. Template and help
 
 A new upload format ships with its documentation, in the same pull request as the behavior it describes:
 
 - **Template.** `docs/references/scenario_page_repair_template(.md|_zh.md)` is the authoring template, linked from `docs/README.md` and `docs/README_zh.md` under References, like `role_card_template`. It states the rules and carries the JSON skeleton. A test keeps its keys identical to the parser's accepted keys so it cannot drift, and checks that an unfilled template is rejected.
-- **Help.** The conversation help (`app/help_registry.py`, rendered by `help_service` and the Help UI) gets an entry for uploading `repair_*.md`, shown when a scenario is loaded: anyone may upload, what the file contains, and that the reply lists the number changes. `docs/references/player_command_reference(.md|_zh.md)` and `docs/guides/gameplay(.md|_zh.md)` get matching lines, and the load confirmation that lists parse-quality warning pages points at the repair flow and the template.
+- **Help.** The conversation help (`app/help_registry.py`, rendered by `help_service` and the Help UI) gets an entry for uploading `repair_*.md`, shown when a scenario is loaded: anyone may upload, what the file contains, and that the KP receives the number changes privately. `docs/references/player_command_reference(.md|_zh.md)` and `docs/guides/gameplay(.md|_zh.md)` get matching lines, and the load confirmation that lists parse-quality warning pages points at the repair flow and the template.
 - **Messages.** Every refusal says what to do next and names the template when the file could not be read.
 
 ## Delivery
@@ -403,7 +403,7 @@ The order makes sure the game can never be switched to a child whose derived art
 
 - a repair cannot be applied to a scenario whose page count differs, to a Markdown-only scenario, or when none is loaded;
 - full-page replacement is deterministic and untouched pages keep their exact bytes;
-- every changed number is reported in the reply and the audit;
+- every changed number is reported to the KP by direct message and in the audit, and none of them appears in the conversation reply;
 - the parent scenario is immutable and a partial repair cannot publish;
 - active-game correction does not reset campaign state;
 - untouched page warnings remain visible;
@@ -417,7 +417,7 @@ The order makes sure the game can never be switched to a child whose derived art
 ## 32. Explicit design choices
 
 - **Why not accept any free-form repair file?** It would carry no page kind, review note or page-count check.
-- **Why bind to the loaded scenario and not to hashes?** The file is written by an external reviewer who has the PDF and the template but not the bot's internal hashes. The loaded scenario, the page count and the reported number changes give the safety that matters without asking the Keeper to copy anything; the immutable parent makes a wrong repair reversible.
+- **Why bind to the loaded scenario and not to hashes?** The file is written by an external reviewer who has the PDF and the template but not the bot's internal hashes. The loaded scenario, the page count and the privately reported number changes give the safety that matters without asking the Keeper to copy anything; the immutable parent makes a wrong repair reversible.
 - **Why replace the whole page?** It gives deterministic provenance and avoids fuzzy alignment.
 - **Why report numbers instead of rejecting them?** Source repair is allowed to fix numbers, and a correction is by definition a numeric change; what must not happen is a change nobody notices. The report is a visibility tool, not a proof of correctness.
 - **Why a child scenario and not an overwrite?** Repairs must be reversible, auditable and safe for existing campaigns.

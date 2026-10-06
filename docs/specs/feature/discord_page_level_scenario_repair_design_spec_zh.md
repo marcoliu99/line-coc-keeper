@@ -29,7 +29,7 @@ KP 手上有只針對這幾頁、由外部審查過的 Markdown 檔，想直接�
 2. 把 repair_<name>.md 上傳到對話。
 3. Bot 檢查後，只替換目前載入的 PDF 劇本中列出的實體頁，發布新的不可變劇本版本；
    如果該劇本仍是正在進行的那一份，就把進行中的遊戲切換過去，不重置任何東西。
-4. 回覆會列出每一頁實際改了什麼，包括每個有變動的數字。
+4. 對話裡的回覆只說哪些頁被替換；KP 會以私訊收到每一頁實際改了什麼，包括每個有變動的數字（詳細內容絕不放進對話，見第 10 節）。
 ```
 
 沒有匯出指令，沒有要複製的雜湊，也沒有要計算的東西。範本寫明每個欄位：劇本標題與頁數（兩者都在 Bot 的載入訊息裡），以及每個被修復的頁面的實體頁碼、完整的修正後文字、頁面種類（`text`、`map` 或 `image`）與簡短的審查備註。其他一切，包括雜湊與數值變動，都由 Bot 算出來。不需要重跑 PDF OCR。
@@ -44,7 +44,7 @@ KP 手上有只針對這幾頁、由外部審查過的 Markdown 檔，想直接�
 2. 把該檔案當成**頁面補丁**，絕不當成完整劇本。
 3. 套用到對話中已載入、來自 PDF 的劇本，頁數不同時拒絕。
 4. 只替換明確列出的 PDF 實體頁，每頁都是完整的修正後文字。
-5. 以確定性方式計算每個被替換頁面上有變動的數字，並在回覆中列出。
+5. 以確定性方式計算每個被替換頁面上有變動的數字，私下回報給 KP 並記入稽核，絕不放在對話的回覆裡。
 6. 重用原始 PDF 位元組與頁面影像。
 7. 建立新的不可變劇本庫項目，絕不覆寫父劇本。
 8. 記錄父子來源關係與稽核。
@@ -161,7 +161,7 @@ for patch in patches:
 repair 套用到對話已載入（`scenario_library_id`）、來自 PDF 的劇本。下列情況會被拒絕：
 
 - 沒有載入劇本，或已載入的劇本沒有 PDF 來源（只有 Markdown 的劇本沒有實體頁面身分）；
-- `target.title` 與已載入劇本的標題不符（不分大小寫、忽略標點與空白，也忽略劇本庫替衍生版本加上的後綴，例如 `[page repaired]` 與 `[source reviewed]`，所以 repair 檔對修復後的子劇本也仍然有效）；
+- `target.title` 與已載入劇本的標題不符（與載入訊息顯示的完全一致，只容許大小寫不同、連續空白折成一個空格，以及劇本庫替衍生版本加上的後綴，例如 `[page repaired]` 與 `[source reviewed]`，所以 repair 檔對修復後的子劇本也仍然有效；標點是有意義的，`Scenario: Alpha` 與 `Scenario Alpha` 是不同的標題，不做任何模糊比對）；
 - `target.page_count` 與 PDF 頁數不同；
 - 某筆補丁的 `page` 超出 PDF。
 
@@ -225,7 +225,7 @@ repair 只改頁面文字，其他都不變，所以子劇本保留來自 PDF �
 
 `trusted_scenario_source.publish_derived()` 不夠用：它會以 110 DPI 重新渲染每一頁、把圖片資源換成 `kp_only_image_assets`，並寫入空的 `scene_maps`。repair 的發布路徑改成複製父劇本的 `images/`、`image_assets` 與 `scene_maps`（該輔助函式的 `reuse_parent_assets` 模式，既有的來源審查呼叫者不變）。
 
-對進行中的遊戲，連續性很重要：保留目前的玩家角色、已認領的預製角色、HP、SAN、幸運、背包、時間線、房間位置與**目前章節**（`active_chapter_id` 與 `context_chapter_ids`），並保留執行階段的 `scene_maps`。把衍生的來源產物標記為需要重建，並依新的來源雜湊非同步重建：NPC 與地點索引、RAG 預熱、必要時的預製角色候選。重建有兩層防護。把重建好的產物提交到**劇本庫項目**，由子劇本自己的 manifest 與來源雜湊把關（並且 `artifacts` 標記從 `pending` 到 `ready` 是一次 compare-and-set），所以第一次上傳、父劇本仍是使用中的劇本時也能運作，針對舊雜湊的緩慢重建也絕不會覆寫較新的 repair。只有把重建好的產物**裝進進行中遊戲的狀態**，才要求子劇本在那一刻是使用中的來源。
+對進行中的遊戲，連續性很重要：保留目前的玩家角色、已認領的預製角色、HP、SAN、幸運、背包、時間線、房間位置與**目前章節**（`active_chapter_id` 與 `context_chapter_ids`），並保留執行階段的 `scene_maps`。把衍生的來源產物標記為需要重建，並依新的來源雜湊重建。NPC 與地點索引、預製角色池在**上傳流程內重建並等待完成**，之後才取得啟用鎖，所以正常的第一次上傳不會在它們還是 `pending` 時就走到啟用，也沒有任何東西依賴一次永遠不會來的重試；只有 RAG 預熱可以維持非同步。重建有兩層防護。把重建好的產物提交到**劇本庫項目**，由子劇本自己的 manifest 與來源雜湊把關（並且 `artifacts` 標記從 `pending` 到 `ready` 是一次 compare-and-set），所以第一次上傳、父劇本仍是使用中的劇本時也能運作，針對舊雜湊的緩慢重建也絕不會覆寫較新的 repair。只有把重建好的產物**裝進進行中遊戲的狀態**，才要求子劇本在那一刻是使用中的來源。
 
 ## 15. 地圖頁
 
@@ -255,7 +255,7 @@ async def activate_repair_version(
 
 ```text
 LOCK: authorize, capture parent id/hash and revision/timeline, check no conflicting pending operation   UNLOCK
-parse, validate, build candidate, publish the immutable derived scenario
+parse, validate, build candidate, publish the immutable derived scenario, await the index and pregen rebuild until `artifacts` is `ready`
 LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activate if still valid      UNLOCK
 ```
 
@@ -375,14 +375,14 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 
 ## 28. 驗收測試：The Haunting
 
-基準：`The_Haunting_Scenario_trimmed`，27 個 PDF 實體頁，警告頁為 2、4、6、7、8、10、14、16、17。審查者對照 PDF 為這九頁填寫範本，檔案以 `repair_the-haunting-trimmed_01.md` 上傳。預期：頁數相符；27 頁的候選中只有那九頁不同；建立新的不可變劇本 ID 且原劇本不變；回覆列出每頁的數值變動；那九個警告頁不再出現在解析品質警告；時間線、角色、狀態與房間位置不變；新的來源雜湊取得新的 RAG 與索引建置；再次上傳同一個檔案不會建立另一個版本。
+基準：`The_Haunting_Scenario_trimmed`，27 個 PDF 實體頁，警告頁為 2、4、6、7、8、10、14、16、17。審查者對照 PDF 為這九頁填寫範本，檔案以 `repair_the-haunting-trimmed_01.md` 上傳。預期：頁數相符；27 頁的候選中只有那九頁不同；建立新的不可變劇本 ID 且原劇本不變；KP 以私訊收到每頁的數值變動，對話裡的回覆不含其中任何一項；那九個警告頁不再出現在解析品質警告；時間線、角色、狀態與房間位置不變；新的來源雜湊取得新的 RAG 與索引建置；再次上傳同一個檔案不會建立另一個版本。
 
 ## 29. 範本與說明
 
 新的上傳格式要連同文件一起，與它所描述的行為放在同一個 pull request：
 
 - **範本。** `docs/references/scenario_page_repair_template(.md|_zh.md)` 是撰寫範本，在 `docs/README.md` 與 `docs/README_zh.md` 的「References」下連結，和 `role_card_template` 一樣。它寫明規則並附 JSON 骨架。測試讓它的鍵與解析器接受的鍵完全一致，所以不會漂移，也檢查沒填的範本會被拒絕。
-- **說明。** 對話說明（`app/help_registry.py`，由 `help_service` 與 Help UI 呈現）新增上傳 `repair_*.md` 的項目，已載入劇本時顯示：任何人都能上傳、檔案的內容，以及回覆會列出數值變動。`docs/references/player_command_reference(.md|_zh.md)` 與 `docs/guides/gameplay(.md|_zh.md)` 加上對應的文字，列出解析品質警告頁的載入確認訊息也要指向 repair 流程與範本。
+- **說明。** 對話說明（`app/help_registry.py`，由 `help_service` 與 Help UI 呈現）新增上傳 `repair_*.md` 的項目，已載入劇本時顯示：任何人都能上傳、檔案的內容，以及 KP 會私下收到數值變動。`docs/references/player_command_reference(.md|_zh.md)` 與 `docs/guides/gameplay(.md|_zh.md)` 加上對應的文字，列出解析品質警告頁的載入確認訊息也要指向 repair 流程與範本。
 - **訊息。** 每個拒絕訊息都說明下一步怎麼做，檔案無法被讀取時要指出範本。
 
 ## 交付方式
@@ -402,7 +402,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 
 - repair 不能套用到頁數不同的劇本、只有 Markdown 的劇本，或沒有載入劇本時；
 - 全頁替換是確定性的，未被修改的頁面保留完全相同的位元組；
-- 每個有變動的數字都會出現在回覆與稽核中；
+- 每個有變動的數字都會以私訊回報給 KP 並記入稽核，而且沒有任何一個出現在對話的回覆裡；
 - 父劇本不可變，部分的 repair 不能發布；
 - 使用中遊戲的更正不會重設戰役狀態；
 - 未被修改頁面的警告仍然可見；
@@ -416,7 +416,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 ## 32. 明確的設計選擇
 
 - **為什麼不接受任意自由格式的 repair 檔？** 它沒有頁面種類、審查備註或頁數檢查。
-- **為什麼綁定已載入的劇本，而不是雜湊？** 檔案由外部審查者撰寫，他有 PDF 與範本，但沒有 Bot 內部的雜湊。已載入的劇本、頁數與回報的數值變動，提供了真正重要的安全性，而不需要 KP 複製任何東西；不可變的父劇本讓錯誤的 repair 可以還原。
+- **為什麼綁定已載入的劇本，而不是雜湊？** 檔案由外部審查者撰寫，他有 PDF 與範本，但沒有 Bot 內部的雜湊。已載入的劇本、頁數與私下回報的數值變動，提供了真正重要的安全性，而不需要 KP 複製任何東西；不可變的父劇本讓錯誤的 repair 可以還原。
 - **為什麼替換整頁？** 這提供確定性的來源紀錄，並避免模糊對齊。
 - **為什麼回報數字而不是拒絕？** 來源修復本來就可以修數字，更正依定義就是數值變動；不該發生的是沒人注意到的變動。報告是讓人看見的工具，不是正確性的證明。
 - **為什麼建立子劇本而不是覆寫？** repair 必須可逆、可稽核，並且對既有戰役安全。
