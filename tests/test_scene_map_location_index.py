@@ -8,7 +8,7 @@ from app import db, scenario_index
 from app.commands.handlers import system as system_handler
 from app.models import GroupState
 from app.repositories import group_state, state_transaction
-from app.services import map_service
+from app.services import map_service, scenario_lifecycle
 
 COTTAGE = "Old Gurteen's Cottage"
 MAP_YAML = f"location_name: {COTTAGE}\nrooms:\n  - id: hall\n    name: Hall\n    exits: []\n".encode()
@@ -136,3 +136,15 @@ def test_a_text_entry_of_the_minimal_shape_survives_its_maps_replacement(stored)
     _upload(MAP_YAML.replace(COTTAGE.encode(), b"Elsewhere"))
     names = [loc["name"] for loc in group_state.load_state("map-index").scenario_location_index]
     assert names == ["Muscoby", COTTAGE, "Elsewhere"]
+
+
+def test_scenario_use_names_the_locations_of_the_maps_that_end_up_committed():
+    state = GroupState("map-index", scene_maps={"custom_old": {"location_name": "Old map place"}})
+    context = {"manifest": {"title": "t"}, "text": "text", "indexes": {"npcs": [], "locations": [_entry("Muscoby", page=2)]},
+               "active_chapter_id": "", "context_chapter_ids": [], "pregens": [],
+               "scene_maps": {"custom_new": {"location_name": "New map place", "rooms": []}}}
+    with patch.object(scenario_lifecycle.scenario_activation.page_repairs, "apply_saved",
+                      side_effect=lambda g, s, h, t: t):
+        scenario_lifecycle._use_existing(state, context, "sid", "")
+    assert list(state.scene_maps) == ["custom_new"]
+    assert [loc["name"] for loc in state.scenario_location_index] == ["Muscoby", "New map place"]

@@ -163,7 +163,6 @@ def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, 
     scenario_activation.install_context_fields(
         state, scenario_id, context, variant_id=variant_id, preserve_maps=True,
     )
-    _name_kept_map_locations(state)
     old_timeline_id = state.timeline_id or f"legacy-{state.group_id}"
     state.timeline_id = f"timeline-{uuid4().hex[:8]}"
     state.pending_checks.clear()
@@ -176,6 +175,7 @@ def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, 
         provider="openai",
     )
     _keep_valid_map_locations(state, context["scene_maps"])
+    _name_kept_map_locations(state)  # after the maps are settled: the ones that will be committed
     state.openai_previous_response_id = ""
     state.openai_previous_response_timeline_id = ""
     state.active = True
