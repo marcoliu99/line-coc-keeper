@@ -41,21 +41,26 @@ def parse_pages(content: str) -> dict[int, str]:
     return pages
 
 
+def present_pages(scenario_text: str) -> set[int]:
+    """The physical pages the text holds; a chapter window of a long scenario holds only some of them."""
+    return {int(m.group(1)) for m in library.PAGE_MARKER_RE.finditer(scenario_text)}
+
+
 def apply_pages(scenario_text: str, pages: dict[int, str]) -> str:
-    """Replace only the listed pages; every other byte of the scenario text is kept as it was."""
+    """Replace the listed pages the text holds; every other byte is kept, and a page outside the text is skipped."""
     marks = list(library.PAGE_MARKER_RE.finditer(scenario_text))
-    count = len(marks)
-    if not count or [int(m.group(1)) for m in marks] != list(range(1, count + 1)):
+    numbers = [int(m.group(1)) for m in marks]
+    if not marks or numbers != sorted(set(numbers)):
         raise PageRepairError("目前劇本沒有完整的實體頁碼標記，無法替換頁面。")
-    outside = sorted(page for page in pages if page > count)
-    if outside:
-        raise PageRepairError(f"目前劇本只有 {count} 頁，沒有第 {'、'.join(map(str, outside))} 頁。")
+    index = {number: i for i, number in enumerate(numbers)}
     pieces, cursor = [], 0
     for page in sorted(pages):
-        mark = marks[page - 1]
-        start = mark.end() + (1 if scenario_text.startswith("\n", mark.end()) else 0)
-        end = marks[page].start() if page < count else len(scenario_text)
-        if page < count and end - 2 >= start and scenario_text[end - 2:end] == "\n\n":
+        if page not in index:
+            continue
+        i = index[page]
+        start = marks[i].end() + (1 if scenario_text.startswith("\n", marks[i].end()) else 0)
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(scenario_text)
+        if i + 1 < len(marks) and end - 2 >= start and scenario_text[end - 2:end] == "\n\n":
             end -= 2  # the blank line between pages stays
         pieces += [scenario_text[cursor:start], pages[page]]
         cursor = max(start, end)

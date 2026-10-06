@@ -566,6 +566,7 @@ async def handle_role_sheet_upload(
     )
 
 
+@mutation_admission.guard_async_entry
 async def handle_page_repair_upload(
     conversation_id: str,
     reply: Reply,
@@ -592,12 +593,24 @@ async def handle_page_repair_upload(
         if replacement_block:
             await reply(replacement_block)
             return
+        present = scenario_page_repair.present_pages(state.scenario_text)
+        total = max(present, default=0)
+        if state.scenario_library_id:  # a loaded chapter window holds only some of the scenario's pages
+            try:
+                total = max(total, int(scenario_library.source_manifest(state.scenario_library_id).get("page_count") or 0))
+            except (OSError, ValueError):
+                pass
+        beyond = sorted(page for page in pages if page > total)
+        if beyond:
+            await reply(f"「{file_name}」沒有套用：目前劇本只有 {total} 頁，沒有第 {'、'.join(map(str, beyond))} 頁。")
+            return
         try:
             repaired = scenario_page_repair.apply_pages(state.scenario_text, pages)
         except scenario_page_repair.PageRepairError as exc:
             await reply(f"「{file_name}」沒有套用：{exc}")
             return
-        if repaired == state.scenario_text:
+        later = sorted(page for page in pages if page not in present)  # saved now, laid over when that chapter loads
+        if repaired == state.scenario_text and not later:
             await reply("這些頁面的內容已經與目前劇本相同，沒有變動。")
             return
         state.scenario_text = repaired
@@ -607,5 +620,8 @@ async def handle_page_repair_upload(
             if scenario_id and source_hash:
                 page_repairs.save(conn, conversation_id, scenario_id, source_hash, pages)
         state_transaction.commit_snapshot(state, mutate_tx=save_pages)
-    numbers = "、".join(str(page) for page in sorted(pages))
-    await reply(f"已替換第 {numbers} 頁，其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本也會套用。")
+    now = "、".join(str(page) for page in sorted(set(pages) & present))
+    note = f"已替換第 {now} 頁，" if now else ""
+    if later:
+        note += f"第 {'、'.join(map(str, later))} 頁不在目前載入的章節裡，已先存下，載入到那一頁時會套用，"
+    await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本也會套用。")

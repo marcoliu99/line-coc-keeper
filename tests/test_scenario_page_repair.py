@@ -55,13 +55,18 @@ def test_a_shorter_replacement_and_the_last_page_work():
     assert merged.endswith("--- 第 4 頁 ---\ntail")
 
 
-def test_a_page_the_scenario_does_not_have_and_a_scenario_without_markers_are_rejected():
-    with pytest.raises(repair.PageRepairError, match="9"):
-        repair.apply_pages(TEXT, {9: "x"})
+def test_a_scenario_without_ordered_markers_is_rejected():
     with pytest.raises(repair.PageRepairError):
         repair.apply_pages("plain text", {1: "x"})
     with pytest.raises(repair.PageRepairError):
         repair.apply_pages("--- 第 2 頁 ---\nb\n\n--- 第 1 頁 ---\na", {1: "x"})
+
+
+def test_a_chapter_window_is_matched_by_physical_page_number_and_other_pages_are_skipped():
+    window = "--- 第 10 頁 ---\nten\n\n--- 第 11 頁 ---\neleven"
+    assert repair.present_pages(window) == {10, 11}
+    assert repair.apply_pages(window, {11: "new", 3: "elsewhere"}) == "--- 第 10 頁 ---\nten\n\n--- 第 11 頁 ---\nnew"
+    assert repair.apply_pages(window, {3: "elsewhere"}) == window
 
 
 # the upload
@@ -137,3 +142,34 @@ def test_a_changed_library_source_ignores_the_saved_pages():
     with db.transaction() as conn:  # a new source starts a fresh set instead of mixing old pages in
         page_repairs.save(conn, "g", "s", "hash-b", {4: "new four"})
     assert page_repairs.load("g", "s", "hash-b") == {4: "new four"}
+
+
+def test_pages_outside_the_loaded_chapter_window_are_saved_and_laid_over_when_they_load(tmp_path):
+    from app import scenario_library
+    from app.repositories import page_repairs
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(scenario_library, "SCENARIO_LIBRARY_DIR", tmp_path / "library")
+        full = "\n\n".join(f"--- 第 {n} 頁 ---\nbody {n}" for n in range(1, 13))
+        sid = scenario_library.save_markdown_scenario(
+            full.encode(), title="T", filename="s.md", preview="p", text=full, indexes={}, pregens=[])
+        manifest = scenario_library.source_manifest(sid)
+        window = "--- 第 10 頁 ---\nbody 10\n\n--- 第 11 頁 ---\nbody 11"
+        replace_state(GroupState("g", scenario_text=window, scenario_library_id=sid,
+                                 active_scenario_source_hash=manifest["content_hash"]))
+        replies = upload(page(11, "fixed 11") + page(3, "fixed 3"), state=None)
+        assert "已替換第 11 頁" in replies[0] and "第 3 頁不在目前載入的章節裡" in replies[0]
+        assert "fixed 11" in group_state.load_state("g").scenario_text
+        later = page_repairs.apply_saved("g", sid, manifest["content_hash"], "--- 第 2 頁 ---\nb2\n\n--- 第 3 頁 ---\nb3")
+        assert later == "--- 第 2 頁 ---\nb2\n\n--- 第 3 頁 ---\nfixed 3"
+        assert "只有 12 頁" in upload(page(13, "x"), state=None)[0]
+
+
+def test_a_held_conversation_gets_the_hold_notice_and_nothing_changes():
+    from unittest.mock import patch
+
+    from app.services import mutation_admission
+    replace_state(GroupState("g", scenario_text=TEXT))
+    with patch.object(mutation_admission, "is_held", return_value=True):
+        replies = upload(page(2, "new two"), state=None)
+    assert replies == [mutation_admission.NOTICE]
+    assert group_state.load_state("g").scenario_text == TEXT
