@@ -150,6 +150,12 @@ def source_manifest(scenario_id: str) -> dict[str, Any]:
     return manifest
 
 
+def read_parse_quality(scenario_id: str) -> dict[str, Any]:
+    """The entry's parse-quality record; ``{}`` when it has none or it is not an object."""
+    value = _read_json(_path(scenario_id) / "parse_quality.json", {})
+    return value if isinstance(value, dict) else {}
+
+
 def exports_dir(scenario_id: str) -> Path:
     """Where the external-preparation packages of a scenario live."""
     return _variants_root(scenario_id) / "exports"

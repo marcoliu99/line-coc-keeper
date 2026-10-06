@@ -2248,7 +2248,12 @@
         "app/trusted_scenario_source.py",
         "app/services/scenario_lifecycle.py",
         "app/commands/handlers/uploads.py",
-        "app/scenario_numbers.py"
+        "app/scenario_numbers.py",
+        "app/scenario_page_repair.py",
+        "docs/references/scenario_page_repair_template.md",
+        "docs/references/scenario_page_repair_template_zh.md",
+        "tests/test_scenario_page_repair.py",
+        "tests/test_publication_lock.py"
       ],
       "path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec.md",
       "zh_path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec_zh.md",

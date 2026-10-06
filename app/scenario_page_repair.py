@@ -7,7 +7,6 @@ and untouched pages keep their exact bytes (see docs/specs/feature/discord_page_
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -134,6 +133,8 @@ def parse_markdown_bytes(data: bytes) -> RepairProposal:
         content = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise RepairError("修復檔必須是 UTF-8 編碼。") from exc
+    if content.strip().startswith(("{", "[")):  # the shared parser also takes a bare JSON document; a repair does not
+        raise RepairError(f"修復檔必須把 JSON 放在 ```json 區塊裡。{TEMPLATE_HINT}")
     try:
         payload = authoring.parse_markdown(content.replace("\r\n", "\n"))
     except authoring.Diagnostics as exc:
@@ -215,14 +216,6 @@ def patches_digest(proposal: RepairProposal) -> str:
     return authoring.digest(_normal_patches(proposal.patches))
 
 
-def _read_quality(scenario_id: str) -> dict[str, Any]:
-    try:
-        value = json.loads((library.scenario_path(scenario_id) / "parse_quality.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
 def _quality_row(quality: dict[str, Any], page: int) -> dict[str, Any] | None:
     for row in quality.get("pages", []):
         if isinstance(row, dict) and row.get("page") == page:
@@ -289,7 +282,7 @@ def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
     if (any(new_pages[n - 1] != old_pages[n - 1] for n in range(1, len(spans) + 1) if n not in by_page)
             or any(new_pages[n - 1] != published_body(patch) for n, patch in by_page.items())):
         return _fail(scenario_id, RepairIssue("content", None, "候選文字的頁面沒有通過還原檢查，沒有套用任何內容。"))
-    quality = _read_quality(scenario_id)
+    quality = library.read_parse_quality(scenario_id)
     changes = tuple(_change(patch, old_pages[patch.page - 1], new_pages[patch.page - 1]) for patch in proposal.patches)
     text_unchanged = candidate == snapshot.text
     noop = text_unchanged and all(

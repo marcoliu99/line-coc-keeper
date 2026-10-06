@@ -105,7 +105,8 @@ def test_image_page_needs_empty_text_and_other_kinds_need_text():
 
 
 def test_not_utf8_without_or_with_two_json_blocks_is_rejected():
-    for data in (b"\xff\xfe", b"no json here", b"```json\n{}\n```\n```json\n{}\n```", b"```json\n[]\n```"):
+    bare = json.dumps(payload([patch(2, "x")])).encode()
+    for data in (b"\xff\xfe", b"no json here", b"```json\n{}\n```\n```json\n{}\n```", b"```json\n[]\n```", bare):
         with pytest.raises(repair.RepairError):
             repair.parse_markdown_bytes(data)
 
@@ -329,3 +330,12 @@ def test_template_keys_match_the_parser_and_an_unfilled_template_is_rejected(nam
     filled = {**template, "target": {"title": "T", "page_count": 3},
               "patches": [{**template["patches"][0], "page": 2, "text": "body", "review_note": "ok"}]}
     assert repair.parse_markdown_bytes(document(filled)).patches[0].page == 2
+
+
+def test_parse_quality_is_read_through_the_library(create):
+    sid = create()
+    assert library.read_parse_quality(sid)["review_pages"] == [1, 2, 4]
+    (library.scenario_path(sid) / "parse_quality.json").write_text("[]", encoding="utf-8")
+    assert library.read_parse_quality(sid) == {}
+    (library.scenario_path(sid) / "parse_quality.json").unlink()
+    assert library.read_parse_quality(sid) == {}
