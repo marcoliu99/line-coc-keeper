@@ -1141,6 +1141,8 @@ class GroupState:
     known_clues: list[dict[str, Any]] = field(default_factory=list)
     commerce: dict[str, Any] = field(default_factory=dict)
     consumed_or_removed_items: list[dict[str, Any]] = field(default_factory=list)
+    # One record per committed ``transfer_item``: who gave what to whom, never counted as a consumption.
+    inventory_transfers: list[dict[str, Any]] = field(default_factory=list)
     # Durable audit markers for a state-changing tool whose caller was
     # cancelled after the grace period expired. The mutation may have
     # committed in its worker thread, so these markers say recovery_required
@@ -1335,6 +1337,7 @@ class GroupState:
             "known_clues": self.known_clues,
             "commerce": self.commerce,
             "consumed_or_removed_items": self.consumed_or_removed_items,
+            "inventory_transfers": self.inventory_transfers,
             "tool_recovery_markers": self.tool_recovery_markers,
         }
 
@@ -1449,6 +1452,7 @@ class GroupState:
             known_clues=data.get("known_clues", []),
             commerce=data.get("commerce", {}),
             consumed_or_removed_items=data.get("consumed_or_removed_items", []),
+            inventory_transfers=data.get("inventory_transfers", []),
             tool_recovery_markers=data.get("tool_recovery_markers", []),
             loaded_timeline_id=data.get("timeline_id", ""),
         )

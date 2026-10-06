@@ -186,6 +186,14 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         "removed": list((Counter(before_items) - Counter(after_items)).elements()),
                         "evidence_ref": f"tool:{len(tool_events) + 1}",
                     }))
+                if result.get("ok") and name == "transfer_item":
+                    moved = [str(result.get("item", ""))] * int(result.get("quantity", 1))
+                    for who, key in ((result.get("from"), "removed"), (result.get("to"), "added")):
+                        inventory_events.append(GameEvent("inventory_change", {
+                            "investigator": who, "operation": name, "added": moved if key == "added" else [],
+                            "removed": moved if key == "removed" else [],
+                            "evidence_ref": f"tool:{len(tool_events) + 1}",
+                        }))
                 if session.dynamic_tools:
                     combat_status_gate.observe_tool_result(name, result)
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),

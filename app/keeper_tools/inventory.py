@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from app import combat_resources
+from app import combat_resources, observability
 from app.keeper_tools import resource_bridge, support
 from app.models import GroupState
 
@@ -106,6 +106,87 @@ def remove_carried_item(call: ToolCall) -> dict[str, Any]:
         return support.ToolStateMutation((target_char.name, target_char.carried_items), should_save=changed)
     investigator, carried_items = support.mutate_tool_state(state, _mutate_remove_item)
     return {"ok": True, "investigator": investigator, "carried_items": carried_items}
+
+
+class _TransferRefused(Exception):
+    """A hand-off that must write nothing; ``code`` is stable and queryable, the message is for the Keeper."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _same_item(left: str, right: str) -> bool:
+    return left.strip().casefold() == right.strip().casefold()
+
+
+def _transfer_quantity(raw: Any) -> int:
+    if raw is None:
+        return 1
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise _TransferRefused("invalid_quantity", f"quantity 必須是至少為 1 的整數，收到 {raw!r}")
+    return raw
+
+
+def _validated_transfer(state: GroupState, call: ToolCall, item: str, quantity: int) -> tuple[Any, Any, list[str]]:
+    """Resolve both ends exactly and check every rule against ``state``; raises ``_TransferRefused`` before any write."""
+    tool_input = call.input
+    giver, why = support.resolve_active_character_exactly(state, str(tool_input.get("from", "")))
+    if giver is None:
+        raise _TransferRefused("unknown_giver" if why == "unknown" else "ambiguous_giver",
+                               f"找不到給出者「{tool_input.get('from')}」" if why == "unknown" else f"給出者名稱有歧義：{why[10:]}")
+    receiver, why = support.resolve_active_character_exactly(state, str(tool_input.get("to", "")))
+    if receiver is None:
+        raise _TransferRefused("unknown_receiver" if why == "unknown" else "ambiguous_receiver",
+                               f"找不到接收者「{tool_input.get('to')}」" if why == "unknown" else f"接收者名稱有歧義：{why[10:]}")
+    if giver is receiver:
+        raise _TransferRefused("same_character", "給出者與接收者是同一個角色")
+    if call.system_origin != "kp_assistant" and (not call.actor_id or giver.owner_id != call.actor_id):
+        raise _TransferRefused("not_actors_item", f"只有「{giver.name}」自己的玩家能交出他的物品")
+    held = [entry for entry in giver.carried_items if _same_item(entry, item)]
+    if len(held) < quantity:
+        raise _TransferRefused("item_not_held", f"「{giver.name}」沒有 {quantity} 份「{item}」（持有 {len(held)} 份）")
+    return giver, receiver, held[:quantity]
+
+
+def transfer_item(call: ToolCall) -> dict[str, Any]:
+    """Move ``quantity`` entries from one investigator to another in one committed step, or write nothing."""
+    state = call.state
+    tool_input = call.input
+    item = str(tool_input.get("item", "")).strip()
+    if not item:
+        return {"ok": False, "error": "item 不能是空字串", "refusal": "empty_item"}
+
+    def refused(exc: _TransferRefused) -> dict[str, Any]:
+        observability.event("inventory.transfer.refused", reason=exc.code)
+        return {"ok": False, "error": str(exc), "refusal": exc.code}
+
+    try:
+        quantity = _transfer_quantity(tool_input.get("quantity"))
+
+        def _mutate_transfer(target_state: GroupState) -> Any:
+            giver, receiver, moved = _validated_transfer(target_state, call, item, quantity)
+            for entry in moved:
+                giver.carried_items.remove(entry)
+            receiver.carried_items.extend(moved)
+            target_state.inventory_transfers.append({
+                "id": uuid4().hex, "turn_id": str(observability.current_context().get("turn_id", "")),
+                "from": giver.name, "to": receiver.name, "item": moved[0], "quantity": quantity,
+                "source_event_id": tool_input.get("source_event_id") or "",
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            })
+            return support.ToolStateMutation((
+                giver.name, receiver.name, moved[0], list(giver.carried_items), list(receiver.carried_items),
+            ))
+        giver_name, receiver_name, moved_item, giver_items, receiver_items = support.mutate_tool_state(state, _mutate_transfer)
+    except _TransferRefused as exc:
+        return refused(exc)
+    observability.event("inventory.transfer", quantity=quantity)
+    return {
+        "ok": True, "from": giver_name, "to": receiver_name, "item": moved_item, "quantity": quantity,
+        "giver_remaining": sum(1 for entry in giver_items if _same_item(entry, item)),
+        "from_carried_items": giver_items, "to_carried_items": receiver_items,
+    }
 
 
 def add_status_tag(call: ToolCall) -> dict[str, Any]:

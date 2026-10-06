@@ -54,6 +54,25 @@ def find_character(state: GroupState, name: str) -> Character | None:
     return None
 
 
+def resolve_active_character_exactly(state: GroupState, ref: str) -> tuple[Character | None, str]:
+    """An active investigator named by character id or by an exact (case-insensitive) name; never a partial match.
+
+    Returns ``(character, "")`` or ``(None, reason)`` where reason is ``unknown`` or ``ambiguous:<names>``. A hand-off
+    must not reach a similarly named investigator, which ``find_character``'s substring fallback would allow.
+    """
+    wanted = (ref or "").strip()
+    if not wanted:
+        return None, "unknown"
+    pool = state.active_characters()
+    by_id = [char for char in pool if char.character_id and char.character_id == wanted]
+    matches = by_id or [char for char in pool if char.name.strip().casefold() == wanted.casefold()]
+    if not matches:
+        return None, "unknown"
+    if len(matches) > 1:
+        return None, "ambiguous:" + "、".join(sorted(char.name for char in matches))
+    return matches[0], ""
+
+
 def require_character(state: GroupState, name: str) -> Character:
     character = find_character(state, name)
     if character is None:

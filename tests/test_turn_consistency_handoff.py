@@ -837,3 +837,41 @@ def test_deferred_rejects_reviewed_native_enemy_damage(state):
         result = _executor_with_provider(state, provider)
     assert result.turn_resolution.disposition == 'incomplete'
     assert combat.find_combatant(group_state.load_state(state.group_id), 'Enemy').hp == 7
+
+
+@pytest.mark.parametrize('kind', ['resolved', 'resolved_without_check'])
+def test_one_transfer_item_call_completes_with_an_unchanged_old_check(state, kind):
+    state.pending_checks['a'] = pending('old-inspection', '偵查木板牆')
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        receipt = await args[5]('transfer_item', {'from': 'Marco', 'to': 'Ken', 'item': '一瓶煤油'})
+        assert receipt['ok'], receipt
+        return decision(state, kind, evidence_refs=['tool:1'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check'
+    stored = group_state.load_state(state.group_id)
+    assert stored.pending_checks['a']['check_id'] == 'old-inspection'
+    assert stored.get_active_character('a').carried_items == []
+    assert stored.get_active_character('b').carried_items == ['一瓶煤油']
+    assert [outcome.public_text for outcome in result.observed_outcomes if outcome.tool_name == 'transfer_item'] == [
+        'Marco 已把「一瓶煤油」交給 Ken。']
+    assert fake.await_count == 1
+
+
+@pytest.mark.parametrize('mode', ['no_evidence_ref', 'refused_transfer'])
+def test_a_transfer_item_without_proof_does_not_complete_the_turn(state, mode):
+    async def provider(*args, **kwargs):
+        if mode == 'refused_transfer':  # Ken's item is not Marco's to give
+            receipt = await args[5]('transfer_item', {'from': 'Ken', 'to': 'Marco', 'item': '一瓶煤油'})
+            assert receipt['ok'] is False
+            return decision(state, 'resolved', evidence_refs=['tool:1'])
+        await args[5]('transfer_item', {'from': 'Marco', 'to': 'Ken', 'item': '一瓶煤油'})
+        return decision(state, 'resolved', evidence_refs=['state'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'incomplete'
+    assert result.turn_resolution.validation_code == (
+        'inventory_or_combat_not_verified' if mode == 'no_evidence_ref' else 'invalid_evidence_reference')
