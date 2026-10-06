@@ -98,6 +98,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 | [Reusable scenario library and chapter context](specs/feature/scenario_library_design_spec.md) | implemented | [繁體中文](specs/feature/scenario_library_design_spec_zh.md) |
 | [Durable state, checkpoints and scoped memory](specs/feature/state_persistence_design_spec.md) | implemented | [繁體中文](specs/feature/state_persistence_design_spec_zh.md) |
 | [Structured request and turn observability](specs/feature/structured_performance_logging_design_spec.md) | implemented | [繁體中文](specs/feature/structured_performance_logging_design_spec_zh.md) |
+| [Page-level scenario repair from a Discord upload](specs/feature/discord_page_level_scenario_repair_design_spec.md) | backlog | [繁體中文](specs/feature/discord_page_level_scenario_repair_design_spec_zh.md) |
 
 ## refactor
 
