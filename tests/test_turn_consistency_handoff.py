@@ -893,3 +893,20 @@ def test_a_replayed_transfer_item_completes_once_and_adds_no_second_inventory_ev
     assert stored.get_active_character('b').carried_items == ['一瓶煤油']
     assert len(stored.inventory_transfers) == 1
     assert [e for e in result.events if e.type == 'inventory_change' and e.payload.get('added')].__len__() == 1
+
+
+@pytest.mark.parametrize('order', ['add_then_transfer', 'transfer_then_add'])
+def test_add_and_transfer_in_one_turn_verify_in_chronological_order(state, order):
+    async def provider(*args, **kwargs):
+        if order == 'add_then_transfer':
+            first = await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '鑰匙'})
+            second = await args[5]('transfer_item', {'from': 'Marco', 'to': 'Ken', 'item': '鑰匙'})
+        else:
+            first = await args[5]('transfer_item', {'from': 'Marco', 'to': 'Ken', 'item': '一瓶煤油'})
+            second = await args[5]('add_carried_item', {'investigator': 'Marco', 'item': '鑰匙'})
+        assert first['ok'] and second['ok'], (first, second)
+        return decision(state, 'resolved_without_check', evidence_refs=['tool:1', 'tool:2'])
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
