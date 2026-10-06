@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from app import db, scenario_library, scenario_templates
+from app import db, scenario_index, scenario_library, scenario_templates
 from app.models import GroupState
 from app.repositories import group_state, page_repairs
 
@@ -33,6 +33,9 @@ def install_context_fields(
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
+    if preserve_maps:  # the kept maps still name their locations, which the library's index does not know
+        state.scenario_location_index = scenario_index.merge_scene_map_locations(
+            state.scenario_location_index, state.scene_maps)
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
     if not preserve_maps:

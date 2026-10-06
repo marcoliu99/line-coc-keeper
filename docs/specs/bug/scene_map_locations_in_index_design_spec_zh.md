@@ -10,7 +10,7 @@ Markdown 劇本載入後地點索引是空的（劇本庫只保留有頁碼的�
 
 ## 修改
 
-`scenario_index.merge_scene_map_locations(locations, scene_maps)` 回傳原索引，外加每個「索引裡還沒有（比對名稱或別名，`strip` 加 `casefold`）」的場景地圖 `location_name` 一筆 `{name, aliases: [], summary: "", page: 0, source: "scene_map"}`。既有條目不動，重複合併不會再加。上傳時若以同一個 key 覆蓋了舊地圖，為舊地圖名稱建立的那一筆會被移除（除非還有別張地圖用同名）；只有合併本身建立、標記為 `source: scene_map` 的條目會被移除，來自劇本文字的條目永遠不會。它在地圖匯入成功時呼叫（`map_service.handle_map_upload`，同一次狀態 commit；無效的地圖什麼都不改），也在 `/coc index` 通過編號標題檢查之後呼叫，所以地圖不會掩蓋文字抽取不完整的問題（[不完整的地點索引重建結果不會取代有效的索引](index_location_underflow_design_spec_zh.md)）。
+`scenario_index.merge_scene_map_locations(locations, scene_maps)` 回傳原索引，外加每個「索引裡還沒有（比對名稱或別名，`strip` 加 `casefold`）」的場景地圖 `location_name` 一筆 `{name, aliases: [], summary: "", page: 0, source: "scene_map"}`。既有條目不動，重複合併不會再加。上傳時若以同一個 key 覆蓋了舊地圖，為舊地圖名稱建立的那一筆會被移除（除非還有別張地圖用同名）；只有合併本身建立、標記為 `source: scene_map` 的條目會被移除，來自劇本文字的條目永遠不會。它在地圖匯入成功時呼叫（`map_service.handle_map_upload`，同一次狀態 commit；無效的地圖什麼都不改），也在 `scenario_activation.install_context_fields` 保留地圖時呼叫（修正執行中的劇本會換掉索引、卻保留自訂地圖），以及 `/coc index` 通過編號標題檢查之後呼叫，所以地圖不會掩蓋文字抽取不完整的問題（[不完整的地點索引重建結果不會取代有效的索引](index_location_underflow_design_spec_zh.md)）。
 
 ## 不做
 
