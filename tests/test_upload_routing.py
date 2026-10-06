@@ -26,7 +26,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         reply, buttons = AsyncMock(), AsyncMock()
         handlers = {name: AsyncMock() for name in (
             "handle_pdf_upload", "handle_map_upload", "handle_role_sheet_upload", "handle_scenario_compare_upload",
-            "handle_scenario_markdown_upload",
+            "handle_scenario_markdown_upload", "handle_page_repair_upload",
         )}
         stage = AsyncMock()
         with patch.multiple(uploads, **handlers), patch.object(uploads, "_stage_pdf_parts", stage):
@@ -79,6 +79,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
             "role_ken.txt": "handle_role_sheet_upload",
             "scenario_lightless_beacon.md": "handle_scenario_markdown_upload",
             "alt_extraction.md": "handle_scenario_compare_upload",
+            "repair_the-haunting_01.md": "handle_page_repair_upload",
         }
         for name, expected in cases.items():
             with self.subTest(name=name):
@@ -90,6 +91,12 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_role_card_in_a_message_is_handled(self):
         _, handlers, _, _, _ = await self._route("role_a.txt", "role_b.txt")
         self.assertEqual(handlers["handle_role_sheet_upload"].await_count, 2)
+
+    async def test_only_one_repair_file_per_message(self):
+        handled, handlers, _, reply, _ = await self._route("repair_a.md", "repair_b.md")
+        self.assertTrue(handled)
+        handlers["handle_page_repair_upload"].assert_not_awaited()
+        self.assertIn("一份", reply.await_args.args[0])
 
     async def test_an_unprefixed_yaml_gets_a_rename_hint(self):
         handled, handlers, _, reply, _ = await self._route("lighthouse.yaml")

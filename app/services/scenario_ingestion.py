@@ -20,13 +20,14 @@ from app import (
     scenario_compare,
     scenario_index,
     scenario_library,
+    scenario_page_repair,
 )
 from app.keeper_tools import resource_bridge
 from app.models import (
     OCCUPATIONS,
     GroupState,
 )
-from app.repositories import manual_pregens, state_transaction
+from app.repositories import manual_pregens, page_repairs, state_transaction
 from app.repositories.group_state import load_state
 from app.services import mutation_admission, scenario_lifecycle
 
@@ -563,3 +564,48 @@ async def handle_role_sheet_upload(
         f"角色卡{action_note}（資產 ID：{result['asset_id']}）：{name_note}，職業「{pregen['occupation']}」，"
         f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
     )
+
+
+async def handle_page_repair_upload(
+    conversation_id: str,
+    reply: Reply,
+    file_text: str,
+    file_name: str,
+) -> None:
+    """Overwrite whole pages of the loaded scenario text from a ``repair_``-prefixed .md attachment.
+
+    Like a role card it belongs to the conversation and the scenario, not to the library entry: the pages are saved
+    (repositories/page_repairs) and laid over the library text whenever the scenario is loaded again, and uploading the
+    same pages again simply overwrites them. The page format is in scenario_page_repair.
+    """
+    try:
+        pages = scenario_page_repair.parse_pages(file_text)
+    except scenario_page_repair.PageRepairError as exc:
+        await reply(f"「{file_name}」沒有套用：{exc}")
+        return
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not state.scenario_text.strip():
+            await reply("目前沒有載入劇本，請先上傳劇本再上傳頁面修復檔。")
+            return
+        replacement_block = resource_bridge.guard_replacement(state)
+        if replacement_block:
+            await reply(replacement_block)
+            return
+        try:
+            repaired = scenario_page_repair.apply_pages(state.scenario_text, pages)
+        except scenario_page_repair.PageRepairError as exc:
+            await reply(f"「{file_name}」沒有套用：{exc}")
+            return
+        if repaired == state.scenario_text:
+            await reply("這些頁面的內容已經與目前劇本相同，沒有變動。")
+            return
+        state.scenario_text = repaired
+        scenario_id, source_hash = state.scenario_library_id, state.active_scenario_source_hash
+
+        def save_pages(conn):
+            if scenario_id and source_hash:
+                page_repairs.save(conn, conversation_id, scenario_id, source_hash, pages)
+        state_transaction.commit_snapshot(state, mutate_tx=save_pages)
+    numbers = "、".join(str(page) for page in sorted(pages))
+    await reply(f"已替換第 {numbers} 頁，其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本也會套用。")

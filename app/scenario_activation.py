@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 
 from app import db, scenario_library, scenario_templates
 from app.models import GroupState
-from app.repositories import group_state
+from app.repositories import group_state, page_repairs
 
 _logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -26,8 +26,9 @@ def install_context_fields(
         else scenario_templates.preferred_variant(state.group_id, scenario_id)
     )
     state.scenario_title = context["manifest"]["title"]
-    state.scenario_text = context["text"]
-    state.active_scenario_source_hash = context["manifest"].get("content_hash", "")
+    source_hash = context["manifest"].get("content_hash", "")
+    state.scenario_text = page_repairs.apply_saved(state.group_id, scenario_id, source_hash, context["text"])
+    state.active_scenario_source_hash = source_hash
     state.active_chapter_id = context["active_chapter_id"]
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])

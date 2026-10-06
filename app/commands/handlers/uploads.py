@@ -20,6 +20,7 @@ from app.services import mutation_admission
 from app.services.map_service import handle_map_upload
 from app.services.scenario_ingestion import (
     apply_pdf_upload_choice,
+    handle_page_repair_upload,
     handle_pdf_upload,
     handle_role_sheet_upload,
     handle_scenario_compare_upload,
@@ -90,6 +91,15 @@ async def handle_uploads(
             f"「{unprefixed[0].filename}」看起來是地圖資料，"
             "但檔名需要以 map_ 開頭（例如 map_lighthouse.yaml）才會被辨識，請改檔名後重新上傳。"
         )
+        return True
+
+    repairs = [u for u in uploads if u.filename.lower().startswith("repair_") and u.filename.lower().endswith(".md")]
+    if repairs:
+        if len(repairs) > 1:
+            await reply("一次請只上傳一份 repair 開頭的頁面修復檔。")
+            return True
+        content = await repairs[0].read()
+        await handle_page_repair_upload(conversation_id, reply, content.decode("utf-8", errors="replace"), repairs[0].filename)
         return True
 
     roles = [u for u in uploads if u.filename.lower().startswith("role_") and u.filename.lower().endswith((".txt", ".md"))]

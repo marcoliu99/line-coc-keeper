@@ -145,6 +145,7 @@ Later entries record their own source revisions; the proposed turn safety and la
 - [prep_persistence](references/prep_persistence.md)
 - [role_card_template](references/role_card_template.md)
 - [rules_reference](references/rules_reference.md)
+- [scenario_page_repair_template](references/scenario_page_repair_template.md)
 - [scenario_template_reference_review](references/scenario_template_reference_review.md)
 - [scenario_zh_external_preparation](references/scenario_zh_external_preparation.md)
 
