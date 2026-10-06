@@ -24,13 +24,19 @@ def roll_player_luck() -> int:
 
 _logger = logging.getLogger(__name__)
 _PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
-# The printed sheet puts small column headings between the label and the value ("Luck  Starting  Current  50"), and
-# OCR keeps them in reading order, so a verbatim quote of the Luck box contains them. A page read as a table also
-# separates them with "|", a dash or a colon ("Luck | Starting: 50", "Luck — Starting | 60").
-_LUCK_SEP = r"[\s|:：=—–-]*"
-_LUCK_HEADINGS = r"(?:(?:starting|start|current|initial|maximum|max|起始|目前|當前|初始)" + _LUCK_SEP + r")*"
-_LUCK_ON_SHEET = re.compile(
-    r"(?i)(?:\bLUCK\b|幸運)" + _LUCK_SEP + r"(?:\([^)]{0,20}\))?" + _LUCK_SEP + _LUCK_HEADINGS + r"(\d{1,3})(?!\d)")
+# A quote states the Luck when the reported value appears after the label, whatever sits in between: the printed
+# form puts column headings there ("Luck Starting Current 50") and a page read as a table adds "|", dashes or colons
+# ("Luck | Starting: 50"). Which investigator it belongs to is decided separately.
+_LUCK_LABEL = re.compile(r"(?i)\bLUCK\b|幸運")
+
+
+def _luck_label_at(quote: str, value: int) -> int | None:
+    """Where the label sits in a quote that states the value after it, else None."""
+    label = _LUCK_LABEL.search(quote)
+    if label is None or re.search(rf"(?<!\d){value}(?!\d)", quote[label.end():]) is None:
+        return None
+    return label.start()
+
 
 _REPORT_TOOL = {
     "name": "report_pregens",
@@ -285,8 +291,8 @@ def _check_pdf_luck(
     quote = _squash(excerpt)
     if not source or not quote or len(quote) > 1200:
         return None, "excerpt_empty_or_page_unknown"
-    matched = _LUCK_ON_SHEET.search(quote)
-    if matched is None or int(matched.group(1)) != value:
+    label_at = _luck_label_at(quote, value)
+    if label_at is None:
         return None, "excerpt_does_not_state_the_value"
     occurrences = [found.start() for found in re.finditer(re.escape(quote), source)]
     if not occurrences:
@@ -301,8 +307,8 @@ def _check_pdf_luck(
     for at in occurrences:
         carries = bool(tail) and at <= _CARRY_CHARS
         combined = f"{tail} {source}" if carries else source
-        luck_at = len(combined) - len(source) + at + matched.start()
-        page_scores = _stat_scores(pregens, source, at + matched.start())
+        luck_at = len(combined) - len(source) + at + label_at
+        page_scores = _stat_scores(pregens, source, at + label_at)
         owner = _stat_owner(page_scores)
         if owner is None and max(page_scores) < _STAT_MIN_MATCHES:
             # Nothing identifying on the cited page: the sheet may have begun on the page before.
