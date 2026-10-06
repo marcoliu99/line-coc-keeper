@@ -1765,7 +1765,6 @@
       "status": "implemented",
       "evidence": [
         "app/services/scenario_lifecycle.py",
-        "app/scenario_activation.py",
         "app/services/scenario_ingestion.py",
         "app/commands/handlers/system.py",
         "app/commands/handlers/uploads.py",
@@ -1825,7 +1824,6 @@
         "app/scenario_library.py",
         "app/scenario_activation.py",
         "app/services/scenario_lifecycle.py",
-        "app/scenario_activation.py",
         "tests/test_scenario_lifecycle_characterization.py"
       ],
       "path": "docs/specs/refactor/active_scenario_source_identity_design_spec.md",
