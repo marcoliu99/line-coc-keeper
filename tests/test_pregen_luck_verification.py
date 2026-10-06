@@ -45,6 +45,15 @@ def _extract(text: str, pregens: list[dict[str, Any]]) -> dict[str, int | None]:
     ("a colon in the quote that the page does not print",
      "--- 第 1 頁 ---\nName: Alice\nLuck 55\n",
      [_card("Alice", 55, 1, "Luck: 55")], {"Alice": 55}),
+    ("the printed form's column headings sit between the label and the value",
+     "--- 第 1 頁 ---\nName\nHit Points 12 Luck Starting Current 50 Sanity 60\n",
+     [_card("Alice", 50, 1, "Luck Starting Current 50")], {"Alice": 50}),
+    ("a single heading and the value before the second heading",
+     "--- 第 1 頁 ---\nName: Alice\nLuck Starting 50 Current\n",
+     [_card("Alice", 50, 1, "Luck Starting 50")], {"Alice": 50}),
+    ("Chinese headings",
+     "--- 第 1 頁 ---\n姓名：林文\n幸運 起始 55\n",
+     [_card("林文", 55, 1, "幸運 起始 55")], {"林文": 55}),
     ("lower case and line breaks in the quote",
      "--- 第 1 頁 ---\nName: Alice\nLUCK\n  55\n",
      [_card("Alice", 55, 1, "luck 55")], {"Alice": 55}),
@@ -131,3 +140,20 @@ def test_a_luck_that_cannot_be_attributed_is_dropped_so_the_player_rolls(label, 
 
 def test_a_blank_luck_stays_blank():
     assert _extract("--- 第 1 頁 ---\nName: Alice\nLUCK\n", [{"name": "Alice"}]) == {"Alice": None}
+
+
+def test_the_drop_warning_shows_what_the_model_reported_and_quoted(caplog):
+    card = _card("Alice", 55, 1, "STR 50 CON 60 only, no luck label here")
+    with caplog.at_level(logging.WARNING, logger=pregen_extractor.__name__):
+        result = _extract("--- 第 1 頁 ---\nName: Alice\nLUCK 55\n", [card])
+    assert result == {"Alice": None}
+    assert "excerpt_does_not_state_the_value" in caplog.text
+    assert "reported 55" in caplog.text and "no luck label here" in caplog.text
+
+
+def test_a_quote_with_headings_but_no_number_is_still_dropped(caplog):
+    with caplog.at_level(logging.WARNING, logger=pregen_extractor.__name__):
+        result = _extract("--- 第 1 頁 ---\nName: Alice\nLuck Starting Current\n",
+                          [_card("Alice", 50, 1, "Luck Starting Current")])
+    assert result == {"Alice": None}
+    assert "excerpt_does_not_state_the_value" in caplog.text

@@ -24,7 +24,11 @@ def roll_player_luck() -> int:
 
 _logger = logging.getLogger(__name__)
 _PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
-_LUCK_ON_SHEET = re.compile(r"(?i)(?:\bLUCK\b|幸運)\s*(?:\([^)]{0,20}\))?\s*[:：]?\s*(\d{1,3})(?!\d)")
+# The printed sheet puts small column headings between the label and the value ("Luck  Starting  Current  50"), and
+# OCR keeps them in reading order, so a verbatim quote of the Luck box contains them.
+_LUCK_HEADINGS = r"(?:(?:starting|start|current|initial|maximum|max|起始|目前|當前|初始)\s*)*"
+_LUCK_ON_SHEET = re.compile(
+    r"(?i)(?:\bLUCK\b|幸運)\s*(?:\([^)]{0,20}\))?\s*" + _LUCK_HEADINGS + r"[:：]?\s*(\d{1,3})(?!\d)")
 
 _REPORT_TOOL = {
     "name": "report_pregens",
@@ -359,7 +363,10 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         if "luck" in pregen:
             verified, reason = _check_pdf_luck(pregen, pregens, pages)
             if verified is None:
-                _logger.warning("dropping unverified PDF pregen Luck for %s: %s", pregen.get("name"), reason)
+                _logger.warning(
+                    "dropping unverified PDF pregen Luck for %s: %s (reported %r, cited page %r, excerpt %r)",
+                    pregen.get("name"), reason, pregen.get("luck"), pregen.get("luck_source_page"),
+                    str(pregen.get("luck_source_excerpt") or "")[:160])
                 pregen.pop("luck", None)
             else:
                 pregen["luck"] = verified

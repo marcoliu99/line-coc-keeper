@@ -2236,6 +2236,19 @@
       "path": "docs/specs/bug/inventory_transfer_design_spec.md",
       "zh_path": "docs/specs/bug/inventory_transfer_design_spec_zh.md",
       "source_revision": "0de529b4789fe4858e8a162e5667663fa2eeb04e"
+    },
+    {
+      "title": "A Luck printed under column headings is kept, not dropped",
+      "zh": "印在欄位標題下方的幸運值要保留，不是丟掉",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/pregen_extractor.py",
+        "tests/test_pregen_luck_verification.py"
+      ],
+      "path": "docs/specs/bug/pregen_luck_form_headings_design_spec.md",
+      "zh_path": "docs/specs/bug/pregen_luck_form_headings_design_spec_zh.md",
+      "source_revision": "6f7a6d97a1981b7411952fa229a29fe646e9b812"
     }
   ]
 }
