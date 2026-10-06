@@ -359,7 +359,10 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         if "luck" in pregen:
             verified, reason = _check_pdf_luck(pregen, pregens, pages)
             if verified is None:
-                _logger.warning("dropping unverified PDF pregen Luck for %s: %s", pregen.get("name"), reason)
+                _logger.warning(
+                    "dropping unverified PDF pregen Luck for %s: %s (reported %r, cited page %r, excerpt %r)",
+                    pregen.get("name"), reason, pregen.get("luck"), pregen.get("luck_source_page"),
+                    str(pregen.get("luck_source_excerpt") or "")[:160])
                 pregen.pop("luck", None)
             else:
                 pregen["luck"] = verified

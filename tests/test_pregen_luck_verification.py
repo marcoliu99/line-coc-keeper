@@ -131,3 +131,12 @@ def test_a_luck_that_cannot_be_attributed_is_dropped_so_the_player_rolls(label, 
 
 def test_a_blank_luck_stays_blank():
     assert _extract("--- 第 1 頁 ---\nName: Alice\nLUCK\n", [{"name": "Alice"}]) == {"Alice": None}
+
+
+def test_the_drop_warning_shows_what_the_model_reported_and_quoted(caplog):
+    card = _card("Alice", 55, 1, "STR 50 CON 60 only, no luck label here")
+    with caplog.at_level(logging.WARNING, logger=pregen_extractor.__name__):
+        result = _extract("--- 第 1 頁 ---\nName: Alice\nLUCK 55\n", [card])
+    assert result == {"Alice": None}
+    assert "excerpt_does_not_state_the_value" in caplog.text
+    assert "reported 55" in caplog.text and "no luck label here" in caplog.text
