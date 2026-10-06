@@ -19,6 +19,7 @@ The guard itself is right: a Luck the model reports must be quoted from the shee
 ## Change
 
 - `_LUCK_ON_SHEET` accepts the form's column headings (`starting`, `start`, `current`, `initial`, `maximum`, `max`, and the Chinese `起始`, `目前`, `當前`, `初始`) between the label and the value, in any number. The number that follows must still equal the reported value, the quote must still appear on the cited page, and it must still belong to this investigator by the sheet's own characteristics, the nearest name, or being the only investigator.
+- The label, the headings and the value may also be separated by `|`, `:`, `=` or a dash, because a page that was read as a table quotes the box as `Luck | Starting: 50`, `Luck — Starting | 60` or `Luck | 55`. These are the four quotes from the second Haunting load that #213 still dropped.
 - A quote that has the headings but no number is still dropped.
 - The warning that reports a dropped Luck now includes the value the model reported, the cited page and the first 160 characters of its excerpt, so the next mismatch can be read from the log instead of guessed.
 
