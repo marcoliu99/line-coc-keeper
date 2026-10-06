@@ -51,6 +51,15 @@ def _extract(text: str, pregens: list[dict[str, Any]]) -> dict[str, int | None]:
     ("a single heading and the value before the second heading",
      "--- 第 1 頁 ---\nName: Alice\nLuck Starting 50 Current\n",
      [_card("Alice", 50, 1, "Luck Starting 50")], {"Alice": 50}),
+    ("a table row: pipe and colon between label, heading and value (The Haunting page 18)",
+     "--- 第 1 頁 ---\nName: Alice\n| Luck | Starting: 50 |\n",
+     [_card("Alice", 50, 1, "Luck | Starting: 50")], {"Alice": 50}),
+    ("a table row with an em dash and a pipe (The Haunting pages 20 and 22)",
+     "--- 第 1 頁 ---\nName: Alice\n| Luck — Starting | 60 |\n",
+     [_card("Alice", 60, 1, "Luck — Starting | 60")], {"Alice": 60}),
+    ("a table row with only a pipe (The Haunting page 24)",
+     "--- 第 1 頁 ---\nName: Alice\n| Luck | 55 |\n",
+     [_card("Alice", 55, 1, "Luck | 55")], {"Alice": 55}),
     ("Chinese headings",
      "--- 第 1 頁 ---\n姓名：林文\n幸運 起始 55\n",
      [_card("林文", 55, 1, "幸運 起始 55")], {"林文": 55}),
@@ -156,4 +165,20 @@ def test_a_quote_with_headings_but_no_number_is_still_dropped(caplog):
         result = _extract("--- 第 1 頁 ---\nName: Alice\nLuck Starting Current\n",
                           [_card("Alice", 50, 1, "Luck Starting Current")])
     assert result == {"Alice": None}
+    assert "excerpt_does_not_state_the_value" in caplog.text
+
+
+@pytest.mark.parametrize("quote,value", [
+    ("Luck Starting Current Sanity 60", 60),       # the Luck box was empty; 60 is the next field's number
+    ("Luck 50 Sanity 60", 60),                     # not the first number after the label
+    ("Luck | Starting | Hit Points 12", 12),
+    ("幸運 起始 當前 力量 60", 60),                 # a Chinese characteristic after an empty Luck box
+    ("Luck Starting 敏捷 70", 70),
+    ("Luck | Damage Bonus +1D4", 1),                # a damage bonus after an empty Luck box
+    ("Luck | DB +1D4", 1),
+])
+def test_a_number_that_belongs_to_another_field_is_not_taken_as_the_luck(quote, value, caplog):
+    with caplog.at_level("WARNING", logger="app.pregen_extractor"):
+        result = _extract(f"--- 第 1 頁 ---\nName: Alice\n{quote}\n", [_card("Alice", value, 1, quote)])
+    assert result == {"Alice": None} or all(v is None for v in result.values())
     assert "excerpt_does_not_state_the_value" in caplog.text
