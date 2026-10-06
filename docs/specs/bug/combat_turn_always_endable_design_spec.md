@@ -20,7 +20,7 @@ The engine only knows attacks: `declare_combat_action` takes a weapon, and `adva
 
 ## Not done
 
-- Starting a fight together with its enemies is [bug-active-enemy-registration-after-combat-start](bug-active-enemy-registration-after-combat-start.md) and PR #148; an enemy-less battle still holds the table until it is closed.
+- Registering the enemies when the fight starts is [bug-active-enemy-registration-after-combat-start](bug-active-enemy-registration-after-combat-start.md): `initialize_combat` exists (PR #148) but the Keeper still sometimes calls `start_combat` alone. Until that is fixed, an enemy-less battle still holds the table until it is closed.
 - The wait message still names the character, so four unnamed sheets all read `[未填]`.
 - No dodge, fight-back, flee or chase rules, and no timer.
 - Why the Executor made no tool call on turns 151–155 is open: a `/coc combat status` before turn 151 showed a normal managed battle (first investigator current, the rat swarm present), and a clean test state declares `kick` fine. All four sheets were unnamed in that run, which real sheets are not; rerun with named characters before treating it as a defect.

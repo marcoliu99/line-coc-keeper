@@ -20,7 +20,7 @@
 
 ## 不做
 
-- 開戰時連同敵人一起登錄，是 [bug-active-enemy-registration-after-combat-start](bug-active-enemy-registration-after-combat-start_zh.md) 與 PR #148 的主題；沒有敵人的戰鬥在關閉前仍會扣住整桌人。
+- 開戰時連同敵人一起登錄，是 [bug-active-enemy-registration-after-combat-start](bug-active-enemy-registration-after-combat-start_zh.md) 的主題：`initialize_combat` 已有（PR #148），但守密人有時仍只呼叫 `start_combat`。在那件事修好之前，沒有敵人的戰鬥在關閉前仍會扣住整桌人。
 - 等待訊息仍用角色名，所以四張沒有名字的角色卡都顯示 `[未填]`。
 - 不做閃避、反擊、逃跑或追逐規則，也不做計時。
 - 第 151–155 回合 Executor 為什麼沒有任何工具呼叫還沒有答案：第 151 回合前的 `/coc combat status` 顯示是正常的 managed 戰鬥（第一位調查員行動中、鼠群在場），乾淨的測試狀態也能正常宣告 `kick`。那次實跑的四張角色卡都沒有名字，真實角色卡不會這樣；先用有名字的角色重跑，再判斷是不是缺陷。
