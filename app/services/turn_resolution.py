@@ -68,7 +68,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 transfers.append(event)
             if not replay_of_seen:
                 # Chronological: a transfer supersedes earlier add/remove evidence for the same two characters.
-                for owner in (result.get('from'), result.get('to')):
+                for owner in (result.get('from'), result.get('to'), result.get('from_id'), result.get('to_id')):
                     latest.pop(owner, None)
                 final_by_id[result['from_id']], final_by_id[result['to_id']] = from_after, to_after
         if name in {'add_carried_item', 'remove_carried_item'}:
@@ -78,10 +78,14 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             if before is None or not isinstance(after, list) or before == after:
                 return False, False
             inventory.append(event)
-            latest[owner] = after
-            named = [c for c in state.active_characters() if c.name == owner]
-            if len(named) == 1:  # a later add/remove supersedes earlier transfer evidence for that one character
-                final_by_id.pop(named[0].character_id or named[0].owner_id, None)
+            exact = result.get('character_id')  # the receipt names the exact character, so same-named ones stay apart
+            latest[exact or owner] = after
+            if exact:
+                final_by_id.pop(exact, None)
+            else:
+                named = [c for c in state.active_characters() if c.name == owner]
+                if len(named) == 1:  # legacy receipt: only an unambiguous name identifies the character
+                    final_by_id.pop(named[0].character_id or named[0].owner_id, None)
         if result.get('ok') and f'tool:{i}' in refs and name in {'declare_combat_action', 'run_combat_action'}:
             action = state.combat.actions.get(result.get('action_id', ''), {})
             combat_completed = combat_completed or bool(
@@ -97,9 +101,10 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
-    if any(owner not in chars or chars[owner].carried_items != items for owner, items in latest.items()):
-        return False, False
     by_id = {(c.character_id or c.owner_id): c for c in state.active_characters()}
+    if any((by_id.get(owner) or chars.get(owner)) is None or (by_id.get(owner) or chars[owner]).carried_items != items
+           for owner, items in latest.items()):
+        return False, False
     for key, after in final_by_id.items():
         char = by_id.get(key)
         # A later add/remove event on the same character is verified against the final state above.

@@ -232,3 +232,14 @@ def test_the_same_handoff_after_the_giver_gets_another_copy_is_a_new_operation()
     assert second["ok"] and not second.get("replayed")
     assert second["operation_id"] != first["operation_id"]
     assert _items()["Bea"] == ["鑰匙", "鑰匙"]
+
+
+def test_an_unrelated_inventory_edit_does_not_turn_a_retry_into_a_new_transfer():
+    state = _state(Ann=["鑰匙", "鑰匙"], Bea=[])
+    call_input = {"from": "Ann", "to": "Bea", "item": "鑰匙"}
+    with _in_turn("turn-1"):
+        first = _transfer(state, call_input)
+        added = tool_dispatch.execute_tool(state, "add_carried_item", {"investigator": "Bea", "item": "地圖"}, [], [], actor_id="u2")
+        retry = _transfer(state, call_input)
+    assert first["ok"] and added["ok"] and retry.get("replayed")
+    assert _items()["Bea"].count("鑰匙") == 1

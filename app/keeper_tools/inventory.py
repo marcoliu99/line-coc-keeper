@@ -76,10 +76,10 @@ def add_carried_item(call: ToolCall) -> dict[str, Any]:
         changed = item not in target_char.carried_items
         if changed:
             target_char.carried_items.append(item)
-            target_state.inventory_edits += 1
-        return support.ToolStateMutation((target_char.name, target_char.carried_items), should_save=changed)
-    investigator, carried_items = support.mutate_tool_state(state, _mutate_add_item)
-    return {"ok": True, "investigator": investigator, "carried_items": carried_items}
+            _note_inventory_edit(target_state, target_char, item)
+        return support.ToolStateMutation((target_char.name, target_char.carried_items, _character_key(target_char)), should_save=changed)
+    investigator, carried_items, character_id = support.mutate_tool_state(state, _mutate_add_item)
+    return {"ok": True, "investigator": investigator, "character_id": character_id, "carried_items": carried_items}
 
 
 def remove_carried_item(call: ToolCall) -> dict[str, Any]:
@@ -99,16 +99,16 @@ def remove_carried_item(call: ToolCall) -> dict[str, Any]:
         changed = item in target_char.carried_items
         if changed:
             target_char.carried_items.remove(item)
-            target_state.inventory_edits += 1
+            _note_inventory_edit(target_state, target_char, item)
             target_state.consumed_or_removed_items.append({
                 "item": item,
                 "character_id": target_char.owner_id,
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
             })
-        return support.ToolStateMutation((target_char.name, target_char.carried_items), should_save=changed)
-    investigator, carried_items = support.mutate_tool_state(state, _mutate_remove_item)
-    return {"ok": True, "investigator": investigator, "carried_items": carried_items}
+        return support.ToolStateMutation((target_char.name, target_char.carried_items, _character_key(target_char)), should_save=changed)
+    investigator, carried_items, character_id = support.mutate_tool_state(state, _mutate_remove_item)
+    return {"ok": True, "investigator": investigator, "character_id": character_id, "carried_items": carried_items}
 
 
 class _TransferRefused(Exception):
@@ -152,6 +152,15 @@ def _validated_transfer(state: GroupState, call: ToolCall, item: str, quantity: 
     return giver, receiver, held[:quantity]
 
 
+def _edit_key(char: Any, item: str) -> str:
+    return f"{_character_key(char)}|{item.strip().casefold()}"
+
+
+def _note_inventory_edit(state: GroupState, char: Any, item: str) -> None:
+    key = _edit_key(char, item)
+    state.inventory_edits[key] = state.inventory_edits.get(key, 0) + 1
+
+
 def _character_key(char: Any) -> str:
     return char.character_id or char.owner_id
 
@@ -163,8 +172,10 @@ def _transfer_fingerprint(state: GroupState, call: ToolCall, item: str, quantity
         raw = str(call.input.get(field_name, ""))
         char, _ = support.resolve_active_character_exactly(state, raw)
         ends.append(_character_key(char) if char is not None else "?" + raw.strip().casefold())
-    # inventory_edits tells a retry (nothing else changed) from the same hand-off after the giver got another copy
-    return json.dumps([*ends, item.strip().casefold(), quantity, state.inventory_edits], ensure_ascii=False)
+    # the giver's add/remove count for this item tells a retry from the same hand-off after the giver got another copy
+    giver, _ = support.resolve_active_character_exactly(state, str(call.input.get("from", "")))
+    edits = state.inventory_edits.get(_edit_key(giver, item), 0) if giver is not None else 0
+    return json.dumps([*ends, item.strip().casefold(), quantity, edits], ensure_ascii=False)
 
 
 def transfer_item(call: ToolCall) -> dict[str, Any]:
