@@ -156,6 +156,11 @@ def read_parse_quality(scenario_id: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def has_page_image(scenario_id: str, page: int) -> bool:
+    """Whether the entry stored the rendered image of this physical page (ingestion keeps one only for graphic pages)."""
+    return (_path(scenario_id) / "images" / f"page_{page}.png").is_file()
+
+
 def exports_dir(scenario_id: str) -> Path:
     """Where the external-preparation packages of a scenario live."""
     return _variants_root(scenario_id) / "exports"

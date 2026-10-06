@@ -253,7 +253,6 @@ def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
     if normalize_title(proposal.target.title) != normalize_title(loaded_title):
         return _fail(scenario_id, RepairIssue(
             "title", None, f"這份修復檔是為《{proposal.target.title}》準備的，目前載入的是《{loaded_title}》。"))
-    images = trusted.source_path(scenario_id) / "images"
     try:
         with pymupdf.open(stream=snapshot.pdf_bytes, filetype="pdf") as doc:
             if len(doc) != proposal.target.page_count:
@@ -265,7 +264,7 @@ def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
                 if patch.page > len(doc):
                     issues.append(RepairIssue("page_range", patch.page, "超出 PDF 的頁數。"))
                 elif patch.page_kind == "image":
-                    if not (images / f"page_{patch.page}.png").is_file():
+                    if not library.has_page_image(scenario_id, patch.page):
                         issues.append(RepairIssue("content", patch.page, "這一頁沒有儲存的頁面圖片可指向，不能標為 image。"))
                     elif pdf_quality.native_text(doc[patch.page - 1])[0].strip():
                         issues.append(RepairIssue("content", patch.page, "這一頁的 PDF 有可讀的文字，不能標為 image。"))

@@ -60,23 +60,43 @@ def mechanics_counts(text: str) -> Counter[str]:
     return Counter(mechanics_tokens(text))
 
 
+_LABEL_WINDOW = 120  # a label is at most two words on one line; looking further back is never needed
+
+
 def mechanics_contexts(text: str) -> list[tuple[str, str]]:
     """Every mechanics token in order of appearance, paired with its casefolded label ('' when it has none)."""
     pairs = []
     for match in MECHANICS.finditer(text):
-        line_start = text.rfind('\n', 0, match.start()) + 1
-        label = _LABEL.search(text[line_start:match.start()])
+        window_start = max(0, match.start() - _LABEL_WINDOW)
+        line_start = max(text.rfind('\n', window_start, match.start()) + 1, window_start)
+        label = _LABEL.search(text, line_start, match.start())
         context = ' '.join(word for word in label.groups() if word).casefold() if label else ''
         pairs.append((context, _canonical(match.group())))
     return pairs
 
 
+_EXACT_DIFF_CELLS = 4_000_000  # above this many comparisons the diff may treat very frequent pairs as junk
+
+
 def ordered_diff(old: list[tuple[str, str]], new: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """What an ordered comparison removes from ``old`` and adds in ``new``; a block of swapped values is both."""
+    """What an ordered comparison removes from ``old`` and adds in ``new``; a block of swapped values is both.
+
+    The common head and tail are matched first, so a page with a few changes costs little however many tokens it has.
+    The remainder is compared exactly when it is small and with difflib's frequent-element heuristic when it is large:
+    that can make the reported blocks less minimal but never hides a change, because only truly equal runs are matched.
+    """
+    head = 0
+    while head < min(len(old), len(new)) and old[head] == new[head]:
+        head += 1
+    tail = 0
+    while tail < min(len(old), len(new)) - head and old[-1 - tail] == new[-1 - tail]:
+        tail += 1
+    middle_old, middle_new = old[head:len(old) - tail], new[head:len(new) - tail]
+    exact = len(middle_old) * len(middle_new) <= _EXACT_DIFF_CELLS
     removed: list[tuple[str, str]] = []
     added: list[tuple[str, str]] = []
-    for tag, a0, a1, b0, b1 in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+    for tag, a0, a1, b0, b1 in SequenceMatcher(None, middle_old, middle_new, autojunk=not exact).get_opcodes():
         if tag != 'equal':
-            removed.extend(old[a0:a1])
-            added.extend(new[b0:b1])
+            removed.extend(middle_old[a0:a1])
+            added.extend(middle_new[b0:b1])
     return removed, added

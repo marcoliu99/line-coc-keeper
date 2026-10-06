@@ -339,3 +339,43 @@ def test_parse_quality_is_read_through_the_library(create):
     assert library.read_parse_quality(sid) == {}
     (library.scenario_path(sid) / "parse_quality.json").unlink()
     assert library.read_parse_quality(sid) == {}
+
+
+# bounded cost on hostile pages
+
+def test_a_page_with_thousands_of_repeated_tokens_is_diffed_quickly_and_still_reports_the_change():
+    import time
+    old = " ".join(["HP 10"] * 8000)
+    new = old.replace("HP 10", "HP 40", 1)
+    start = time.monotonic()
+    removed, added = removed_added(old, new)
+    assert time.monotonic() - start < 5
+    assert removed == [("hp", "10")] and added == [("hp", "40")]
+    scattered = " ".join(("HP 10" if i % 2 else "HP 20") for i in range(8000))
+    changed = " ".join(("HP 20" if i % 2 else "HP 10") for i in range(8000))
+    start = time.monotonic()
+    removed, added = removed_added(scattered, changed)
+    assert time.monotonic() - start < 5
+    assert removed and added  # a large block may be reported whole, never hidden
+
+
+def test_one_very_long_line_does_not_rescan_a_growing_prefix():
+    import time
+    text = " ".join(str(i) for i in range(100_000))
+    start = time.monotonic()
+    pairs = numbers.mechanics_contexts(text)
+    assert time.monotonic() - start < 10
+    assert len(pairs) == 100_000
+
+
+def test_labels_still_come_from_the_nearest_words_on_the_same_line():
+    assert numbers.mechanics_contexts("a\nHP 10\n  SAN: 40") == [("hp", "10"), ("san", "40")]
+    assert numbers.mechanics_contexts("Rat HP 10") == [("rat hp", "10")]
+    (context, token), = numbers.mechanics_contexts("x" * 500 + " HP 10")
+    assert token == "10" and context.endswith(" hp") and len(context) < 130  # the look-back is bounded
+
+
+def test_page_image_inventory_is_read_through_the_library(create):
+    sid = create(images=(1, 3))
+    assert library.has_page_image(sid, 3) and library.has_page_image(sid, 1)
+    assert not library.has_page_image(sid, 2)
