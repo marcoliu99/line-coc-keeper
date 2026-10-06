@@ -67,14 +67,24 @@ def test_nobody_can_skip_an_enemys_turn():
     assert _load().combat.order[_load().combat.current_index].combatant_id == cur.combatant_id
 
 
-def test_a_successful_skip_counts_as_evidence_for_the_turn_resolution():
+def test_a_successful_skip_counts_as_evidence_only_for_the_call_that_made_it():
     from app.services import turn_resolution
 
     state = _battle("p1", "p2", enemies=(("Rat swarm", 30),), first_enemy=False)
     cur, owner = _current(state)
-    result = _tool("advance_combat_turn", {"actor_id": cur.combatant_id, "event_id": "e5", "skip": True}, actor=owner)
-    event = {"name": "advance_combat_turn", "arguments": {"skip": True}, "result": result}
-    mutation, _ = turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")
-    assert mutation is True
-    plain = {"name": "advance_combat_turn", "arguments": {}, "result": result}
-    assert turn_resolution._mutation_evidence(_load(), [plain], ["tool:1"], "x")[0] is False
+    arguments = {"actor_id": cur.combatant_id, "event_id": "e5", "skip": True}
+
+    def call():
+        before = turn_resolution.gameplay_snapshot(_load())
+        result = _tool("advance_combat_turn", arguments, actor=owner)
+        return {"name": "advance_combat_turn", "arguments": arguments, "result": result,
+                "gameplay_before": before, "gameplay_after": turn_resolution.gameplay_snapshot(_load())}
+
+    def evidence(event):
+        return turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")[0]
+
+    first = call()
+    assert evidence(first) is True
+    assert evidence(call()) is False  # the same event id again: the engine replays, nothing new happened
+    plain = {**first, "arguments": {}}
+    assert evidence(plain) is False
