@@ -100,6 +100,10 @@ def _exact(value: Any, keys: frozenset[str], what: str) -> dict[str, Any]:
 def _string(value: Any, what: str) -> str:
     if not isinstance(value, str) or len(value) > authoring.MAX_FILE_BYTES:
         raise RepairError(f"{what}必須是文字。{TEMPLATE_HINT}")
+    try:
+        value.encode("utf-8")  # a JSON escape can carry a lone surrogate, which cannot be hashed or stored
+    except UnicodeEncodeError as exc:
+        raise RepairError(f"{what}含有無法以 UTF-8 儲存的字元。") from exc
     return value
 
 

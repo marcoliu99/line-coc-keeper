@@ -76,11 +76,16 @@ def mechanics_contexts(text: str) -> list[tuple[str, str]]:
 
 
 def ordered_diff(old: list[tuple[str, str]], new: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """What an ordered comparison removes from ``old`` and adds in ``new``; a block of swapped values is both."""
-    removed: list[tuple[str, str]] = []
-    added: list[tuple[str, str]] = []
-    for tag, a0, a1, b0, b1 in SequenceMatcher(None, old, new).get_opcodes():
-        if tag != 'equal':
-            removed.extend(old[a0:a1])
-            added.extend(new[b0:b1])
+    """What an ordered comparison removes from ``old`` and adds in ``new``; a block of swapped values is both.
+
+    When a pair is both removed and added, a value moved and difflib may have matched the moved copy as unchanged, so
+    the whole region from the first to the last change is listed instead of dropping it.
+    """
+    changes = [op for op in SequenceMatcher(None, old, new).get_opcodes() if op[0] != 'equal']
+    if not changes:
+        return [], []
+    removed = [pair for _, a0, a1, _, _ in changes for pair in old[a0:a1]]
+    added = [pair for _, _, _, b0, b1 in changes for pair in new[b0:b1]]
+    if set(removed) & set(added):
+        return old[changes[0][1]:changes[-1][2]], new[changes[0][3]:changes[-1][4]]
     return removed, added

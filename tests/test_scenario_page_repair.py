@@ -215,7 +215,7 @@ def test_swapped_values_and_swapped_repeated_labels_are_reported():
     assert removed_added("HP 10, SAN 40", "HP 40, SAN 10") == (
         [("hp", "10"), ("san", "40")], [("hp", "40"), ("san", "10")])
     removed, added = removed_added("Rat / HP 10\nOgre / HP 20", "Rat / HP 20\nOgre / HP 10")
-    assert removed and added
+    assert {("hp", "10"), ("hp", "20")} <= set(removed) and {("hp", "10"), ("hp", "20")} <= set(added)
 
 
 @pytest.mark.parametrize("old,new", [
@@ -367,3 +367,10 @@ def test_a_json_block_that_json_cannot_decode_is_a_repair_error_not_a_crash():
     for data in (huge, deep):
         with pytest.raises(repair.RepairError):
             repair.parse_markdown_bytes(data)
+
+
+def test_a_lone_surrogate_escape_is_a_repair_error():
+    data = ('```json\n{"repair_version": 1, "target": {"title": "T", "page_count": 3}, "patches": '
+            '[{"page": 2, "text": "\\ud800", "page_kind": "text", "review_note": "n"}]}\n```').encode()
+    with pytest.raises(repair.RepairError):
+        repair.parse_markdown_bytes(data)
