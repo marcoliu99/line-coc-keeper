@@ -60,6 +60,17 @@ def test_what_the_model_gave_wins_over_the_scenarios_defaults():
     assert (source["url"], source["extreme_rule"]) == ("u", "impale")
 
 
+def test_blank_fields_the_model_gave_do_not_hide_the_scenarios_provenance():
+    _scenario_battle(["鼠群"])
+    given = {"url": "", "revision": "", "sha256": "", "extreme_rule": "impale"}
+    result = _tool("add_npc_to_combat", {"name": "鼠群", "dex": 99, "hp": 9, "attacks": [BITE], "source": given})
+    assert result["ok"], result
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    source = _load().combat.enemy_cards[enemy.enemy_card_id].source
+    assert (source["url"], source["revision"], source["sha256"]) == ("scenario:haunting", "chapter-01", "a81bb44a")
+    assert source["extreme_rule"] == "impale"
+
+
 def test_initialize_combat_gives_an_indexed_enemy_the_same_provenance():
     _scenario_battle(["鼠群"])
     result = _tool("initialize_combat", {"enemies": [{"name": "鼠群", "dex": 99, "hp": 9, "attacks": [BITE]}]})

@@ -204,7 +204,8 @@ def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None
         return given
     return {
         "url": f"scenario:{state.scenario_library_id}", "revision": state.active_chapter_id or "scenario",
-        "sha256": state.active_scenario_source_hash, "extreme_rule": "maximum", **(given or {}),
+        "sha256": state.active_scenario_source_hash, "extreme_rule": "maximum",
+        **{key: value for key, value in (given or {}).items() if value not in ("", None)},
     }
 
 
