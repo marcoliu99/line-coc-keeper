@@ -99,6 +99,7 @@
 | [可重用劇本庫與章節脈絡](specs/feature/scenario_library_design_spec_zh.md) | 已實作 | [English](specs/feature/scenario_library_design_spec.md) |
 | [持久狀態、checkpoint 與範圍記憶](specs/feature/state_persistence_design_spec_zh.md) | 已實作 | [English](specs/feature/state_persistence_design_spec.md) |
 | [結構化請求與回合可觀測性](specs/feature/structured_performance_logging_design_spec_zh.md) | 已實作 | [English](specs/feature/structured_performance_logging_design_spec.md) |
+| [從 Discord 上傳進行頁面級劇本修復](specs/feature/discord_page_level_scenario_repair_design_spec_zh.md) | 待實作 | [English](specs/feature/discord_page_level_scenario_repair_design_spec.md) |
 
 ## 重構
 

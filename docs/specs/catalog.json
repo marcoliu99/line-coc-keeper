@@ -2238,6 +2238,23 @@
       "source_revision": "0de529b4789fe4858e8a162e5667663fa2eeb04e"
     },
     {
+      "title": "Page-level scenario repair from a Discord upload",
+      "zh": "從 Discord 上傳進行頁面級劇本修復",
+      "category": "feature",
+      "status": "backlog",
+      "evidence": [
+        "app/scenario_source_review.py",
+        "app/scenario_library.py",
+        "app/trusted_scenario_source.py",
+        "app/services/scenario_lifecycle.py",
+        "app/commands/handlers/uploads.py",
+        "app/scenario_numbers.py"
+      ],
+      "path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec.md",
+      "zh_path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec_zh.md",
+      "source_revision": "3fbec39fc941c366ef11a4f1cb43888b98810bce"
+    },
+    {
       "title": "A Luck printed under column headings is kept, not dropped",
       "zh": "印在欄位標題下方的幸運值要保留，不是丟掉",
       "category": "bug",
