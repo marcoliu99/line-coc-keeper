@@ -2241,14 +2241,15 @@
       "title": "Page-level scenario repair from a Discord upload",
       "zh": "從 Discord 上傳進行頁面級劇本修復",
       "category": "feature",
-      "status": "partial",
+      "status": "implemented",
       "evidence": [
-        "app/scenario_source_review.py",
-        "app/scenario_library.py",
-        "app/trusted_scenario_source.py",
-        "app/services/scenario_lifecycle.py",
+        "app/scenario_page_repair.py",
+        "app/repositories/page_repairs.py",
+        "app/services/scenario_ingestion.py",
+        "app/scenario_activation.py",
         "app/commands/handlers/uploads.py",
-        "app/scenario_numbers.py"
+        "tests/test_scenario_page_repair.py",
+        "tests/test_upload_routing.py"
       ],
       "path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec.md",
       "zh_path": "docs/specs/feature/discord_page_level_scenario_repair_design_spec_zh.md",

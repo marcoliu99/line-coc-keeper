@@ -58,6 +58,7 @@ _TABLES = (
     "group_states", "characters", "scenario_indexes", "memory_chunks", "dictionary",
     "state_checkpoints", "scene_digests", "manual_pregen_assets", "narrative_correction_archive", "narrative_message_receipts",
     "scenario_template_jobs", "scenario_template_checkpoints", "scenario_template_preferences",
+    "scenario_page_repairs",
     # Per-conversation action ledger written by app/repositories/state_transaction.py
     # in the same SQLite transaction as the state row it belongs to.
     "state_actions",

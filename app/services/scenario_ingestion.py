@@ -20,13 +20,14 @@ from app import (
     scenario_compare,
     scenario_index,
     scenario_library,
+    scenario_page_repair,
 )
 from app.keeper_tools import resource_bridge
 from app.models import (
     OCCUPATIONS,
     GroupState,
 )
-from app.repositories import manual_pregens, state_transaction
+from app.repositories import manual_pregens, page_repairs, state_transaction
 from app.repositories.group_state import load_state
 from app.services import mutation_admission, scenario_lifecycle
 
@@ -563,3 +564,64 @@ async def handle_role_sheet_upload(
         f"角色卡{action_note}（資產 ID：{result['asset_id']}）：{name_note}，職業「{pregen['occupation']}」，"
         f"{len(pregen['skills'])} 項技能。用「/coc pregens」查看目前所有預製角色。"
     )
+
+
+@mutation_admission.guard_async_entry
+async def handle_page_repair_upload(
+    conversation_id: str,
+    reply: Reply,
+    file_text: str,
+    file_name: str,
+) -> None:
+    """Overwrite whole pages of the loaded scenario text from a ``repair_``-prefixed .md attachment.
+
+    Like a role card it belongs to the conversation and the scenario, not to the library entry: the pages are saved
+    (repositories/page_repairs) and laid over the library text whenever the scenario is loaded again, and uploading the
+    same pages again simply overwrites them. The page format is in scenario_page_repair.
+    """
+    try:
+        pages = scenario_page_repair.parse_pages(file_text)
+    except scenario_page_repair.PageRepairError as exc:
+        await reply(f"「{file_name}」沒有套用：{exc}")
+        return
+    async with locks.get_conversation_lock(conversation_id):
+        state = load_state(conversation_id)
+        if not state.scenario_text.strip():
+            await reply("目前沒有載入劇本，請先上傳劇本再上傳頁面修復檔。")
+            return
+        replacement_block = resource_bridge.guard_replacement(state)
+        if replacement_block:
+            await reply(replacement_block)
+            return
+        present = scenario_page_repair.present_pages(state.scenario_text)
+        total, scenario_id, source_hash = max(present, default=0), state.scenario_library_id, state.active_scenario_source_hash
+        if scenario_id:  # a loaded chapter window holds only some of the pages; the library knows them all
+            try:
+                manifest = scenario_library.source_manifest(scenario_id)
+                total, source_hash = max(total, int(manifest.get("page_count") or 0)), source_hash or manifest.get("content_hash", "")
+            except (OSError, ValueError):
+                pass
+        beyond = sorted(page for page in pages if page > total)
+        if beyond:
+            await reply(f"「{file_name}」沒有套用：目前劇本只有 {total} 頁，沒有第 {'、'.join(map(str, beyond))} 頁。")
+            return
+        try:
+            repaired = scenario_page_repair.apply_pages(state.scenario_text, pages)
+        except scenario_page_repair.PageRepairError as exc:
+            await reply(f"「{file_name}」沒有套用：{exc}")
+            return
+        later = sorted(page for page in pages if page not in present)  # saved now, laid over when that chapter loads
+        if repaired == state.scenario_text and not later:
+            await reply("這些頁面的內容已經與目前劇本相同，沒有變動。")
+            return
+        state.scenario_text = repaired
+
+        def save_pages(conn):
+            if scenario_id:
+                page_repairs.save(conn, conversation_id, scenario_id, source_hash, pages)
+        state_transaction.commit_snapshot(state, mutate_tx=save_pages)
+    now = "、".join(str(page) for page in sorted(set(pages) & present))
+    note = f"已替換第 {now} 頁，" if now else ""
+    if later:
+        note += f"第 {'、'.join(map(str, later))} 頁不在目前載入的章節裡，已先存下，載入到那一頁時會套用，"
+    await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本、或 /coc newgame 後再上傳同一份劇本，也都會套用。")

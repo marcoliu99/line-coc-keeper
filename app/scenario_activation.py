@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 
 from app import db, scenario_library, scenario_templates
 from app.models import GroupState
-from app.repositories import group_state
+from app.repositories import group_state, page_repairs
 
 _logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -26,8 +26,9 @@ def install_context_fields(
         else scenario_templates.preferred_variant(state.group_id, scenario_id)
     )
     state.scenario_title = context["manifest"]["title"]
-    state.scenario_text = context["text"]
-    state.active_scenario_source_hash = context["manifest"].get("content_hash", "")
+    source_hash = context["manifest"].get("content_hash", "")
+    state.scenario_text = page_repairs.apply_saved(state.group_id, scenario_id, source_hash, context["text"])
+    state.active_scenario_source_hash = source_hash
     state.active_chapter_id = context["active_chapter_id"]
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
@@ -49,6 +50,11 @@ def refresh_context_images(
     revision = committed.state_revision if expected_revision is None else expected_revision
     timeline = committed.timeline_id
     chapter = context.get("active_chapter_id")
+    # The text the activation installed: the library text with this conversation's saved pages laid over it.
+    raw_text = context.get("text")
+    installed_text = (
+        page_repairs.apply_saved(group_id, scenario_id, context.get("manifest", {}).get("content_hash", ""), raw_text)
+        if isinstance(raw_text, str) else raw_text)
 
     def still_current(conn: Any, images: dict[int, bytes], *, allow_revision_drift: bool) -> bool:
         row = conn.execute("SELECT data FROM group_states WHERE key = ?", (group_id,)).fetchone()
@@ -67,7 +73,7 @@ def refresh_context_images(
         # runs. Publish after it only if the active text and source image bytes
         # are still identical; this also rules out an in-place library reparse
         # with the same scenario ID and timeline.
-        if not allow_revision_drift or current.get("scenario_text") != context.get("text"):
+        if not allow_revision_drift or current.get("scenario_text") != installed_text:
             return False
         latest_images: dict[int, bytes] = {}
         try:
