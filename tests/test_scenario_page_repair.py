@@ -231,3 +231,16 @@ def test_an_outer_fence_after_a_heading_or_note_is_stripped_with_its_closing_fen
     content = "# 修復\n說明\n```markdown\n" + page(2, "new two") + "```\n"
     assert repair.parse_pages(content) == {2: "new two"}
     assert repair.parse_pages("# 修復\n" + page(2, "intro\n```py\nx\n```")) == {2: "intro\n```py\nx\n```"}
+
+
+def test_a_game_saved_before_the_state_kept_the_source_hash_binds_to_the_library_hash(tmp_path):
+    from app import scenario_library
+    from app.repositories import page_repairs
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(scenario_library, "SCENARIO_LIBRARY_DIR", tmp_path / "library")
+        sid = scenario_library.save_markdown_scenario(
+            TEXT.encode(), title="T", filename="s.md", preview="p", text=TEXT, indexes={}, pregens=[])
+        library_hash = scenario_library.source_manifest(sid)["content_hash"]
+        replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash=""))
+        upload(page(2, "new two"), state=None)
+        assert page_repairs.load("g", sid, library_hash) == {2: "new two"}

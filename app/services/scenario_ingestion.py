@@ -595,9 +595,12 @@ async def handle_page_repair_upload(
             return
         present = scenario_page_repair.present_pages(state.scenario_text)
         total = max(present, default=0)
+        source_hash = state.active_scenario_source_hash
         if state.scenario_library_id:  # a loaded chapter window holds only some of the scenario's pages
             try:
-                total = max(total, int(scenario_library.source_manifest(state.scenario_library_id).get("page_count") or 0))
+                manifest = scenario_library.source_manifest(state.scenario_library_id)
+                total = max(total, int(manifest.get("page_count") or 0))
+                source_hash = manifest.get("content_hash", "")  # the library's hash, also for a game saved before the state kept one
             except (OSError, ValueError):
                 pass
         beyond = sorted(page for page in pages if page > total)
@@ -614,7 +617,7 @@ async def handle_page_repair_upload(
             await reply("這些頁面的內容已經與目前劇本相同，沒有變動。")
             return
         state.scenario_text = repaired
-        scenario_id, source_hash = state.scenario_library_id, state.active_scenario_source_hash
+        scenario_id = state.scenario_library_id
 
         def save_pages(conn):
             if scenario_id:  # a legacy entry without a content hash is bound by the empty hash
