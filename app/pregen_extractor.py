@@ -29,9 +29,6 @@ _PAGE_MARKER = re.compile(r"^--- 第 (\d+) 頁 ---$", re.MULTILINE)
 # colons ("Luck | Starting: 50"). Another field's name in between means the Luck box was empty and the number is that
 # field's ("Luck Starting Current Sanity 60"). Which investigator it belongs to is decided separately.
 _LUCK_LABEL = re.compile(r"(?i)\bLUCK\b|幸運")
-_OTHER_FIELD = re.compile(
-    r"(?i)\b(?:sanity|san|hit points|hp|magic points|mp|str|con|siz|dex|app|int|pow|edu|move|mov|build|age|name)\b"
-    r"|理智|生命|魔法|姓名|年齡")
 _NUMBER = re.compile(r"(?<!\d)\d{1,3}(?!\d)")
 
 
@@ -225,6 +222,10 @@ _STAT_LABELS = {
     "str_": "str|力量", "con": "con|體質", "siz": "siz|體型", "dex": "dex|敏捷",
     "app": "app|外貌", "int_": "int|智力", "pow_": "pow|意志", "edu": "edu|教育",
 }
+# The names of the other fields a sheet prints beside the Luck: its characteristics (above) and the usual derived ones.
+_OTHER_FIELD = re.compile(
+    r"(?i)(?<![a-z])(?:" + "|".join(_STAT_LABELS.values())
+    + r"|sanity|san|hit points|hp|magic points|mp|move|mov|build|age|name)(?![a-z])|理智|生命|魔法|姓名|年齡")
 # How far from the quoted Luck a sheet's own characteristics may sit, in characters of
 # whitespace-squashed text, and how many of them must be found to identify the sheet.
 _STAT_WINDOW = 500

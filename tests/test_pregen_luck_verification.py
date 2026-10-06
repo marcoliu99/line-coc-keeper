@@ -172,6 +172,8 @@ def test_a_quote_with_headings_but_no_number_is_still_dropped(caplog):
     ("Luck Starting Current Sanity 60", 60),       # the Luck box was empty; 60 is the next field's number
     ("Luck 50 Sanity 60", 60),                     # not the first number after the label
     ("Luck | Starting | Hit Points 12", 12),
+    ("幸運 起始 當前 力量 60", 60),                 # a Chinese characteristic after an empty Luck box
+    ("Luck Starting 敏捷 70", 70),
 ])
 def test_a_number_that_belongs_to_another_field_is_not_taken_as_the_luck(quote, value, caplog):
     with caplog.at_level("WARNING", logger="app.pregen_extractor"):
