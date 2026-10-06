@@ -245,6 +245,7 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
             result = combat_engine.handle(target_state, act.Advance(
                 actor_id=call.input.get('actor_id', ''),
                 event_id=resource_bridge.mutation_id(call.name, call.input),
+                skip=bool(call.input.get('skip')),
             ))
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))

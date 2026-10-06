@@ -672,7 +672,9 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     return run_action(state, identity)
 
 
-def advance_combat(state: GroupState, *, actor_id: str, event_id: str, transition_budget: int = 16) -> dict[str, Any]:
+def advance_combat(
+    state: GroupState, *, actor_id: str, event_id: str, transition_budget: int = 16, skip: bool = False,
+) -> dict[str, Any]:
     """Advance a completed current actor; execute NPC actions to one human boundary."""
     combat_resources.initialize_working_state(state)
     prior = next((e for e in state.combat.events if e['event_id'] == event_id), None)
@@ -685,7 +687,12 @@ def advance_combat(state: GroupState, *, actor_id: str, event_id: str, transitio
         return _error('Resolve the current action/interaction before advancing')
     if not any(a.get('actor_id') == actor_id and a.get('completed') and a.get('round') == state.combat.round_number
                for a in state.combat.actions.values()) and not current.defeated:
-        return _error('Current actor has no completed action; explicit initiative ruling required')
+        if not skip:
+            return _error('Current actor has no completed action; explicit initiative ruling required')
+        # A turn spent on something the engine does not resolve still counts as taken; no dice, no resource change.
+        state.combat.actions[f'skip:{event_id}'] = {
+            'action_id': f'skip:{event_id}', 'kind': 'skip', 'actor_id': actor_id, 'completed': True,
+            'round': state.combat.round_number}
     if not 1 <= transition_budget <= 64:
         return _error('Transition budget must be 1..64')
     result = combat.advance_turn(state, ops=MANAGED_OPS)
