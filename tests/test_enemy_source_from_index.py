@@ -24,8 +24,8 @@ def _scenario_battle(index_names: list[str]):
     _save(state)
 
 
-def _add(name: str):
-    result = _tool("add_npc_to_combat", {"name": name, "dex": 99, "hp": 9, "attacks": [BITE]})
+def _add(name: str, attacks: list[dict] | None = None):
+    result = _tool("add_npc_to_combat", {"name": name, "dex": 99, "hp": 9, "attacks": attacks or [BITE]})
     assert result["ok"], result
     state = _load()
     state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.side == "enemy")
@@ -38,6 +38,20 @@ def test_an_indexed_enemy_carries_the_scenarios_provenance_and_can_attack():
     enemy = _add("鼠群")
     source = _load().combat.enemy_cards[enemy.enemy_card_id].source
     assert (source["url"], source["revision"], source["sha256"]) == ("scenario:haunting", "chapter-01", "a81bb44a")
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "PLAYER_CHOICE", run
+
+
+def test_an_indexed_enemy_with_several_melee_attacks_still_attacks():
+    _scenario_battle(["鼠群"])
+    _add("鼠群", [BITE, {"id": "overwhelm", "skill_value": 40, "damage": "2d6", "range_band": "engaged"}])
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "PLAYER_CHOICE", run
+
+
+def test_an_attack_with_no_declared_mode_is_melee_whatever_its_range_band():
+    _scenario_battle(["鼠群"])
+    _add("鼠群", [{**BITE, "range_band": "near"}])
     run, _ = _enemy_turn([20])
     assert run["phase"] == "PLAYER_CHOICE", run
 
