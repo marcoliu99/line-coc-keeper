@@ -193,6 +193,7 @@ Any failure aborts the whole repair and nothing is published.
 - **B, target:** a PDF-derived scenario is loaded, and `page_count` matches.
 - **C, pages:** page range, uniqueness, no injected page markers.
 - **D, contents:** non-empty `review_note`; `text` rules for the page kind; the `image` rule against native text.
+- **D2, already applied:** if the loaded scenario is itself a repair child (its manifest has `source_repair`), rebuild the candidate for these patches against that child's recorded parent and compare its digest with the child's `source_repair.candidate_digest`. A match means this same file was already applied, so reply `這份修復已經套用，沒有重複建立版本。` and stop: nothing is published and phase F's no-op rejection is never reached. No match means a different repair, which continues against the loaded scenario. This is why a normal retry after the first success does not fail as an invalid no-op repair.
 - **E, candidate:** build the candidate by splicing only the listed pages.
 - **F, invariants:** the physical markers are still `1..N` once each; untouched page bodies are byte-for-byte unchanged (raw bodies as in section 8); the number of replaced pages equals the number of patches; the candidate differs from the parent; the candidate digest is deterministic.
 
@@ -306,7 +307,9 @@ New: `app/scenario_page_repair.py`, `app/services/scenario_repair.py`, `tests/te
 
 ```python
 @dataclass(frozen=True)
-class RepairTarget: page_count: int
+class RepairTarget:
+    title: str
+    page_count: int
 
 @dataclass(frozen=True)
 class PageRepair:
@@ -355,9 +358,9 @@ Treat the file as untrusted input: reject path traversal and file paths, embedde
 ## 27. Tests
 
 - **Parser:** a valid one-page repair; BOM accepted; unknown top-level, target or patch keys; duplicate or zero or out-of-range pages; marker injection; invalid `page_kind`; missing review note; an unfilled template is rejected.
-- **Binding:** no scenario loaded; Markdown-only scenario; wrong page count; a different scenario with the same page count is rejected by its title; the title still matches a repaired child.
+- **Binding:** the parser keeps `target.title` and the check compares it, so a wrong title is rejected in the parser and binding tests; no scenario loaded; Markdown-only scenario; wrong page count; a different scenario with the same page count is rejected by its title; the title still matches a repaired child.
 - **Numeric report:** swapped values (`HP 10, SAN 40` → `HP 40, SAN 10`) and swapped repeated labels (`Rat / HP 10; Ogre / HP 20`) are reported; a `1D40 → 1D4` change is reported with removed and added tokens; `+10% → -10%`, `SAN 1/1d6 → SAN 1 1d6` and `STR+10 → STR-10` are reported; unchanged text reports nothing; an unchanged hyphenated label causes no change; one page's report does not affect another.
-- **Merge:** only the listed pages change; untouched pages keep their exact bytes including whitespace; markers stay ordered once each; patch order does not change the result; a no-op repair is rejected; the same repair is idempotent.
+- **Merge:** only the listed pages change; untouched pages keep their exact bytes including whitespace; markers stay ordered once each; patch order does not change the result; a no-op repair is rejected; the same repair is idempotent: uploading the same file again after it was applied to the loaded scenario is answered `已經套用` and never reaches the no-op rejection.
 - **Map and image:** a map page with labels is accepted and clears its low-text warning; a map repair does not change the scene-map graph; `image` is rejected when native text exists and accepted when it does not.
 - **Discord:** `repair_*.md` routes to the repair handler and never to compare; any user may upload by default and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it; more than one repair attachment is rejected; a pending source replacement follows the admission policy; a state that changed after publication publishes but does not activate.
 - **Lifecycle:** activation preserves the active chapter in a multi-chapter campaign; a stale activation is recovered by re-uploading the same file with repair semantics while the parent is still loaded, never by `/coc scenario use`, and no re-upload is advised after a scenario switch; activation preserves timeline, `game_started`, claimed PCs, HP/SAN/Luck/inventory and room positions; it never calls `_new_upload()`; the new source becomes active only after the whole transaction; the old scenario stays readable.

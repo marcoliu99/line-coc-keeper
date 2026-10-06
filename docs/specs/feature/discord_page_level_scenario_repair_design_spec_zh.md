@@ -192,6 +192,7 @@ removed, added = ordered_diff(old, new)               # difflib opcodes over the
 - **B，目標：** 已載入來自 PDF 的劇本，且 `page_count` 相符。
 - **C，頁面：** 頁碼範圍、唯一性、沒有注入頁面標記。
 - **D，內容：** `review_note` 不為空；頁面種類對 `text` 的要求；`image` 對原生文字的規則。
+- **D2，是否已套用：** 如果已載入的劇本本身就是 repair 子劇本（它的 manifest 有 `source_repair`），就對這個子劇本記錄的父劇本重建這些補丁的候選，並把摘要與子劇本的 `source_repair.candidate_digest` 比對。相符表示同一個檔案已經套用過，回覆 `這份修復已經套用，沒有重複建立版本。` 並停止：什麼都不發布，也不會走到 F 階段的「沒有變化」拒絕。不相符就是另一份 repair，照常對已載入的劇本繼續。這就是為什麼第一次成功之後的正常重試，不會被當成無效的沒有變化 repair 而失敗。
 - **E，候選：** 只拼接列出的頁面，建出候選。
 - **F，不變條件：** 實體標記仍是 `1..N` 且各出現一次；未被修改的頁面本文逐位元組不變（指第 8 節的原始本文）；被替換的頁數等於補丁數；候選與父劇本不同；候選摘要是確定性的。
 
@@ -305,7 +306,9 @@ LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activ
 
 ```python
 @dataclass(frozen=True)
-class RepairTarget: page_count: int
+class RepairTarget:
+    title: str
+    page_count: int
 
 @dataclass(frozen=True)
 class PageRepair:
@@ -354,9 +357,9 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 ## 27. 測試
 
 - **解析：** 有效的單頁 repair；接受 BOM；未知的最上層、target 或補丁鍵；重複、0 或超出範圍的頁碼；注入標記；無效的 `page_kind`；缺少審查備註；沒填的範本會被拒絕。
-- **綁定：** 沒有載入劇本；只有 Markdown 的劇本；頁數不符；頁數相同的另一份劇本會因標題不符被拒絕；標題對修復後的子劇本仍然相符。
+- **綁定：** 解析器保留 `target.title` 並在檢查時比對，標題不符在解析與綁定測試中被拒絕；沒有載入劇本；只有 Markdown 的劇本；頁數不符；頁數相同的另一份劇本會因標題不符被拒絕；標題對修復後的子劇本仍然相符。
 - **數值報告：** 互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10`）與互換的重複標籤（`Rat / HP 10; Ogre / HP 20`）會被回報；`1D40 → 1D4` 的變動會以移除與新增的 token 列出；`+10% → -10%`、`SAN 1/1d6 → SAN 1 1d6` 與 `STR+10 → STR-10` 都會被列出；沒變的文字什麼都不報；沒改動的帶連字號標籤不產生變動；一頁的報告不影響另一頁。
-- **合併：** 只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；沒有任何變化的 repair 被拒絕；同一份 repair 具冪等性。
+- **合併：** 只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；沒有任何變化的 repair 被拒絕；同一份 repair 具冪等性：套用到已載入的劇本之後再上傳同一個檔案，回覆「已經套用」，絕不走到沒有變化的拒絕。
 - **地圖與影像：** 有標籤的地圖頁被接受並清除低文字量警告；地圖 repair 不改變場景地圖圖形；存在原生文字時 `image` 被拒絕，沒有時被接受。
 - **Discord：** `repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
 - **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用在父劇本仍載入時靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`，切換劇本之後不建議重新上傳；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
