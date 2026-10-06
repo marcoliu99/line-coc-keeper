@@ -3,6 +3,7 @@
 In a real run the current investigator tried five such actions and the battle stayed at round 1: initiative moves
 only after a completed action, and only an attack could be one.
 """
+from app.repositories import state_transaction
 from tests.test_combat_engine import (  # noqa: F401  (database is the autouse fixture)
     _battle,
     _load,
@@ -88,3 +89,21 @@ def test_a_successful_skip_counts_as_evidence_only_for_the_call_that_made_it():
     assert evidence(call()) is False  # the same event id again: the engine replays, nothing new happened
     plain = {**first, "arguments": {}}
     assert evidence(plain) is False
+
+
+def test_a_skip_still_succeeds_when_the_next_enemy_needs_a_ruling():
+    from app.services import turn_resolution
+
+    state = _battle("p1", enemies=(("Rat swarm", 30),), first_enemy=False)
+    for card in state.combat.enemy_cards.values():
+        card.source = {}  # no verified provenance: the enemy's attack will pause for a ruling
+    state_transaction.mutate_value(state.group_id, lambda ctx: ctx.replace_state(state), reason="test_setup")
+    cur, owner = _current(_load())
+    arguments = {"actor_id": cur.combatant_id, "event_id": "e6", "skip": True}
+    before = turn_resolution.gameplay_snapshot(_load())
+    result = _tool("advance_combat_turn", arguments, actor=owner)
+    assert result["ok"] is True
+    assert result["enemy_turn"]["ok"] is False
+    event = {"name": "advance_combat_turn", "arguments": arguments, "result": result,
+             "gameplay_before": before, "gameplay_after": turn_resolution.gameplay_snapshot(_load())}
+    assert turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")[0] is True

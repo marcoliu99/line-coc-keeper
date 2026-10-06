@@ -697,6 +697,7 @@ def advance_combat(
         return _error('Transition budget must be 1..64')
     result = combat.advance_turn(state, ops=MANAGED_OPS)
     if not result.get('ok'):
+        state.combat.actions.pop(f'skip:{event_id}', None)  # the turn did not end, so it was not given up either
         return result
     transition = deepcopy(result)
     if not result.get('pending'):
@@ -704,7 +705,9 @@ def advance_combat(
         if next_actor.side == 'enemy':
             plan = combat.plan_enemy_turn(state, next_actor.display_name, ops=MANAGED_OPS)
             if plan.get('ok'):
-                result = run_enemy_plan(state, plan['plan_id'])
+                enemy = run_enemy_plan(state, plan['plan_id'])
+                # A skip that ended the turn succeeded; an enemy that then needs a ruling is a pending item beside it.
+                result = {**transition, 'enemy_turn': enemy} if skip and not enemy.get('ok') else enemy
     combat_resources.record_event(state, event_id, 'initiative',
                                   data={'transition': transition, 'final_response': deepcopy(result)})
     return result
