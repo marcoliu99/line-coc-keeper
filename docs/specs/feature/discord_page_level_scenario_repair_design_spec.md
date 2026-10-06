@@ -204,6 +204,7 @@ Never update the parent directory. Use the immutable derived-source pattern of `
 - Derived ID: `<parent-prefix>-repair-<candidate_digest[:16]>`. If it already exists and its audit digest matches, return it as an idempotent success; if it exists with different content, fail.
 - `candidate_digest` covers the parent identity, the normalized patches (sorted by page) and the candidate text.
 - The manifest gains `source_repair` (version, parent id and content hash, candidate digest, repaired pages, reviewer user id and display name, uploaded file name, time).
+- The identity that `trusted_scenario_source.publish_derived()` verifies on an existing destination (`candidate_digest` and `parent_scenario_id`) is written where its verifier reads it, in the audit and in `manifest["source_review"]`, exactly as for a source-review child; `source_repair` carries the repair-specific detail above. Both are written, so the helper's idempotent `target.exists()` path returns the existing ID instead of rejecting the destination as changed, which is what makes an ordinary retry and the stale-activation recovery work.
 - The audit is stored in the existing audit slot (`source_review.json`) with `kind: page_repair`: parent and candidate digests, before and after content hashes, the PDF SHA, the reviewer, and per page the before and after SHA-256, the review note, the page kind and the removed and added numeric tokens. Full before and after texts are optional; the page hashes plus the immutable parent and child recover the diff.
 
 ## 13. Parse-quality update
@@ -241,7 +242,7 @@ async def activate_repair_version(
 ) -> LifecycleResult:
 ```
 
-Under the conversation lock: the actor is still authorized; the active `scenario_library_id` equals the parent; the active source hash still equals the parent's; `timeline_id` is unchanged; `state_revision` satisfies the repair transaction policy; there is no other pending scenario submission or pending pregen Luck decision; and `resource_bridge.guard_replacement(state)` permits replacement. Load the repaired child with the current active chapter id: `scenario_library.load_context()` defaults to the first chapter when none is given and `scenario_activation.install_context_fields()` would then overwrite both fields. The repair child keeps the parent's chapters, so the ids still resolve. Apply with correction semantics. Do **not** call `_new_upload()`, reset `game_started`, clear the timeline, wipe characters, reset rooms or clear campaign history. `scenario_library_id` and `scenario_text` change in one transaction, never one before the other.
+Under the conversation lock: the actor is still authorized; the active `scenario_library_id` equals the parent; the active source hash still equals the parent's; `timeline_id` is unchanged; `state_revision` satisfies the repair transaction policy; there is no other pending scenario submission or pending pregen Luck decision; the child's `artifacts` marker is `ready` (a child whose NPC and location index and pregen pool are not built yet is refused, so empty derived files are never installed into the running game); and `resource_bridge.guard_replacement(state)` permits replacement. Load the repaired child with the current active chapter id: `scenario_library.load_context()` defaults to the first chapter when none is given and `scenario_activation.install_context_fields()` would then overwrite both fields. The repair child keeps the parent's chapters, so the ids still resolve. Apply with correction semantics. Do **not** call `_new_upload()`, reset `game_started`, clear the timeline, wipe characters, reset rooms or clear campaign history. `scenario_library_id` and `scenario_text` change in one transaction, never one before the other.
 
 ## 17. Two-phase concurrency
 
@@ -385,10 +386,12 @@ Each implementation phase below ships as its own pull request with its own revie
 
 ## 30. Implementation order
 
-1. **Deterministic core.** Extract the shared page helpers from `scenario_source_review`; implement the parser, strict schema, lossless merge, numeric report, candidate digest and immutable partial-page publication, with unit tests and the template.
-2. **Discord upload.** `repair_*.md` routing, `user_id` in `handle_uploads`, the scenario-lifecycle permission check, the repair service, result and refusal messages, routing tests, help entries and guide lines.
-3. **Active-game correction.** `scenario_lifecycle.activate_repair_version()`, correction semantics, the stale revision and timeline checks, preservation of map position and player state, integration tests.
-4. **Derived artifacts.** Schedule the index and RAG rebuild against the new source hash, protect the rebuild commit with a hash check, and report the status after a repair.
+The order makes sure the game can never be switched to a child whose derived artifacts are missing: the rebuild lands before activation, and until activation lands the upload only publishes.
+
+1. **Deterministic core.** Extract the shared page helpers from `scenario_source_review`; implement the parser, strict schema, lossless merge, numeric report, candidate digest and immutable partial-page publication that copies the parent's images, image assets and scene maps, with unit tests and the template. The published child records `artifacts: "pending"` in its manifest.
+2. **Derived artifact rebuild.** Build the child's NPC and location index, pregen pool and RAG prewarm from its new text with the existing builders, against the child's source hash, commit them with a hash check, and set `artifacts: "ready"`. A child with `artifacts: "pending"` is not selectable for activation. Tests: the rebuild fills the indexes and pregens, a stale rebuild cannot overwrite a newer repair, and a pending child is refused.
+3. **Discord upload.** `repair_*.md` routing, `user_id` in `handle_uploads`, the scenario-lifecycle permission check, the repair service, the rebuild from phase 2, result and refusal messages, routing tests, help entries and guide lines. Until phase 4 the reply says the new version was created and not yet applied to the running game, so the upload never changes the game.
+4. **Active-game correction.** `scenario_lifecycle.activate_repair_version()` requiring `artifacts: "ready"`, correction semantics, the stale revision and timeline checks, preservation of map position, active chapter and player state, integration tests, and the result messages that say the game switched.
 
 ## 31. Merge criteria
 

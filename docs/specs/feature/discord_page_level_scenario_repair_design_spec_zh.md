@@ -203,6 +203,7 @@ removed, added = ordered_diff(old, new)               # difflib opcodes over the
 - 衍生 ID：`<parent-prefix>-repair-<candidate_digest[:16]>`。已存在且稽核摘要相符時，當成冪等的成功回傳；已存在但內容不同則失敗。
 - `candidate_digest` 涵蓋父劇本身分、正規化後的補丁（依頁碼排序）與候選文字。
 - manifest 新增 `source_repair`（版本、父劇本 ID 與內容雜湊、候選摘要、被修復的頁面、審查者使用者 ID 與顯示名稱、上傳的檔名、時間）。
+- `trusted_scenario_source.publish_derived()` 對既有目的地驗證的身分（`candidate_digest` 與 `parent_scenario_id`）要寫在它的驗證器讀取的地方，也就是稽核與 `manifest["source_review"]`，和來源審查的子劇本完全一樣；`source_repair` 帶上面那些 repair 專屬的細節。兩者都寫，所以輔助函式冪等的 `target.exists()` 路徑會回傳既有的 ID，而不是把目的地當成已改變而拒絕，這樣一般的重試與狀態過時後的復原才能運作。
 - 稽核存在既有的稽核位置（`source_review.json`），帶 `kind: page_repair`：父劇本與候選的摘要、前後內容雜湊、PDF SHA、審查者，以及每頁的前後 SHA-256、審查備註、頁面種類與移除／新增的數值 token。完整的前後文字是選用的；頁面雜湊加上不可變的父子劇本就能還原差異。
 
 ## 13. 解析品質更新
@@ -240,7 +241,7 @@ async def activate_repair_version(
 ) -> LifecycleResult:
 ```
 
-在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
+在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；子劇本的 `artifacts` 標記是 `ready`（NPC 與地點索引、預製角色池還沒建好的子劇本會被拒絕，所以空的衍生檔案絕不會被裝進進行中的遊戲）；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
 
 ## 17. 兩階段並行
 
@@ -384,10 +385,12 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 
 ## 30. 實作順序
 
-1. **確定性核心。** 從 `scenario_source_review` 抽出共用的頁面輔助函式；實作解析器、嚴格 schema、無損合併、數值報告、候選摘要與不可變的部分頁面發布，附單元測試與範本。
-2. **Discord 上傳。** `repair_*.md` 路由、`handle_uploads` 的 `user_id`、劇本生命週期權限檢查、repair 服務、結果與拒絕訊息、路由測試、說明項目與指南文字。
-3. **使用中遊戲的更正。** `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置與玩家狀態、整合測試。
-4. **衍生產物。** 針對新的來源雜湊排程索引與 RAG 重建、以雜湊檢查保護重建的提交，並在修復後回報狀態。
+這個順序確保遊戲永遠不會被切到衍生產物缺失的子劇本：重建在啟用之前完成，而在啟用上線之前，上傳只做發布。
+
+1. **確定性核心。** 從 `scenario_source_review` 抽出共用的頁面輔助函式；實作解析器、嚴格 schema、無損合併、數值報告、候選摘要，以及會複製父劇本圖片、圖片資源與場景地圖的不可變部分頁面發布，附單元測試與範本。發布的子劇本在 manifest 記錄 `artifacts: "pending"`。
+2. **衍生產物重建。** 以既有的建構器，依子劇本的來源雜湊，從它的新文字建出 NPC 與地點索引、預製角色池與 RAG 預熱，以雜湊檢查提交，並設為 `artifacts: "ready"`。`artifacts: "pending"` 的子劇本不能被選去啟用。測試：重建會填入索引與預製角色、過時的重建不能覆寫較新的 repair、pending 的子劇本被拒絕。
+3. **Discord 上傳。** `repair_*.md` 路由、`handle_uploads` 的 `user_id`、劇本生命週期權限檢查、repair 服務、第 2 階段的重建、結果與拒絕訊息、路由測試、說明項目與指南文字。在第 4 階段之前，回覆只說新版本已建立、尚未套用到進行中的遊戲，所以上傳不會改變遊戲。
+4. **使用中遊戲的更正。** 要求 `artifacts: "ready"` 的 `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置、目前章節與玩家狀態、整合測試，以及說明遊戲已切換的結果訊息。
 
 ## 31. 合併條件
 
