@@ -193,9 +193,25 @@ def resolve_defense_options(
 
 
 _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-name fuzzy match
+# Looser, for attaching provenance only (a wrong match never changes a number): 老鼠 against 鼠群 scores exactly 0.5.
+ENEMY_SOURCE_FUZZY_THRESHOLD = 0.5
 
 
-def find_npc_index_entry(state: GroupState, name: str) -> dict | None:
+def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None) -> dict | None:
+    """The provenance an enemy's attacks need. What the model gave stays; for an enemy the scenario's own NPC index
+    names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote."""
+    if index_entry is None or not state.active_scenario_source_hash:
+        return given
+    return {
+        "url": f"scenario:{state.scenario_library_id}", "revision": state.active_chapter_id or "scenario",
+        "sha256": state.active_scenario_source_hash, "extreme_rule": "maximum",
+        **{key: value for key, value in (given or {}).items() if value not in ("", None)},
+    }
+
+
+def find_npc_index_entry(
+    state: GroupState, name: str, *, threshold: float = _NPC_INDEX_FUZZY_THRESHOLD,
+) -> dict | None:
     """Looks up `name` (whatever the Keeper called this NPC/monster when
     calling add_npc_to_combat) against state.scenario_npc_index — exact match
     against the entry's name or any alias first, then a difflib fuzzy
@@ -224,7 +240,7 @@ def find_npc_index_entry(state: GroupState, name: str) -> dict | None:
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_entry = entry
-    return best_entry if best_ratio >= _NPC_INDEX_FUZZY_THRESHOLD else None
+    return best_entry if best_ratio >= threshold else None
 
 
 def refresh_tool_state(state: GroupState) -> GroupState:
