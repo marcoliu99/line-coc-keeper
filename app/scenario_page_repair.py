@@ -118,7 +118,7 @@ def _delta(value: Any, page: int) -> tuple[dict[str, int], dict[str, int]]:
         if not isinstance(counts, dict):
             raise RepairError(f"page {page}: expected_numeric_delta.{side} must be an object")
         for token, count in counts.items():
-            if (not isinstance(token, str) or scenario_numbers.tokens(token) != [token]
+            if (not isinstance(token, str) or scenario_numbers.mechanics_tokens(token) != [token]
                     or not _plain_int(count) or count < 1):
                 raise RepairError(f"page {page}: expected_numeric_delta.{side} needs canonical number tokens and counts")
         parsed.append(dict(counts))
@@ -179,12 +179,37 @@ def parse_markdown_bytes(data: bytes) -> RepairProposal:
                                                 raw["page_count"]), tuple(parsed))
 
 
+def locate_page_bodies(text: str, count: int) -> list[tuple[int, int]]:
+    """Offsets of each physical page's raw body; lossless, so untouched pages are never re-serialized.
+
+    A body runs from its marker line to the next marker, minus exactly one leading newline and, when another marker
+    follows, exactly one blank-line separator.
+    """
+    marks = list(library.PAGE_MARKER_RE.finditer(text))
+    if not marks and count == 1:
+        return [(0, len(text))]
+    if [int(m.group(1)) for m in marks] != list(range(1, count + 1)) or text[:marks[0].start()].strip():
+        raise ValueError("Original extraction needs unique, ordered physical page markers")
+    spans = []
+    for i, mark in enumerate(marks):
+        start = mark.end() + (1 if text.startswith("\n", mark.end()) else 0)
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        if i + 1 < len(marks) and end - 2 >= start and text[end - 2:end] == "\n\n":
+            end -= 2
+        spans.append((start, max(start, end)))
+    return spans
+
+
+def page_bodies(text: str, count: int) -> list[str]:
+    return [text[a:b] for a, b in locate_page_bodies(text, count)]
+
+
 def _fail(target: RepairTarget, *issues: RepairIssue) -> RepairCheck:
     return RepairCheck(False, target, "", "", (), tuple(issues), ())
 
 
 def _numeric_issue(patch: PageRepair, old: str) -> RepairIssue | None:
-    before, after = scenario_numbers.counts(old), scenario_numbers.counts(patch.text)
+    before, after = scenario_numbers.mechanics_counts(old), scenario_numbers.mechanics_counts(patch.text)
     removed, added = dict(before - after), dict(after - before)
     if removed == patch.removed and added == patch.added:
         return None
@@ -227,7 +252,8 @@ def check(proposal: RepairProposal) -> RepairCheck:
         with pymupdf.open(stream=snapshot.pdf_bytes, filetype="pdf") as doc:
             if len(doc) != target.page_count:
                 return _fail(target, RepairIssue("stale", None, "page count differs from the repair target"))
-            old_pages = review.split_source_pages(snapshot.text, len(doc))
+            spans = locate_page_bodies(snapshot.text, len(doc))
+            old_pages = [snapshot.text[a:b] for a, b in spans]
             issues: list[RepairIssue] = []
             for patch in proposal.patches:
                 if patch.page > len(doc):
@@ -244,20 +270,22 @@ def check(proposal: RepairProposal) -> RepairCheck:
         return _fail(target, *issues)
 
     by_page = {patch.page: patch for patch in proposal.patches}
-    rows = [{"page": number, "image_only": by_page[number].page_kind == "image" if number in by_page else False,
-             "text": by_page[number].text if number in by_page else body}
-            for number, body in enumerate(old_pages, 1)]
-    candidate = review.candidate_text(rows)
-    new_bodies = review.split_source_pages(candidate, len(old_pages))
     touched = sorted(by_page)
-    if (any(new_bodies[n - 1] != old_pages[n - 1] for n in range(1, len(old_pages) + 1) if n not in by_page)
-            or any(new_bodies[n - 1] != review.published_page_text(rows[n - 1]) for n in touched)):
+    replacement = {n: review.published_page_text({"image_only": by_page[n].page_kind == "image", "page": n,
+                                                  "text": by_page[n].text}) for n in touched}
+    candidate = snapshot.text
+    for n in reversed(touched):  # splice from the end so earlier offsets stay valid
+        a, b = spans[n - 1]
+        candidate = candidate[:a] + replacement[n] + candidate[b:]
+    new_pages = page_bodies(candidate, len(old_pages))
+    if (any(new_pages[n - 1] != old_pages[n - 1] for n in range(1, len(old_pages) + 1) if n not in by_page)
+            or any(new_pages[n - 1] != replacement[n] for n in touched)):
         return _fail(target, RepairIssue("content", None, "candidate pages did not round-trip"))
-    if all(new_bodies[n - 1] == old_pages[n - 1] for n in touched):
+    if all(new_pages[n - 1] == old_pages[n - 1] for n in touched):
         return _fail(target, RepairIssue("no_change", None, "the repair does not change any page"))
     changes = tuple({
         "page": n, "page_kind": by_page[n].page_kind, "before_sha256": _sha(old_pages[n - 1]),
-        "after_sha256": _sha(new_bodies[n - 1]), "review_note": by_page[n].review_note,
+        "after_sha256": _sha(new_pages[n - 1]), "review_note": by_page[n].review_note,
         "evidence": list(by_page[n].evidence), "numeric_removed": by_page[n].removed,
         "numeric_added": by_page[n].added,
     } for n in touched)
@@ -317,7 +345,7 @@ def publish(checked: RepairCheck, *, reviewer_user_id: str, reviewer_display_nam
         scenario_id = derived_scenario_id(target.scenario_id, checked.candidate_digest)
         text = checked.candidate_text
         text_hash = _sha(text)
-        bodies = review.split_source_pages(text, target.page_count)
+        bodies = page_bodies(text, target.page_count)
         kinds = {change["page"]: change["page_kind"] for change in checked.changes}
         identity = {"candidate_digest": checked.candidate_digest, "parent_scenario_id": target.scenario_id}
         parent_quality = _parent_quality(target.scenario_id)

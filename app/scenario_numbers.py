@@ -9,6 +9,14 @@ from collections import Counter
 NUMBER = re.compile(r'(?i)(?<![a-z0-9_])(?:\d+d\d+(?:[ \t]*[+-][ \t]*\d+)?|\d+(?:\.\d+)?%?)(?![a-z0-9_])')
 
 
+_CORE = r'(?:\d+d\d+(?:[ \t]*[+-][ \t]*\d+)?|\d+(?:\.\d+)?%?)'
+# A mechanics token keeps a leading sign (not glued to a word) and joins operands separated by / - en dash or minus,
+# so "+10%" differs from "-10%" and "1/1d6" from "1 1d6", which `NUMBER` cannot tell apart.
+MECHANICS = re.compile(
+    r'(?i)(?:(?<![a-z0-9_])[+\-\u2212])?(?<![a-z0-9_])' + _CORE
+    + r'(?:[ \t]*[/\-\u2013\u2212][ \t]*' + _CORE + r')*(?![a-z0-9_])')
+
+
 def _canonical(value: str) -> str:
     return re.sub(r'[ \t]', '', value).casefold()
 
@@ -19,6 +27,14 @@ def tokens(text: str) -> list[str]:
 
 def counts(text: str) -> Counter[str]:
     return Counter(tokens(text))
+
+
+def mechanics_tokens(text: str) -> list[str]:
+    return [_canonical(match.group()) for match in MECHANICS.finditer(text)]
+
+
+def mechanics_counts(text: str) -> Counter[str]:
+    return Counter(mechanics_tokens(text))
 
 
 def missing(source: str, translation: str) -> list[str]:

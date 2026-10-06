@@ -44,7 +44,7 @@ def scenario(tmp_path, monkeypatch):
 
 def patch(sid, number, text, *, kind='text', removed=None, added=None, **overrides):
     snapshot = trusted.read_snapshot(sid)
-    body = repair.review.split_source_pages(snapshot.text, len(PAGES))[number - 1]
+    body = repair.page_bodies(snapshot.text, len(PAGES))[number - 1]
     row = {'page': number, 'base_page_sha256': sha(body), 'text': text, 'page_kind': kind,
            'review_note': 'Checked against the rendered PDF page.',
            'evidence': [{'bbox': [0.0, 0.0, 300.0, 400.0], 'note': 'Full page checked.'}],
@@ -166,8 +166,8 @@ def test_only_patched_pages_change_in_a_deterministic_order_free_candidate(scena
     first, second = checked(sid, patches), checked(sid, list(reversed(patches)))
     assert first.ready and first.candidate_digest == second.candidate_digest
     old = trusted.read_snapshot(sid).text
-    old_pages = repair.review.split_source_pages(old, 4)
-    new_pages = repair.review.split_source_pages(first.candidate_text, 4)
+    old_pages = repair.page_bodies(old, 4)
+    new_pages = repair.page_bodies(first.candidate_text, 4)
     assert [i + 1 for i in range(4) if old_pages[i] != new_pages[i]] == [2, 3]
     assert first.candidate_text.count('--- 第') == 4 and first.repaired_pages == (2, 3)
 
@@ -275,3 +275,31 @@ def test_markdown_only_scenario_cannot_be_repaired(scenario, tmp_path):
     manifest['source_format'] = 'markdown'
     manifest_path.write_text(json.dumps(manifest))
     assert codes(repair.check(repair.parse_markdown_bytes(raw))) == {'identity'}
+
+
+# mechanics-aware numbers and lossless merge
+
+@pytest.mark.parametrize('before, after, removed, added', [
+    ('Bonus +10%.', 'Bonus -10%.', {'+10%': 1}, {'-10%': 1}),
+    ('SAN 1/1d6 loss.', 'SAN 1 1d6 loss.', {'1/1d6': 1}, {'1': 1, '1d6': 1}),
+    ('Range 1-3 yards.', 'Range 1/3 yards.', {'1-3': 1}, {'1/3': 1}),
+])
+def test_signs_and_separators_are_part_of_the_numeric_contract(scenario, before, after, removed, added):
+    sid = scenario(pages=(before, 'Two.', 'Three.', 'Four.'))
+    assert codes(checked(sid, [patch(sid, 1, after)])) == {'numeric'}
+    assert checked(sid, [patch(sid, 1, after, removed=removed, added=added)]).ready
+
+
+def test_page_numbers_and_hyphenated_words_do_not_trigger_phantom_signs(scenario):
+    sid = scenario(pages=('Room A-10 on page 3.', 'Two.', 'Three.', 'Four.'))
+    assert checked(sid, [patch(sid, 1, 'Room A-10 on page 3, east wing.')]).ready
+
+
+def test_untouched_pages_keep_their_exact_bytes_including_whitespace(scenario):
+    sid = scenario(pages=('Armor 2.\n17', 'Damage 1D40.\n18', '  Reviewed   spacing.  \n\n', 'Last page.\n'))
+    original = trusted.read_snapshot(sid).text
+    result = checked(sid, [patch(sid, 2, 'Damage 1D4.', removed={'1d40': 1, '18': 1}, added={'1d4': 1})])
+    assert result.ready, result.issues
+    assert result.candidate_text.startswith(original.split('--- 第 2 頁 ---')[0])
+    assert result.candidate_text.endswith('--- 第 3 頁 ---' + original.split('--- 第 3 頁 ---')[1])
+    assert repair.page_bodies(result.candidate_text, 4)[2] == '  Reviewed   spacing.  \n\n'
