@@ -171,16 +171,16 @@ repair 套用到對話已載入（`scenario_library_id`）、來自 PDF 的劇�
 來源修復正是被 OCR 弄壞的機制數值可能進入正本來源的地方，所以每個變動的數字都要被呈現，而不是被信任。對每個被替換的頁面，Bot 計算：
 
 ```python
-old_counts = scenario_numbers.mechanics_counts(old_page)
-new_counts = scenario_numbers.mechanics_counts(new_page)
+old = scenario_numbers.mechanics_contexts(old_page)   # Counter of (context, token)
+new = scenario_numbers.mechanics_contexts(new_page)
 
-removed = old_counts - new_counts
-added   = new_counts - old_counts
+removed = old - new
+added   = new - old
 ```
 
-並在回覆與稽核中列出，例如 `第 10 頁：移除 1d40 ×1、18 ×1；新增 1d4 ×1`。數字沒變的頁面會明說沒變。不會因為數值變動而拒絕：檔案本來就是審查者的更正，報告讓 KP 能在下一場遊戲前看到 `1D4` 變成了 `1D6`。父劇本仍可選用，所以錯誤的 repair 只要重新選用父劇本就能還原。
+並在回覆與稽核中列出，例如 `第 10 頁：移除 damage 1d40、18；新增 damage 1d4`。數字與語境都沒變的頁面會明說沒變。不會因為數值變動而拒絕：檔案本來就是審查者的更正，報告讓 KP 能在下一場遊戲前看到 `1D4` 變成了 `1D6`。錯誤的 repair 要靠上傳修正後的 repair 檔來更正，它以同樣的更正語意套用；父劇本保留在劇本庫，作為來源紀錄，也可用來刻意開新遊戲，但從劇本庫選用它（`/coc scenario use`）會開新的時間線，不是還原。
 
-`mechanics_counts` 是比 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留直接寫在數字前面的正負號（`+`、`-`、`−`），**包括緊貼在字詞後面的情況**（`STR+10` 與 `STR-10` 是 token `+10` 與 `-10`），並把以 `/`、`-`、`–` 或 `−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）。token 內的空格與 tab 不重要。像 `A-10` 這樣帶連字號的標籤會得到 token `-10`；只有那段文字被改動時才有影響，文字相同就不會有變化。現有的 `counts` 不變，其他使用者不受影響。
+`mechanics_counts` 是比 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留直接寫在數字前面的正負號（`+`、`-`、`−`），**包括緊貼在字詞後面的情況**（`STR+10` 與 `STR-10` 是 token `+10` 與 `-10`），並把以 `/`、`-`、`–` 或 `−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）。token 內的空格與 tab 不重要。像 `A-10` 這樣帶連字號的標籤會得到 token `-10`；只有那段文字被改動時才有影響，文字相同就不會有變化。整頁的 token 計數看不到在不同機制之間互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10` 的 token 相同），所以每個 token 都配上它的語境：同一行中緊接在它前面的最多兩個詞（字母或 CJK 字元），並做大小寫折疊。`HP 10, SAN 40` 是 (`hp`, `10`) 與 (`san`, `40`) 兩組；數值互換會改變兩組，因此會被回報。報告比對的是這些配對。現有的 `counts` 不變，其他使用者不受影響。
 
 報告只證明有變動的 token 被看見了，並不證明改得對；外部審查仍是證據來源。
 
@@ -212,7 +212,7 @@ added   = new_counts - old_counts
 
 `scenario_source_review.publish()` 會讓 `indexes`、`pregens` 與 `scene_maps` 失效，因為它們是從舊文字萃取的。repair 子劇本也一樣：不複製父劇本的 NPC 與地點索引、預製角色萃取或場景地圖推論。
 
-對進行中的遊戲，連續性很重要：保留目前的玩家角色、已認領的預製角色、HP、SAN、幸運、背包、時間線與房間位置，並保留執行階段的 `scene_maps`（PDF 影像沒有改變）。把衍生的來源產物標記為需要重建，並依新的來源雜湊非同步重建：NPC 與地點索引、RAG 預熱、必要時的預製角色候選。只有在重建完成時，被修復的劇本仍是使用中的來源，重建結果才可以取代衍生產物；針對舊雜湊的緩慢重建絕不能覆寫較新的 repair。
+對進行中的遊戲，連續性很重要：保留目前的玩家角色、已認領的預製角色、HP、SAN、幸運、背包、時間線、房間位置與**目前章節**（`active_chapter_id` 與 `context_chapter_ids`），並保留執行階段的 `scene_maps`（PDF 影像沒有改變）。把衍生的來源產物標記為需要重建，並依新的來源雜湊非同步重建：NPC 與地點索引、RAG 預熱、必要時的預製角色候選。只有在重建完成時，被修復的劇本仍是使用中的來源，重建結果才可以取代衍生產物；針對舊雜湊的緩慢重建絕不能覆寫較新的 repair。
 
 ## 15. 地圖頁
 
@@ -234,7 +234,7 @@ async def activate_repair_version(
 ) -> LifecycleResult:
 ```
 
-在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；而且 `resource_bridge.guard_replacement(state)` 允許替換。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
+在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
 
 ## 17. 兩階段並行
 
@@ -250,7 +250,10 @@ LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activ
 
 ```text
 新版已建立，但遊戲狀態在修復期間已變更，因此沒有自動套用。
+請重新上傳同一份 repair 檔，會以更正的方式套用，不會重置遊戲。
 ```
+
+復原方式是重新上傳同一個檔案：衍生 ID 是確定性的，所以上傳時會找到已發布的版本，只以 repair 語意啟用它。不要叫 KP 從劇本庫選用這個版本：`/coc scenario use`（`activate_existing_scenario()`）會建立新的時間線並清掉待處理與已結算的檢定。
 
 已有效發布的來源絕不會因為啟用變成過時就被回滾或刪除。
 
@@ -271,10 +274,10 @@ LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activ
 
 已只替換指定頁面，其餘頁面保持不變。
 目前遊戲已切換到修正版，角色、進度與目前位置沒有重置。
-舊版仍在劇本庫，必要時可切回。
+舊版仍保留在劇本庫。
 ```
 
-已發布但未套用：版本 ID 加上第 17 節的狀態過時通知。冪等的重新上傳：`這份修復已經套用，沒有重複建立版本。` 頁數不符、沒有載入來自 PDF 的劇本、頁碼無效、含有可讀文字的 `image` 頁，或無法讀取的檔案，各自得到一則明確的訊息，並且什麼都不套用。
+已發布但未套用：版本 ID 加上第 17 節的狀態過時通知，請 KP 再上傳同一個檔案。冪等的重新上傳：`這份修復已經套用，沒有重複建立版本。` 頁數不符、沒有載入來自 PDF 的劇本、頁碼無效、含有可讀文字的 `image` 頁，或無法讀取的檔案，各自得到一則明確的訊息，並且什麼都不套用。
 
 ## 19. 自由格式的 repair Markdown
 
@@ -342,11 +345,11 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 
 - **解析：** 有效的單頁 repair；接受 BOM；未知的最上層、target 或補丁鍵；重複、0 或超出範圍的頁碼；注入標記；無效的 `page_kind`；缺少審查備註；沒填的範本會被拒絕。
 - **綁定：** 沒有載入劇本；只有 Markdown 的劇本；頁數不符。
-- **數值報告：** `1D40 → 1D4` 的變動會以移除與新增的 token 列出；`+10% → -10%`、`SAN 1/1d6 → SAN 1 1d6` 與 `STR+10 → STR-10` 都會被列出；沒變的文字什麼都不報；沒改動的帶連字號標籤不產生變動；一頁的報告不影響另一頁。
+- **數值報告：** 互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10`）會被回報；`1D40 → 1D4` 的變動會以移除與新增的 token 列出；`+10% → -10%`、`SAN 1/1d6 → SAN 1 1d6` 與 `STR+10 → STR-10` 都會被列出；沒變的文字什麼都不報；沒改動的帶連字號標籤不產生變動；一頁的報告不影響另一頁。
 - **合併：** 只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；沒有任何變化的 repair 被拒絕；同一份 repair 具冪等性。
 - **地圖與影像：** 有標籤的地圖頁被接受並清除低文字量警告；地圖 repair 不改變場景地圖圖形；存在原生文字時 `image` 被拒絕，沒有時被接受。
 - **Discord：** `repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
-- **生命週期：** 啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
+- **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
 - **解析品質：** 被修復頁面的警告清除、未被修改頁面的保留、載入訊息只列出剩下的頁面。
 - **產物：** 父劇本的索引不會被複製；重建以子劇本的雜湊為鍵；過時的重建不能覆寫較新的 repair。
 
@@ -393,7 +396,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 - **為什麼不接受任意自由格式的 repair 檔？** 它沒有頁面種類、審查備註或頁數檢查。
 - **為什麼綁定已載入的劇本，而不是雜湊？** 檔案由外部審查者撰寫，他有 PDF 與範本，但沒有 Bot 內部的雜湊。已載入的劇本、頁數與回報的數值變動，提供了真正重要的安全性，而不需要 KP 複製任何東西；不可變的父劇本讓錯誤的 repair 可以還原。
 - **為什麼替換整頁？** 這提供確定性的來源紀錄，並避免模糊對齊。
-- **為什麼回報數字而不是拒絕？** 來源修復本來就可以修數字，更正依定義就是數值變動；不該發生的是沒人注意到的變動。
+- **為什麼回報數字而不是拒絕？** 來源修復本來就可以修數字，更正依定義就是數值變動；不該發生的是沒人注意到的變動。報告是讓人看見的工具，不是正確性的證明。
 - **為什麼建立子劇本而不是覆寫？** repair 必須可逆、可稽核，並且對既有戰役安全。
 - **為什麼保留遊戲狀態？** 這修的是來源，不是新劇本。
 
