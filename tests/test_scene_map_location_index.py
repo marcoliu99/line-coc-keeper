@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import db, scenario_index
+from app import db, scenario_activation, scenario_index
 from app.commands.handlers import system as system_handler
 from app.models import GroupState
 from app.repositories import group_state, state_transaction
@@ -148,3 +148,25 @@ def test_scenario_use_names_the_locations_of_the_maps_that_end_up_committed():
         scenario_lifecycle._use_existing(state, context, "sid", "")
     assert list(state.scene_maps) == ["custom_new"]
     assert [loc["name"] for loc in state.scenario_location_index] == ["Muscoby", "New map place"]
+
+
+def _install(*, preserve_maps: bool) -> GroupState:
+    state = GroupState("map-index", scene_maps={"custom_old": {"location_name": "Old map place"}})
+    context = {"manifest": {"title": "t"}, "text": "text", "indexes": {"npcs": [], "locations": [_entry("Muscoby", page=2)]},
+               "active_chapter_id": "", "context_chapter_ids": [], "pregens": [],
+               "scene_maps": {"2": {"location_name": "Page map place", "rooms": []}}}
+    with patch.object(scenario_activation.page_repairs, "apply_saved", side_effect=lambda g, s, h, t: t), \
+            patch.object(scenario_activation.scenario_templates, "preferred_variant", return_value=""):
+        scenario_activation.install_context_fields(state, "sid", context, preserve_maps=preserve_maps)
+    return state
+
+
+def test_installing_a_scenarios_own_maps_names_their_locations_for_first_activation_and_chapters():
+    state = _install(preserve_maps=False)
+    assert list(state.scene_maps) == ["2"]
+    assert [loc["name"] for loc in state.scenario_location_index] == ["Muscoby", "Page map place"]
+
+
+def test_installing_while_the_running_maps_stay_leaves_the_merge_to_the_caller():
+    state = _install(preserve_maps=True)
+    assert [loc["name"] for loc in state.scenario_location_index] == ["Muscoby"]

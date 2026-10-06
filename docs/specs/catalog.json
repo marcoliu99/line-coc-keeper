@@ -2291,6 +2291,8 @@
       "status": "implemented",
       "evidence": [
         "app/scenario_index.py",
+        "app/scene_map_locations.py",
+        "app/scenario_activation.py",
         "app/services/scenario_lifecycle.py",
         "app/services/map_service.py",
         "app/commands/handlers/system.py",
