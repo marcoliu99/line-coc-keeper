@@ -10,7 +10,7 @@ A Markdown scenario loaded with an empty location index (the library keeps only 
 
 ## Change
 
-`scenario_index.merge_scene_map_locations(locations, scene_maps)` returns the index plus one entry `{name, aliases: [], summary: "", page: 0}` per scene map `location_name` that no entry already holds by name or alias (`strip` + `casefold`). Existing entries are untouched and a repeat adds nothing. It is called when a map upload succeeds (`map_service.handle_map_upload`, in the same state commit; an invalid map changes nothing) and by `/coc index` after the numbered-heading check, so a map never hides an incomplete text extraction ([an incomplete location-index rebuild never replaces a valid index](index_location_underflow_design_spec.md)).
+`scenario_index.merge_scene_map_locations(locations, scene_maps)` returns the index plus one entry `{name, aliases: [], summary: "", page: 0}` per scene map `location_name` that no entry already holds by name or alias (`strip` + `casefold`). Existing entries are untouched and a repeat adds nothing. When an upload overwrites a map under the same key, the entry made for the old map's name is removed unless another map still names it; an entry that came from the scenario text is never removed. It is called when a map upload succeeds (`map_service.handle_map_upload`, in the same state commit; an invalid map changes nothing) and by `/coc index` after the numbered-heading check, so a map never hides an incomplete text extraction ([an incomplete location-index rebuild never replaces a valid index](index_location_underflow_design_spec.md)).
 
 ## Not done
 

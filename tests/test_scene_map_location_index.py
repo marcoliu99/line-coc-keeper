@@ -111,3 +111,14 @@ def test_a_map_does_not_hide_an_incomplete_text_extraction():
     commit.assert_not_called()
     assert len(state.scenario_location_index) == 5
     assert "LOCATION 1–5" in replies[0]
+
+
+def test_replacing_a_map_drops_the_location_it_added_but_never_a_text_one(stored):
+    _upload(MAP_YAML)
+    _upload(MAP_YAML.replace(COTTAGE.encode(), b"Gurteen Cottage"))
+    names = [loc["name"] for loc in group_state.load_state("map-index").scenario_location_index]
+    assert names == ["Muscoby", "Gurteen Cottage"]
+    _upload(MAP_YAML.replace(COTTAGE.encode(), b"Muscoby"))  # a name the scenario text already gave
+    _upload(MAP_YAML.replace(COTTAGE.encode(), b"Elsewhere"))
+    names = [loc["name"] for loc in group_state.load_state("map-index").scenario_location_index]
+    assert names == ["Muscoby", "Elsewhere"]

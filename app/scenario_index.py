@@ -125,13 +125,22 @@ def detect_numbered_location_sequence(text: str) -> list[int] | None:
     return numbers if len(numbers) >= 2 and numbers == list(range(1, len(numbers) + 1)) else None
 
 
-def merge_scene_map_locations(locations: list[dict[str, Any]], scene_maps: dict[str, Any]) -> list[dict[str, Any]]:
+def merge_scene_map_locations(
+    locations: list[dict[str, Any]], scene_maps: dict[str, Any], *, replaced: str = "",
+) -> list[dict[str, Any]]:
     """``locations`` plus one entry per scene map ``location_name`` the index does not already hold (by name or alias,
-    ``strip`` + ``casefold``). Existing entries are kept as they are; a repeated merge adds nothing."""
+    ``strip`` + ``casefold``). Existing entries are kept as they are; a repeated merge adds nothing. ``replaced`` is the
+    location name of a map that was just overwritten: the entry this function made for it goes, unless another map still
+    names it (an entry from the scenario text is never removed)."""
     def key(name: Any) -> str:
         return str(name or "").strip().casefold()
 
     merged = list(locations)
+    if replaced and not any(isinstance(m, dict) and key(m.get("location_name")) == key(replaced)
+                            for m in scene_maps.values()):
+        merged = [loc for loc in merged if not (
+            key(loc.get("name")) == key(replaced) and not loc.get("aliases") and not loc.get("summary")
+            and not loc.get("page"))]
     known = {key(name) for loc in merged for name in (loc.get("name"), *(loc.get("aliases") or []))}
     for scene in scene_maps.values():
         name = str(scene.get("location_name") or "").strip() if isinstance(scene, dict) else ""
