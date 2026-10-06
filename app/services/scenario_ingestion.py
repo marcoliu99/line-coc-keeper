@@ -593,9 +593,6 @@ async def handle_page_repair_upload(
         if replacement_block:
             await reply(replacement_block)
             return
-        if state.pending_pdf_upload is not None or state.pending_scenario_upload is not None:
-            await reply("有一份劇本上傳正在等你選擇（新遊戲或修正目前遊戲），請先處理完再上傳頁面修復檔。")
-            return
         present = scenario_page_repair.present_pages(state.scenario_text)
         total = max(present, default=0)
         source_hash = state.active_scenario_source_hash

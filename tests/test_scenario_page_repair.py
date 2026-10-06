@@ -268,10 +268,3 @@ def test_while_a_reparse_is_pending_only_the_running_source_decides_which_pages_
         # the game still runs another source (hash) with only the four pages of TEXT
         replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash="older"))
         assert "只有 4 頁" in upload(page(9, "x"), state=None)[0]
-
-
-def test_a_repair_waits_while_a_scenario_upload_is_waiting_for_its_choice():
-    state = GroupState("g", scenario_text=TEXT, pending_pdf_upload={"scenario_id": "s"})
-    replies = upload(page(2, "new two"), state=state)
-    assert "等你選擇" in replies[0]
-    assert group_state.load_state("g").scenario_text == TEXT
