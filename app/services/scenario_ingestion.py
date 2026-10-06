@@ -182,6 +182,20 @@ def _confirmation_for_result(result: scenario_lifecycle.LifecycleResult, *, choi
     return confirmation + (stale + variant + image if choice else variant + image + stale)
 
 
+async def _extract_checked_index(text: str, *, source: str) -> tuple[dict, str]:
+    """The upload's NPC/location index, or an empty one plus a notice when the extraction found fewer locations than
+    the text's numbered headings; the scenario itself is imported either way and nothing is retried or guessed."""
+    index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
+    underflow = scenario_index.location_index_underflow(text, index["locations"], previous_count=0, source=source)
+    if underflow is None:
+        return index, ""
+    expected, extracted = underflow
+    return {"npcs": [], "locations": []}, (
+        f"⚠️ 這份劇本的自動索引結果不完整：劇本文字明確包含 {expected} 個編號地點，本次只抽出 {extracted} 個。"
+        "未寫入這份不完整索引，之後可用 /coc index 重建。"
+    )
+
+
 @mutation_admission.guard_async_entry
 async def handle_pdf_upload(
     conversation_id: str,
@@ -295,7 +309,9 @@ async def handle_pdf_upload(
     # upload time instead of on demand; degrades to {"npcs": [], "locations":
     # []} on any failure (no provider configured, extraction call failing),
     # same as before this existed — never blocks the upload from succeeding.
-    extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
+    extracted_index, incomplete_notice = await _extract_checked_index(text, source="pdf_upload")
+    if incomplete_notice:
+        await push(incomplete_notice)
 
     # Also extracted eagerly, at upload time, rather than lazily behind the
     # first /coc pregens call the old code waited for — that lazy trigger
@@ -412,7 +428,9 @@ async def handle_scenario_markdown_upload(
 
     await reply("收到了，正在讀取 Markdown 劇本並建立索引；這條路徑不會執行 PDF OCR。")
     title = _markdown_scenario_title(text, file_name)
-    extracted_index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
+    extracted_index, incomplete_notice = await _extract_checked_index(text, source="markdown_upload")
+    if incomplete_notice:
+        await push(incomplete_notice)
     pregens = await asyncio.to_thread(pregen_extractor.extract_pregens, text)
     preview = text[:12_000]
     scenario_id = await asyncio.to_thread(

@@ -430,6 +430,10 @@ def _save_scenario_source(
             (temporary / "parse_quality.json").write_text(
                 json.dumps(parse_quality or {}, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            if not (indexes.get("npcs") or indexes.get("locations")):
+                # An empty index is what an upload stores after an incomplete or failed extraction: it never
+                # replaces the index this entry already has.
+                indexes = _read_json(target / "indexes.json", indexes)
             (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
             (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
             (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")
