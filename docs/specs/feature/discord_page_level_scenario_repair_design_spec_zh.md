@@ -184,7 +184,7 @@ removed, added = ordered_diff(old, new)               # difflib opcodes over the
 
 並在稽核與**私下報告**中列出，例如 `第 10 頁：移除 damage 1d40、18；新增 damage 1d4`。數字與語境都沒變的頁面會明說沒變。
 
-報告會把舊來源回送出去：被移除的 token 連同語境就是原頁面的數字與標籤。因為任何人都能上傳（第 6 節），如果放在對話回覆裡，玩家只要送出結構有效、內容任意的補丁，就能讀回只給 KP 看的數值，例如怪物 HP、SAN 損失與傷害骰。所以詳細報告只用私訊（`send_dm`）傳給 KP Assistant，對話裡的回覆只是不含敏感內容的確認：被修復的頁碼、新版本 ID、其中幾頁有數值變動，以及 KP 已收到詳細內容。沒有登記 KP Assistant 時，詳細內容只留在稽核裡，回覆會這樣說明。拒絕訊息也同樣處理：說明問題，絕不引用頁面文字。不會因為數值變動而拒絕：檔案本來就是審查者的更正，報告讓 KP 能在下一場遊戲前看到 `1D4` 變成了 `1D6`。錯誤的 repair 要靠上傳修正後的 repair 檔來更正，它以同樣的更正語意套用；父劇本保留在劇本庫，作為來源紀錄，也可用來刻意開新遊戲，但從劇本庫選用它（`/coc scenario use`）會開新的時間線，不是還原。
+報告會把舊來源回送出去：被移除的 token 連同語境就是原頁面的數字與標籤。因為任何人都能上傳（第 6 節），如果放在對話回覆裡，玩家只要送出結構有效、內容任意的補丁，就能讀回只給 KP 看的數值，例如怪物 HP、SAN 損失與傷害骰。所以詳細報告只用私訊（`send_dm`）傳給 KP Assistant，對話裡的回覆只是不含敏感內容的確認：被修復的頁碼、新版本 ID、其中幾頁有數值變動，以及 KP 已收到詳細內容。沒有登記 KP Assistant 時，詳細內容只留在稽核裡，回覆會這樣說明。不能假設一定送得到：KP 關閉私訊時 `delivery.send_dm()` 會丟出例外。所以報告先連同 `report_delivered: false` 寫進稽核，再傳送；repair 本身絕不會因為私訊失敗而被擋下或回滾，但回覆會說私下報告沒有送達，請 KP 開啟私訊後再上傳同一個檔案。上傳同一個檔案會走到「已套用」的回答，而它會先檢查稽核：存著 `report_delivered: false` 的報告會重新傳送並標成已送達，之後回覆才說 repair 已經套用。測試讓第一次私訊失敗，再上傳同一個檔案，確認報告只送達一次。拒絕訊息也同樣處理：說明問題，絕不引用頁面文字。不會因為數值變動而拒絕：檔案本來就是審查者的更正，報告讓 KP 能在下一場遊戲前看到 `1D4` 變成了 `1D6`。錯誤的 repair 要靠上傳修正後的 repair 檔來更正，它以同樣的更正語意套用；父劇本保留在劇本庫，作為來源紀錄，也可用來刻意開新遊戲，但從劇本庫選用它（`/coc scenario use`）會開新的時間線，不是還原。
 
 `mechanics_counts` 是比 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留直接寫在數字前面的正負號（`+`、`-`、`−`），**包括緊貼在字詞後面的情況**（`STR+10` 與 `STR-10` 是 token `+10` 與 `-10`），並把以 `/`、`-`、`–` 或 `−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）。token 內的空格與 tab 不重要。像 `A-10` 這樣帶連字號的標籤會得到 token `-10`；只有那段文字被改動時才有影響，文字相同就不會有變化。整頁的 token 計數看不到在不同機制之間互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10` 的 token 相同），所以每個 token 都配上它的語境：同一行中緊接在它前面的最多兩個詞（字母或 CJK 字元），並做大小寫折疊。`HP 10, SAN 40` 是 (`hp`, `10`) 與 (`san`, `40`) 兩組。多重集合還是看不到重複出現的同一個標籤，例如屬性表（`Rat / HP 10`、`Ogre / HP 20` 兩個數值互換），所以配對**依出現順序**保留，報告是兩個序列的有序差異（`difflib.SequenceMatcher` 的 opcodes）：被取代、刪除或插入的區塊內的一切，連同語境都列為移除與新增。數值互換會改變序列，因此會被回報。數字只是搬移位置的頁面（修正雙欄閱讀順序）也會被回報為有變動，這是刻意的：KP 看得到那些數字移動了，可以確認它們仍然在正確的標籤旁邊。現有的 `counts` 不變，其他使用者不受影響。
 
@@ -247,7 +247,7 @@ async def activate_repair_version(
 ) -> LifecycleResult:
 ```
 
-在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；子劇本的 `artifacts` 標記是 `ready`（NPC 與地點索引、預製角色池還沒建好的子劇本會被拒絕，所以空的衍生檔案絕不會被裝進進行中的遊戲）；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
+在對話鎖之下：操作者仍有權限；使用中的 `scenario_library_id` 等於父劇本；使用中的來源雜湊仍等於父劇本的；`timeline_id` 沒有改變；`state_revision` 符合 repair 交易的政策；沒有其他待處理的劇本提交或預製角色幸運決定；子劇本的 `artifacts` 標記是 `ready` 或 `inherited`（NPC 與地點索引、預製角色池還沒建好的子劇本會被拒絕，而 fail-soft 的空結果絕不算建好，所以空的衍生檔案絕不會被裝進進行中的遊戲）；而且 `resource_bridge.guard_replacement(state)` 允許替換。以目前的章節 ID 載入修復後的子劇本：沒給章節時 `scenario_library.load_context()` 會預設為第一章，`scenario_activation.install_context_fields()` 隨後會覆寫這兩個欄位。repair 子劇本沿用父劇本的章節，所以 ID 仍能解析。以更正語意套用。**不要**呼叫 `_new_upload()`、重設 `game_started`、清除時間線、清掉角色、重設房間或清除戰役歷史。`scenario_library_id` 與 `scenario_text` 在同一個交易中改變，絕不能一個先、一個後。
 
 ## 17. 兩階段並行
 
@@ -354,7 +354,7 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 
 ## 25. 效能
 
-9 頁的補丁不會重跑 PaddleOCR、Tesseract、PyMuPDF4LLM 擷取或 AI PDF 修復。上傳延遲來自解析、雜湊、頁面檢查、數值報告、衍生發布與狀態提交，通常是數秒，加上選用的非同步索引與 RAG 重建。
+9 頁的補丁不會重跑 PaddleOCR、Tesseract、PyMuPDF4LLM 擷取或 AI PDF 修復。上傳延遲來自解析、雜湊、頁面檢查、數值報告、衍生發布與狀態提交，通常是數秒，加上要等待完成的 NPC 與地點索引和預製角色池重建，那是一次模型呼叫，可能比其他步驟都久；只有 RAG 預熱之後非同步執行。
 
 ## 26. 安全／信任邊界
 
@@ -394,9 +394,9 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 這個順序確保遊戲永遠不會被切到衍生產物缺失的子劇本：重建在啟用之前完成，而在啟用上線之前，上傳只做發布。
 
 1. **確定性核心。** 從 `scenario_source_review` 抽出共用的頁面輔助函式；實作解析器、嚴格 schema、無損合併、數值報告、候選摘要，以及會複製父劇本圖片、圖片資源與場景地圖的不可變部分頁面發布，附單元測試與範本。發布的子劇本在 manifest 記錄 `artifacts: "pending"`。
-2. **衍生產物重建。** 以既有的建構器，依子劇本的來源雜湊，從它的新文字建出 NPC 與地點索引、預製角色池與 RAG 預熱，以雜湊檢查提交，並設為 `artifacts: "ready"`。`artifacts: "pending"` 的子劇本不能被選去啟用。測試：父劇本仍是使用中的劇本時，重建也會填入索引與預製角色並把子劇本標成 `ready`、過時的重建不能覆寫較新的 repair、裝進進行中的遊戲要求子劇本是使用中的、pending 的子劇本被拒絕。
+2. **衍生產物重建。** 以既有的建構器，依子劇本的來源雜湊，從它的新文字建出 NPC 與地點索引和預製角色池，以雜湊檢查提交，並設為 `artifacts: "ready"`；RAG 預熱另外排程。既有的建構器是 fail-soft 的：沒有設定分析 provider 或呼叫失敗時，`scenario_index.extract_scenario_index()` 回傳空清單、`pregen_extractor.extract_pregens()` 回傳空池。所以重建要回報擷取是否**成功**，並把來自失敗或不可用 provider 的空結果當成沒建好：此時子劇本會得到從父劇本複製來的索引與預製角色檔（repair 只改幾頁，父劇本的清單是手邊最好的），標記是 `inherited` 而不是 `ready`。`inherited` 可以啟用，回覆會說索引之後會更新，下次有 provider 時再重試重建。擷取成功而且真的是空的才是 `ready`。`artifacts: "pending"` 的子劇本不能被選去啟用。測試：父劇本仍是使用中的劇本時，重建也會填入索引與預製角色並把子劇本標成 `ready`；沒有 provider 時子劇本是 `inherited` 並帶著父劇本非空的檔案，絕不是空的；過時的重建不能覆寫較新的 repair；裝進進行中的遊戲要求子劇本是使用中的；pending 的子劇本被拒絕。
 3. **Discord 上傳。** `repair_*.md` 路由、`handle_uploads` 的 `user_id`、劇本生命週期權限檢查、repair 服務、第 2 階段的重建、結果與拒絕訊息、路由測試、說明項目與指南文字。在第 4 階段之前，回覆只說新版本已建立、尚未套用到進行中的遊戲，所以上傳不會改變遊戲。
-4. **使用中遊戲的更正。** 要求 `artifacts: "ready"` 的 `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置、目前章節與玩家狀態、整合測試，以及說明遊戲已切換的結果訊息。
+4. **使用中遊戲的更正。** 要求 `artifacts` 為 `ready` 或 `inherited` 的 `scenario_lifecycle.activate_repair_version()`、更正語意、過時修訂／時間線檢查、保留地圖位置、目前章節與玩家狀態、整合測試，以及說明遊戲已切換的結果訊息。
 
 ## 31. 合併條件
 
