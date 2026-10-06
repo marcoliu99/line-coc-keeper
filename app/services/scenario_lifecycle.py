@@ -126,8 +126,11 @@ def _new_upload(state: GroupState, context: dict[str, Any]) -> None:
 def _repair(state: GroupState, context: dict[str, Any]) -> None:
     state.scenario_title = context["manifest"]["title"]
     state.scenario_text = context["text"]
-    state.scenario_npc_index = context["indexes"]["npcs"]
-    state.scenario_location_index = context["indexes"]["locations"]
+    # An empty index is what an upload stores when its extraction came back incomplete or failed: never let it
+    # replace an index the running scenario already has.
+    if context["indexes"]["npcs"] or context["indexes"]["locations"]:
+        state.scenario_npc_index = context["indexes"]["npcs"]
+        state.scenario_location_index = context["indexes"]["locations"]
     scenario_index.report_location_index(
         state.scenario_location_index, source="correction", scenario_title=state.scenario_title,
     )

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from app import scenario_index, scenario_page_repair
 from app.commands.handlers import system as system_handler
 from app.models import GroupState
-from app.services import scenario_ingestion
+from app.services import scenario_ingestion, scenario_lifecycle
 
 
 def _text(count: int, *, heading: str = "LOCATION {n}: PLACE {n}") -> str:
@@ -157,13 +157,34 @@ class UploadIndexTests(unittest.TestCase):
     def test_an_incomplete_index_is_dropped_with_a_notice_and_the_import_goes_on(self):
         index, notice = self._extract(8)
         self.assertEqual(index, {"npcs": [], "locations": []})
-        self.assertIn("劇本仍可正常遊玩", notice)
+        self.assertIn("未寫入這份不完整索引", notice)
+        self.assertNotIn("已載入", notice)
         self.assertIn("9", notice)
 
     def test_a_complete_index_is_kept_without_a_notice(self):
         index, notice = self._extract(9)
         self.assertEqual(len(index["locations"]), 9)
         self.assertEqual(notice, "")
+
+
+class CorrectionTests(unittest.TestCase):
+    def _repair(self, indexes: dict) -> GroupState:
+        state = GroupState("group-index-guard")
+        state.scenario_npc_index = [{"name": "old npc"}]
+        state.scenario_location_index = _locations(9)
+        scenario_lifecycle._repair(state, {"manifest": {"title": "t"}, "text": "new text", "indexes": indexes,
+                                           "pregens": []})
+        return state
+
+    def test_a_correction_with_an_empty_index_keeps_the_running_index(self):
+        state = self._repair({"npcs": [], "locations": []})
+        self.assertEqual(state.scenario_text, "new text")
+        self.assertEqual(len(state.scenario_location_index), 9)
+        self.assertEqual(state.scenario_npc_index, [{"name": "old npc"}])
+
+    def test_a_correction_with_an_index_replaces_it(self):
+        state = self._repair({"npcs": [], "locations": _locations(9)})
+        self.assertEqual(state.scenario_npc_index, [])
 
 
 if __name__ == "__main__":

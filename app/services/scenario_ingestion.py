@@ -191,8 +191,8 @@ async def _extract_checked_index(text: str, *, source: str) -> tuple[dict, str]:
         return index, ""
     expected, extracted = underflow
     return {"npcs": [], "locations": []}, (
-        f"⚠️ 劇本已載入，但自動索引結果不完整：劇本文字明確包含 {expected} 個編號地點，本次只抽出 {extracted} 個。"
-        "未寫入這份不完整索引；劇本仍可正常遊玩，之後可用 /coc index 重建。"
+        f"⚠️ 這份劇本的自動索引結果不完整：劇本文字明確包含 {expected} 個編號地點，本次只抽出 {extracted} 個。"
+        "未寫入這份不完整索引，之後可用 /coc index 重建。"
     )
 
 

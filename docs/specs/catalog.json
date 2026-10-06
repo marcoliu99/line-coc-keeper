@@ -2267,6 +2267,22 @@
       "path": "docs/specs/bug/pregen_luck_form_headings_design_spec.md",
       "zh_path": "docs/specs/bug/pregen_luck_form_headings_design_spec_zh.md",
       "source_revision": "6f7a6d97a1981b7411952fa229a29fe646e9b812"
+    },
+    {
+      "title": "An incomplete location-index rebuild never replaces a valid index",
+      "zh": "不完整的地點索引重建結果，不會取代有效的索引",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_index.py",
+        "app/commands/handlers/system.py",
+        "app/services/scenario_ingestion.py",
+        "app/services/scenario_lifecycle.py",
+        "tests/test_location_index_guard.py"
+      ],
+      "path": "docs/specs/bug/index_location_underflow_design_spec.md",
+      "zh_path": "docs/specs/bug/index_location_underflow_design_spec_zh.md",
+      "source_revision": "6de8b31021b1a6e699c2b6939a253aa47fc3a058"
     }
   ]
 }
