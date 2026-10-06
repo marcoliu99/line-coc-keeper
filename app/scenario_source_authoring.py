@@ -228,7 +228,7 @@ def _export_source(sid: str) -> Path:
             raise ValueError('Unsupported physical PDF page count (1–2000)')
         fallback = False
         try:
-            originals = review._source_pages(text, len(doc))
+            originals = review.split_source_pages(text, len(doc))
         except ValueError:
             originals = [''] * len(doc)
             fallback = True
@@ -432,7 +432,7 @@ def _publish(registry: dict, draft: dict) -> str:
     sid, eid = registry['scenario_id'], registry['export_id']
     rows = [draft['pages'][p['page_id']] for p in registry['pages']]
     pages = [{'page': p['pdf_page'], 'text': p['text'], 'image_only': p['status'] == 'visual_only'} for p in rows]
-    text = review._candidate_text(pages)
+    text = review.candidate_text(pages)
     digest = authoring.digest([registry, rows, draft['imported_by']])
     target_id = sid[:38].rstrip('-') + '-ai-' + digest[:16]
     text_hash = review._sha(text.encode())
@@ -446,7 +446,7 @@ def _publish(registry: dict, draft: dict) -> str:
             old, new = scenario_numbers.counts(before), scenario_numbers.counts(after)
             changes.append({'page': page['page'], 'before': before, 'after': after,
                             'before_sha256': review._sha(before.encode()), 'after_sha256': review._sha(after.encode()),
-                            'published_text': review._published_page_text(page), 'status': row['status'],
+                            'published_text': review.published_page_text(page), 'status': row['status'],
                             'removed_counts': dict(old-new), 'added_counts': dict(new-old),
                             'ai_changes': row['changes']})
         metadata = {'origin': 'external_ai', 'export_id': eid, 'candidate_digest': digest,
@@ -464,7 +464,7 @@ def _publish(registry: dict, draft: dict) -> str:
         quality = {'version': 'external-ai-v1', 'source_chars': len(text), 'review_pages': [],
                    'source_review': metadata, 'pdf_sha256': registry['pdf_sha256'],
                    'pages': [{'page': p['page'], 'method': 'external-ai', 'warnings': [],
-                              'selected_sha256': review._sha(review._published_page_text(p).encode())} for p in pages]}
+                              'selected_sha256': review._sha(review.published_page_text(p).encode())} for p in pages]}
         return manifest, audit, quality
 
     return trusted.publish_derived(

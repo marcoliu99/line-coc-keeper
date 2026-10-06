@@ -2,17 +2,18 @@
 
 [English](discord_page_level_scenario_repair_design_spec.md)
 
-狀態：**部分實作**（4 個階段中的第 1a 階段已實作，其餘仍是設計）。基準：`main_v2` 的 `3fbec39`。
+狀態：**部分實作**（第 1a 與 1b-i 階段已實作，其餘仍是設計）。基準：`main_v2` 的 `3fbec39`。
 
 ## 實作進度
 
-各階段是各自的 pull request、各自審查（第 30 節），不用讓單一次審查扛下整個設計；第 1 階段本身再分成兩個。第 4 階段完成時，狀態才變成 `implemented`。
+各階段是各自的 pull request、各自審查（第 30 節），不用讓單一次審查扛下整個設計；第 1 階段本身再分成三個（1a、1b-i、1b-ii）。第 4 階段完成時，狀態才變成 `implemented`。
 
 1. **第 1a 階段，跨行程的發布鎖（已實作）。** `scenario_library.publication_lock()` 只在最外層取得時，對 `<library>/.publication.lock` 取獨佔的 `fcntl.flock`（同一執行緒的巢狀取得只增加深度計數，所以 `scenario_source_review.publish()` → `publish_derived()` 不會死結），而 `_save_scenario_source()` 與 `clean_scenario()` 現在都經由它，不再直接取私有的 `RLock`。測試：巢狀取得、出錯時釋放、真的第二個行程等第一個行程，以及兩條變更路徑。
-2. **第 1b 階段，確定性核心。** 稽核 API、共用的頁面輔助函式、解析器、無損合併、數值報告、摘要、圖片描述輔助函式、部分頁面發布與範本。尚未開始。
-3. **第 2 階段，衍生產物重建。** 尚未開始。
-4. **第 3 階段，Discord 上傳。** 尚未開始。
-5. **第 4 階段，啟用到進行中的遊戲。** 尚未開始。
+2. **第 1b-i 階段，純邏輯核心（已實作）。** `scenario_source_review` 公開 `split_source_pages`、`published_page_text`、`candidate_text` 與 `validate_evidence`；`scenario_numbers` 新增機制 token、它們的標籤與有序差異；`app/scenario_page_repair.py` 含嚴格解析器、無損的頁面範圍定位與單趟合併、`check()`（以標題與頁數綁定、`image` 規則、逐頁數值變動、no-op 與僅中繼資料的分類）、`patches_digest`／候選摘要、`repaired_quality()` 與報告行；範本兩種語言都已提供。尚未發布任何東西。
+3. **第 1b-ii 階段，發布。** `trusted_scenario_source.read_audit()` 與投遞狀態的 compare-and-set API、`scenario_library.image_asset_description()`、`publish_derived()` 的 `reuse_parent_assets` 模式與欄位移除、clean 與 reparse 的世系守門，以及寫出 `artifacts: "pending"` 子劇本的 `publish()`。尚未開始。
+4. **第 2 階段，衍生產物重建。** 尚未開始。
+5. **第 3 階段，Discord 上傳。** 尚未開始。
+6. **第 4 階段，啟用到進行中的遊戲。** 尚未開始。
 
 ## 1. 問題
 
