@@ -116,7 +116,7 @@ Markdown containing exactly one fenced `json` block (the `authoring.parse_markdo
 ```json
 {
   "repair_version": 1,
-  "target": { "page_count": 27 },
+  "target": { "title": "The Haunting Scenario trimmed", "page_count": 27 },
   "patches": [
     {
       "page": 10,
@@ -129,7 +129,7 @@ Markdown containing exactly one fenced `json` block (the `authoring.parse_markdo
 ```
 
 - `repair_version` is `1`.
-- `target.page_count` is the PDF's physical page count, a sanity check that the file was made for this PDF.
+- `target.title` is the title of the loaded scenario, as the load message shows it (`已載入劇本《…》`), and `target.page_count` is the PDF's physical page count. Together they are the check that the file was made for this PDF: a different scenario that happens to have the same number of pages is rejected by its title.
 - `patches` has 1 to 100 entries, one per page, in any order.
 - `page` is the **physical PDF page**, 1-based, never the printed book page.
 - `text` is the **complete** corrected text of that page and replaces the whole page. It must not contain a physical page marker (`library.PAGE_MARKER_RE`); the system owns the markers. Leading and trailing whitespace is trimmed.
@@ -162,6 +162,7 @@ A page body is the text between its marker line and the next marker, with exactl
 The repair applies to the PDF-derived scenario the conversation has loaded (`scenario_library_id`). It is rejected when:
 
 - no scenario is loaded, or the loaded scenario has no PDF source (a Markdown-only scenario has no physical page identity);
+- `target.title` does not match the loaded scenario's title (compared case-insensitively, ignoring punctuation and spacing, and ignoring the suffixes the library adds to derived versions such as `[page repaired]` and `[source reviewed]`, so a repair file keeps working against a repaired child);
 - `target.page_count` differs from the PDF's page count;
 - a patch's `page` is outside the PDF.
 
@@ -172,16 +173,15 @@ The parent's identity (scenario id, content hash, PDF SHA) is captured by the se
 Source repair is exactly where OCR-corrupted mechanics can enter the canonical source, so every changed number is surfaced instead of trusted. For each replaced page the bot computes
 
 ```python
-old = scenario_numbers.mechanics_contexts(old_page)   # Counter of (context, token)
+old = scenario_numbers.mechanics_contexts(old_page)   # ordered list of (context, token)
 new = scenario_numbers.mechanics_contexts(new_page)
 
-removed = old - new
-added   = new - old
+removed, added = ordered_diff(old, new)               # difflib opcodes over the two sequences
 ```
 
 and lists them in the reply and in the audit, for example `第 10 頁：移除 damage 1d40、18；新增 damage 1d4`. A page whose numbers and contexts are unchanged says so. Nothing is rejected for a numeric change: the file is the reviewer's correction, and the report is what lets the Keeper see that a `1D4` became a `1D6` before the next session. A wrong repair is corrected by uploading a corrected repair file, which applies with the same correction semantics; the parent stays in the library for provenance and for deliberately starting a fresh game, but selecting it from the library (`/coc scenario use`) starts a new timeline and is not an undo.
 
-`mechanics_counts` is a stricter tokenizer than `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional sign (`+`, `-`, `−`) written directly before the number, **including when it is glued to a word** (`STR+10` and `STR-10` are the tokens `+10` and `-10`), and joins numeric operands separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant. A hyphenated label such as `A-10` yields the token `-10`; this only matters when that text changes, because identical text produces no change. Page-wide token counts cannot see values that move between mechanics (`HP 10, SAN 40` → `HP 40, SAN 10` has the same tokens), so each token is paired with its context: the up to two words (letters or CJK characters) immediately before it on the same line, casefolded. `HP 10, SAN 40` is the pairs (`hp`, `10`) and (`san`, `40`); swapping the values changes both pairs and is reported. The report diffs the pairs. The existing `counts` is left unchanged for its other users.
+`mechanics_counts` is a stricter tokenizer than `scenario_numbers.counts`, which discards standalone signs and separators (`counts("Bonus +10%") == counts("Bonus -10%")`, and `SAN 1/1d6` and `SAN 1 1d6` have the same token counts). A mechanics token keeps an optional sign (`+`, `-`, `−`) written directly before the number, **including when it is glued to a word** (`STR+10` and `STR-10` are the tokens `+10` and `-10`), and joins numeric operands separated by `/`, `-`, `–` or `−` into one token (`1/1d6`, `1-3`). Spaces and tabs inside a token are not significant. A hyphenated label such as `A-10` yields the token `-10`; this only matters when that text changes, because identical text produces no change. Page-wide token counts cannot see values that move between mechanics (`HP 10, SAN 40` → `HP 40, SAN 10` has the same tokens), so each token is paired with its context: the up to two words (letters or CJK characters) immediately before it on the same line, casefolded. `HP 10, SAN 40` is the pairs (`hp`, `10`) and (`san`, `40`). A multiset would still miss the same label repeated, as in a stat block (`Rat / HP 10`, `Ogre / HP 20` with the two values swapped), so the pairs are kept **in order of appearance** and the report is an ordered diff of the two sequences (`difflib.SequenceMatcher` opcodes): everything inside a replaced, deleted or inserted block is listed as removed and added, with its context. Swapped values change the sequence and are reported. A page whose numbers only moved (a two-column reading-order repair) is reported as changed too, which is deliberate: the Keeper sees that those numbers moved and can check that they still sit next to the right labels. The existing `counts` is left unchanged for its other users.
 
 The report proves only that the changed tokens are known, not that the change is right; the external review remains the evidence.
 
@@ -211,9 +211,14 @@ Do not replace the parse-quality history with one clean result. Untouched pages 
 
 ## 14. Derived artifacts
 
-`scenario_source_review.publish()` invalidates `indexes`, `pregens` and `scene_maps` because they were extracted from the old text. The repair child does the same: it does not copy the parent's NPC and location index, pregen extraction or scene-map inference.
+A repair changes page text and nothing else, so the child keeps what comes from the PDF's pictures and invalidates only what was extracted from the old text:
 
-For the running game, continuity matters: keep the current player characters, claimed pregens, HP, SAN, Luck, inventory, timeline, room positions and the **active chapter** (`active_chapter_id` and `context_chapter_ids`), and keep the runtime `scene_maps` (the PDF image did not change). Mark the derived source artifacts for rebuild and rebuild them asynchronously against the new source hash: NPC and location index, RAG prewarm, pregen candidates if needed. A rebuild may replace derived artifacts only if the repaired scenario is still the active source when it finishes; a slow rebuild for an old hash never overwrites a newer repair.
+- **Invalidated:** `indexes` (NPC and location index) and `pregens`, which were extracted from the text; they are rebuilt below.
+- **Copied from the parent unchanged:** `scene_maps` (the map topology comes from the page images, which did not change, and section 15 says a repair never edits it), the page image files with their original bytes and resolution, and the image-asset metadata including which pages were marked public handouts or maps. A later `/coc scenario use <repaired-id>` therefore loads a child with working room navigation and the same readable maps.
+
+`trusted_scenario_source.publish_derived()` is not enough for this: it re-renders every page at 110 DPI, replaces the image assets with `kp_only_image_assets` and writes empty `scene_maps`. The repair publication path copies the parent's `images/`, `image_assets` and `scene_maps` instead (a `reuse_parent_assets` mode of the helper, with the existing source-review callers unchanged).
+
+For the running game, continuity matters: keep the current player characters, claimed pregens, HP, SAN, Luck, inventory, timeline, room positions and the **active chapter** (`active_chapter_id` and `context_chapter_ids`), and keep the runtime `scene_maps`. Mark the derived source artifacts for rebuild and rebuild them asynchronously against the new source hash: NPC and location index, RAG prewarm, pregen candidates if needed. A rebuild may replace derived artifacts only if the repaired scenario is still the active source when it finishes; a slow rebuild for an old hash never overwrites a newer repair.
 
 ## 15. Map pages
 
@@ -254,7 +259,12 @@ If the state changed after publication, the new version stays in the library and
 請重新上傳同一份 repair 檔，會以更正的方式套用，不會重置遊戲。
 ```
 
-The recovery is to re-upload the same file: the derived ID is deterministic, so the upload finds the already published version and only activates it with repair semantics. Do not tell the Keeper to select the version from the library: `/coc scenario use` (`activate_existing_scenario()`) creates a new timeline and clears pending and resolved checks.
+The recovery is to re-upload the same file **while the original parent is still the loaded scenario**: the derived ID is deterministic, so the upload finds the already published version and only activates it with repair semantics. The stale notice is chosen by what changed:
+
+- the revision advanced but the loaded scenario and its source hash are still the parent's: ask the Keeper to upload the same file again;
+- the loaded scenario or its source hash changed (another upload, `/coc scenario use`, a different repair): do not advise a re-upload, because the file would then be checked against the newly loaded scenario by title and page count, and say instead that the new version stays in the library and was not applied to the current scenario.
+
+The title check is what makes a mistaken upload against another scenario fail. Do not tell the Keeper to select the version from the library: `/coc scenario use` (`activate_existing_scenario()`) creates a new timeline and clears pending and resolved checks.
 
 A valid published source is never rolled back or deleted just because activation became stale.
 
@@ -278,7 +288,7 @@ Every refusal says what to do next and names the template when the file could no
 舊版仍保留在劇本庫。
 ```
 
-Published but not applied: the version id plus the stale-state notice of section 17, which asks the Keeper to upload the same file again. Idempotent re-upload: `這份修復已經套用，沒有重複建立版本。` A wrong page count, no PDF-derived scenario loaded, an invalid page, an `image` page that has readable text, or an unreadable file each get one specific message and apply nothing.
+Published but not applied: the version id plus the stale-state notice of section 17, chosen by what changed. A title or page-count mismatch says which loaded scenario the file expected and which is loaded. Idempotent re-upload: `這份修復已經套用，沒有重複建立版本。` A wrong page count, no PDF-derived scenario loaded, an invalid page, an `image` page that has readable text, or an unreadable file each get one specific message and apply nothing.
 
 ## 19. Free-form repair Markdown
 
@@ -345,14 +355,14 @@ Treat the file as untrusted input: reject path traversal and file paths, embedde
 ## 27. Tests
 
 - **Parser:** a valid one-page repair; BOM accepted; unknown top-level, target or patch keys; duplicate or zero or out-of-range pages; marker injection; invalid `page_kind`; missing review note; an unfilled template is rejected.
-- **Binding:** no scenario loaded; Markdown-only scenario; wrong page count.
-- **Numeric report:** swapped values (`HP 10, SAN 40` → `HP 40, SAN 10`) are reported; a `1D40 → 1D4` change is reported with removed and added tokens; `+10% → -10%`, `SAN 1/1d6 → SAN 1 1d6` and `STR+10 → STR-10` are reported; unchanged text reports nothing; an unchanged hyphenated label causes no change; one page's report does not affect another.
+- **Binding:** no scenario loaded; Markdown-only scenario; wrong page count; a different scenario with the same page count is rejected by its title; the title still matches a repaired child.
+- **Numeric report:** swapped values (`HP 10, SAN 40` → `HP 40, SAN 10`) and swapped repeated labels (`Rat / HP 10; Ogre / HP 20`) are reported; a `1D40 → 1D4` change is reported with removed and added tokens; `+10% → -10%`, `SAN 1/1d6 → SAN 1 1d6` and `STR+10 → STR-10` are reported; unchanged text reports nothing; an unchanged hyphenated label causes no change; one page's report does not affect another.
 - **Merge:** only the listed pages change; untouched pages keep their exact bytes including whitespace; markers stay ordered once each; patch order does not change the result; a no-op repair is rejected; the same repair is idempotent.
 - **Map and image:** a map page with labels is accepted and clears its low-text warning; a map repair does not change the scene-map graph; `image` is rejected when native text exists and accepted when it does not.
 - **Discord:** `repair_*.md` routes to the repair handler and never to compare; any user may upload by default and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it; more than one repair attachment is rejected; a pending source replacement follows the admission policy; a state that changed after publication publishes but does not activate.
-- **Lifecycle:** activation preserves the active chapter in a multi-chapter campaign; a stale activation is recovered by re-uploading the same file with repair semantics, never by `/coc scenario use`; activation preserves timeline, `game_started`, claimed PCs, HP/SAN/Luck/inventory and room positions; it never calls `_new_upload()`; the new source becomes active only after the whole transaction; the old scenario stays readable.
+- **Lifecycle:** activation preserves the active chapter in a multi-chapter campaign; a stale activation is recovered by re-uploading the same file with repair semantics while the parent is still loaded, never by `/coc scenario use`, and no re-upload is advised after a scenario switch; activation preserves timeline, `game_started`, claimed PCs, HP/SAN/Luck/inventory and room positions; it never calls `_new_upload()`; the new source becomes active only after the whole transaction; the old scenario stays readable.
 - **Parse quality:** repaired pages cleared, untouched pages kept, the load message lists only the remaining pages.
-- **Artifacts:** parent indexes are not copied; rebuild is keyed to the child hash; a stale rebuild cannot overwrite a newer repair.
+- **Artifacts:** the child keeps the parent's `scene_maps`, image bytes and image-asset metadata (a public handout stays public) and `/coc scenario use <child>` loads working maps; parent indexes and pregens are not copied; rebuild is keyed to the child hash; a stale rebuild cannot overwrite a newer repair.
 
 ## 28. Acceptance test: The Haunting
 

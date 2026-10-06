@@ -115,7 +115,7 @@ Markdown，恰好包含一個有圍欄的 `json` 區塊（`authoring.parse_markd
 ```json
 {
   "repair_version": 1,
-  "target": { "page_count": 27 },
+  "target": { "title": "The Haunting Scenario trimmed", "page_count": 27 },
   "patches": [
     {
       "page": 10,
@@ -128,7 +128,7 @@ Markdown，恰好包含一個有圍欄的 `json` 區塊（`authoring.parse_markd
 ```
 
 - `repair_version` 是 `1`。
-- `target.page_count` 是 PDF 的實體頁數，用來確認這個檔案是針對這份 PDF 製作的。
+- `target.title` 是已載入劇本的標題，照載入訊息顯示的寫（`已載入劇本《…》`），`target.page_count` 是 PDF 的實體頁數。兩者合起來用來確認這個檔案是針對這份 PDF 製作的：碰巧頁數相同的另一份劇本會因為標題不符而被拒絕。
 - `patches` 有 1 到 100 筆，每頁一筆，順序不拘。
 - `page` 是 **PDF 實體頁碼**，從 1 開始，絕不是書上印的頁碼。
 - `text` 是該頁**完整**的修正後文字，會取代整頁。不得包含實體頁面標記（`library.PAGE_MARKER_RE`），標記由系統擁有。前後空白會被修剪。
@@ -161,6 +161,7 @@ for patch in patches:
 repair 套用到對話已載入（`scenario_library_id`）、來自 PDF 的劇本。下列情況會被拒絕：
 
 - 沒有載入劇本，或已載入的劇本沒有 PDF 來源（只有 Markdown 的劇本沒有實體頁面身分）；
+- `target.title` 與已載入劇本的標題不符（不分大小寫、忽略標點與空白，也忽略劇本庫替衍生版本加上的後綴，例如 `[page repaired]` 與 `[source reviewed]`，所以 repair 檔對修復後的子劇本也仍然有效）；
 - `target.page_count` 與 PDF 頁數不同；
 - 某筆補丁的 `page` 超出 PDF。
 
@@ -171,16 +172,15 @@ repair 套用到對話已載入（`scenario_library_id`）、來自 PDF 的劇�
 來源修復正是被 OCR 弄壞的機制數值可能進入正本來源的地方，所以每個變動的數字都要被呈現，而不是被信任。對每個被替換的頁面，Bot 計算：
 
 ```python
-old = scenario_numbers.mechanics_contexts(old_page)   # Counter of (context, token)
+old = scenario_numbers.mechanics_contexts(old_page)   # ordered list of (context, token)
 new = scenario_numbers.mechanics_contexts(new_page)
 
-removed = old - new
-added   = new - old
+removed, added = ordered_diff(old, new)               # difflib opcodes over the two sequences
 ```
 
 並在回覆與稽核中列出，例如 `第 10 頁：移除 damage 1d40、18；新增 damage 1d4`。數字與語境都沒變的頁面會明說沒變。不會因為數值變動而拒絕：檔案本來就是審查者的更正，報告讓 KP 能在下一場遊戲前看到 `1D4` 變成了 `1D6`。錯誤的 repair 要靠上傳修正後的 repair 檔來更正，它以同樣的更正語意套用；父劇本保留在劇本庫，作為來源紀錄，也可用來刻意開新遊戲，但從劇本庫選用它（`/coc scenario use`）會開新的時間線，不是還原。
 
-`mechanics_counts` 是比 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留直接寫在數字前面的正負號（`+`、`-`、`−`），**包括緊貼在字詞後面的情況**（`STR+10` 與 `STR-10` 是 token `+10` 與 `-10`），並把以 `/`、`-`、`–` 或 `−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）。token 內的空格與 tab 不重要。像 `A-10` 這樣帶連字號的標籤會得到 token `-10`；只有那段文字被改動時才有影響，文字相同就不會有變化。整頁的 token 計數看不到在不同機制之間互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10` 的 token 相同），所以每個 token 都配上它的語境：同一行中緊接在它前面的最多兩個詞（字母或 CJK 字元），並做大小寫折疊。`HP 10, SAN 40` 是 (`hp`, `10`) 與 (`san`, `40`) 兩組；數值互換會改變兩組，因此會被回報。報告比對的是這些配對。現有的 `counts` 不變，其他使用者不受影響。
+`mechanics_counts` 是比 `scenario_numbers.counts` 更嚴格的 token 切分：`counts` 會丟掉單獨的正負號與分隔符（`counts("Bonus +10%") == counts("Bonus -10%")`，`SAN 1/1d6` 與 `SAN 1 1d6` 的 token 計數也相同）。機制 token 會保留直接寫在數字前面的正負號（`+`、`-`、`−`），**包括緊貼在字詞後面的情況**（`STR+10` 與 `STR-10` 是 token `+10` 與 `-10`），並把以 `/`、`-`、`–` 或 `−` 相連的數值運算元合成一個 token（`1/1d6`、`1-3`）。token 內的空格與 tab 不重要。像 `A-10` 這樣帶連字號的標籤會得到 token `-10`；只有那段文字被改動時才有影響，文字相同就不會有變化。整頁的 token 計數看不到在不同機制之間互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10` 的 token 相同），所以每個 token 都配上它的語境：同一行中緊接在它前面的最多兩個詞（字母或 CJK 字元），並做大小寫折疊。`HP 10, SAN 40` 是 (`hp`, `10`) 與 (`san`, `40`) 兩組。多重集合還是看不到重複出現的同一個標籤，例如屬性表（`Rat / HP 10`、`Ogre / HP 20` 兩個數值互換），所以配對**依出現順序**保留，報告是兩個序列的有序差異（`difflib.SequenceMatcher` 的 opcodes）：被取代、刪除或插入的區塊內的一切，連同語境都列為移除與新增。數值互換會改變序列，因此會被回報。數字只是搬移位置的頁面（修正雙欄閱讀順序）也會被回報為有變動，這是刻意的：KP 看得到那些數字移動了，可以確認它們仍然在正確的標籤旁邊。現有的 `counts` 不變，其他使用者不受影響。
 
 報告只證明有變動的 token 被看見了，並不證明改得對；外部審查仍是證據來源。
 
@@ -210,9 +210,14 @@ added   = new - old
 
 ## 14. 衍生產物
 
-`scenario_source_review.publish()` 會讓 `indexes`、`pregens` 與 `scene_maps` 失效，因為它們是從舊文字萃取的。repair 子劇本也一樣：不複製父劇本的 NPC 與地點索引、預製角色萃取或場景地圖推論。
+repair 只改頁面文字，其他都不變，所以子劇本保留來自 PDF 圖片的東西，只讓從舊文字萃取的內容失效：
 
-對進行中的遊戲，連續性很重要：保留目前的玩家角色、已認領的預製角色、HP、SAN、幸運、背包、時間線、房間位置與**目前章節**（`active_chapter_id` 與 `context_chapter_ids`），並保留執行階段的 `scene_maps`（PDF 影像沒有改變）。把衍生的來源產物標記為需要重建，並依新的來源雜湊非同步重建：NPC 與地點索引、RAG 預熱、必要時的預製角色候選。只有在重建完成時，被修復的劇本仍是使用中的來源，重建結果才可以取代衍生產物；針對舊雜湊的緩慢重建絕不能覆寫較新的 repair。
+- **失效：** `indexes`（NPC 與地點索引）與 `pregens`，它們是從文字萃取的，下面會重建。
+- **原樣從父劇本複製：** `scene_maps`（地圖拓撲來自頁面圖片，圖片沒有改變，而且第 15 節說 repair 絕不編輯它）、頁面圖片檔（原本的位元組與解析度），以及圖片資源的中繼資料，包括哪些頁面被標成公開講義或地圖。所以之後 `/coc scenario use <repaired-id>` 載入的子劇本，房間導覽仍然正常，地圖也一樣清楚。
+
+`trusted_scenario_source.publish_derived()` 不夠用：它會以 110 DPI 重新渲染每一頁、把圖片資源換成 `kp_only_image_assets`，並寫入空的 `scene_maps`。repair 的發布路徑改成複製父劇本的 `images/`、`image_assets` 與 `scene_maps`（該輔助函式的 `reuse_parent_assets` 模式，既有的來源審查呼叫者不變）。
+
+對進行中的遊戲，連續性很重要：保留目前的玩家角色、已認領的預製角色、HP、SAN、幸運、背包、時間線、房間位置與**目前章節**（`active_chapter_id` 與 `context_chapter_ids`），並保留執行階段的 `scene_maps`。把衍生的來源產物標記為需要重建，並依新的來源雜湊非同步重建：NPC 與地點索引、RAG 預熱、必要時的預製角色候選。只有在重建完成時，被修復的劇本仍是使用中的來源，重建結果才可以取代衍生產物；針對舊雜湊的緩慢重建絕不能覆寫較新的 repair。
 
 ## 15. 地圖頁
 
@@ -253,7 +258,12 @@ LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activ
 請重新上傳同一份 repair 檔，會以更正的方式套用，不會重置遊戲。
 ```
 
-復原方式是重新上傳同一個檔案：衍生 ID 是確定性的，所以上傳時會找到已發布的版本，只以 repair 語意啟用它。不要叫 KP 從劇本庫選用這個版本：`/coc scenario use`（`activate_existing_scenario()`）會建立新的時間線並清掉待處理與已結算的檢定。
+復原方式是**在原本的父劇本仍是已載入的劇本時**重新上傳同一個檔案：衍生 ID 是確定性的，所以上傳時會找到已發布的版本，只以 repair 語意啟用它。狀態過時的通知依「什麼變了」選擇：
+
+- 只是修訂版本前進，已載入的劇本與它的來源雜湊仍是父劇本的：請 KP 再上傳同一個檔案；
+- 已載入的劇本或它的來源雜湊變了（另一次上傳、`/coc scenario use`、另一份 repair）：不建議重新上傳，因為那時檔案會對著新載入的劇本以標題與頁數檢查；改說新版本留在劇本庫，沒有套用到目前的劇本。
+
+標題檢查就是讓誤傳到另一份劇本的上傳失敗的機制。不要叫 KP 從劇本庫選用這個版本：`/coc scenario use`（`activate_existing_scenario()`）會建立新的時間線並清掉待處理與已結算的檢定。
 
 已有效發布的來源絕不會因為啟用變成過時就被回滾或刪除。
 
@@ -277,7 +287,7 @@ LOCK: re-check authorization, parent id/hash, timeline, replacement guard; activ
 舊版仍保留在劇本庫。
 ```
 
-已發布但未套用：版本 ID 加上第 17 節的狀態過時通知，請 KP 再上傳同一個檔案。冪等的重新上傳：`這份修復已經套用，沒有重複建立版本。` 頁數不符、沒有載入來自 PDF 的劇本、頁碼無效、含有可讀文字的 `image` 頁，或無法讀取的檔案，各自得到一則明確的訊息，並且什麼都不套用。
+已發布但未套用：版本 ID 加上第 17 節的狀態過時通知，依什麼變了選擇內容。標題或頁數不符時，說明檔案預期的是哪份劇本、目前載入的又是哪份。冪等的重新上傳：`這份修復已經套用，沒有重複建立版本。` 頁數不符、沒有載入來自 PDF 的劇本、頁碼無效、含有可讀文字的 `image` 頁，或無法讀取的檔案，各自得到一則明確的訊息，並且什麼都不套用。
 
 ## 19. 自由格式的 repair Markdown
 
@@ -344,14 +354,14 @@ publish(check: RepairCheck, *, reviewer_user_id, reviewer_display_name, uploaded
 ## 27. 測試
 
 - **解析：** 有效的單頁 repair；接受 BOM；未知的最上層、target 或補丁鍵；重複、0 或超出範圍的頁碼；注入標記；無效的 `page_kind`；缺少審查備註；沒填的範本會被拒絕。
-- **綁定：** 沒有載入劇本；只有 Markdown 的劇本；頁數不符。
-- **數值報告：** 互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10`）會被回報；`1D40 → 1D4` 的變動會以移除與新增的 token 列出；`+10% → -10%`、`SAN 1/1d6 → SAN 1 1d6` 與 `STR+10 → STR-10` 都會被列出；沒變的文字什麼都不報；沒改動的帶連字號標籤不產生變動；一頁的報告不影響另一頁。
+- **綁定：** 沒有載入劇本；只有 Markdown 的劇本；頁數不符；頁數相同的另一份劇本會因標題不符被拒絕；標題對修復後的子劇本仍然相符。
+- **數值報告：** 互換的數值（`HP 10, SAN 40` → `HP 40, SAN 10`）與互換的重複標籤（`Rat / HP 10; Ogre / HP 20`）會被回報；`1D40 → 1D4` 的變動會以移除與新增的 token 列出；`+10% → -10%`、`SAN 1/1d6 → SAN 1 1d6` 與 `STR+10 → STR-10` 都會被列出；沒變的文字什麼都不報；沒改動的帶連字號標籤不產生變動；一頁的報告不影響另一頁。
 - **合併：** 只有列出的頁面改變；未被修改的頁面保留完全相同的位元組（含空白）；標記維持順序且各出現一次；補丁順序不影響結果；沒有任何變化的 repair 被拒絕；同一份 repair 具冪等性。
 - **地圖與影像：** 有標籤的地圖頁被接受並清除低文字量警告；地圖 repair 不改變場景地圖圖形；存在原生文字時 `image` 被拒絕，沒有時被接受。
 - **Discord：** `repair_*.md` 路由到 repair 處理器、絕不到比較處理器；預設任何使用者都能上傳，`SCENARIO_LIFECYCLE_KP_ONLY` 會限制為 KP Assistant；拒絕超過一個 repair 附件；待處理的來源替換遵循准入政策；發布之後狀態已改變時會發布但不啟用。
-- **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
+- **生命週期：** 啟用在多章節戰役中保留目前章節；狀態過時的啟用在父劇本仍載入時靠重新上傳同一個檔案以 repair 語意復原，絕不靠 `/coc scenario use`，切換劇本之後不建議重新上傳；啟用保留時間線、`game_started`、已認領的玩家角色、HP／SAN／幸運／背包與房間位置；絕不呼叫 `_new_upload()`；新來源只在完整交易之後才成為使用中；舊劇本仍可讀取。
 - **解析品質：** 被修復頁面的警告清除、未被修改頁面的保留、載入訊息只列出剩下的頁面。
-- **產物：** 父劇本的索引不會被複製；重建以子劇本的雜湊為鍵；過時的重建不能覆寫較新的 repair。
+- **產物：** 子劇本保留父劇本的 `scene_maps`、圖片位元組與圖片資源中繼資料（公開講義仍然公開），`/coc scenario use <child>` 載入的地圖正常運作；父劇本的索引與預製角色不會被複製；重建以子劇本的雜湊為鍵；過時的重建不能覆寫較新的 repair。
 
 ## 28. 驗收測試：The Haunting
 
