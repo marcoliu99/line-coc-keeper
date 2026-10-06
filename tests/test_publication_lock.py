@@ -38,10 +38,12 @@ class PublicationLockTests(unittest.TestCase):
         result: list[str] = []
 
         def nested() -> None:
-            with scenario_library.publication_lock():
-                with scenario_library.publication_lock():
-                    with scenario_library.publication_target("nested-case") as target:
-                        result.append(target.name)
+            with (
+                scenario_library.publication_lock(),
+                scenario_library.publication_lock(),
+                scenario_library.publication_target("nested-case") as target,
+            ):
+                result.append(target.name)
 
         worker = threading.Thread(target=nested, daemon=True)
         worker.start()
@@ -50,18 +52,16 @@ class PublicationLockTests(unittest.TestCase):
         self.assertEqual(result, ["nested-case"])
 
     def test_lock_is_released_after_the_outermost_exit(self) -> None:
-        with scenario_library.publication_lock():
-            with scenario_library.publication_lock():
-                pass
+        with scenario_library.publication_lock(), scenario_library.publication_lock():
+            pass
         self.assertEqual(getattr(scenario_library._LOCK_STATE, "depth", 0), 0)
         acquired = threading.Event()
         threading.Thread(target=lambda: (scenario_library.publication_lock().__enter__(), acquired.set()), daemon=True).start()
         self.assertTrue(acquired.wait(5))
 
     def test_release_happens_when_the_body_raises(self) -> None:
-        with self.assertRaises(RuntimeError):
-            with scenario_library.publication_lock():
-                raise RuntimeError("boom")
+        with self.assertRaises(RuntimeError), scenario_library.publication_lock():
+            raise RuntimeError("boom")
         self.assertEqual(getattr(scenario_library._LOCK_STATE, "depth", 0), 0)
 
     def test_second_process_waits_for_the_first(self) -> None:
