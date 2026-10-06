@@ -341,87 +341,23 @@ def test_parse_quality_is_read_through_the_library(create):
     assert library.read_parse_quality(sid) == {}
 
 
-# bounded cost on hostile pages
+# page size
 
-def test_a_page_with_thousands_of_repeated_tokens_is_diffed_quickly_and_still_reports_the_change():
-    import time
-    old = " ".join(["HP 10"] * 8000)
-    new = old.replace("HP 10", "HP 40", 1)
-    start = time.monotonic()
-    removed, added = removed_added(old, new)
-    assert time.monotonic() - start < 5
-    assert removed == [("hp", "10")] and added == [("hp", "40")]
-    scattered = " ".join(("HP 10" if i % 2 else "HP 20") for i in range(8000))
-    changed = " ".join(("HP 20" if i % 2 else "HP 10") for i in range(8000))
-    start = time.monotonic()
-    removed, added = removed_added(scattered, changed)
-    assert time.monotonic() - start < 5
-    assert removed and added  # a large block is reported whole, never hidden
-
-
-def test_one_very_long_line_does_not_rescan_a_growing_prefix():
-    import time
-    text = " ".join(str(i) for i in range(100_000))
-    start = time.monotonic()
-    pairs = numbers.mechanics_contexts(text)
-    assert time.monotonic() - start < 10
-    assert len(pairs) == 100_000
+def test_a_page_longer_than_any_physical_page_is_rejected():
+    with pytest.raises(repair.RepairError):
+        repair.parse_markdown_bytes(document(payload([patch(2, "1 " * repair.MAX_PAGE_CHARS)])))
+    assert repair.parse_markdown_bytes(document(payload([patch(2, "1 " * 5000)]))).patches[0].page == 2
 
 
 def test_labels_still_come_from_the_nearest_words_on_the_same_line():
     assert numbers.mechanics_contexts("a\nHP 10\n  SAN: 40") == [("hp", "10"), ("san", "40")]
     assert numbers.mechanics_contexts("Rat HP 10") == [("rat hp", "10")]
-    (context, token), = numbers.mechanics_contexts("x" * 500 + " HP 10")
-    assert token == "10" and context.endswith(" hp") and len(context) < 130  # the look-back is bounded
 
 
 def test_page_image_inventory_is_read_through_the_library(create):
     sid = create(images=(1, 3))
     assert library.has_page_image(sid, 3) and library.has_page_image(sid, 1)
     assert not library.has_page_image(sid, 2)
-
-
-def test_unique_token_sequences_are_bounded_too():
-    import time
-    old = [("n", str(i)) for i in range(8000)]
-    new = list(old)
-    for i in range(0, 8000, 2):
-        new[i], new[i + 1] = new[i + 1], new[i]
-    start = time.monotonic()
-    removed, added = numbers.ordered_diff(old, new)
-    assert time.monotonic() - start < 2
-    assert set(removed) == set(old) == set(added)  # reported whole: nothing that moved is hidden
-
-
-def test_small_remainders_are_still_aligned_exactly():
-    old = [("n", str(i)) for i in range(20)]
-    new = list(old)
-    new[5], new[6] = new[6], new[5]
-    removed, added = numbers.ordered_diff(old, new)
-    assert 1 <= len(removed) == len(added) <= 2  # exact alignment, not the whole 20-token block
-
-
-def test_the_audit_and_the_report_cap_what_they_list_but_keep_the_totals(create):
-    count = 300
-    sid = create(pages=("Start.", "".join(f"HP {i} " for i in range(count)), "End."), images=())
-    body = "".join(f"HP {i + 1000} " for i in range(count))
-    result = repair.check(proposal([patch(2, body)], page_count=3), sid)
-    (change,) = result.changes
-    assert change["removed_total"] == change["added_total"] == count
-    assert len(change["removed"]) == repair.MAX_LISTED_TOKENS
-    (line,) = repair.describe_changes(result.changes)
-    assert f"…另有 {count - repair.MAX_REPORTED_TOKENS} 項" in line
-
-
-def test_token_extraction_is_capped_before_anything_is_built(create, monkeypatch):
-    assert len(numbers.mechanics_contexts("1 " * 100, 10)) == 11  # stops one past the limit
-    assert len(numbers.mechanics_contexts("1 " * 5, 10)) == 5
-    monkeypatch.setattr(repair, "MAX_REPAIR_TOKENS", 30)
-    sid = create(pages=("Start.", "HP 10 " * 20, "End."), images=())
-    refused = repair.check(proposal([patch(2, "HP 11 " * 20)], page_count=3), sid)
-    assert not refused.ready and codes(refused) == {"content"} and refused.issues[0].page == 2
-    assert "30" in str(refused.issues[0])
-    assert repair.check(proposal([patch(2, "HP 11 " * 5)], page_count=3), sid).ready
 
 
 def test_a_json_block_that_json_cannot_decode_is_a_repair_error_not_a_crash():

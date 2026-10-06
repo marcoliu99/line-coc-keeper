@@ -22,6 +22,7 @@ from app import trusted_scenario_source as trusted
 
 VERSION = 1
 MAX_PATCHES = 100
+MAX_PAGE_CHARS = 20_000  # a physical page is a few thousand characters; this keeps the numeric comparison cheap
 PageKind = Literal["text", "map", "image"]
 PAGE_KINDS: tuple[PageKind, ...] = ("text", "map", "image")
 TOP_KEYS = frozenset({"repair_version", "target", "patches"})
@@ -113,6 +114,8 @@ def _patch(row: Any) -> PageRepair:
     if kind not in PAGE_KINDS:
         raise RepairError(f"第 {number} 頁的 page_kind 必須是 {'、'.join(PAGE_KINDS)} 其中之一。")
     body = _string(row["text"], f"第 {number} 頁的 text").strip()
+    if len(body) > MAX_PAGE_CHARS:
+        raise RepairError(f"第 {number} 頁的 text 超過 {MAX_PAGE_CHARS:,} 字元，一個實體頁不會這麼長，請確認內容。")
     if library.PAGE_MARKER_RE.search(body):
         raise RepairError(f"第 {number} 頁的 text 不能含頁碼標記（--- 第 N 頁 ---），頁碼標記由系統產生。")
     note = _string(row["review_note"], f"第 {number} 頁的 review_note").strip()
@@ -234,35 +237,12 @@ def _fail(scenario_id: str, *issues: RepairIssue) -> RepairCheck:
     return RepairCheck(False, scenario_id, "", "", "", (), tuple(issues), ())
 
 
-MAX_LISTED_TOKENS = 200  # per side and page in the audit; the totals are always recorded
-MAX_REPORTED_TOKENS = 40  # per side and page in a private report line
-
-
-MAX_REPAIR_TOKENS = 50_000  # numeric tokens compared across every replaced page, old and new text together
-
-
-def _change(patch: PageRepair, old_body: str, new_body: str,
-            old_pairs: list[tuple[str, str]], new_pairs: list[tuple[str, str]]) -> dict[str, Any]:
-    removed, added = scenario_numbers.ordered_diff(old_pairs, new_pairs)
+def _change(patch: PageRepair, old_body: str, new_body: str) -> dict[str, Any]:
+    removed, added = scenario_numbers.ordered_diff(
+        scenario_numbers.mechanics_contexts(old_body), scenario_numbers.mechanics_contexts(new_body))
     return {"page": patch.page, "page_kind": patch.page_kind, "review_note": patch.review_note,
             "before_sha256": _sha(old_body), "after_sha256": _sha(new_body),
-            "removed": [list(pair) for pair in removed[:MAX_LISTED_TOKENS]],
-            "added": [list(pair) for pair in added[:MAX_LISTED_TOKENS]],
-            "removed_total": len(removed), "added_total": len(added)}
-
-
-def _changes(patches: tuple[PageRepair, ...], old_pages: list[str], new_pages: list[str]) -> tuple[dict[str, Any], ...] | RepairIssue:
-    """The per-page numeric changes, or the issue that the pages hold too many numbers to compare within the budget."""
-    budget, rows = MAX_REPAIR_TOKENS, []
-    for patch in patches:
-        old, new = old_pages[patch.page - 1], new_pages[patch.page - 1]
-        old_pairs = scenario_numbers.mechanics_contexts(old, budget)
-        new_pairs = scenario_numbers.mechanics_contexts(new, budget - len(old_pairs))
-        budget -= len(old_pairs) + len(new_pairs)
-        if budget < 0:
-            return RepairIssue("content", patch.page, f"數字太多，整份修復合計最多比對 {MAX_REPAIR_TOKENS:,} 個數字，請分成較小的修復檔。")
-        rows.append(_change(patch, old, new, old_pairs, new_pairs))
-    return tuple(rows)
+            "removed": [list(pair) for pair in removed], "added": [list(pair) for pair in added]}
 
 
 def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
@@ -305,9 +285,7 @@ def check(proposal: RepairProposal, scenario_id: str) -> RepairCheck:
             or any(new_pages[n - 1] != published_body(patch) for n, patch in by_page.items())):
         return _fail(scenario_id, RepairIssue("content", None, "候選文字的頁面沒有通過還原檢查，沒有套用任何內容。"))
     quality = library.read_parse_quality(scenario_id)
-    changes = _changes(proposal.patches, old_pages, new_pages)
-    if isinstance(changes, RepairIssue):
-        return _fail(scenario_id, changes)
+    changes = tuple(_change(patch, old_pages[patch.page - 1], new_pages[patch.page - 1]) for patch in proposal.patches)
     text_unchanged = candidate == snapshot.text
     noop = text_unchanged and all(
         _quality_in_place(quality, patch, new_pages[patch.page - 1]) for patch in proposal.patches)
@@ -345,19 +323,18 @@ def repaired_quality(parent: dict[str, Any], proposal: RepairProposal, candidate
 
 def describe_changes(changes: tuple[dict[str, Any], ...]) -> list[str]:
     """One line per page for the private numeric report. Quotes numbers and their labels, never page prose."""
-    def show(pairs: list[list[str]], total: int) -> str:
-        listed = "、".join(f"{context} {token}".strip() for context, token in pairs[:MAX_REPORTED_TOKENS])
-        return listed + (f"…另有 {total - MAX_REPORTED_TOKENS} 項" if total > MAX_REPORTED_TOKENS else "")
+    def show(pairs: list[list[str]]) -> str:
+        return "、".join(f"{context} {token}".strip() for context, token in pairs)
 
     lines = []
     for change in changes:
-        if not change["removed_total"] and not change["added_total"]:
+        if not change["removed"] and not change["added"]:
             lines.append(f"第 {change['page']} 頁：數值沒有變動")
             continue
         parts = []
-        if change["removed_total"]:
-            parts.append(f"移除 {show(change['removed'], change['removed_total'])}")
-        if change["added_total"]:
-            parts.append(f"新增 {show(change['added'], change['added_total'])}")
+        if change["removed"]:
+            parts.append(f"移除 {show(change['removed'])}")
+        if change["added"]:
+            parts.append(f"新增 {show(change['added'])}")
         lines.append(f"第 {change['page']} 頁：" + "；".join(parts))
     return lines
