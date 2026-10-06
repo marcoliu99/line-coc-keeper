@@ -76,6 +76,7 @@ def add_carried_item(call: ToolCall) -> dict[str, Any]:
         changed = item not in target_char.carried_items
         if changed:
             target_char.carried_items.append(item)
+            target_state.inventory_edits += 1
         return support.ToolStateMutation((target_char.name, target_char.carried_items), should_save=changed)
     investigator, carried_items = support.mutate_tool_state(state, _mutate_add_item)
     return {"ok": True, "investigator": investigator, "carried_items": carried_items}
@@ -98,6 +99,7 @@ def remove_carried_item(call: ToolCall) -> dict[str, Any]:
         changed = item in target_char.carried_items
         if changed:
             target_char.carried_items.remove(item)
+            target_state.inventory_edits += 1
             target_state.consumed_or_removed_items.append({
                 "item": item,
                 "character_id": target_char.owner_id,
@@ -161,7 +163,8 @@ def _transfer_fingerprint(state: GroupState, call: ToolCall, item: str, quantity
         raw = str(call.input.get(field_name, ""))
         char, _ = support.resolve_active_character_exactly(state, raw)
         ends.append(_character_key(char) if char is not None else "?" + raw.strip().casefold())
-    return json.dumps([*ends, item.strip().casefold(), quantity], ensure_ascii=False)
+    # inventory_edits tells a retry (nothing else changed) from the same hand-off after the giver got another copy
+    return json.dumps([*ends, item.strip().casefold(), quantity, state.inventory_edits], ensure_ascii=False)
 
 
 def transfer_item(call: ToolCall) -> dict[str, Any]:

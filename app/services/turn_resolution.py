@@ -79,9 +79,9 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 return False, False
             inventory.append(event)
             latest[owner] = after
-            for named in state.active_characters():  # and a later add/remove supersedes earlier transfer evidence
-                if named.name == owner:
-                    final_by_id.pop(named.character_id or named.owner_id, None)
+            named = [c for c in state.active_characters() if c.name == owner]
+            if len(named) == 1:  # a later add/remove supersedes earlier transfer evidence for that one character
+                final_by_id.pop(named[0].character_id or named[0].owner_id, None)
         if result.get('ok') and f'tool:{i}' in refs and name in {'declare_combat_action', 'run_combat_action'}:
             action = state.combat.actions.get(result.get('action_id', ''), {})
             combat_completed = combat_completed or bool(

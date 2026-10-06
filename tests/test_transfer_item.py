@@ -217,3 +217,18 @@ def test_the_persisted_record_names_both_characters_by_id():
     record = state.inventory_transfers[-1]
     assert record["from_id"] == receipt["from_id"] and record["to_id"] == receipt["to_id"]
     assert record["from_id"] != record["to_id"] and record["moved_items"] == ["手電筒"]
+
+
+def test_the_same_handoff_after_the_giver_gets_another_copy_is_a_new_operation():
+    state = _state(Ann=["鑰匙"])
+    call_input = {"from": "Ann", "to": "Bea", "item": "鑰匙"}
+    with _in_turn("turn-1"):
+        first = _transfer(state, call_input)
+        retry = _transfer(state, call_input)
+        added = tool_dispatch.execute_tool(state, "add_carried_item", {"investigator": "Ann", "item": "鑰匙"}, [], [], actor_id="u1")
+        assert added["ok"], added
+        second = _transfer(state, call_input)
+    assert first["ok"] and retry.get("replayed")
+    assert second["ok"] and not second.get("replayed")
+    assert second["operation_id"] != first["operation_id"]
+    assert _items()["Bea"] == ["鑰匙", "鑰匙"]
