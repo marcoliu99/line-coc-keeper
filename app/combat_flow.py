@@ -685,8 +685,11 @@ def advance_combat(
         return _error('Only the current actor may advance with a stable event ID')
     if state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values()):
         return _error('Resolve the current action/interaction before advancing')
-    if not any(a.get('actor_id') == actor_id and a.get('completed') and a.get('round') == state.combat.round_number
-               for a in state.combat.actions.values()) and not current.defeated:
+    acted = any(a.get('actor_id') == actor_id and a.get('completed') and a.get('round') == state.combat.round_number
+                for a in state.combat.actions.values()) or current.defeated
+    if skip and acted:
+        return _error('Nothing to skip: this actor already acted or is down; advance without skip')
+    if not acted:
         if not skip:
             return _error('Current actor has no completed action; explicit initiative ruling required')
         # A turn spent on something the engine does not resolve still counts as taken; no dice, no resource change.

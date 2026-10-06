@@ -107,3 +107,16 @@ def test_a_skip_still_succeeds_when_the_next_enemy_needs_a_ruling():
     event = {"name": "advance_combat_turn", "arguments": arguments, "result": result,
              "gameplay_before": before, "gameplay_after": turn_resolution.gameplay_snapshot(_load())}
     assert turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")[0] is True
+
+
+def test_a_skip_is_refused_when_the_actor_already_acted_this_round():
+    state = _battle("p1", "p2", enemies=(("Rat swarm", 30),), first_enemy=False)
+    cur, owner = _current(state)
+    state.combat.actions["done"] = {"action_id": "done", "actor_id": cur.combatant_id, "completed": True,
+                                    "round": state.combat.round_number}
+    state_transaction.mutate_value(state.group_id, lambda ctx: ctx.replace_state(state), reason="test_setup")
+    result = _tool("advance_combat_turn", {"actor_id": cur.combatant_id, "event_id": "e7", "skip": True}, actor=owner)
+    assert result["ok"] is False and "Nothing to skip" in result["error"]
+    assert _load().combat.order[_load().combat.current_index].combatant_id == cur.combatant_id
+    plain = _tool("advance_combat_turn", {"actor_id": cur.combatant_id, "event_id": "e8"}, actor=owner)
+    assert plain.get("ok") is not False  # an ordinary advance after a real action still works
