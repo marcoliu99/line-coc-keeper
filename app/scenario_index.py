@@ -22,6 +22,9 @@ from typing import Any
 
 from app import observability
 from app.providers.registry import conversation_provider
+from app.scene_map_locations import (
+    merge_scene_map_locations,  # noqa: F401  (re-exported for its callers)
+)
 
 _REPORT_TOOL = {
     "name": "report_scenario_index",

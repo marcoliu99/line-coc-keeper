@@ -2300,6 +2300,24 @@
       "path": "docs/specs/bug/combat_turn_always_endable_design_spec.md",
       "zh_path": "docs/specs/bug/combat_turn_always_endable_design_spec_zh.md",
       "source_revision": "37e16bd6b0841c11c2a7120f4ca013ec40117ff5"
+    },
+    {
+      "title": "A scene map's location name is added to the location index",
+      "zh": "場景地圖的地點名稱要加進地點索引",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_index.py",
+        "app/scene_map_locations.py",
+        "app/scenario_activation.py",
+        "app/services/scenario_lifecycle.py",
+        "app/services/map_service.py",
+        "app/commands/handlers/system.py",
+        "tests/test_scene_map_location_index.py"
+      ],
+      "path": "docs/specs/bug/scene_map_locations_in_index_design_spec.md",
+      "zh_path": "docs/specs/bug/scene_map_locations_in_index_design_spec_zh.md",
+      "source_revision": "37e16bd6b0841c11c2a7120f4ca013ec40117ff5"
     }
   ]
 }

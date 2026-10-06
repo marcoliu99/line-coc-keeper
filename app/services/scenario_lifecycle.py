@@ -153,6 +153,12 @@ def _keep_valid_map_locations(state: GroupState, new_maps: dict[str, Any]) -> No
             state.party_facing.pop(owner_id, None)
 
 
+def _name_kept_map_locations(state: GroupState) -> None:
+    """The library's index replaces the running one while the custom maps stay, so put their locations back."""
+    state.scenario_location_index = scenario_index.merge_scene_map_locations(
+        state.scenario_location_index, state.scene_maps)
+
+
 def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, variant_id: str) -> None:
     scenario_activation.install_context_fields(
         state, scenario_id, context, variant_id=variant_id, preserve_maps=True,
@@ -169,6 +175,7 @@ def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, 
         provider="openai",
     )
     _keep_valid_map_locations(state, context["scene_maps"])
+    _name_kept_map_locations(state)  # after the maps are settled: the ones that will be committed
     state.openai_previous_response_id = ""
     state.openai_previous_response_timeline_id = ""
     state.active = True
@@ -342,6 +349,8 @@ async def resolve_pending_submission(
             state, scenario_id, context, preserve_maps=(choice != "new"),
             preserve_pregens=(choice != "new"),
         )
+        if choice != "new":
+            _name_kept_map_locations(state)
         state.pending_pdf_upload = None
         claimed = [p for p in old_pool if p.get("claimed_by")] if choice != "new" else []
         image_refreshed, stale_cards = _commit_activation(

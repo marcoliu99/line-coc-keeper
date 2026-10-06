@@ -299,6 +299,28 @@ def test_correction_with_an_empty_index_keeps_the_running_index(storage: None) -
     assert len(active.scenario_location_index) == 9
 
 
+def test_a_repair_keeps_the_locations_of_the_custom_maps_it_keeps(storage: None) -> None:
+    def publish(text: str) -> str:
+        return scenario_library.save_markdown_scenario(
+            text.encode(), title="同一劇本", filename="scenario_same.md", preview=text, text=text,
+            indexes={"npcs": [], "locations": [{"name": "Muscoby", "page": 1}]}, pregens=[], scenario_id="same-maps",
+        )
+
+    scenario_id = publish("--- 第 1 頁 ---\n版本一")
+    asyncio.run(scenario_lifecycle.submit_published_scenario("keep-maps", scenario_id, source_format="markdown"))
+    state = group_state.load_state("keep-maps")
+    state.scene_maps["custom_a"] = {"location_name": "Old Gurteen's Cottage", "rooms": []}
+    state.scenario_location_index = scenario_lifecycle.scenario_index.merge_scene_map_locations(
+        state.scenario_location_index, state.scene_maps)
+    state_transaction.commit_snapshot(state)
+
+    publish("--- 第 1 頁 ---\n版本二")
+    asyncio.run(scenario_lifecycle.submit_published_scenario("keep-maps", scenario_id, source_format="markdown"))
+    asyncio.run(scenario_lifecycle.resolve_pending_submission("keep-maps", "fix"))
+    names = [loc["name"] for loc in group_state.load_state("keep-maps").scenario_location_index]
+    assert names == ["Muscoby", "Old Gurteen's Cottage"]
+
+
 def test_reparse_keeps_active_hash_until_pending_choice_is_committed(
     storage: None, extraction: None,
 ) -> None:
