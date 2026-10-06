@@ -63,7 +63,8 @@ def _load(review_id: str) -> dict:
     return registry
 
 
-def _source_pages(text: str, count: int) -> list[str]:
+def split_source_pages(text: str, count: int) -> list[str]:
+    """Physical-page bodies of a published source, each stripped; shared with the page repair flow."""
     pieces = library.PAGE_MARKER_RE.split(text)
     if len(pieces) == 1 and count == 1:
         return [text]
@@ -88,7 +89,7 @@ def prepare(scenario_id: str, directory: Path) -> dict:
         with pymupdf.open(stream=pdf, filetype='pdf') as doc:
             if not 1 <= len(doc) <= _MAX_PAGES:
                 raise ValueError('Unsupported PDF page count')
-            old_pages = _source_pages(text, len(doc))
+            old_pages = split_source_pages(text, len(doc))
             for number, page in enumerate(doc, 1):
                 native, warnings = pdf_quality.native_text(page)
                 bounds = list(page.rect)
@@ -137,6 +138,25 @@ def _read_proposal(path: Path) -> tuple[dict, dict]:
     return proposal, registry
 
 
+def validate_evidence(evidence: Any, bounds: list[float], number: int) -> list[str]:
+    """Structural problems raise ValueError; a missing note is returned as an issue. Shared with page repair."""
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 100:
+        raise ValueError('Each page needs 1 to 100 PDF evidence rectangles')
+    issues = []
+    x0, y0, x1, y1 = bounds
+    for region in evidence:
+        if not isinstance(region, dict) or set(region) != {'bbox', 'note'}:
+            raise ValueError('Evidence needs bbox and note')
+        box = region['bbox']
+        if (not isinstance(box, list) or len(box) != 4
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in box)
+                or not (x0 <= box[0] < box[2] <= x1 and y0 <= box[1] < box[3] <= y1)):
+            raise ValueError(f'page {number}: evidence outside physical PDF page')
+        if not isinstance(region['note'], str) or not region['note'].strip():
+            issues.append(f'page {number}: missing evidence note')
+    return issues
+
+
 def _validate_proposal(proposal: dict, registry: dict) -> tuple[list[dict], list[str]]:
     pages = proposal['pages']
     if not isinstance(pages, list) or len(pages) != len(registry['pages']):
@@ -160,23 +180,11 @@ def _validate_proposal(proposal: dict, registry: dict) -> tuple[list[dict], list
         elif not row['text'].strip():
             issues.append(f'page {number}: missing transcription')
         evidence = row['evidence']
-        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 100:
-            raise ValueError('Each page needs 1 to 100 PDF evidence rectangles')
-        x0, y0, x1, y1 = original['bounds']
-        for region in evidence:
-            if not isinstance(region, dict) or set(region) != {'bbox', 'note'}:
-                raise ValueError('Evidence needs bbox and note')
-            box = region['bbox']
-            if (not isinstance(box, list) or len(box) != 4
-                    or any(type(v) not in (int, float) or not math.isfinite(v) for v in box)
-                    or not (x0 <= box[0] < box[2] <= x1 and y0 <= box[1] < box[3] <= y1)):
-                raise ValueError(f'page {number}: evidence outside physical PDF page')
-            if not isinstance(region['note'], str) or not region['note'].strip():
-                issues.append(f'page {number}: missing evidence note')
+        issues.extend(validate_evidence(evidence, original['bounds'], number))
         old_counts = scenario_numbers.counts(original['original'])
         new_counts = scenario_numbers.counts(row['text'])
         changes.append({'page': number, 'before': original['original'], 'after': row['text'],
-                        'published_text': _published_page_text(row),
+                        'published_text': published_page_text(row),
                         'review_note': row['review_note'], 'image_only': row['image_only'], 'evidence': evidence,
                         'before_counts': dict(old_counts), 'after_counts': dict(new_counts),
                         'removed_counts': dict(old_counts-new_counts), 'added_counts': dict(new_counts-old_counts)})
@@ -192,15 +200,15 @@ def check(path: Path) -> dict:
             'changes': changes}
 
 
-def _published_page_text(page: dict) -> str:
+def published_page_text(page: dict) -> str:
     """Serialize once for publication, audit and hashing; preserve reviewed whitespace."""
     if page['image_only']:
         return f"[SOURCE_IMAGE page_{page['page']}.png: reviewed image-only page]"
     return str(page['text'])
 
 
-def _candidate_text(pages: list[dict]) -> str:
-    return '\n\n'.join(f"--- 第 {p['page']} 頁 ---\n" + _published_page_text(p) for p in pages)
+def candidate_text(pages: list[dict]) -> str:
+    return '\n\n'.join(f"--- 第 {p['page']} 頁 ---\n" + published_page_text(p) for p in pages)
 
 
 def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
@@ -215,7 +223,7 @@ def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
             raise ValueError('Candidate changed since check; review it again')
         if issues:
             raise ValueError('Source review incomplete: ' + '; '.join(issues))
-        text = _candidate_text(proposal['pages'])
+        text = candidate_text(proposal['pages'])
         if text == registry['source_text']:
             raise ValueError('Source is unchanged')
         scenario_id = registry['scenario_id'][:38].rstrip('-') + '-review-' + digest[:16]
@@ -239,7 +247,7 @@ def publish(path: Path, *, reviewer: str, expected_digest: str) -> str:
             quality = {'version': 'source-review-v1', 'source_chars': len(text), 'review_pages': [],
                        'source_review': manifest['source_review'], 'pdf_sha256': registry['pdf_sha256'],
                        'pages': [{'page': row['page'], 'method': 'operator-reviewed', 'warnings': [],
-                                  'selected_sha256': _sha(_published_page_text(row).encode())}
+                                  'selected_sha256': _sha(published_page_text(row).encode())}
                                  for row in proposal['pages']]}
             return manifest, audit, quality
 
