@@ -192,18 +192,37 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     return "unknown"
 
 
+def _failed_before_any_tool(reason: str | None, result: MechanicResult) -> bool:
+    """The model request itself failed (timeout, CLI error) before a single tool ran, so there is nothing to repeat.
+
+    Real runs lost turns this way after 52-120 s with no tool call at all. ``execution_health == "failed"`` is only
+    set when the game state is also unchanged; a failure after any tool call stays a fallback.
+    """
+    return (reason == "internal_error" and result.execution_health == "failed"
+            and not result.tool_calls and not result.observed_outcomes)
+
+
 def recoverable(reason: str | None, result: MechanicResult, *, before_pending: dict, before_luck: dict, state: GroupState) -> bool:
     """True only when running the Executor again cannot apply anything twice.
 
     The first attempt must have changed no game state, rolled no dice, and left every pending check and
-    Luck decision as it found it; its tools may only have looked things up.
+    Luck decision as it found it; its tools may only have looked things up. Looking something up is itself a tool
+    call with a recorded outcome (``search_scenario`` leaves an internal one), so an outcome only counts against a
+    retry when it came from a tool that is not read-only. Counting every outcome made any turn that searched the
+    scenario unrecoverable: in a 200-turn run, one of 18 searching fallback turns was retried and four of four that
+    made no tool call were.
     """
+    from app.keeper_tools import (
+        registry,  # imported here: the tool registry imports modules that import this one
+    )
+
     status = result.check_status
     return bool(
-        reason in RECOVERABLE
+        (reason in RECOVERABLE or _failed_before_any_tool(reason, result))
         and not status.get("state_changed") and not status.get("dice_rolled") and not status.get("resolved")
         and state.pending_checks == before_pending and state.pending_luck_decisions == before_luck
-        and not result.events and not result.observed_outcomes
+        and not result.events
+        and all(outcome.tool_name in registry.READ_ONLY_TOOL_NAMES for outcome in result.observed_outcomes)
     )
 
 

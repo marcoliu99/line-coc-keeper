@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import signal
 import tempfile
@@ -81,17 +82,37 @@ def config_args(overrides: dict[str, Any]) -> list[str]:
     return result
 
 
+_EXIT_WAIT_SECONDS = 5.0
+
+
+def _signal_group(proc: asyncio.subprocess.Process, sig: signal.Signals) -> None:
+    """Signal the child's process group; cleanup must never replace the error that triggered it.
+
+    A real run saw `PermissionError` (EPERM) from killpg while cleaning up after a 120 s timeout,
+    which surfaced to the player as an internal error instead of the timeout.
+    """
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        # The group is gone, or not ours to signal: fall back to the child itself.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            proc.send_signal(sig)
+
+
 async def stop_process(proc: asyncio.subprocess.Process) -> None:
     # Also kill descendants after a parent exits; pipes may still be held open.
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGTERM)
+    _signal_group(proc, signal.SIGTERM)
     try:
         await asyncio.wait_for(proc.wait(), 0.5)
     except TimeoutError:
         pass
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGKILL)
-    await proc.wait()
+    _signal_group(proc, signal.SIGKILL)
+    try:
+        # Bounded: a child we are not allowed to signal must not hold the conversation lock for ever, nor hide the
+        # failure that led here.
+        await asyncio.wait_for(proc.wait(), _EXIT_WAIT_SECONDS)
+    except TimeoutError:
+        observability.event('codex.process.unkillable', level=logging.WARNING)
 
 
 class Process:

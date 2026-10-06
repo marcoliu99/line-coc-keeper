@@ -18,6 +18,7 @@
 | `SCENARIO_CONTEXT_WINDOW_TOKENS` | `128000` | 硬上限。搜尋最多只能用「這個值減去提示與輸出保留量」之後剩下的，即使有下限也一樣，所以請求不會超過模型的視窗。 | 視窗較小的模型請調低；`rag.retrieval.budget` 會回報 `budget_capped_by_window`。 |
 | `SCENARIO_RETRIEVAL_TOKEN_BUDGET` / `SCENARIO_RETRIEVAL_MIN_TOKENS` | `6000` / `3000` | 一次劇本搜尋最多、最少能用多少。下限避免擁擠的提示把搜尋壓到零；`0` 允許壓到零。記錄在 `rag.retrieval.budget`，用到下限時帶 `budget_floor_applied`。 | 下限只是後盾：常常看到它被套用，代表上限設太低。 |
 | `TURN_FALLBACK_RECOVERY_ENABLED` | `true` | 原本會以通用「無法繼續」回覆收場的回合，先多搜尋一次、多決定一次。 | 最多多一次搜尋與一次模型呼叫，只發生在這類回合。 |
+| `TURN_RETRY_MIN_REMAINING_SECONDS` | `45` | Executor 請求在執行任何工具之前就失敗（逾時、CLI 錯誤）時再跑一次，但只有 `LLM_TURN_DEADLINE_SECONDS` 還剩這麼多秒才會跑。 | 跑不完的重試只會讓玩家等更久；見 `docs/specs/bug/executor_request_failure_retry_design_spec_zh.md`。 |
 | `LLM_TURN_DEADLINE_SECONDS` | `180` | 模型工作的整回合期限；超過時回合以明確訊息結束，已提交的變更保留。 | |
 | `MAX_TOOL_ITERATIONS` / `MAX_TOOLS_PER_TURN` | `5` / `4` | Executor 工具迴圈的上限。 | |
 
