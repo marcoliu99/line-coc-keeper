@@ -22,8 +22,8 @@ def parse_pages(content: str) -> dict[int, str]:
     lines = content.lstrip("﻿").replace("\r\n", "\n").strip().split("\n")
     if lines and _FENCE.match(lines[0].strip()):  # the whole answer pasted inside a code block
         lines = lines[1:]
-    if lines and _FENCE.match(lines[-1].strip()):
-        lines = lines[:-1]
+        if lines and _FENCE.match(lines[-1].strip()):
+            lines = lines[:-1]
     text = "\n".join(lines)
     marks = list(library.PAGE_MARKER_RE.finditer(text))
     if not marks:
@@ -60,8 +60,8 @@ def apply_pages(scenario_text: str, pages: dict[int, str]) -> str:
         i = index[page]
         start = marks[i].end() + (1 if scenario_text.startswith("\n", marks[i].end()) else 0)
         end = marks[i + 1].start() if i + 1 < len(marks) else len(scenario_text)
-        if i + 1 < len(marks) and end - 2 >= start and scenario_text[end - 2:end] == "\n\n":
-            end -= 2  # the blank line between pages stays
+        if i + 1 < len(marks):  # the newline or blank line before the next marker stays
+            end -= 2 if end - 2 >= start and scenario_text[end - 2:end] == "\n\n" else int(end - 1 >= start)
         pieces += [scenario_text[cursor:start], pages[page]]
         cursor = max(start, end)
     pieces.append(scenario_text[cursor:])

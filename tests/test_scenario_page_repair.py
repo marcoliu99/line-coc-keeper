@@ -200,3 +200,28 @@ def test_the_repair_survives_newgame_and_loading_the_same_scenario_again(tmp_pat
 
         text = asyncio.run(play())
         assert "new two" in text and "old two" not in text and "keep three" in text
+
+
+def test_a_closing_fence_belongs_to_the_last_page_unless_the_whole_answer_is_fenced():
+    code = "```json\n{}\n```"
+    assert repair.parse_pages(page(2, "intro\n" + code)) == {2: "intro\n" + code}
+    assert repair.parse_pages("```\n" + page(2, "intro\n" + code) + "```") == {2: "intro\n" + code}
+
+
+def test_pages_separated_by_a_single_newline_keep_their_markers():
+    text = "--- 第 1 頁 ---\none\n--- 第 2 頁 ---\ntwo\n--- 第 3 頁 ---\nthree"
+    merged = repair.apply_pages(text, {2: "new two"})
+    assert merged == "--- 第 1 頁 ---\none\n--- 第 2 頁 ---\nnew two\n--- 第 3 頁 ---\nthree"
+    assert repair.present_pages(merged) == {1, 2, 3}
+
+
+def test_a_legacy_entry_without_a_content_hash_still_saves_the_pages():
+    from app import db
+    from app.repositories import page_repairs
+    replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id="legacy", active_scenario_source_hash=""))
+    replies = upload(page(2, "new two"), state=None)
+    assert "newgame" in replies[0]
+    assert page_repairs.load("g", "legacy", "") == {2: "new two"}
+    with db.transaction() as conn:
+        page_repairs.save(conn, "g", "legacy", "", {4: "new four"})
+    assert page_repairs.load("g", "legacy", "") == {2: "new two", 4: "new four"}

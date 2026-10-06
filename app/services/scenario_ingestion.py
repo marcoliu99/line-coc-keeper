@@ -617,11 +617,12 @@ async def handle_page_repair_upload(
         scenario_id, source_hash = state.scenario_library_id, state.active_scenario_source_hash
 
         def save_pages(conn):
-            if scenario_id and source_hash:
+            if scenario_id:  # a legacy entry without a content hash is bound by the empty hash
                 page_repairs.save(conn, conversation_id, scenario_id, source_hash, pages)
         state_transaction.commit_snapshot(state, mutate_tx=save_pages)
     now = "、".join(str(page) for page in sorted(set(pages) & present))
     note = f"已替換第 {now} 頁，" if now else ""
     if later:
         note += f"第 {'、'.join(map(str, later))} 頁不在目前載入的章節裡，已先存下，載入到那一頁時會套用，"
-    await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本、或 /coc newgame 後再上傳同一份劇本，也都會套用。")
+    saved = "之後重新載入這份劇本、或 /coc newgame 後再上傳同一份劇本，也都會套用。" if scenario_id else "這份劇本不在劇本庫裡，修復只套用在目前這場遊戲。"
+    await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。" + saved)
