@@ -2224,12 +2224,14 @@
       "status": "partial",
       "evidence": [
         "app/keeper_tools/inventory.py",
+        "app/keeper_tools/operation_ids.py",
         "app/keeper_tools/registry.py",
         "app/services/turn_resolution.py",
         "app/providers/codex_provider.py",
         "app/agents/tool_gateway.py",
         "tests/test_keeper_tool_registry.py",
-        "tests/test_inventory_actor_plumbing.py"
+        "tests/test_inventory_actor_plumbing.py",
+        "tests/test_transfer_item.py"
       ],
       "path": "docs/specs/bug/inventory_transfer_design_spec.md",
       "zh_path": "docs/specs/bug/inventory_transfer_design_spec_zh.md",

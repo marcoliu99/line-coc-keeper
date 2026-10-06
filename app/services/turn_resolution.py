@@ -33,14 +33,48 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     completion. Only a matched transfer may coexist with an unchanged old check.
     """
     inventory = []
-    latest = {}
+    transfers = []
+    committed_operations: set[str] = set()
+    counted_operations: set[str] = set()
+    final_by_id: dict[str, list[str]] = {}
+    latest: dict[str, list[str]] = {}
     ended = False
     combat_completed = False
+    # Either receipt of one logical transfer is evidence for it, so a re-emission may be the one the decision cites.
+    cited_operations = {e['result'].get('operation_id') for i, e in enumerate(events, 1)
+                        if e['name'] == 'transfer_item' and f'tool:{i}' in refs and e['result'].get('operation_id')}
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
-        if (name in {'add_carried_item', 'remove_carried_item', 'end_combat'}
-                and (not result.get('ok') or f'tool:{i}' not in refs)):
+        replay_of_seen = bool(result.get('replayed')) and result.get('operation_id') in committed_operations
+        if (name in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
+                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen
+                                                    and result.get('operation_id') not in cited_operations))):
             return False, False
+        if name == 'transfer_item':
+            # The receipt carries its own before/after lists and character ids, so it verifies on its own even when
+            # two investigators share a display name or the call is a replay of one this turn already recorded.
+            listed = result.get('moved_items')
+            moved = Counter(listed if isinstance(listed, list) and listed
+                            else [result.get('item')] * int(result.get('quantity') or 1))
+            lists = [result.get(key) for key in ('from_before', 'to_before', 'from_carried_items', 'to_carried_items')]
+            if (not all(isinstance(entries, list) for entries in lists) or not result.get('from_id')
+                    or not result.get('to_id') or result.get('from_id') == result.get('to_id')):
+                return False, False
+            from_before, to_before, from_after, to_after = lists
+            if (Counter(from_before) - Counter(from_after) != moved or Counter(from_after) - Counter(from_before)
+                    or Counter(to_after) - Counter(to_before) != moved or Counter(to_before) - Counter(to_after)):
+                return False, False
+            operation = result.get('operation_id') or f'tool:{i}'
+            if not result.get('replayed'):
+                committed_operations.add(operation)
+            if operation not in counted_operations:
+                counted_operations.add(operation)
+                transfers.append(event)
+            if not replay_of_seen:
+                # Chronological: a transfer supersedes earlier add/remove evidence for the same two characters.
+                for owner in (result.get('from'), result.get('to'), result.get('from_id'), result.get('to_id')):
+                    latest.pop(owner, None)
+                final_by_id[result['from_id']], final_by_id[result['to_id']] = from_after, to_after
         if name in {'add_carried_item', 'remove_carried_item'}:
             owner = result.get('investigator')
             before = event.get('inventory_before', {}).get(owner)
@@ -48,7 +82,14 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             if before is None or not isinstance(after, list) or before == after:
                 return False, False
             inventory.append(event)
-            latest[owner] = after
+            exact = result.get('character_id')  # the receipt names the exact character, so same-named ones stay apart
+            latest[exact or owner] = after
+            if exact:
+                final_by_id.pop(exact, None)
+            else:
+                named = [c for c in state.active_characters() if c.name == owner]
+                if len(named) == 1:  # legacy receipt: only an unambiguous name identifies the character
+                    final_by_id.pop(named[0].character_id or named[0].owner_id, None)
         if result.get('ok') and f'tool:{i}' in refs and name in {'declare_combat_action', 'run_combat_action'}:
             action = state.combat.actions.get(result.get('action_id', ''), {})
             combat_completed = combat_completed or bool(
@@ -64,8 +105,15 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
-    if any(owner not in chars or chars[owner].carried_items != items for owner, items in latest.items()):
+    by_id = {(c.character_id or c.owner_id): c for c in state.active_characters()}
+    if any((by_id.get(owner) or chars.get(owner)) is None or (by_id.get(owner) or chars[owner]).carried_items != items
+           for owner, items in latest.items()):
         return False, False
+    for key, after in final_by_id.items():
+        char = by_id.get(key)
+        # A later add/remove event on the same character is verified against the final state above.
+        if char is None or char.carried_items != after:
+            return False, False
     actor_involved = any(e['result'].get('investigator') == actor_name for e in inventory)
     transfer = False
     if len(inventory) == 2 and {e['name'] for e in inventory} == {'remove_carried_item', 'add_carried_item'}:
@@ -83,10 +131,13 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 and Counter(remove['result']['carried_items']) - Counter(remove['inventory_before'][giver]) == Counter()
                 and Counter(add['inventory_before'][receiver]) - Counter(add['result']['carried_items']) == Counter()
             )
+    # One committed ``transfer_item`` by the acting player is itself the verified, independent transfer.
+    transfer = transfer or (len(transfers) == 1 and not inventory and transfers[0]['result'].get('from') == actor_name)
     transfer = transfer and all(e['name'] in {
-        'add_carried_item', 'remove_carried_item', 'search_scenario', 'get_character_sheet',
+        'add_carried_item', 'remove_carried_item', 'transfer_item', 'search_scenario', 'get_character_sheet',
     } for e in events)
-    return bool(ended or combat_completed or (inventory and actor_involved)), transfer
+    actor_involved = actor_involved or any(e['result'].get('from') == actor_name for e in transfers)
+    return bool(ended or combat_completed or ((inventory or transfers) and actor_involved)), transfer
 
 def validate_resolution(
     text: str, *, state: GroupState, user_id: str, before_pending: dict,
@@ -167,7 +218,7 @@ def validate_resolution(
     elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
         if disposition in {"resolved", "resolved_without_check"}:
-            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'end_combat'} for e in tool_events) and not mutation:
+            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'} for e in tool_events) and not mutation:
                 return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據", "inventory_or_combat_not_verified")
             # A newly created/replaced check for any participant is still work.
             changed_wait = any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())

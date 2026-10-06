@@ -24,10 +24,11 @@ from app import (
 from app.checks.skills import resolve_skill_value
 from app.keeper_tools import resource_bridge
 from app.models import Character, GroupState
-from app.repositories import state_transaction
+from app.repositories import group_state, state_transaction
 from app.services import combat_actions as combat_act
 from app.services import (
     combat_engine,
+    mutation_admission,
 )
 
 _logger = logging.getLogger(__name__)
@@ -54,11 +55,58 @@ def find_character(state: GroupState, name: str) -> Character | None:
     return None
 
 
+def resolve_active_character_exactly(state: GroupState, ref: str) -> tuple[Character | None, str]:
+    """An active investigator named by character id or by an exact (case-insensitive) name; never a partial match.
+
+    Returns ``(character, "")`` or ``(None, reason)`` where reason is ``unknown`` or ``ambiguous:<names>``. A hand-off
+    must not reach a similarly named investigator, which ``find_character``'s substring fallback would allow.
+    """
+    wanted = (ref or "").strip()
+    if not wanted:
+        return None, "unknown"
+    pool = state.active_characters()
+    by_id = [char for char in pool if char.character_id and char.character_id == wanted]
+    matches = by_id or [char for char in pool if char.name.strip().casefold() == wanted.casefold()]
+    if not matches:
+        return None, "unknown"
+    if len(matches) > 1:
+        return None, "ambiguous:" + "、".join(sorted(char.name for char in matches))
+    return matches[0], ""
+
+
 def require_character(state: GroupState, name: str) -> Character:
     character = find_character(state, name)
     if character is None:
         raise ValueError(f"找不到角色「{name}」")
     return character
+
+
+def mutate_tool_state_once(
+    state: GroupState, mutator: Callable[[GroupState], dict[str, Any]], *,
+    action_id: str | None, request_fingerprint: str,
+) -> tuple[dict[str, Any], bool]:
+    """``mutate_tool_state`` for a repeatable mutation that returns its receipt as a JSON-safe dict.
+
+    With an ``action_id`` the receipt is stored in the transaction ledger, so the same call re-sent after a lost reply
+    returns the stored receipt (second element True) and changes nothing. Without one it behaves like a plain mutation.
+    """
+    def run(ctx: state_transaction.TxContext) -> dict[str, Any]:
+        receipt = mutator(ctx.state)
+        ctx.set_result(receipt)
+        return receipt
+
+    outcome = state_transaction.commit_for_snapshot(
+        state, run, reason="tool", action_id=action_id, request_fingerprint=request_fingerprint if action_id else None)
+    if outcome.outcome is state_transaction.Outcome.STALE_TIMELINE:
+        raise mutation_admission.MutationHeld("stale tool timeline")
+    if outcome.outcome is state_transaction.Outcome.CONFLICT:
+        raise group_state.StateRevisionConflict(
+            f"state transaction conflict for {observability.safe_identifier(state.group_id)}: {outcome.reason}")
+    if not outcome.ok:
+        raise state_transaction.StateTransactionFailed(outcome)
+    if outcome.outcome is state_transaction.Outcome.DUPLICATE:
+        return dict(outcome.result), True
+    return outcome.value, False  # type: ignore[return-value]
 
 
 def deterministic_check_cache_key(

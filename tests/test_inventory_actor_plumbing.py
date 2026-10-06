@@ -36,11 +36,11 @@ def _recording(name: str, seen: list[registry.ToolCall]):
 
 def test_the_gateway_hands_the_acting_player_to_the_inventory_tools() -> None:
     seen: list[registry.ToolCall] = []
-    for name in ("add_carried_item", "remove_carried_item"):
+    for name in ("add_carried_item", "remove_carried_item", "transfer_item"):
         with _recording(name, seen):
             execute = tool_gateway.make_tool_executor(_state(), [], [], "player", [], actor_id="u1")
             asyncio.run(execute(name, {"investigator": "Ann", "item": "鑰匙"}))
-    assert [call.actor_id for call in seen] == ["u1", "u1"]
+    assert [call.actor_id for call in seen] == ["u1", "u1", "u1"]
     assert all(call.system_origin is None for call in seen)
 
 

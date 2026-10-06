@@ -56,6 +56,8 @@ OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
 
 已確定角色取得重要物品但未登記 → 補呼叫 add_carried_item
 
+已確定一位調查員把物品交給另一位 → 呼叫 transfer_item（一次完成，不要拆成 remove_carried_item 再 add_carried_item）
+
 已確定進入正式戰鬥、兩隻以上有劇本依據的敵人同時啟動但未初始化 → 呼叫 initialize_combat 一次登記
 
 已確定進入正式戰鬥、只有一隻敵人啟動但未初始化 → 呼叫 start_combat，接著登記敵人

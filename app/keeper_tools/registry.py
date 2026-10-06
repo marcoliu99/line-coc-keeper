@@ -586,6 +586,31 @@ _SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         schema={
+                "name": "transfer_item",
+                "description": (
+                    "一位調查員把攜帶物品交給另一位調查員時使用，一次完成：要嘛兩邊背包都改變，要嘛都不變。"
+                    "交接一律用這個，不要分開呼叫 remove_carried_item 再 add_carried_item。"
+                    "from 與 to 填角色名稱（需完全相符）；只有給出者自己的玩家能交出他的物品；"
+                    "quantity 省略時為 1，同名物品要交出多份時一次填完。"
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "from": {"type": "string", "description": "給出者的角色名稱"},
+                        "to": {"type": "string", "description": "接收者的角色名稱"},
+                        "item": {"type": "string", "description": "要交出的物品，需與給出者背包裡的文字相符"},
+                        "quantity": {"type": "integer", "minimum": 1, "description": "交出幾份，省略為 1"},
+                        "source_event_id": {"type": "string"},
+                    },
+                    "required": ["from", "to", "item"],
+                },
+            },
+        handler=inventory_handlers.transfer_item,
+        kp_assistant=True,
+        kp_canonical_game=True,
+    ),
+    ToolSpec(
+        schema={
                 "name": "record_established_fact",
                 "description": "記錄已被證實、之後必須保持一致的劇情事實；不是猜測或普通對話。",
                 "input_schema": {
