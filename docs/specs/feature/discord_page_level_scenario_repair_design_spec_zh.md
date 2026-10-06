@@ -2,7 +2,7 @@
 
 [English](discord_page_level_scenario_repair_design_spec.md)
 
-狀態：**待辦**（僅設計，尚未實作）。基準：`main_v2` 的 `3fbec39`。
+狀態：**待實作**（僅設計，尚未實作）。基準：`main_v2` 的 `3fbec39`。
 
 ## 1. 問題
 
