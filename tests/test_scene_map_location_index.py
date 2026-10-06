@@ -18,9 +18,13 @@ def _entry(name, aliases=(), summary="", page=0):
     return {"name": name, "aliases": list(aliases), "summary": summary, "page": page}
 
 
+def _from_map(name):
+    return {**_entry(name), "source": "scene_map"}
+
+
 def test_an_empty_index_gets_the_map_location():
     merged = scenario_index.merge_scene_map_locations([], {"custom_a": {"location_name": COTTAGE, "rooms": []}})
-    assert merged == [_entry(COTTAGE)]
+    assert merged == [_from_map(COTTAGE)]
 
 
 def test_an_existing_location_is_kept_as_it_is():
@@ -122,3 +126,13 @@ def test_replacing_a_map_drops_the_location_it_added_but_never_a_text_one(stored
     _upload(MAP_YAML.replace(COTTAGE.encode(), b"Elsewhere"))
     names = [loc["name"] for loc in group_state.load_state("map-index").scenario_location_index]
     assert names == ["Muscoby", "Elsewhere"]
+
+
+def test_a_text_entry_of_the_minimal_shape_survives_its_maps_replacement(stored):
+    state = group_state.load_state("map-index")
+    state.scenario_location_index.append(_entry(COTTAGE))  # the text named it too, with nothing else to say
+    state_transaction.commit_snapshot(state)
+    _upload(MAP_YAML)  # deduplicated against the text entry: nothing added
+    _upload(MAP_YAML.replace(COTTAGE.encode(), b"Elsewhere"))
+    names = [loc["name"] for loc in group_state.load_state("map-index").scenario_location_index]
+    assert names == ["Muscoby", COTTAGE, "Elsewhere"]
