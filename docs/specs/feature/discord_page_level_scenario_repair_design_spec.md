@@ -124,7 +124,7 @@ Version 1 MUST NOT:
 - silently accept missing numeric changes;
 - automatically rewrite translation variants;
 - rerun OCR over the whole PDF;
-- allow ordinary players to alter a published scenario source.
+- let an upload edit a published scenario source in place (a repair only ever creates a new version).
 
 Map topology repair remains owned by the existing map pipeline / `map_*.yaml` path unless a later spec explicitly merges the two systems.
 
@@ -246,15 +246,13 @@ Rules:
 
 ## 7. Permission model
 
-This differs intentionally from ordinary initial scenario upload.
-
-A `repair_*.md` file changes the trusted source used by the active campaign. Therefore only the group's KP Assistant may submit it:
+Anyone in the conversation may upload a `repair_*.md`, the same as a PDF or `scenario*.md` upload today. The check is the existing scenario-lifecycle policy:
 
 ```python
-permissions.is_kp(state, user_id)
+permissions.may_manage_scenario_lifecycle(state, user_id)
 ```
 
-Do **not** use `permissions.may_manage_scenario_lifecycle`: with the default `SCENARIO_LIFECYCLE_KP_ONLY=false` it is true for every user, which would let an ordinary player publish or activate a modified trusted source. The refusal uses `permissions.kp_only(...)`, like the existing source and template management handlers.
+which is true for everyone by default and is restricted to the KP Assistant when `SCENARIO_LIFECYCLE_KP_ONLY` is turned on; the refusal is `permissions.kp_only(...)`. The safety of an open upload does not rest on who sends the file: a repair only applies when its target hashes and every base page hash match the current source, its numeric changes are declared, and it creates a new immutable version instead of editing the parent. The repair workfile **export** is different: it carries the scenario's full page text, so it stays KP-only and DM-only (see the export workflow).
 
 `handle_uploads()` currently does not receive the upload actor ID. Extend it:
 
@@ -1506,7 +1504,7 @@ Do not allow repair Markdown to reference another local file.
 ### Discord tests
 
 32. `repair_*.md` routes to repair handler, not compare handler.
-33. ordinary player cannot submit repair.
+33. an ordinary player can submit a repair, and `SCENARIO_LIFECYCLE_KP_ONLY` restricts it to the KP Assistant when enabled.
 34. KP can submit repair.
 35. more than one repair attachment rejected.
 36. repair upload during pending source replacement follows admission policy.
@@ -1632,7 +1630,7 @@ Recommended sequence:
 This feature is mergeable only when all of the following are true:
 
 - repair cannot target the wrong source silently;
-- ordinary players cannot apply repair;
+- the upload check follows the scenario-lifecycle policy, and the export is KP-only and DM-only;
 - full-page replacement is deterministic;
 - undeclared numeric changes hard-fail;
 - parent scenario is immutable;

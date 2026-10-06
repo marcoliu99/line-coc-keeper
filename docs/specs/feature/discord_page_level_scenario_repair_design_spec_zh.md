@@ -124,7 +124,7 @@ published + applied
 - 默默接受缺漏的數值變化；
 - 自動改寫翻譯變體；
 - 對整份 PDF 重跑 OCR；
-- 允許一般玩家修改已發布的劇本來源。
+- 讓上傳就地修改已發布的劇本來源（repair 永遠只建立新版本）。
 
 地圖拓撲的修復仍歸既有的地圖管線／`map_*.yaml` 路徑負責，除非之後的規格明確把兩個系統合併。
 
@@ -246,15 +246,13 @@ repairs = [
 
 ## 7. 權限模型
 
-這裡刻意與一般的初次劇本上傳不同。
-
-`repair_*.md` 會改變使用中戰役所信任的來源。因此只有該群組的 KP Assistant 可以提交：
+對話中的任何人都可以上傳 `repair_*.md`，和現在上傳 PDF 或 `scenario*.md` 一樣。檢查沿用既有的劇本生命週期政策：
 
 ```python
-permissions.is_kp(state, user_id)
+permissions.may_manage_scenario_lifecycle(state, user_id)
 ```
 
-**不要**使用 `permissions.may_manage_scenario_lifecycle`：在預設的 `SCENARIO_LIFECYCLE_KP_ONLY=false` 之下它對每個使用者都是 true，一般玩家就能發布或啟用被修改過的可信來源。拒絕訊息與既有的來源／範本管理處理器一樣，使用 `permissions.kp_only(...)`。
+預設對所有人為真；開啟 `SCENARIO_LIFECYCLE_KP_ONLY` 時只限 KP Assistant，拒絕訊息用 `permissions.kp_only(...)`。開放上傳的安全性不靠誰送出檔案：repair 只有在目標雜湊與每一頁的基準頁面雜湊都符合目前的來源、數值變化都有宣告時才會套用，而且只建立新的不可變版本，不會修改父劇本。repair 工作檔的**匯出**不同：它帶有劇本的完整頁面文字，所以維持只限 KP 且只走私訊（見匯出流程）。
 
 `handle_uploads()` 目前拿不到上傳者的 ID。把它擴充為：
 
@@ -1504,7 +1502,7 @@ state commit
 ### Discord 測試
 
 32. `repair_*.md` 路由到 repair 處理器，而不是比較處理器。
-33. 一般玩家不能提交 repair。
+33. 一般玩家可以提交 repair，開啟 `SCENARIO_LIFECYCLE_KP_ONLY` 時則只限 KP Assistant。
 34. KP 可以提交 repair。
 35. 拒絕超過一個 repair 附件。
 36. 在待處理的來源替換期間上傳 repair，遵循准入政策。
@@ -1630,7 +1628,7 @@ repair_the-haunting-scenario-trimmed_01.md
 只有在下列全部成立時，這個功能才可以合併：
 
 - repair 不會默默地以錯誤的來源為目標；
-- 一般玩家不能套用 repair；
+- 上傳檢查遵循劇本生命週期政策，匯出只限 KP 且只走私訊；
 - 全頁替換是確定性的；
 - 未宣告的數值變化會直接失敗；
 - 父劇本不可變；
