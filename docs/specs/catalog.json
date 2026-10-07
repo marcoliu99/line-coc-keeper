@@ -2434,6 +2434,20 @@
       "path": "docs/specs/bug/settlement_preview_refuses_further_play_design_spec.md",
       "zh_path": "docs/specs/bug/settlement_preview_refuses_further_play_design_spec_zh.md",
       "source_revision": "4dcfcf433515bce446c43aa4521e374765b81bd1"
+    },
+    {
+      "title": "A refused turn in a battle names whose turn it is",
+      "zh": "戰鬥中被拒絕的行動，說明現在輪到誰",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/services/prompt_config.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/combat_refusal_names_whose_turn_design_spec.md",
+      "zh_path": "docs/specs/bug/combat_refusal_names_whose_turn_design_spec_zh.md",
+      "source_revision": "6d6451c6b667dd4203a68b45547e4eaa43a4bd34"
     }
   ]
 }

@@ -373,6 +373,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            if state is not None and (in_battle := turn_fallback.combat_guidance(state, result.fallback_reason)):
+                return f"{warning}{in_battle}"
             hints = turn_fallback.scene_hints(state) if state is not None else ""
             if status.get("scenario_evidence_blocked"):
                 blocked = f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"

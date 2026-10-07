@@ -18,7 +18,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
-from app.models import GroupState
+from app.models import Combatant, CombatState, GroupState
 from app.services import prompt_config, turn_fallback
 
 
@@ -436,3 +436,23 @@ async def test_the_retry_time_is_checked_again_after_the_recovery_search(monkeyp
     _, run_executor, searched, _ = await _turn(
         _state(), [_crashed()], rag_status="empty", search=("找到的內容", "success"))
     assert searched.call_count == 1 and run_executor.await_count == 1
+
+
+def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_about_the_scenario() -> None:
+    state = _state()
+    state.scenario_npc_index = [{"name": "鼠群", "aliases": []}]
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=1, phase="READY",
+        order=[Combatant(name="鼠群", side="enemy", hp=5, hp_max=5), Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)],
+    )
+    result = _result("blocked", fallback_reason="unsupported_action")
+    reply = prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    assert "現在輪到「小雨」行動" in reply and "劇本" not in reply and "鼠群" not in reply
+    state.combat.phase = "SETTLEMENT"
+    assert "等守密人結算" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    state.combat.phase = "READY"
+    state.combat.order[0].defeated = True
+    assert "敵方已全數倒下" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    state.combat.active = False
+    assert "劇本" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    assert turn_fallback.combat_guidance(state, "tool_failure") == ""
