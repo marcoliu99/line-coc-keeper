@@ -121,6 +121,14 @@ def _coerce_armor(raw: list[dict[str, Any]] | None) -> list[ArmorRule]:
 
 def _coerce_attacks(raw: list[dict[str, Any]] | None) -> list[AttackRule]:
     attacks = [AttackRule.from_dict(a) for a in (raw or [])]
+    for attack in attacks:
+        try:
+            dice.max_expression_value(attack.damage)
+        except ValueError:
+            raise ValueError(
+                f"攻擊「{attack.label or attack.id}」的 damage 只能填骰子表示式（例如 1D4+2），收到 {attack.damage!r}。"
+                "極限成功的額外傷害不要寫在 damage；請在 source.extreme_rule 填 maximum，穿刺類武器填 impale。"
+            ) from None
     return attacks or [_default_attack()]
 
 
@@ -149,6 +157,7 @@ def create_enemy_card(
     source: dict[str, Any] | None = None,
     incomplete: bool = False,
 ) -> EnemyCombatCard:
+    coerced_attacks = _coerce_attacks(attacks)  # refuse a bad damage string before the fight is touched
     _ensure_started(state)
     card = EnemyCombatCard(
         id=_enemy_card_id(name),
@@ -158,7 +167,7 @@ def create_enemy_card(
         hp=max(0, hp),
         hp_max=max(1, hp),
         armor=_coerce_armor(armor),
-        attacks=_coerce_attacks(attacks),
+        attacks=coerced_attacks,
         abilities=_coerce_abilities(abilities),
         stats={"DEX": dex, **(stats or {})},
         skills=skills or {},
@@ -219,6 +228,8 @@ def add_npc(
     source: dict[str, Any] | None = None,
     skills: dict[str, int] | None = None,
 ) -> CombatState:
+    if not is_ally:
+        _coerce_attacks(attacks)  # refuse a bad damage string before the fight is touched
     _ensure_started(state)
     if is_ally:
         current_id = state.combat.order[state.combat.current_index].combatant_id if state.combat.order else None
@@ -473,6 +484,7 @@ def add_combatant(
     reports the defeated namesake so the caller can ask whether it's really a
     new one, and the newcomer gets a numbered display name.
     """
+    _coerce_attacks(attacks)  # a bad damage string is refused before the fight is touched
     if not state.combat.active:
         begin_combat(state)
     if not is_ally and not force_new_instance:

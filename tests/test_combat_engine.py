@@ -546,6 +546,23 @@ def test_a_managed_action_on_an_idle_conversation_refuses_instead_of_inventing_a
     assert not state.combat.active and not state.combat.combat_id
 
 
+def test_a_damage_string_that_is_not_dice_is_refused_without_starting_a_battle():
+    state = GroupState(GROUP, active=True, timeline_id="timeline-b")
+    with pytest.raises(ValueError, match="extreme_rule"):
+        combat_engine.handle(state, act.AddCombatant(
+            name="Knife", dex=50, hp=5, attacks=[{"id": "slash", "damage": "1D4+2；極限成功 6+1D4+2"}],
+        ))
+    assert not state.combat.active and not state.combat.combat_id
+    bad = [{"id": "slash", "damage": "1D4+2；極限成功 6+1D4+2"}]
+    for create in (
+        lambda: combat.add_npc(state, "Knife", 50, 5, attacks=bad),
+        lambda: combat.create_enemy_card(state, "Knife", attacks=bad),
+    ):
+        with pytest.raises(ValueError, match="extreme_rule"):
+            create()
+        assert not state.combat.active and not state.combat.combat_id
+
+
 def test_the_tools_do_not_fabricate_a_battle_when_none_is_running():
     state = GroupState(GROUP, active=True, timeline_id="timeline-b")
     _save(state)
