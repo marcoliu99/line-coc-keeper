@@ -182,24 +182,6 @@ def test_dying_settlement_transfers_and_due_check_survives_restart():
     assert restored.characters_by_id['pc1'].injury['dead']
 
 
-def test_legacy_admission_requires_explicit_pending_empty_closure():
-    state, pc, _ = battle()
-    state.combat.pipeline_version = ''
-    state.combat.combat_id = ''
-    state.combat.working_resources = state.combat.baseline_resources = {}
-    with pytest.raises(combat_resources.CombatAdmissionError):
-        combat.start_combat(state)
-    state.pending_checks['player'] = {'type': 'skill'}
-    with pytest.raises(combat_resources.CombatAdmissionError):
-        combat.close_legacy_combat(state, event_id='closure', reason='Controller closes old history')
-    state.pending_checks.clear()
-    receipt = combat.close_legacy_combat(state, event_id='closure', reason='Controller closes old history')
-    assert receipt['legacy_state']['active']
-    assert pc.hp == 10
-    combat.begin_combat(state)
-    assert state.combat.pipeline_version == combat_resources.PIPELINE_VERSION
-
-
 def test_explicit_severity_effect_receipt_retry_and_transfer():
     state, pc, _ = battle()
     result = combat_flow.declare_effect(state, effect_id='acid', target_id='pc:pc1', severity_id='minor',

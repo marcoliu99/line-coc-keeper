@@ -1,7 +1,7 @@
 import unittest
 
 from app import combat
-from app.models import Combatant, CombatState, GroupState
+from app.models import Character, CombatState, GroupState
 from app.tool_dispatch import CombatStatusToolGate
 from tests import combat_calls as calls
 
@@ -15,11 +15,10 @@ class CombatStatusToolGateTests(unittest.TestCase):
 
     def _active_state(self) -> GroupState:
         state = GroupState(group_id="g")
-        state.combat = CombatState(
-            active=True,
-            round_number=1,
-            order=[Combatant(name="Investigator", dex=70, hp=10, hp_max=10, is_pc=True)],
-        )
+        investigator = Character(name="Investigator", owner_id="p1", dex=70)
+        state.characters["p1"] = investigator
+        state.set_active_character("p1", investigator.character_id)
+        combat.begin_combat(state)
         return state
 
     def test_withholds_initial_status_lookup_when_snapshot_is_complete(self):
@@ -57,6 +56,7 @@ class CombatStatusToolGateTests(unittest.TestCase):
         )
         enemy = next(combatant for combatant in state.combat.order if combatant.name == "Cultist")
         combat.add_combat_effect(state, "Cultist", "burning", timing="turn_start", damage="1")
+        state.combat.effects[-1].save_or_check = {"rule_source": {"rule": "fire"}, "severity_id": "minor"}
         gate = CombatStatusToolGate(state)
 
         result = calls.plan_enemy_turn(state, "Cultist")

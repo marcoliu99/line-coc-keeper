@@ -130,12 +130,12 @@ def test_all_resources_edits_ammo_and_status_remain_working_only_and_are_clamped
     assert combat_resources.effective_character(state, character).hp == 0
 
 
-def test_legacy_active_battle_fails_closed_and_retains_pending_and_history():
+def test_unsupported_active_battle_fails_closed_and_retains_pending_and_history():
     state = GroupState('group')
     state.combat.active = True
     state.combat.round_number = 4
     state.pending_checks['player'] = {'roll_id': 'old-roll'}
-    with pytest.raises(combat_resources.CombatAdmissionError):
+    with pytest.raises(combat_resources.CombatAdmissionError, match='Start a new combat'):
         combat_resources.initialize_working_state(state)
     assert state.combat.round_number == 4
     assert state.pending_checks['player']['roll_id'] == 'old-roll'

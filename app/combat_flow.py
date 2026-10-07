@@ -1545,7 +1545,7 @@ def process_managed_timing(state: GroupState, timing: str, target_id: str) -> li
 
 
 def _require_managed(state: GroupState) -> None:
-    if not combat_resources.is_managed(state):
+    if state.combat.active and not combat_resources.is_managed(state):
         raise combat.ModeMismatch("only a managed battle can be handled by the managed rules")
 
 

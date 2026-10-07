@@ -39,15 +39,15 @@ class ExecutorWrapupGatingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(fake_run_conversation.call_args.kwargs.get("enable_wrapup", True))
 
     async def test_openai_executor_withholds_status_tool_when_snapshot_is_present(self):
+        from app import combat
         from app.agents import executor
-        from app.models import Combatant, CombatState
+        from app.models import Character
 
         state = GroupState(group_id="g")
-        state.combat = CombatState(
-            active=True,
-            round_number=1,
-            order=[Combatant(name="Investigator", dex=70, hp=10, hp_max=10, is_pc=True)],
-        )
+        investigator = Character(name="Investigator", owner_id="u1", dex=70)
+        state.characters["u1"] = investigator
+        state.set_active_character("u1", investigator.character_id)
+        combat.begin_combat(state)
         message = AgentMessage(payload={
             "state": state,
             "text": "我攻擊怪物",

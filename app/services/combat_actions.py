@@ -1,8 +1,8 @@
 """What can be asked of a battle: the actions ``CombatEngine.handle`` accepts.
 
 Each action is a frozen record of the caller's intent and nothing else: the
-state it runs on is passed to ``handle``, and the mode of the battle (idle,
-legacy, managed) is read once there. The type parameter is the result type, so
+state it runs on is passed to ``handle``, and the mode of the battle (idle
+or managed) is read once there. The type parameter is the result type, so
 ``engine.handle(state, Run(action_id="a1"))`` is a ``dict`` and
 ``engine.handle(state, RollPending(...))`` is a ``SkillCheckResult``.
 
@@ -345,12 +345,4 @@ class ReconcileBaseline(Action[Result]):
     character: Character
     event_id: str
     decision: str
-    reason: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class CloseLegacy(Action[Result]):
-    """Explicitly close a battle saved before the pipeline, without guessing its baseline."""
-
-    event_id: str
     reason: str

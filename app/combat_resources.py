@@ -31,11 +31,11 @@ RESOURCE_FIELDS = ('hp', 'hp_max', 'luck', 'san', 'san_max', 'mp', 'mp_max',
                    'weapons', 'weapon_instances', 'status_tags', 'injury')
 
 
-LEGACY_NEEDS_ADMISSION = 'Legacy active combat needs explicit admission, not baseline reconstruction'
+UNSUPPORTED_COMBAT_FORMAT = 'This combat was created by an unsupported legacy combat format. Start a new combat.'
 
 
 class CombatAdmissionError(ValueError):
-    """A legacy/malformed/unclosed battle needs explicit controller admission."""
+    """A malformed, unsupported or unclosed battle cannot be admitted as it is."""
 
 
 class SettlementConflict(ValueError):
@@ -93,7 +93,7 @@ def initialize_working_state(state: GroupState, *, combat_id: str | None = None,
             raise CombatAdmissionError('Another combat is already unclosed')
         return managed
     if combat.active and not new_combat:
-        raise CombatAdmissionError(LEGACY_NEEDS_ADMISSION)
+        raise CombatAdmissionError(UNSUPPORTED_COMBAT_FORMAT)
     if combat.baseline_resources or combat.combat_id:
         raise CombatAdmissionError('Unclosed combat metadata cannot be replaced')
     participants = []

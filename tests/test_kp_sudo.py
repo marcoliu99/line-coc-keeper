@@ -14,9 +14,10 @@ sys.modules.setdefault(
     ),
 )
 
+from app import combat, combat_resources
 from app.commands import router
 from app.commands.sudo import parse_sudo_command
-from app.models import Character, Combatant, CombatState, EffectState, GroupState
+from app.models import Character, EffectState, GroupState
 from tests import combat_calls as calls
 from tests.state_store import StateStorePatch
 
@@ -97,19 +98,7 @@ class SudoStateTests(unittest.TestCase):
         state.characters.update({"p1": first, "p2": second})
         state.set_active_character("p1", first.character_id)
         state.set_active_character("p2", second.character_id)
-        state.combat = CombatState(
-            active=True,
-            round_number=1,
-            order=[
-                Combatant(name=first.name, dex=first.dex, hp=first.hp, hp_max=first.hp_max,
-                          is_pc=True, side="pc", character_id=first.character_id,
-                          combatant_id=f"pc:{first.character_id}"),
-                Combatant(name=second.name, dex=second.dex, hp=second.hp, hp_max=second.hp_max,
-                          is_pc=True, side="pc", character_id=second.character_id,
-                          combatant_id=f"pc:{second.character_id}"),
-            ],
-            current_index=0,
-        )
+        combat.begin_combat(state)
         retired_id = f"pc:{first.character_id}"
         survivor_id = f"pc:{second.character_id}"
         state.combat.plans = {
@@ -134,23 +123,6 @@ class SudoStateTests(unittest.TestCase):
         self.assertEqual([effect.id for effect in state.combat.effects], ["keep-effect"])
         self.assertEqual(state.combat.range_bands, {f"enemy:2:{survivor_id}": "near"})
 
-    def test_retire_cleans_legacy_combat_entry_without_character_id(self):
-        state = GroupState(group_id="g")
-        character = Character(name="小明", owner_id="p1")
-        state.characters["p1"] = character
-        state.set_active_character("p1", character.character_id)
-        state.combat = CombatState(
-            active=True,
-            round_number=1,
-            order=[Combatant(name="小明", dex=50, hp=10, hp_max=10, is_pc=True, side="pc")],
-            current_index=0,
-        )
-
-        calls.retire_active_character(state, "p1", "小明")
-
-        self.assertEqual(state.combat.order, [])
-        self.assertFalse(state.combat.active)
-
     def test_retire_current_turn_skips_away_and_processes_next_turn_start(self):
         state = GroupState(group_id="g")
         first = Character(name="小明", owner_id="p1", dex=70)
@@ -163,29 +135,24 @@ class SudoStateTests(unittest.TestCase):
         first_id = f"pc:{first.character_id}"
         away_id = f"pc:{away.character_id}"
         next_id = f"pc:{next_player.character_id}"
-        state.combat = CombatState(
-            active=True,
-            round_number=1,
-            order=[
-                Combatant(name=first.name, dex=first.dex, hp=first.hp, hp_max=first.hp_max,
-                          is_pc=True, side="pc", character_id=first.character_id,
-                          combatant_id=first_id),
-                Combatant(name=away.name, dex=away.dex, hp=away.hp, hp_max=away.hp_max,
-                          is_pc=True, side="pc", character_id=away.character_id,
-                          combatant_id=away_id),
-                Combatant(name=next_player.name, dex=next_player.dex, hp=next_player.hp,
-                          hp_max=next_player.hp_max, is_pc=True, side="pc",
-                          character_id=next_player.character_id, combatant_id=next_id),
-            ],
-            current_index=0,
-            effects=[EffectState(id="next-turn", label="毒", target_id=next_id, timing="turn_start", damage="3")],
-        )
+        away.away = False
+        combat.begin_combat(state)
+        away.away = True
+        state.combat.effects = [
+            EffectState(
+                id="next-turn", label="毒", target_id=next_id, timing="turn_start", damage="3",
+                save_or_check={"rule_source": {"rule": "poison"}, "severity_id": "minor"},
+            )
+        ]
+        self.assertEqual([item.combatant_id for item in state.combat.order], [first_id, away_id, next_id])
 
         calls.retire_active_character(state, "p1", first.name)
 
         self.assertEqual(state.combat.order[state.combat.current_index].combatant_id, next_id)
         self.assertEqual(state.combat.order[state.combat.current_index].hp, 7)
-        self.assertEqual(state.characters_by_id[next_player.character_id].hp, 7)
+        # Managed combat keeps hit points provisional until settlement.
+        self.assertEqual(combat_resources.effective_character(state, next_player).hp, 7)
+        self.assertEqual(next_player.hp, 10)
         self.assertTrue(any("turn_start" in key for key in state.combat.processed_timings))
 
     def test_retire_current_turn_wraps_round_before_next_turn_start(self):
@@ -198,19 +165,10 @@ class SudoStateTests(unittest.TestCase):
 
         first_id = f"pc:{first.character_id}"
         next_id = f"pc:{next_player.character_id}"
-        state.combat = CombatState(
-            active=True,
-            round_number=1,
-            order=[
-                Combatant(name=next_player.name, dex=next_player.dex, hp=next_player.hp,
-                          hp_max=next_player.hp_max, is_pc=True, side="pc",
-                          character_id=next_player.character_id, combatant_id=next_id),
-                Combatant(name=first.name, dex=first.dex, hp=first.hp, hp_max=first.hp_max,
-                          is_pc=True, side="pc", character_id=first.character_id,
-                          combatant_id=first_id),
-            ],
-            current_index=1,
-        )
+        first.dex, next_player.dex = 60, 70
+        combat.begin_combat(state)
+        state.combat.current_index = 1
+        self.assertEqual([item.combatant_id for item in state.combat.order], [next_id, first_id])
 
         calls.retire_active_character(state, "p1", first.name)
 
@@ -230,20 +188,14 @@ class SudoStateTests(unittest.TestCase):
 
         away_id = f"pc:{away.character_id}"
         current_id = f"pc:{current.character_id}"
-        state.combat = CombatState(
-            active=True,
-            round_number=3,
-            order=[
-                Combatant(name=away.name, dex=away.dex, hp=away.hp, hp_max=away.hp_max,
-                          is_pc=True, side="pc", character_id=away.character_id,
-                          combatant_id=away_id),
-                Combatant(name=current.name, dex=current.dex, hp=current.hp, hp_max=current.hp_max,
-                          is_pc=True, side="pc", character_id=current.character_id,
-                          combatant_id=current_id),
-            ],
-            current_index=1,
-            effects=[EffectState(id="round-end", label="毒", timing="round_end", remaining_rounds=2)],
-        )
+        away.away = False
+        combat.begin_combat(state)
+        away.away = True
+        state.combat.round_number = 3
+        state.combat.current_index = 1
+        state.combat.processed_timings = []
+        state.combat.effects = [EffectState(id="round-end", label="毒", timing="round_end", remaining_rounds=2)]
+        self.assertEqual([item.combatant_id for item in state.combat.order], [away_id, current_id])
 
         calls.retire_active_character(state, "p2", current.name)
 

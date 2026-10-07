@@ -683,77 +683,6 @@ def apply_combat_damage(
     )
 
 
-def apply_legacy_damage(
-    state: GroupState,
-    target_name: str,
-    raw_damage: int,
-    *,
-    damage_type: str = "physical",
-    tags: list[str] | None = None,
-    source_id: str = "",
-    bypass_armor: bool = False,
-    entry_point: str = "apply_combat_damage",
-    event_id: str = "",
-) -> dict[str, Any]:
-    """Immediate-persistence damage of a battle saved before the working-resource pipeline."""
-    combatant = find_combatant(state, target_name)
-    if not combatant:
-        return {"ok": False, "error": f"戰鬥中找不到「{target_name}」"}
-    blocked = major_wound_block_for(
-        state, target_name, raw_damage, damage_type=damage_type, tags=tags, bypass_armor=bypass_armor
-    )
-    if blocked:
-        return major_wound_blocked(state, *blocked, entry_point=entry_point)
-    card = card_for(state, combatant)
-    armor, armor_label, final = planned_damage(state, combatant, raw_damage, damage_type, tags or [], bypass_armor)
-    before = combatant.hp
-    after = max(0, before - final)
-    combatant.hp = after
-    combatant.defeated = after <= 0
-    if card:
-        card.hp = after
-        card.status_tags = [t for t in card.status_tags if t]
-        if final > 0 and damage_taken_trigger_tag() not in card.status_tags:
-            card.status_tags.append(damage_taken_trigger_tag())
-    sync_pc_hp(state, combatant)
-    major_wound_check = _resolve_major_wound_check(state, combatant, final, after)
-    state.last_combat_report = {
-        "timeline_id": state.timeline_id,
-        "scenario_library_id": state.scenario_library_id,
-        "scenario_title": state.scenario_title,
-        "last_damage": {
-            "target": combatant.display_name,
-            "side": combatant.side,
-            "final_damage": final,
-            "hp_before": before,
-            "hp_after": after,
-            "defeated": combatant.defeated,
-        },
-    }
-    return {
-        "ok": True,
-        "name": combatant.display_name,
-        "target": combatant.display_name,
-        "target_id": combatant.combatant_id,
-        "side": combatant.side,
-        "raw_damage": raw_damage,
-        "damage_type": damage_type,
-        "armor_reduction": armor,
-        "armor_label": armor_label,
-        "weakness_bonus": 0,
-        "final_damage": final,
-        "hp_before": before,
-        "hp_after": after,
-        "hp": after,
-        "hp_max": combatant.hp_max,
-        "major_wound_triggered": major_wound_check is not None,
-        "major_wound_check": major_wound_check,
-        "defeated": combatant.defeated,
-        "public_summary": f"{combatant.display_name} 受到 {final} 點傷害" + ("（部分傷害被擋下）" if armor else ""),
-        "private_notes": f"raw={raw_damage}, armor={armor_label or '-'}:{armor}, source={source_id}",
-    }
-
-
 def damage_combatant(state: GroupState, name: str, delta: int, *, ops: ModeOps) -> dict:
     combatant = find_combatant(state, name)
     if not combatant:
@@ -1014,86 +943,6 @@ def process_timing(state: GroupState, timing: str, target_id: str = "", *, ops: 
     More effect types can be added without changing the turn-order API.
     """
     return ops.process_timing(state, timing, target_id)
-
-
-def process_legacy_timing(state: GroupState, timing: str, target_id: str = "") -> list[dict[str, Any]]:
-    key = timing_key(state, timing, target_id)
-    if key in state.combat.processed_timings:
-        return []
-
-    results: list[dict[str, Any]] = []
-    remaining: list[EffectState] = []
-    timing_failed = False
-    for effect in state.combat.effects:
-        applies = effect.timing == timing and (
-            not target_id or effect.target_id == target_id or effect.target_id == "__all__"
-        )
-        effect_key = f"{key}:effect:{effect.id}"
-        if applies and effect_key in state.combat.processed_timings:
-            remaining.append(effect)
-            continue
-        applied = False
-        if applies and effect.damage:
-            try:
-                raw = resolve_effect_damage(effect.damage)
-            except ValueError as exc:
-                results.append({
-                    "ok": False,
-                    "effect_id": effect.id,
-                    "target_id": effect.target_id,
-                    "error": f"無法解析效果傷害：{exc}",
-                })
-                timing_failed = True
-            else:
-                targets = (
-                    [combatant.combatant_id for combatant in state.combat.order if not combatant.defeated]
-                    if effect.target_id == "__all__"
-                    else [effect.target_id]
-                )
-                # Check every target before damaging any: refusing the second
-                # of two targets after damaging the first would leave the
-                # effect unprocessed, and the retry would hit the first twice.
-                blocked = [
-                    (target, block)
-                    for target in targets
-                    if (block := major_wound_block_for(
-                        state, target, raw, damage_type=effect.damage_type, tags=effect.tags
-                    ))
-                ]
-                if blocked:
-                    for target, block in blocked:
-                        result = major_wound_blocked(state, *block, entry_point="process_timing")
-                        result.update(effect_id=effect.id, target_id=target)
-                        results.append(result)
-                    timing_failed = True
-                else:
-                    applied = True
-                    for target in targets:
-                        result = apply_legacy_damage(
-                            state,
-                            target,
-                            raw,
-                            damage_type=effect.damage_type,
-                            tags=effect.tags,
-                            source_id=effect.source_id,
-                            entry_point="process_timing",
-                        )
-                        result["effect_id"] = effect.id
-                        results.append(result)
-                        if not result.get("ok"):
-                            applied = False
-                            timing_failed = True
-        elif applies:
-            applied = True
-        if applied:
-            state.combat.processed_timings.append(effect_key)
-            tick_effect(effect)
-        if effect.remaining_rounds is None or effect.remaining_rounds > 0:
-            remaining.append(effect)
-    state.combat.effects = remaining
-    if not timing_failed:
-        state.combat.processed_timings.append(key)
-    return results
 
 
 def _trigger_matches(ability: SpecialAbility, card: EnemyCombatCard, state: GroupState, target_id: str) -> bool:
@@ -1370,102 +1219,6 @@ def _apply_ability_effect(
     }
 
 
-def resolve_enemy_action(
-    state: GroupState,
-    plan_id: str,
-    outcome: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Resolve an enemy plan with a caller-supplied outcome (battles saved before the working-resource pipeline)."""
-    plan = state.combat.plans.get(plan_id)
-    if not plan:
-        return {"ok": False, "error": f"找不到行動計畫 {plan_id}"}
-    if plan.get("resolved"):
-        return {"ok": True, "plan_id": plan_id, "resolved": True, "already_resolved": True}
-    if (
-        plan.get("round_number") is not None
-        and plan.get("round_number") != state.combat.round_number
-    ) or (
-        plan.get("current_index") is not None
-        and plan.get("current_index") != state.combat.current_index
-    ):
-        return {"ok": False, "error": "行動計畫已經過期，請重新規劃敵人回合"}
-    current = (
-        state.combat.order[state.combat.current_index]
-        if 0 <= state.combat.current_index < len(state.combat.order)
-        else None
-    )
-    expected_combatant_id = plan.get("enemy_combatant_id")
-    if current is None or (
-        expected_combatant_id and current.combatant_id != expected_combatant_id
-    ) or (
-        not expected_combatant_id and current.enemy_card_id != plan.get("enemy_card_id")
-    ):
-        return {"ok": False, "error": "目前不是這個敵人的回合，行動計畫不能執行"}
-    card = state.combat.enemy_cards.get(plan["enemy_card_id"])
-    if not card:
-        return {"ok": False, "error": "行動計畫對應的敵人卡不存在"}
-    effect_result: dict[str, Any] = {"ok": True, "applied": False}
-    if plan["selected_action"] == "special_ability":
-        ability = next((a for a in card.abilities if a.id == plan["selected_id"]), None)
-        if not ability:
-            return {"ok": False, "error": "行動計畫對應的特殊能力不存在，請重新規劃"}
-        usage = ability.usage
-        if usage.get("per_combat") is not None and usage.get("used_total", 0) >= usage["per_combat"]:
-            return {"ok": False, "error": "特殊能力本場戰鬥的使用次數已耗盡"}
-        if usage.get("per_round") is not None and usage.get("used_this_round", 0) >= usage["per_round"]:
-            return {"ok": False, "error": "特殊能力本輪的使用次數已耗盡"}
-        if ability.current_cooldown > 0:
-            return {"ok": False, "error": "特殊能力仍在冷卻中"}
-        if ability.effect.get("on_success") == "apply_effect":
-            if outcome is None:
-                return {"ok": False, "error": "此特殊能力需要提供檢定結果 outcome"}
-            success = bool(outcome.get("success", outcome.get("passed", outcome.get("ok", False))))
-            if success:
-                effect_result = _apply_ability_effect(state, ability, plan.get("target_ids", []))
-                if not effect_result.get("ok"):
-                    return {"ok": False, "error": effect_result["error"]}
-        ability.usage["used_total"] = ability.usage.get("used_total", 0) + 1
-        ability.usage["used_this_round"] = ability.usage.get("used_this_round", 0) + 1
-        ability.current_cooldown = ability.cooldown_rounds
-        trigger_type = (ability.trigger or {}).get("type")
-        if trigger_type == "round_start":
-            card.status_tags = [tag for tag in card.status_tags if tag != _round_start_trigger_tag(ability.id)]
-        elif trigger_type == "on_damage_taken":
-            card.status_tags = [tag for tag in card.status_tags if tag != damage_taken_trigger_tag()]
-    elif plan["selected_action"] == "attack":
-        attack = next((item for item in card.attacks if item.id == plan.get("selected_id")), None)
-        if not attack:
-            return {"ok": False, "error": "行動計畫對應的攻擊不存在，請重新規劃"}
-        target_id = next((item for item in plan.get("target_ids", []) if any(
-            combatant.combatant_id == item and not is_skippable(state, combatant)
-            for combatant in state.combat.order
-        )), "")
-        if not target_id:
-            return {"ok": False, "error": "攻擊目標已無法行動，請重新規劃"}
-        if outcome is None:
-            return {"ok": False, "error": "攻擊需要提供正式檢定結果 outcome"}
-        hit = bool(outcome.get("hit", outcome.get("success", outcome.get("ok", False))))
-        if hit:
-            raw_damage = outcome.get("damage", outcome.get("raw_damage"))
-            if not isinstance(raw_damage, int) or raw_damage < 0:
-                return {"ok": False, "error": "命中攻擊需要非負整數 damage"}
-            effect_result = apply_legacy_damage(
-                state,
-                target_id,
-                raw_damage,
-                damage_type=outcome.get("damage_type", "physical"),
-                tags=outcome.get("tags") or [],
-                source_id=attack.id,
-                entry_point="resolve_enemy_action",
-            )
-            if not effect_result.get("ok"):
-                return effect_result
-        else:
-            effect_result = {"ok": True, "applied": False, "hit": False}
-    plan["resolved"] = True
-    return {"ok": True, "plan_id": plan_id, "resolved": True, "effect": effect_result}
-
-
 class TimingBlocked(Exception):
     """A fixed-timing effect was refused for a blocked major wound."""
 
@@ -1475,14 +1228,10 @@ class TimingBlocked(Exception):
 
 
 class ModeOps(Protocol):
-    """The steps of a turn and of damage that differ between the two battle modes.
+    """The steps of a turn and of damage that belong to the working-resource pipeline.
 
-    A battle runs either under the working-resource pipeline ("managed", every
-    battle started today) or as an old save with immediate persistence
-    ("legacy"). The combat engine picks the implementation **once**, when an
-    action arrives, and passes it down; the rules below never ask which mode
-    they are in. ``LEGACY_OPS`` is this module's; the managed one lives with the
-    pipeline in ``combat_flow``.
+    The rules below never ask which mode they are in; the combat engine passes
+    the implementation down. The only one is ``combat_flow.MANAGED_OPS``.
     """
 
     def process_timing(self, state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]: ...
@@ -1518,57 +1267,7 @@ class ModeOps(Protocol):
 
 
 class ModeMismatch(RuntimeError):
-    """A battle was handed to the rules of the other mode; it must go through the combat engine."""
-
-
-def _require_legacy(state: GroupState) -> None:
-    if combat_resources.is_managed(state):
-        raise ModeMismatch("a managed battle must be handled through the combat engine")
-
-
-class LegacyOps:
-    """Battles saved before the working-resource pipeline: immediate persistence, no pending waits."""
-
-    def process_timing(self, state: GroupState, timing: str, target_id: str) -> list[dict[str, Any]]:
-        _require_legacy(state)
-        return process_legacy_timing(state, timing, target_id)
-
-    def apply_damage(
-        self, state: GroupState, target_name: str, raw_damage: int, *, damage_type: str,
-        tags: list[str] | None, source_id: str, bypass_armor: bool, entry_point: str, event_id: str,
-    ) -> dict[str, Any]:
-        _require_legacy(state)
-        return apply_legacy_damage(
-            state, target_name, raw_damage, damage_type=damage_type, tags=tags, source_id=source_id,
-            bypass_armor=bypass_armor, entry_point=entry_point, event_id=event_id,
-        )
-
-    def sync_hp(self, state: GroupState, combatant: Combatant) -> None:
-        _require_legacy(state)
-        sync_pc_hp(state, combatant)
-
-    def refuse_planning(self, state: GroupState) -> dict[str, Any] | None:
-        _require_legacy(state)
-        return None
-
-    def refuse_advance(self, state: GroupState) -> dict[str, Any] | None:
-        _require_legacy(state)
-        return None
-
-    def round_wrapped(self, state: GroupState) -> None:
-        return None
-
-    def check_timing_result(self, result: dict[str, Any]) -> None:
-        return None
-
-    def after_timing(self, state: GroupState) -> None:
-        return None
-
-    def keep_rolls(self, restored: GroupState, snapshot: dict[str, Any], retained_rolls: dict[str, Any]) -> None:
-        return None
-
-
-LEGACY_OPS: ModeOps = LegacyOps()
+    """An unmanaged battle was handed to the managed rules; it must go through the combat engine."""
 
 
 def _process_timing_or_stop(state: GroupState, timing: str, ops: ModeOps, target_id: str = "") -> None:
@@ -1680,7 +1379,7 @@ def _advance_turn(state: GroupState, ops: ModeOps) -> dict:
 def end_combat(state: GroupState) -> dict[str, Any] | None:
     """Leave an idle battle slot empty; a battle that is still running needs explicit closure."""
     if state.combat.active:
-        raise combat_resources.CombatAdmissionError('Legacy combat requires explicit controller closure')
+        raise combat_resources.CombatAdmissionError(combat_resources.UNSUPPORTED_COMBAT_FORMAT)
     state.combat = CombatState()
     return None
 
@@ -1740,26 +1439,3 @@ def status_text(state: GroupState, include_private: bool = False, *, provisional
                 line += "（戰鬥卡未完整）"
         lines.append(line)
     return "\n".join(lines)
-
-
-def close_legacy_combat(state: GroupState, *, event_id: str, reason: str) -> dict[str, Any]:
-    """Controller explicitly closes old immediate-persistence history without guessing baselines."""
-    for receipt in state.closed_combat_receipts.values():
-        if receipt.get('legacy_close_event_id') == event_id:
-            return dict(receipt)
-    if not state.combat.active or combat_resources.is_managed(state) or not event_id or not reason.strip():
-        raise combat_resources.CombatAdmissionError('Explicit legacy closure requires an old active battle and reason')
-    owners = {c.owner_id for c in active_characters(state)}
-    if owners & (state.pending_checks.keys() | state.pending_luck_decisions.keys()):
-        raise combat_resources.CombatAdmissionError('Resolve legacy pending checks and Luck before closure')
-    identity = f'legacy-closed:{event_id}'
-    receipt = {'combat_id': identity, 'legacy_close_event_id': event_id, 'status': 'legacy_closed',
-               'reason': reason, 'legacy_state': state.combat.to_dict()}
-    state.closed_combat_receipts[identity] = receipt
-    state.last_combat_report = {'timeline_id': state.timeline_id,
-                               'scenario_library_id': state.scenario_library_id,
-                               'scenario_title': state.scenario_title, 'ended': True,
-                               'combatants': [{'name': p.display_name, 'side': p.side, 'defeated': p.defeated,
-                                               'hp': p.hp, 'hp_max': p.hp_max} for p in state.combat.order]}
-    state.combat = CombatState()
-    return receipt

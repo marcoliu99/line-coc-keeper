@@ -14,21 +14,21 @@ Before this change `combat.py` and `combat_flow.py` imported each other (four fu
 Keeper tools (keeper_tools/combat.py, managed_combat.py)   /coc combat   check adapter   retire flow
                           \                                    |              |            /
                            app/services/combat_engine.py   CombatEngine.handle(state, action)
-                               |  reads the mode once: IDLE / LEGACY / MANAGED
+                               |  reads the mode once: IDLE / MANAGED (an active battle that is not managed is refused)
                                +--> combat_flow.py   (MANAGED_OPS: receipts, owned waits, obligations)
-                               +--> combat.py        (LEGACY_OPS: immediate persistence; shared primitives)
+                               +--> combat.py        (shared primitives and rules)
                                          \               /
                                           combat_resources.py (leaf: working resources, settlement)   combat_rules.py (leaf: pure rules)
 ```
 
 * `app/services/combat_actions.py` — one frozen dataclass per thing that can be asked of a battle (`Declare`, `Run`, `Choose`, `Advance`, `ApplyDamage`, `PreviewSettlement`, …). The type parameter is the result type. An action carries intent and stable identities, never a die result.
-* `app/services/combat_engine.py` — `CombatEngine.handle(state, action)`. `mode_of(state)` is called once per action; the handler gets the mode and uses `combat_flow.MANAGED_OPS` or `combat.LEGACY_OPS` for the rules that differ per mode. A managed-only action in `IDLE` refuses without writing; in `LEGACY` it raises the admission error it always raised.
-* `combat.ModeOps` — the steps of a turn that differ by mode: fixed timings, damage, hit-point sync, the advance and planning guards, the round clock, restoring a blocked advance. The rules take it as a required argument; they no longer ask which mode they are in (reads of the flag in `combat.py`: 15 → 2, a guard against the wrong ops and the explicit legacy closure).
+* `app/services/combat_engine.py` — `CombatEngine.handle(state, action)`. `mode_of(state)` is called once per action; the handler gets the mode and passes `combat_flow.MANAGED_OPS` to the shared rules. A managed-only action in `IDLE` refuses without writing; an active battle that is not managed raises `CombatAdmissionError` ("unsupported legacy combat format. Start a new combat.") before any handler runs.
+* `combat.ModeOps` — the steps of a turn that belong to the working-resource pipeline: fixed timings, damage, hit-point sync, the advance and planning guards, the round clock, restoring a blocked advance. The rules take it as a required argument; they never ask which mode they are in (`combat.py` no longer reads the flag at all).
 * The layers are checked as an import graph (lazy imports included): `combat_rules` and `combat_resources` are leaves; `combat` reaches only `combat_resources`; `combat_flow` builds on `combat`; only the engine imports `combat_flow`. `app.models` no longer reaches combat code: `GroupState.retire_active_character` takes the turn finisher as an argument.
 
 ## Contract kept
 
-1. **Modes.** A battle started today is managed. A battle saved before the working-resource pipeline stays legacy: it can be looked at, planned and advanced, is never converted, and refuses managed actions. (The `close_legacy_combat` tool that used to close one explicitly is no longer in the Keeper's tool list; see [an enemy attacks through the combat engine](../bug/enemy_attack_through_combat_engine_design_spec.md).) Both load, serialise and continue.
+1. **Modes.** Every battle is managed. A battle saved before the working-resource pipeline is no longer supported: it is never converted or guessed at, and every action on it is refused (see [removing the legacy combat mode](remove_legacy_combat_mode_design_spec.md)).
 2. **Atomic actions.** One state transaction wraps an action, including the check it waits on, resource changes and settlement entries. An action that needs a person's answer returns with that wait saved (`PLAYER_CHOICE`, `PLAYER_ROLL`, `INJURY_CHECK`, `LUCK_DECISION`); the answer arrives as a new action carrying the same identity.
 3. **No double settlement.** Damage, ammunition, effects and turn advance are keyed by stable ledger ids (`action_id`, `event_id`). A retry, a double click, or the same hit sent through an old tool and the new entry replays the stored receipt.
 4. **Player choices are never made for the player**: defence, Luck, weapon and consumable stay the player's; autoroll stays off by default.
@@ -38,7 +38,7 @@ Timing points (declaration, ammunition, malfunction, cancellation, weapon change
 
 ## Compatibility
 
-Tool names, schemas and outputs (except that `offer_npc_attack_defense_choice` and `close_legacy_combat` have been removed from the Keeper's tools), Discord custom ids, command text and stored combat shapes are unchanged; existing saves need no migration. The raw-outcome tools (`apply_combat_damage`, `damage_combatant`, …) still refuse while a battle runs. `app.combat.apply_managed_damage`, `managed_single_hit` and `is_managed` moved (to `combat_flow` and `combat_resources`); no code in this repository imports them from the old place.
+Tool names, schemas and outputs (except that `offer_npc_attack_defense_choice` and `close_legacy_combat` have been removed from the Keeper's tools), Discord custom ids, command text and stored combat shapes are unchanged; a saved battle from before the working-resource pipeline is refused, not migrated. The raw-outcome tools (`apply_combat_damage`, `damage_combatant`, …) still refuse while a battle runs. `app.combat.apply_managed_damage`, `managed_single_hit` and `is_managed` moved (to `combat_flow` and `combat_resources`); no code in this repository imports them from the old place.
 
 ## Verification
 
