@@ -70,9 +70,8 @@ def defense_choice_hint(check: dict) -> str:
 
     Only applies once attacker_tier is already known, which is true for
     melee (rolled up front) but never true for a ranged choice at this
-    point — a ranged offer_npc_attack_defense_choice defers the attacker's
-    shot until the player's own dive-for-cover roll is in (see keeper.py's
-    is_ranged branch), so this naturally returns "" there; a "threshold to
+    point — a ranged attack defers the attacker's
+    shot until the player's own dive-for-cover roll is in, so this naturally returns "" there; a "threshold to
     beat" wouldn't even make sense for ranged since dodging it isn't a tier
     comparison in the first place (§2).
 
@@ -101,10 +100,8 @@ def defense_choice_hint(check: dict) -> str:
         if is_counter and needed_rank <= dice.TIER_RANK["fail"]:
             needed_rank = dice.TIER_RANK["regular"]
         if needed_rank >= len(_TIER_ORDER):
-            # A Fight Back option against a Critical attacker is filtered out
-            # server-side before this ever renders (see keeper.py's
-            # offer_npc_attack_defense_choice) — this is just a defensive
-            # skip in case that invariant is ever violated, not an expected path.
+            # No success level beats a Critical attacker, so a Fight Back option
+            # has no threshold to show: leave its hint line out.
             continue
         needed_tier = _TIER_ORDER[needed_rank]
         threshold = tier_percentage_hint(needed_tier, o["skill_value"])

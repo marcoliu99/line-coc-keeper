@@ -2368,7 +2368,10 @@
       "status": "implemented",
       "evidence": [
         "app/prompt_builder.py",
-        "app/keeper_tools/registry.py"
+        "app/keeper_tools/registry.py",
+        "app/keeper_tools/checks.py",
+        "app/keeper_tools/managed_combat.py",
+        "tests/test_npc_attack_latency.py"
       ],
       "path": "docs/specs/bug/enemy_attack_through_combat_engine_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_attack_through_combat_engine_design_spec_zh.md",

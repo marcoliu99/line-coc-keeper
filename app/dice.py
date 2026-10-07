@@ -216,7 +216,7 @@ TIER_ZH = {
 
 
 def is_counter_option(option: dict) -> bool:
-    """Whether a defense-choice option (offer_npc_attack_defense_choice /
+    """Whether a defense-choice option (a managed-combat defense interaction /
     offer_check_choice's {label, skill, ..., kind?} dict) represents Fight
     Back, as opposed to Dodge.
 

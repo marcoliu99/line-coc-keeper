@@ -511,7 +511,7 @@ def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     assert battle.effective().status_tags == []
 
 
-def test_legacy_active_history_requires_explicit_closure_without_guessed_baseline(battle):
+def test_legacy_active_history_is_never_run_without_a_guessed_baseline(battle):
     old = battle.load()
     old.characters_by_id['char:ada'].hp = 7
     old.characters['player'].hp = 7
@@ -523,15 +523,6 @@ def test_legacy_active_history_requires_explicit_closure_without_guessed_baselin
     with pytest.raises(combat_resources.CombatAdmissionError, match='No safely admitted combat working state'):
         battle.tool('preview_combat_settlement')
     assert battle.load().to_dict() == before
-    closed = battle.tool('close_legacy_combat', {'event_id': 'legacy:close',
-                         'reason': 'controller explicitly closes already committed historical tracker'})
-    assert closed['status'] == 'legacy_closed'
-    reloaded = battle.load()
-    assert not reloaded.combat.active
-    assert reloaded.characters_by_id['char:ada'].hp == 7
-    audit = reloaded.closed_combat_receipts['legacy-closed:legacy:close']['legacy_state']
-    assert audit['round_number'] == 4
-    assert audit['baseline_resources'] == {}
 
 
 def test_bot_diagnostics_expose_usable_ids_without_enemy_hp_in_player_status(battle):
@@ -776,7 +767,6 @@ def test_active_keeper_prompts_follow_managed_source_runner_and_settlement(battl
     assert 'never duplicate' in static
     assert 'owned choice/check/Luck controls' in dynamic
     assert 'manual rolls remain' in dynamic
-    assert 'legacy active snapshot' in dynamic
 
 
 @pytest.mark.parametrize('role', ['attack', 'defense', 'defense_choice', 'injury', 'medical', 'counter',

@@ -24,3 +24,11 @@
 ## 測試
 
 沒有：這是提示用字。驗證方式是實跑：敵人甦醒就攻擊時，會先 `initialize_combat`，傷害確實落在目標的 HP 上。
+
+## 後續：移除兩個較舊的工具
+
+在 managed 流程之前存下的戰鬥已經沒有需要保留的（專案負責人確認），所以上面的文字修正，對造成問題的兩個工具改成直接移除：
+
+- `offer_npc_attack_defense_choice`（較舊的 NPC 攻擊與防守檢定）和 `close_legacy_combat` 不再出現在 Keeper 的工具表裡，它們的處理函式，以及只測它們的測試都已刪除。Keeper 不會再在戰鬥還不存在時就結算敵人攻擊，也不會再去關閉舊版戰鬥。
+- `offer_check_choice`、`npc_skill_check`、`clear_pending_check` 的說明和提示，不再指向被移除的工具。被移除的舊工具原本會在攻擊者大成功時拿掉「反擊」選項；managed 戰鬥自己的防守選擇現在也這樣做（見[大成功攻擊下，防守方不再有「反擊」選項](no_fight_back_against_critical_design_spec_zh.md)）。`offer_check_choice` 也不再接受 `attacker_tier`（舊的兩步流程的第二步），傳了會被拒絕，所以對 NPC 攻擊的防守選擇只會來自戰鬥引擎。
+- 保留：檢定引擎裡的閃避與反擊機制（managed 戰鬥自己的防守選擇也在用）、以及 `combat.py`、`combat_engine.py` 裡的舊版戰鬥模式。移除那個模式會牽動 `combat.py`、`combat_engine.py` 裡約 250 到 300 行只給舊版用的程式碼，以及許多靠這個模式建戰鬥的測試，是另一項工作，另以報告評估。
