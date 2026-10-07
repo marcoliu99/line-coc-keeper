@@ -540,6 +540,7 @@ def test_a_managed_action_on_an_idle_conversation_refuses_instead_of_inventing_a
         act.RunEffect("e1"),
         act.SingleHit(character=investigator, damage=1, event_id="h1", reason="r"),
         act.SetInitiative(combat_id="", actor_ids=[], event_id="e", reason="r"),
+        act.ApplyDamage(target="x", raw_damage=3),
     ):
         assert combat_engine.handle(state, action) == {"ok": False, "error": combat_engine.NO_BATTLE}
     assert not state.combat.active and not state.combat.combat_id

@@ -189,7 +189,7 @@ def _check_result(state: GroupState, action: act.CheckResult, mode: Mode) -> dic
 
 
 def _apply_damage(state: GroupState, action: act.ApplyDamage, mode: Mode) -> dict[str, Any]:
-    return combat.apply_combat_damage(
+    return _live_managed(state, mode) or combat.apply_combat_damage(
         state, action.target, action.raw_damage, ops=combat_flow.MANAGED_OPS, damage_type=action.damage_type,
         tags=action.tags, source_id=action.source_id, bypass_armor=action.bypass_armor,
         entry_point=action.entry_point, event_id=action.event_id,
