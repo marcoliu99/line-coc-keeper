@@ -6,7 +6,7 @@ In a Haunting run the rat pack was already down and the Keeper had called `previ
 
 ## Change
 
-While the battle is in the `SETTLEMENT` phase, `advance_combat` and `declare_action` refuse before changing anything. The refusal says the battle is over and names the step to take: `confirm_combat_settlement` with the pending `settlement_id` (also returned as a field), or `rollback_combat`. A retried advance that was already recorded still replays its stored result.
+While the battle is in the `SETTLEMENT` phase, `advance_combat`, `declare_action`, NPC planning (`plan_enemy_turn`) and running an NPC plan (`run_enemy_plan`) refuse before changing anything. The refusal says the battle is over and names the step to take: `confirm_combat_settlement` with the pending `settlement_id` (also returned as a field), or `rollback_combat`. A retried advance that was already recorded still replays its stored result.
 
 ## Not done
 
@@ -14,4 +14,4 @@ Settling is still the Keeper's call; nothing confirms a preview on its own. Othe
 
 ## Tests
 
-`tests/test_combat_flow.py`: with a preview pending, advancing and declaring are refused with the settlement id, the round and revision do not move, and the same preview then commits.
+`tests/test_combat_flow.py`: with a preview pending, advancing, declaring, planning an NPC turn and running its plan are refused with the settlement id, the round and revision do not move, and the same preview then commits.
