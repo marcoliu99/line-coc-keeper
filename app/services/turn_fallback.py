@@ -88,6 +88,8 @@ def combat_guidance(state: GroupState, reason: str | None) -> str:
             or any(not action.get("completed") for action in battle.actions.values())):
         return "戰鬥暫停中，還有尚未完成的檢定或選擇；請先完成它（按檢定按鈕或輸入 /coc check），才能繼續。"
     current = battle.order[min(battle.current_index, len(battle.order) - 1)]
+    if current.defeated:
+        return f"「{current.display_name}」已經倒下，等守密人推進到下一位。"
     if any(action.get("actor_id") == current.combatant_id and action.get("completed")
            and action.get("round") == battle.round_number for action in battle.actions.values()):
         return f"「{current.display_name}」這一輪已經行動完畢，等守密人推進到下一位。"

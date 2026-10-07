@@ -503,3 +503,14 @@ def test_a_luck_wait_names_the_luck_control_and_an_evidence_hold_keeps_its_own_w
                    check_status={"tool_called": False, "pending": None, "scenario_evidence_blocked": True})
     reply = prompt_config.enforce_mechanic_check_consistency("narration", held, state=state)
     assert "劇本依據" in reply and "/coc luck" not in reply
+
+
+def test_a_defeated_current_actor_is_waiting_for_the_keeper_to_advance() -> None:
+    state = _state()
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=0, phase="READY",
+        order=[Combatant(name="小雨", side="pc", is_pc=True, combatant_id="pc:1", hp=0, hp_max=10, defeated=True),
+               Combatant(name="鼠群", side="enemy", hp=5, hp_max=5)],
+    )
+    text = turn_fallback.combat_guidance(state, "unsupported_action")
+    assert "已經倒下" in text and "請說明要對哪個目標" not in text

@@ -13,7 +13,7 @@ For the three reasons whose wording talks about the scenario (`no_scenario_evide
 * a ruling is pending (`NEEDS_RULING`): the battle is paused for the Keeper's ruling;
 * a Luck decision is open (`LUCK_DECISION`): use the Luck button or `/coc luck`;
 * a check or choice is still open (an open interaction, an unfinished action, or a phase other than ready): finish it first;
-* the current actor has already acted this round: waiting for the Keeper to advance;
+* the current actor is down, or has already acted this round: waiting for the Keeper to advance;
 * otherwise: whose turn it is ("現在輪到「X」行動"), and that the player should say which target and which action when their turn comes, or wait.
 
 Every other reason, and any turn outside a battle, keeps its wording; so does a turn held for incomplete scenario evidence, which keeps its own message.
