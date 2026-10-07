@@ -2429,11 +2429,13 @@
       "status": "implemented",
       "evidence": [
         "app/combat_flow.py",
-        "tests/test_combat_flow.py"
+        "app/combat_resources.py",
+        "tests/test_combat_flow.py",
+        "tests/test_combat_wiring.py"
       ],
       "path": "docs/specs/bug/settlement_preview_refuses_further_play_design_spec.md",
       "zh_path": "docs/specs/bug/settlement_preview_refuses_further_play_design_spec_zh.md",
-      "source_revision": "4dcfcf433515bce446c43aa4521e374765b81bd1"
+      "source_revision": "6813159a5eeea10c8f54e69ae98ce5efbc5dd797"
     }
   ]
 }

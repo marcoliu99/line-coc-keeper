@@ -727,3 +727,19 @@ def test_a_pending_settlement_preview_refuses_planning_and_running_an_enemy_turn
         assert 'confirm_combat_settlement' in refused['error']
     assert state.combat.revision == revision and state.combat.phase == 'SETTLEMENT'
     assert combat_resources.commit_settlement(state, settlement_id)['status'] == 'committed'
+
+
+def test_cancelling_a_settlement_preview_resumes_the_battle_and_replays_a_retry():
+    state, _, _enemy = battle(npc_first=True)
+    preview = combat_resources.get_settlement(state)
+    assert state.combat.phase == 'SETTLEMENT'
+    with pytest.raises(ValueError, match='reason'):
+        combat_resources.cancel_settlement(state, event_id='cancel:1', reason=' ')
+    receipt = combat_resources.cancel_settlement(state, event_id='cancel:1', reason='enemy still standing')
+    assert receipt['phase'] == 'READY' and state.combat.phase == 'READY' and not state.combat.settlement
+    assert combat_resources.cancel_settlement(state, event_id='cancel:1', reason='enemy still standing') == receipt
+    with pytest.raises(combat_resources.SettlementConflict):
+        combat_resources.commit_settlement(state, preview['settlement_id'])
+    assert combat.plan_enemy_turn(state, 'Cultist', ops=combat_flow.MANAGED_OPS)['ok']
+    with pytest.raises(combat_resources.CombatAdmissionError, match='no pending settlement preview'):
+        combat_resources.cancel_settlement(state, event_id='cancel:2', reason='nothing to cancel')

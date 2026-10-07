@@ -140,6 +140,13 @@ def rollback_combat(call: ToolCall) -> dict[str, Any]:
     )))
 
 
+def cancel_combat_preview(call: ToolCall) -> dict[str, Any]:
+    return _mutate(call, lambda state: combat_engine.handle(state, act.CancelSettlement(
+        combat_id=str(call.input.get('combat_id') or ''), event_id=call.input['event_id'],
+        reason=str(call.input.get('reason') or ''),
+    )))
+
+
 def correct_combat_event(call: ToolCall) -> dict[str, Any]:
     return _mutate(call, lambda state: combat_engine.handle(state, act.CorrectEvent(
         combat_id=str(call.input.get('combat_id') or ''), target_event_id=call.input['target_event_id'],

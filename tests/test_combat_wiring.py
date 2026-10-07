@@ -658,6 +658,22 @@ def test_public_initializer_opens_fresh_battle_after_closed_roster_and_preserves
     assert len([p for p in store['state'].combat.order if p.side == 'enemy']) == 1
 
 
+def test_keeper_can_cancel_a_premature_preview_and_settle_later(store):
+    assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
+    combat_id = store['state'].combat.combat_id
+    early = tool(store, 'preview_combat_settlement')
+    assert early['ok'] and store['state'].combat.phase == 'SETTLEMENT'
+    assert not tool(store, 'cancel_combat_preview', {'combat_id': 'other', 'event_id': 'c1', 'reason': 'early'})['ok']
+    cancelled = tool(store, 'cancel_combat_preview', {'combat_id': combat_id, 'event_id': 'c1', 'reason': 'enemy still up'})
+    assert cancelled['ok'] and cancelled['phase'] == 'READY'
+    again = tool(store, 'cancel_combat_preview', {'combat_id': combat_id, 'event_id': 'c1', 'reason': 'enemy still up'})
+    assert again['ok'] and again['receipt'] == cancelled['receipt']
+    late = tool(store, 'preview_combat_settlement')
+    assert late['ok'] and late['preview']['settlement_id'] != early['preview']['settlement_id']
+    assert tool(store, 'confirm_combat_settlement', {
+        'combat_id': combat_id, 'settlement_id': late['preview']['settlement_id'], 'reason': 'battle over'})['ok']
+
+
 def test_blocked_managed_advance_does_not_save_unchanged_state(store):
     actor = store['state'].combat.order[0].combatant_id
     before = normalized(store['state'])

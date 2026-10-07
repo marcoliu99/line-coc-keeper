@@ -41,8 +41,9 @@ def _settlement_pending(state: GroupState) -> dict[str, Any] | None:
         return None
     settlement_id = state.combat.settlement.get('settlement_id', '')
     return {'ok': False, 'settlement_id': settlement_id, 'error': (
-        'A settlement preview is pending; the battle is over. Call confirm_combat_settlement with this '
-        f'settlement_id ({settlement_id}), or rollback_combat. Advancing, declaring or running an NPC turn would make the preview stale.')}
+        'A settlement preview is pending. If the battle is over, call confirm_combat_settlement with settlement_id '
+        f'{settlement_id}. If it is not over yet, call cancel_combat_preview to go on fighting (rollback_combat '
+        'discards the whole battle). Advancing, declaring or running an NPC turn would make the preview stale.')}
 
 
 def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:

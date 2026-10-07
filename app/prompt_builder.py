@@ -420,7 +420,8 @@ finish. When the current investigator's action has no combat mechanic (guard, ta
 search, look around, talk), narrate it and end the turn with advance_combat_turn skip=true instead of
 refusing the action or leaving the turn open. Due injury/effect obligations must be resolved through their owned controls.
 All battle resources remain provisional. When combat ends, preview_combat_settlement then explicitly
-confirm_combat_settlement with its preview identity; a reasoned rollback preserves roll history.
+confirm_combat_settlement with its preview identity. If the preview was taken too early, cancel_combat_preview
+resumes the battle; a reasoned rollback preserves roll history.
 Enemy plan private_reason, undisclosed abilities, POW/armor/weakness/cooldown/use counts remain private.
 Public narration uses only public_hint and phenomena the players can perceive."""
 

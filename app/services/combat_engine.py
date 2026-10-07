@@ -322,6 +322,12 @@ def _rollback(state: GroupState, action: act.Rollback, mode: Mode) -> dict[str, 
     return {"ok": True, "receipt": receipt, "rolled_back": True}
 
 
+def _cancel_settlement(state: GroupState, action: act.CancelSettlement, mode: Mode) -> dict[str, Any]:
+    reason = authorize(state, action.combat_id, action.reason)
+    receipt = combat_resources.cancel_settlement(state, event_id=action.event_id, reason=reason)
+    return {"ok": True, "receipt": receipt, "phase": state.combat.phase, "provisional": True}
+
+
 def _correct_event(state: GroupState, action: act.CorrectEvent, mode: Mode) -> dict[str, Any]:
     reason = authorize(state, action.combat_id, action.reason)
     receipt = combat_resources.correct_event(
@@ -372,6 +378,7 @@ _HANDLERS: dict[type, Handler] = {
     act.PreviewSettlement: _preview_settlement,
     act.ConfirmSettlement: _confirm_settlement,
     act.Rollback: _rollback,
+    act.CancelSettlement: _cancel_settlement,
     act.CorrectEvent: _correct_event,
     act.ReconcileBaseline: _reconcile_baseline,
 }

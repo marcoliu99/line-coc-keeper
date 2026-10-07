@@ -451,6 +451,21 @@ def commit_settlement(state: GroupState, settlement_id: str, *,
     return deepcopy(receipt)
 
 
+def cancel_settlement(state: GroupState, *, event_id: str, reason: str) -> dict[str, Any]:
+    """Withdraw the pending settlement preview and let the battle go on; nothing else changes."""
+    combat = _managed(state)
+    if not reason.strip():
+        raise ValueError('Cancelling a settlement preview requires an explicit controller reason')
+    previous = _existing(combat, event_id)
+    if previous is None:
+        if combat.phase != 'SETTLEMENT':
+            raise CombatAdmissionError('There is no pending settlement preview to cancel')
+        record_event(state, event_id, 'administrative', reason=reason,
+                     data={'decision': 'cancel_settlement', 'settlement_id': combat.settlement.get('settlement_id', '')})
+        combat.phase = 'READY'
+    return {'combat_id': combat.combat_id, 'event_id': event_id, 'phase': combat.phase}
+
+
 def rollback_combat(state: GroupState, *, event_id: str, reason: str) -> dict[str, Any]:
     for receipt in state.closed_combat_receipts.values():
         if receipt.get('rollback_event_id') == event_id:

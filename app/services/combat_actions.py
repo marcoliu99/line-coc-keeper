@@ -331,6 +331,15 @@ class Rollback(Action[Result]):
 
 
 @dataclass(frozen=True, kw_only=True)
+class CancelSettlement(Action[Result]):
+    """Withdraw a settlement preview that was taken too early, so the battle goes on."""
+
+    combat_id: str
+    event_id: str
+    reason: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class CorrectEvent(Action[Result]):
     combat_id: str
     target_event_id: str
