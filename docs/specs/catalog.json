@@ -2490,6 +2490,19 @@
       "path": "docs/specs/bug/enemy_first_battle_opens_on_its_turn_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_first_battle_opens_on_its_turn_design_spec_zh.md",
       "source_revision": "7549cfc760857ac1ca95cecb7745e00ed0297733"
+    },
+    {
+      "title": "The refusals of advance_combat_turn say what to do",
+      "zh": "advance_combat_turn 的拒絕訊息說明該怎麼做",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper_tools/combat.py",
+        "tests/test_combat_wiring.py"
+      ],
+      "path": "docs/specs/bug/advance_combat_turn_refusals_say_what_to_do_design_spec.md",
+      "zh_path": "docs/specs/bug/advance_combat_turn_refusals_say_what_to_do_design_spec_zh.md",
+      "source_revision": "2261e8e8a780c32fceb0b421ffa820cddb8e7a5b"
     }
   ]
 }
