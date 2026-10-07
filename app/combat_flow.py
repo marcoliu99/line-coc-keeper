@@ -323,6 +323,9 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
                  'bonus_dice': 0, 'penalty_dice': 0},
                 {'kind': 'counter', 'label': '反擊', 'skill': '格鬥（鬥毆）',
                  'skill_value': character.skills.get('格鬥（鬥毆）', 25), 'bonus_dice': 0, 'penalty_dice': 0}])
+    if not ranged and action['checks'].get('attack', {}).get('tier') == 'critical':
+        # No success level beats a Critical attack, so Fight Back could only lose.
+        options = [o for o in options if o['kind'] != 'counter']
     candidate: dict[str, Any] = {'type': 'choice', 'options': options,
                  'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
     registered = check_lifecycle.register(state, character.owner_id, candidate)

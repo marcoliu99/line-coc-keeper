@@ -611,3 +611,22 @@ def test_a_carried_item_that_contains_the_weapon_name_counts_as_that_weapon():
         "action_id": "baton:2", "actor_id": "pc:char:p1", "target_id": enemy.combatant_id, "weapon_reference": "警棍",
     })
     assert declared["ok"] and declared["phase"] == "PLAYER_ROLL", declared
+
+
+def test_a_critical_attack_leaves_the_defender_no_fight_back_option():
+    _battle()
+    run, _ = _enemy_turn([1])  # claw 50: a roll of 1 is a Critical
+    assert run["phase"] == "PLAYER_CHOICE"
+    assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dodge"]
+    _player("/coc check 閃避")
+    outcome, _ = _player("/coc check", [20])  # Dodge 40 cannot reach a Critical
+    assert outcome.should_finalize
+    action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
+    assert action["result"]["hit"] is True
+
+
+def test_a_non_critical_attack_still_offers_dodge_and_fight_back():
+    _battle()
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "PLAYER_CHOICE"
+    assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dodge", "counter"]
