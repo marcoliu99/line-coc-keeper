@@ -588,3 +588,15 @@ def test_every_action_has_a_handler():
         if issubclass(cls, act.Action) and cls is not act.Action
     }
     assert declared == set(combat_engine._HANDLERS)
+
+
+def test_a_carried_melee_item_can_be_used_as_a_weapon():
+    state = _battle(first_enemy=False)
+    state.characters["p1"].carried_items = ["警棍"]
+    _save(state)
+    enemy = next(p for p in _load().combat.order if p.side == "enemy")
+    baton = _tool("declare_combat_action", {
+        "action_id": "baton:1", "actor_id": "pc:char:p1", "target_id": enemy.combatant_id, "weapon_reference": "警棍",
+    })
+    assert baton["ok"] and baton["phase"] == "PLAYER_ROLL", baton
+    assert _load().combat.actions["baton:1"]["weapon"]["id"] == "i.weapon.club-small"
