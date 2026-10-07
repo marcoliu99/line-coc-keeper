@@ -6,7 +6,7 @@
 
 ## 修改
 
-* 對敵人使用 `skip=true`：改說該怎麼做：先 `plan_enemy_turn`、再 `run_enemy_combat_plan`，之後不帶 `skip` 推進。跳過其他玩家或盟友的回合，訊息不變（引擎不執行盟友的回合，沒有可指的敵人式做法）。
+* 對「目前正輪到的」敵人使用 `skip=true`：改說該怎麼做：先 `plan_enemy_turn`、再 `run_enemy_combat_plan`，之後不帶 `skip` 推進。跳過其他玩家或盟友的回合，訊息不變（引擎不執行盟友的回合，沒有可指的敵人式做法）。
 * 沒有帶 `event_id`：說明 `advance_combat_turn` 需要穩定的 `event_id`，給出格式（`<combat_id>:advance:round<N>:<actor>`），並說明只有重試同一次呼叫時才沿用同一個 id。
 
 ## 不做

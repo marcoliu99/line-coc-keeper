@@ -254,7 +254,8 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                 # Only the investigator whose turn it is can give it up: not an enemy's, not another player's.
                 skipper = combat.find_combatant(target_state, call.input.get('actor_id', ''))
                 owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None
-                if skipper is not None and skipper.side == 'enemy':
+                current = target_state.combat.order[target_state.combat.current_index] if target_state.combat.order else None
+                if skipper is not None and skipper.side == 'enemy' and skipper is current:
                     return support.ToolStateMutation({'ok': False, 'error': (
                         'Only the acting investigator can skip their own turn. This is an enemy turn: '
                         'run plan_enemy_turn then run_enemy_combat_plan, and advance without skip afterwards')},

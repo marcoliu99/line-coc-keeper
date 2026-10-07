@@ -6,7 +6,7 @@ In a Haunting run an enemy had the first turn, and the Keeper spent the first tu
 
 ## Change
 
-* `skip=true` on an enemy now says what to do instead: run `plan_enemy_turn` then `run_enemy_combat_plan`, and advance without `skip` afterwards. Skipping another player's or an ally's turn keeps its message (the engine does not play ally turns, so there is no enemy-style path to name).
+* `skip=true` on the enemy whose turn it currently is now says what to do instead: run `plan_enemy_turn` then `run_enemy_combat_plan`, and advance without `skip` afterwards. Skipping another player's or an ally's turn keeps its message (the engine does not play ally turns, so there is no enemy-style path to name).
 * A call without `event_id` says that `advance_combat_turn` needs a stable `event_id`, gives the shape (`<combat_id>:advance:round<N>:<actor>`) and says to reuse the id only to retry the same call.
 
 ## Not done
