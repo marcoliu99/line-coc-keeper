@@ -658,6 +658,23 @@ def test_public_initializer_opens_fresh_battle_after_closed_roster_and_preserves
     assert len([p for p in store['state'].combat.order if p.side == 'enemy']) == 1
 
 
+def test_a_battle_opens_on_the_enemys_turn_only_when_the_enemy_is_first_and_only_once(store):
+    slow = reviewed_enemy_entry()
+    assert 'opening_enemy_turn' not in tool(store, 'initialize_combat', {'enemies': [slow]})
+    assert not store['state'].combat.actions.keys() - {'system:continuing-state'}
+    tool(store, 'rollback_combat', {'combat_id': store['state'].combat.combat_id, 'event_id': 'cancel:slow',
+                                    'reason': 'start again with a fast enemy'})
+    fast = reviewed_enemy_entry()
+    fast['dex'] = 99
+    opened = tool(store, 'initialize_combat', {'enemies': [fast]})
+    assert opened['opening_enemy_turn']['phase'] in {'PLAYER_CHOICE', 'NEEDS_RULING', 'READY'}
+    acted = {k for k in store['state'].combat.actions if k.startswith('npc:')}
+    assert len(acted) == 1
+    again = tool(store, 'initialize_combat', {'enemies': [fast]})
+    assert 'opening_enemy_turn' not in again and again['enemies'][0]['reused']
+    assert {k for k in store['state'].combat.actions if k.startswith('npc:')} == acted
+
+
 def test_advance_says_what_it_needs_when_the_event_id_is_missing_or_the_actor_is_an_enemy(store):
     assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
     enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')

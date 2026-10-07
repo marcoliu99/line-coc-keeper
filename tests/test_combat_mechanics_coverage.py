@@ -53,10 +53,8 @@ def resolve_player_roll(battle: Battle, outcomes: list, *, damage_roll: int = 2)
 
 def npc_attacks(battle: Battle, attack_tier: str = 'regular') -> str:
     """The first enemy attacks Ada; returns the interaction id of her defence choice."""
-    battle.start(npc_first=True)
-    plan = battle.tool('plan_enemy_turn', {'enemy': 'Cultist'})
     with patch.object(dice, 'skill_check', return_value=result(roll=20, tier=attack_tier, value=50)):
-        started = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+        started = battle.start(npc_first=True)['opening_enemy_turn']
     assert started['phase'] == 'PLAYER_CHOICE'
     pending = battle.load().pending_checks['player']
     assert pending['combat_context']['check_role'] == 'defense_choice'

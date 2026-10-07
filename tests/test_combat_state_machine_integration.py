@@ -539,13 +539,12 @@ def test_bot_diagnostics_expose_usable_ids_without_enemy_hp_in_player_status(bat
     assert all('hp' not in a and 'hp_after' not in a for a in waiting['actions'])
 
 
-def test_first_npc_can_run_source_bound_plan_without_client_hit_or_damage(battle):
-    battle.start(npc_first=True)
-    plan = battle.tool('plan_enemy_turn', {'enemy': 'Cultist'})
-    assert plan['ok']
+def test_first_npc_runs_its_source_bound_turn_when_the_battle_opens_without_client_hit_or_damage(battle):
     with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)):
-        started = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+        opened = battle.start(npc_first=True)
+    started = opened['opening_enemy_turn']
     assert started['phase'] == 'PLAYER_CHOICE'
+    assert not battle.tool('plan_enemy_turn', {'enemy': 'Cultist'})['ok']  # the turn is already played
     pending = battle.load().pending_checks['player']
     assert pending['combat_context']['check_role'] == 'defense_choice'
     assert battle.load().characters_by_id['char:ada'].hp == 10
@@ -724,10 +723,8 @@ def test_distinct_healer_owned_first_aid_stabilizes_only_bound_patient_and_recei
 
 
 def test_owned_defense_choice_button_replays_saved_delivery_without_new_roll(battle):
-    battle.start(npc_first=True)
     with patch.object(dice, 'skill_check', return_value=result(roll=1, tier='critical', value=50)) as rng:
-        plan = battle.tool('plan_enemy_turn', {})
-        battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+        battle.start(npc_first=True)
         pending = battle.load().pending_checks['player']
         assert pending['type'] == 'choice'
         with patch.object(battle, 'reply', side_effect=RuntimeError('choice delivery lost')), \
