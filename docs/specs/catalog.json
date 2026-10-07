@@ -2421,6 +2421,19 @@
       "path": "docs/specs/bug/enemy_damage_must_be_dice_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_damage_must_be_dice_design_spec_zh.md",
       "source_revision": "6b077092058abb099248615ff95e1861ec886627"
+    },
+    {
+      "title": "A pending settlement preview refuses further combat play",
+      "zh": "結算預覽等待確認時，拒絕繼續戰鬥操作",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "tests/test_combat_flow.py"
+      ],
+      "path": "docs/specs/bug/settlement_preview_refuses_further_play_design_spec.md",
+      "zh_path": "docs/specs/bug/settlement_preview_refuses_further_play_design_spec_zh.md",
+      "source_revision": "e32ff35cd73076bc51ad540eeffcc6fd93a5b639"
     }
   ]
 }

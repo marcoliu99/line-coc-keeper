@@ -35,6 +35,16 @@ def _error(message: str) -> dict[str, Any]:
     return {'ok': False, 'error': message}
 
 
+def _settlement_pending(state: GroupState) -> dict[str, Any] | None:
+    """Refuse combat play while a settlement preview waits to be confirmed: any further step makes it stale."""
+    if state.combat.phase != 'SETTLEMENT':
+        return None
+    settlement_id = state.combat.settlement.get('settlement_id', '')
+    return {'ok': False, 'settlement_id': settlement_id, 'error': (
+        'A settlement preview is pending; the battle is over. Call confirm_combat_settlement with this '
+        f'settlement_id ({settlement_id}), or rollback_combat. Advancing or declaring would make the preview stale.')}
+
+
 def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:
     state.combat.phase = 'NEEDS_RULING'
     action['needs_ruling'] = reason
@@ -262,6 +272,8 @@ def declare_action(
         return deepcopy(action.get('receipt', _result(state, action)))
     if not action_id or len(action_id) > 160 or action_id.startswith('system:'):
         return _error('A bounded stable action ID is required')
+    if pending := _settlement_pending(state):
+        return pending
     if (state.combat.interaction or state.combat.phase not in {'READY', 'RESOLVE'}
             or any(not a.get('completed') for a in state.combat.actions.values())):
         return _error('Resolve the current action before declaring another')
@@ -685,6 +697,8 @@ def advance_combat(
     prior = next((e for e in state.combat.events if e['event_id'] == event_id), None)
     if prior:
         return deepcopy(prior['data'].get('final_response', prior['data']))
+    if pending := _settlement_pending(state):
+        return pending
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     if not current or current.combatant_id != actor_id or not event_id:
         return _error('Only the current actor may advance with a stable event ID')
