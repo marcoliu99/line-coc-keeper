@@ -14,7 +14,7 @@
 ## 修改
 
 - `app/data/combat_weapons.json`：「Club, Small」加上別名 `nightstick` 和 `警棍`。
-- `app/combat_flow.py`（`_weapon_actor_evidence`）：不使用彈藥的近戰武器，只要調查員的隨身物品名稱含有武器名稱、宣告時用的名稱或它的別名之一，就視為持有。
+- `app/combat_flow.py`（`_weapon_actor_evidence`）：不使用彈藥的近戰武器，只要調查員有一件隨身物品的名稱，跟武器名稱、宣告時用的名稱或它的別名之一完全相同，就視為持有（要整個名稱相同，所以「棒球手套」不會被當成球棒）。
 
 ## 不做
 
