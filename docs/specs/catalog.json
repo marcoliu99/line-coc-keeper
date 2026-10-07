@@ -2334,6 +2334,18 @@
       "path": "docs/specs/bug/enemy_attack_provenance_from_scenario_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_attack_provenance_from_scenario_design_spec_zh.md",
       "source_revision": "910b133530fa67053dfa6a2f615c3eefa1e3f7bc"
+    },
+    {
+      "title": "The Keeper describes a place fully instead of one or two sentences",
+      "zh": "守密人要把地點完整描述出來，而不是只寫一兩句",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/prompt_builder.py"
+      ],
+      "path": "docs/specs/bug/fuller_keeper_narration_design_spec.md",
+      "zh_path": "docs/specs/bug/fuller_keeper_narration_design_spec_zh.md",
+      "source_revision": "87413aed13ea9b6e9e2029698a126e3cae41debb"
     }
   ]
 }
