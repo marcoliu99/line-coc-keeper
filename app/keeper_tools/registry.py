@@ -717,6 +717,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "同種怪物每一隻都要給不同的顯示名稱（例如「魚人（左）」／「魚人（右）」），不要用同一個"
                     "名字填多筆——系統只會在偵測到同名時才自動編號，那是最後手段，不是預設做法。"
                     "戰鬥已在進行、中途才加入的新敵人，改用 add_npc_to_combat。"
+                    "如果敵人先攻，系統會立刻執行牠的第一個行動，結果在回傳的 opening_enemy_turn；"
+                    "不要再自己 plan_enemy_turn，等玩家處理完防禦選擇後再 advance_combat_turn。"
                 ),
                 "input_schema": {
                     "type": "object",

@@ -91,10 +91,31 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     return response
 
 
+def _open_with_enemy_turn(state: GroupState) -> dict[str, Any] | None:
+    """A fight that opens on an enemy's turn plays that turn, the way advancing to an enemy does.
+
+    Only before anyone has acted. Anything the enemy's action then waits on (a defence choice, a ruling) is
+    reported like any enemy turn.
+    """
+    battle = state.combat
+    if not battle.active or not battle.order or battle.interaction:
+        return None
+    if any(not key.startswith("system:") for key in battle.actions):
+        return None
+    current = battle.order[min(battle.current_index, len(battle.order) - 1)]
+    if current.side != "enemy" or current.defeated:
+        return None
+    plan = combat_engine.handle(state, act.PlanEnemy(current.display_name))
+    if not plan.get("ok"):
+        return plan
+    return combat_engine.handle(state, act.RunEnemyPlan(plan["plan_id"]))
+
+
 def initialize_combat(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
     enemies = call.input.get("enemies") or []
+    opening: dict[str, Any] = {}
 
     def mutate(target_state: GroupState) -> Any:
         results: list[dict[str, Any]] = []
@@ -154,14 +175,21 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
             # The single-add path preserves the first actor while sorting.
             # Before the first turn, the full roster's highest DEX acts first.
             target_state.combat.current_index = 0
+            opening.clear()
+            if added_any and (first_turn := _open_with_enemy_turn(target_state)) is not None:
+                opening.update(first_turn)
         return support.ToolStateMutation(results, should_save=added_any)
 
     entry_results = support.mutate_tool_state(state, mutate)
-    return {
+    response = {
         "ok": any(entry["ok"] for entry in entry_results),
         "status": combat_engine.handle(state, act.Status()),
         "enemies": entry_results,
     }
+    if opening:
+        response["opening_enemy_turn"] = managed_combat.public_result(
+            opening, include_private=call.speaker_role == "kp_assistant")
+    return response
 
 
 def get_combat_status(call: ToolCall) -> dict[str, Any]:
