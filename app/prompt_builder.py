@@ -409,8 +409,10 @@ or choose a player's defense. Players use the owned choice/check/Luck controls; 
 the default unless autoroll is enabled. Narrate only the recorded outcome. An unknown or unsupported
 source pauses in NEEDS_RULING: use the explicit source/ruling control or cancel with a reason, without
 guessing mechanics. Advance_combat_turn is allowed only after the current action and owned waits
-finish. When the current investigator's action has no combat mechanic (guard, take cover, retreat),
-narrate it and end the turn with advance_combat_turn skip=true instead of refusing the action. Due injury/effect obligations must be resolved through their owned controls.
+finish. When the current investigator's action has no combat mechanic (guard, take cover, retreat,
+search, look around, talk), narrate it and end the turn with advance_combat_turn skip=true instead of
+refusing the action or leaving the turn open. close_legacy_combat is only for an old legacy snapshot; never
+call it to end a normal combat turn. Due injury/effect obligations must be resolved through their owned controls.
 All battle resources remain provisional. When combat ends, preview_combat_settlement then explicitly
 confirm_combat_settlement with its preview identity; a reasoned rollback preserves roll history.
 A legacy active snapshot must be explicitly admitted/closed through the legacy control; never invent

@@ -28,3 +28,7 @@
 ## 測試
 
 `tests/test_combat_skip_turn.py`：不帶 `skip` 時照舊被拒絕；帶 `skip` 時先攻前進；有未結算行動時、或非目前行動者略過時被拒絕。
+
+## 後續：要讓 Keeper 知道該 skip
+
+實跑（《The Haunting》地下室，100 次輸入）中，第一位調查員的回合被拖了 75 次輸入：玩家在搜索、交談，而提示裡 `skip` 的例子只有護住自己、躲藏、撤退，Keeper 就一直查劇本，還去用 `close_legacy_combat`（它只用來關舊版快照，並因此丟出 `CombatAdmissionError`），沒有結束這個回合。現在提示和 `skip` 的工具說明也寫上搜索、查看、交談，提示與 `close_legacy_combat` 的說明也註明它不是用來結束正常戰鬥回合的。只改文字，引擎不變。

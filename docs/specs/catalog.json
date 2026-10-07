@@ -2295,6 +2295,7 @@
         "app/combat_flow.py",
         "app/keeper_tools/combat.py",
         "app/prompt_builder.py",
+        "app/keeper_tools/registry.py",
         "tests/test_combat_skip_turn.py"
       ],
       "path": "docs/specs/bug/combat_turn_always_endable_design_spec.md",
