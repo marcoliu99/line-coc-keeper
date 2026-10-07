@@ -743,3 +743,16 @@ def test_cancelling_a_settlement_preview_resumes_the_battle_and_replays_a_retry(
     assert combat.plan_enemy_turn(state, 'Cultist', ops=combat_flow.MANAGED_OPS)['ok']
     with pytest.raises(combat_resources.CombatAdmissionError, match='no pending settlement preview'):
         combat_resources.cancel_settlement(state, event_id='cancel:2', reason='nothing to cancel')
+
+
+def test_a_second_cancel_with_nothing_played_in_between_is_refused():
+    state, _, _enemy = battle(npc_first=True)
+    combat_resources.get_settlement(state)
+    combat_resources.cancel_settlement(state, event_id='cancel:1', reason='enemy still standing')
+    combat_resources.get_settlement(state)
+    with pytest.raises(combat_resources.CombatAdmissionError, match='play on'):
+        combat_resources.cancel_settlement(state, event_id='cancel:2', reason='again')
+    assert state.combat.phase == 'SETTLEMENT'
+    combat_resources.record_event(state, 'played:1', 'action')
+    combat_resources.get_settlement(state)
+    assert combat_resources.cancel_settlement(state, event_id='cancel:3', reason='still going')['phase'] == 'READY'

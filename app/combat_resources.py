@@ -460,6 +460,10 @@ def cancel_settlement(state: GroupState, *, event_id: str, reason: str) -> dict[
     if previous is None:
         if combat.phase != 'SETTLEMENT':
             raise CombatAdmissionError('There is no pending settlement preview to cancel')
+        if combat.events and combat.events[-1]['data'].get('decision') == 'cancel_settlement':
+            raise CombatAdmissionError(
+                'The last thing recorded was already a cancelled preview; play on before cancelling another, '
+                'or confirm or roll back')
         record_event(state, event_id, 'administrative', reason=reason,
                      data={'decision': 'cancel_settlement', 'settlement_id': combat.settlement.get('settlement_id', '')})
         combat.phase = 'READY'

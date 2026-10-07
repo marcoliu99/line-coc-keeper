@@ -8,7 +8,7 @@
 
 戰鬥處於 `SETTLEMENT` 階段時，`advance_combat`、`declare_action`、NPC 規劃（`plan_enemy_turn`）與執行 NPC 計畫（`run_enemy_plan`）會在改動任何東西之前拒絕。拒絕訊息說明戰鬥已結束，並指出下一步：用待確認的 `settlement_id` 呼叫 `confirm_combat_settlement`（這個 id 也會放在回傳欄位裡），或呼叫 `rollback_combat`。已經記錄過的推進重試，仍然重播原本的結果。
 
-結算預覽拿得太早時，原本沒有退路：只能確認（戰鬥就結束了）或 `rollback_combat`（整場丟掉）。現在守密人有 `cancel_combat_preview`（`combat_id`、`event_id`、`reason`）：預覽等待確認時，它撤回預覽並把階段改回 `READY`，戰鬥繼續；資源、骰值與收據都不動，用同一個 `event_id` 重試會重播。舊的結算 id 之後視為過期，下一次 `preview_combat_settlement` 會產生新的。沒有等待中的預覽時會被拒絕。
+結算預覽拿得太早時，原本沒有退路：只能確認（戰鬥就結束了）或 `rollback_combat`（整場丟掉）。現在守密人有 `cancel_combat_preview`（`combat_id`、`event_id`、`reason`）：預覽等待確認時，它撤回預覽並把階段改回 `READY`，戰鬥繼續；資源、骰值與收據都不動，用同一個 `event_id` 重試會重播。舊的結算 id 之後視為過期，下一次 `preview_combat_settlement` 會產生新的。沒有等待中的預覽時會被拒絕。為了防止「預覽、取消、預覽、取消」空轉，若戰鬥紀錄的最後一筆已經是取消，再取消會被拒絕：中間必須先有實際的戰鬥進行。
 
 ## 不做
 
