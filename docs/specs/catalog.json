@@ -2373,6 +2373,19 @@
       "path": "docs/specs/bug/enemy_attack_through_combat_engine_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_attack_through_combat_engine_design_spec_zh.md",
       "source_revision": "0c2b022847988776faaecb4f3f411466dd51d085"
+    },
+    {
+      "title": "A Critical attack leaves the defender no Fight Back option",
+      "zh": "大成功攻擊下，防守方不再有「反擊」選項",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "tests/test_combat_engine.py"
+      ],
+      "path": "docs/specs/bug/no_fight_back_against_critical_design_spec.md",
+      "zh_path": "docs/specs/bug/no_fight_back_against_critical_design_spec_zh.md",
+      "source_revision": "961c9cebec30f4149e25a1d4990dbe4a2f655b5e"
     }
   ]
 }
