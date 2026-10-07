@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app import check_lifecycle, dice, resolved_check_consequences
+from app import check_lifecycle, resolved_check_consequences
 from app.checks import events as check_events
 from app.checks import service as check_service
 from app.checks.dice_port import DEFAULT_DICE
@@ -169,30 +169,12 @@ def offer_check_choice(call: ToolCall) -> dict[str, Any]:
     raw_options = tool_input.get("options") or []
     if len(raw_options) < 2:
         return {"ok": False, "error": "options 至少要給兩個選項，只有一個的話請直接用 skill_check"}
-    attacker_tier = tool_input.get("attacker_tier")
+    if tool_input.get("attacker_tier"):
+        return {"ok": False, "error": "NPC 攻擊的防守選擇由戰鬥引擎建立：先 initialize_combat，輪到敵人時用 plan_enemy_turn → run_enemy_combat_plan"}
     def _register_pending_choice(target_state: GroupState) -> Any:
         target_char = resource_bridge.effective(target_state, support.require_character(target_state, tool_input.get("investigator", "")))
         options = services.resolve_defense_options(target_char, raw_options, register_unknown=False)
-        # COC7e：攻擊方大成功時沒有任何等級贏得過它，「反擊」選項不成立——這是
-        # offer_npc_attack_defense_choice 已有的同一條規則，code review 發現這個
-        # 舊版兩步流程（npc_skill_check 先擲、這裡再註冊選項）從未套用，讓仍在用
-        # 這個入口的 Keeper 能給玩家一個數學上穩輸的反擊選項，補上同樣的過濾。
-        if attacker_tier == "critical":
-            filtered_options = [o for o in options if not dice.is_counter_option(o)]
-            if not filtered_options:
-                return services.StateMutation(
-                    {
-                        "ok": False,
-                        "error": "攻擊方這次擲出大成功，沒有任何成功等級贏得過它，「反擊」選項"
-                                 "已不成立；但目前 options 只有反擊，沒有閃避可選，請至少提供一個"
-                                 "「閃避」選項後再重新呼叫這個工具。",
-                    },
-                    should_save=False,
-                )
-            options = filtered_options
         new_choice: dict[str, Any] = {"type": "choice", "options": options}
-        if attacker_tier:
-            new_choice["attacker_tier"] = attacker_tier
         decision = check_lifecycle.register(
             target_state, target_char.owner_id, new_choice,
             duplicate="identical", source=tool_input,

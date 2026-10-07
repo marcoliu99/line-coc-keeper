@@ -96,8 +96,7 @@ def build_check_narration(
     attacker_tier (only set for a melee Dodge/Fight Back choice — see
     keeper.py's offer_check_choice/npc_skill_check) triggers the COC7e
     opposed-roll comparison, named explicitly in both messages.
-    ranged_opposed_text (only set for a ranged offer_npc_attack_defense_choice
-    — see keeper.py's is_ranged branch) is the ALREADY-RESOLVED narration
+    ranged_opposed_text (only set for a ranged attack's defense choice) is the ALREADY-RESOLVED narration
     from resolve_ranged_defense_outcome, computed once by the caller (never
     computed in here) since that function rolls the attacker's shot as a side
     effect and must not be invoked more than once per resolved defender roll.

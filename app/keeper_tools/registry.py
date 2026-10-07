@@ -269,15 +269,6 @@ _SPECS: tuple[ToolSpec, ...] = (
                                 "required": ["label", "skill"],
                             },
                         },
-                        "attacker_tier": {
-                            "type": "string",
-                            "enum": ["fumble", "fail", "regular", "hard", "extreme", "critical"],
-                            "description": (
-                                "這是防守方對抗攻擊的選擇（閃避／反擊）時才填：攻擊方這次攻擊的成功等級"
-                                "（先呼叫 npc_skill_check 幫攻擊方擲出來，不要自己編）。不是防守情境（單純"
-                                "多選一，不涉及被攻擊）就不用填。"
-                            ),
-                        },
                         "action_context": {
                             "type": "string",
                             "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事。",

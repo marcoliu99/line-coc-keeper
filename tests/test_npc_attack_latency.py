@@ -1,11 +1,8 @@
-"""Tests for docs/specs/enhancement/npc_attack_latency_design_spec.md's two optimizations:
+"""Tests for the check tools around NPC attacks and the combat RAG skip.
 
-- app/keeper.py's new offer_npc_attack_defense_choice tool, which merges
-  what used to be two sequential tool calls (npc_skill_check, then
-  offer_check_choice with attacker_tier filled in from its result) into
-  one — cutting one LLM round-trip off the most common combat exchange
-  (NPC attacks, player picks dodge/counter).
-- app/agents/context_builder.py skipping its proactive scenario/memory RAG
+- offer_check_choice no longer takes an attacker_tier: a defense choice against an
+  NPC attack is created by the managed combat, never by the Keeper before a fight.
+- app/agents/context_builder.py skips its proactive scenario/memory RAG
   embedding calls while state.combat.active, since combat_block already
   carries the mechanical context combat narration needs.
 """
@@ -39,12 +36,29 @@ def _state_with_investigator() -> GroupState:
     return state
 
 
-class OfferCheckChoiceCriticalAttackerTests(unittest.TestCase):
+class OfferCheckChoiceTests(unittest.TestCase):
 
 
-    def test_npc_skill_check_and_offer_check_choice_are_unaffected(self):
-        """Regression: both original tools must keep behaving exactly as
-        before — this is an additive change, not a replacement."""
+    def test_offer_check_choice_rejects_an_npc_attack_tier(self):
+        """A defense choice against an NPC attack comes from the combat engine, so the
+        Keeper cannot register one here (that would resolve the attack before a fight exists)."""
+        state = _state_with_investigator()
+        with StateStorePatch() as store:
+            store.put(state)
+            result = tool_dispatch.execute_tool(
+                state, "offer_check_choice",
+                {
+                    "investigator": "小明",
+                    "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
+                    "attacker_tier": "regular",
+                },
+                [], [], speaker_role="player",
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual(store.store["g"].pending_checks, {})
+
+    def test_npc_skill_check_and_offer_check_choice_still_work(self):
+        """npc_skill_check and a plain offer_check_choice keep behaving as before."""
         state = _state_with_investigator()
         with StateStorePatch() as store:
             store.put(state)
@@ -65,71 +79,6 @@ class OfferCheckChoiceCriticalAttackerTests(unittest.TestCase):
         self.assertTrue(choice_result["ok"])
         self.assertNotIn("attacker_tier", choice_result)  # not requested this time
 
-
-    def test_offer_check_choice_filters_fight_back_when_attacker_tier_is_critical(self):
-        """offer_check_choice filters out Fight Back against a Critical attacker
-        (§4.2 - nothing beats Critical), so a player is never offered an option
-        that is mathematically guaranteed to lose."""
-        state = _state_with_investigator()
-        with StateStorePatch() as store:
-            store.put(state)
-            result = tool_dispatch.execute_tool(
-                state, "offer_check_choice",
-                {
-                    "investigator": "小明",
-                    "options": [{"label": "閃避", "skill": "閃避"}, {"label": "反擊", "skill": "格鬥"}],
-                    "attacker_tier": "critical",
-                },
-                [], [], speaker_role="player",
-            )
-            saved_state = store.store["g"]
-
-        self.assertTrue(result["ok"])
-        self.assertEqual([o["label"] for o in result["options"]], ["閃避"])
-        self.assertEqual(
-            [o["label"] for o in saved_state.pending_checks["u1"]["options"]], ["閃避"]
-        )
-
-    def test_offer_check_choice_with_only_fight_back_and_critical_tier_errors_without_saving(self):
-        state = _state_with_investigator()
-        with StateStorePatch() as store:
-            store.put(state)
-            result = tool_dispatch.execute_tool(
-                state, "offer_check_choice",
-                {
-                    "investigator": "小明",
-                    "options": [{"label": "反擊", "skill": "格鬥"}, {"label": "其他", "skill": "偵查"}],
-                    "attacker_tier": "critical",
-                },
-                [], [], speaker_role="player",
-            )
-        self.assertTrue(result["ok"])
-        # Only "反擊" gets filtered — a non-Fight-Back second option survives.
-        self.assertEqual([o["label"] for o in result["options"]], ["其他"])
-
-    def test_offer_check_choice_critical_tier_with_only_fight_back_errors_without_saving(self):
-        """offer_check_choice requires >=2 raw options up front, so to reach
-        the "filtered down to zero" branch both options have to be Fight
-        Back variants (an edge case, but the filter matches on substring
-        "反擊" so this is what triggers it — not achievable with a single
-        option, which the tool rejects before the filter ever runs)."""
-        state = _state_with_investigator()
-        with StateStorePatch() as store:
-            store.put(state)
-            result = tool_dispatch.execute_tool(
-                state, "offer_check_choice",
-                {
-                    "investigator": "小明",
-                    "options": [
-                        {"label": "反擊", "skill": "格鬥"},
-                        {"label": "反擊（左手）", "skill": "格鬥"},
-                    ],
-                    "attacker_tier": "critical",
-                },
-                [], [], speaker_role="player",
-            )
-            self.assertEqual(store.store["g"].pending_checks, {})
-        self.assertFalse(result["ok"])
 
 
 class RangedDefenseEndToEndTests(unittest.TestCase):
