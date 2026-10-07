@@ -245,10 +245,20 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
+            if not str(call.input.get('event_id') or '').strip():
+                return support.ToolStateMutation({'ok': False, 'error': (
+                    'advance_combat_turn needs a stable event_id, for example '
+                    f'"{target_state.combat.combat_id}:advance:round{target_state.combat.round_number}:<actor>"; '
+                    'reuse the same id only to retry the same call')}, should_save=False)
             if call.input.get('skip'):
                 # Only the investigator whose turn it is can give it up: not an enemy's, not another player's.
                 skipper = combat.find_combatant(target_state, call.input.get('actor_id', ''))
                 owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None
+                if skipper is not None and not skipper.is_pc:
+                    return support.ToolStateMutation({'ok': False, 'error': (
+                        'Only the acting investigator can skip their own turn. This is an enemy or ally turn: '
+                        'run plan_enemy_turn then run_enemy_combat_plan, and advance without skip afterwards')},
+                        should_save=False)
                 if owner is None or not call.actor_id or owner.owner_id != call.actor_id:
                     return support.ToolStateMutation(
                         {'ok': False, 'error': 'Only the acting investigator can skip their own turn'}, should_save=False)

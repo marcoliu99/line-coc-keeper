@@ -2475,6 +2475,19 @@
       "path": "docs/specs/bug/combat_refusal_names_whose_turn_design_spec.md",
       "zh_path": "docs/specs/bug/combat_refusal_names_whose_turn_design_spec_zh.md",
       "source_revision": "1ec27cb9c18a49f06734dba8da022cc86f955a00"
+    },
+    {
+      "title": "The refusals of advance_combat_turn say what to do",
+      "zh": "advance_combat_turn 的拒絕訊息說明該怎麼做",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper_tools/combat.py",
+        "tests/test_combat_wiring.py"
+      ],
+      "path": "docs/specs/bug/advance_combat_turn_refusals_say_what_to_do_design_spec.md",
+      "zh_path": "docs/specs/bug/advance_combat_turn_refusals_say_what_to_do_design_spec_zh.md",
+      "source_revision": "7549cfc760857ac1ca95cecb7745e00ed0297733"
     }
   ]
 }

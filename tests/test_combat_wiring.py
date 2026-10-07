@@ -658,6 +658,15 @@ def test_public_initializer_opens_fresh_battle_after_closed_roster_and_preserves
     assert len([p for p in store['state'].combat.order if p.side == 'enemy']) == 1
 
 
+def test_advance_says_what_it_needs_when_the_event_id_is_missing_or_the_actor_is_an_enemy(store):
+    assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
+    enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')
+    missing = tool(store, 'advance_combat_turn', {'actor_id': enemy.combatant_id})
+    assert not missing['ok'] and 'stable event_id' in missing['error'] and store['state'].combat.combat_id in missing['error']
+    skipped = tool(store, 'advance_combat_turn', {'actor_id': enemy.combatant_id, 'skip': True, 'event_id': 'skip:enemy'})
+    assert not skipped['ok'] and 'plan_enemy_turn' in skipped['error'] and 'run_enemy_combat_plan' in skipped['error']
+
+
 def test_blocked_managed_advance_does_not_save_unchanged_state(store):
     actor = store['state'].combat.order[0].combatant_id
     before = normalized(store['state'])
