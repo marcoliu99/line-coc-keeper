@@ -156,7 +156,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 combat_active_before = state.combat.active
                 actor_before_tool = turn_resolution.actor_snapshot(state, user_id)
                 gameplay_before_tool = turn_resolution.gameplay_snapshot(state)
-                if name in {'skill_check', 'offer_check_choice', 'offer_npc_attack_defense_choice', 'sanity_check'}:
+                if name in {'skill_check', 'offer_check_choice', 'sanity_check'}:
                     tool_input = {**tool_input, '_player_action': text}
                 model = session.model or "unknown"
                 remaining = (await asyncio.to_thread(scenario_retrieval.request_budget,

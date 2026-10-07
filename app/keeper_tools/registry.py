@@ -237,9 +237,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "建立一次有多個互斥選項的待處理檢定——用在玩家要在幾個技能之間選一個的一般情境"
                     "（不涉及被 NPC 攻擊）。玩家用按鈕或 /coc check <選項名稱> 選定並觸發玩家擲骰；"
                     "只有 autoroll 開啟時才由系統代擲。不能自己替玩家選或編結果。"
-                    "如果這是被 NPC 攻擊時的防守選擇（COC7e 的『閃避』還是『反擊』），改用"
-                    "offer_npc_attack_defense_choice——那個工具會直接處理攻擊方的檢定，不用"
-                    "你自己先呼叫 npc_skill_check 再把結果填回這裡。"
+                    "被 NPC 攻擊時的防守選擇（COC7e 的『閃避』還是『反擊』）不用這個工具：先 initialize_combat，"
+                    "輪到敵人時用 plan_enemy_turn → run_enemy_combat_plan，系統會自己建立防守選擇。"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -298,9 +297,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                 "description": (
                     "立刻擲一次『沒有玩家可以自己擲骰』那一方（NPC、怪物、敵人）的技能百分比檢定，直接由"
                     "程式碼擲骰算出真正的擲骰值和成功等級，回傳給你——不要自己編一個 NPC 的檢定結果。"
-                    "如果是『NPC 攻擊玩家、玩家要在閃避／反擊之間選一個』的對抗檢定情境，改用"
-                    "offer_npc_attack_defense_choice（一次呼叫就包含這一步，不用先呼叫這個工具）；"
-                    "這個工具留給其他劇本需要 NPC 自己做一次檢定、但不是那個特定防守選擇流程的場合。"
+                    "『NPC 攻擊玩家』不用這個工具：先 initialize_combat，輪到敵人時用 plan_enemy_turn → "
+                    "run_enemy_combat_plan。這個工具留給劇本需要 NPC 自己做一次檢定、但不是戰鬥攻擊的場合。"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -318,75 +316,6 @@ _SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         schema={
-                "name": "offer_npc_attack_defense_choice",
-                "description": (
-                    "『請求』一次「被 NPC 攻擊時的防守選擇」——COC7e 對抗檢定的完整標準流程。近戰跟遠程"
-                    "在 COC7e 規則下走完全不同的判定機制（見 is_ranged 參數），這個工具會依 is_ranged 自動"
-                    "選對的機制擲骰，不用你自己先呼叫 npc_skill_check、也不用自己編。跟 offer_check_choice "
-                    "一樣只記錄選項清單，讓玩家選一個；玩家選定後用 /coc check 觸發防守方擲骰並自動判定"
-                    "（autoroll 開啟時才可由系統代擲）。呼叫完之後只能敘述『被攻擊、需要在這幾個選項裡選一個』"
-                    "的當下場景，不能自己選、不能自己編結果、不能自己講攻擊有沒有命中。"
-                    "options 要不要給『反擊』選項看攻擊距離：近戰（engaged）才能反擊，給「閃避」「反擊」"
-                    "兩個選項；遠程攻擊（near/any，例如槍械、投擲武器）COC7e 規則不允許反擊，只能給"
-                    "「閃避」一個選項——這種情況 options 只給一個是合法的，不要為了湊兩個選項硬塞一個假的"
-                    "反擊選項。戰鬥已開始或即將開始時不要用這個工具：先 initialize_combat，輪到敵人時用 plan_enemy_turn → run_enemy_combat_plan。如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "investigator": {"type": "string", "description": "調查員角色名稱"},
-                        "is_ranged": {
-                            "type": "boolean",
-                            "description": (
-                                "這次攻擊是不是遠程（槍械、投擲武器等）。COC7e 規則：遠程攻擊不是對抗檢定——"
-                                "攻擊方單獨擲自己的技能檢定決定有沒有命中（不能孤注一擲），防守方唯一能做的"
-                                "是『撲向掩體』，是防守方自己獨立的閃避檢定，成功的話會讓攻擊方這次射擊多"
-                                "承受一個懲罰骰，但不會直接讓攻擊落空。近戰才是雙方比較成功等級的對抗檢定。"
-                                "近戰填 false 或省略；遠程一定要填 true，不要漏填讓系統誤判成近戰。"
-                            ),
-                        },
-                        "options": {
-                            "type": "array",
-                            "minItems": 1,
-                            "description": "互斥選項；近戰通常是閃避+反擊兩個，遠程攻擊沒有反擊，只給閃避一個",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "label": {"type": "string", "description": "選項顯示名稱，例如「閃避」「反擊」"},
-                                    "skill": {"type": "string", "description": "這個選項要用的技能或屬性名稱"},
-                                    "bonus_dice": {"type": "integer", "description": "獎勵骰數量，預設 0"},
-                                    "penalty_dice": {"type": "integer", "description": "懲罰骰數量，預設 0"},
-                                    "kind": {
-                                        "type": "string",
-                                        "enum": ["dodge", "counter"],
-                                        "description": (
-                                            "這個選項是閃避還是反擊，請務必填寫（dodge 或 counter）——系統"
-                                            "靠這個欄位判斷平手規則、大成功時要不要過濾掉這個選項，比單看"
-                                            "label 文字更準確可靠。"
-                                        ),
-                                    },
-                                },
-                                "required": ["label", "skill", "kind"],
-                            },
-                        },
-                        "attacker_skill_value": {"type": "integer", "description": "攻擊方（NPC）這次攻擊技能的百分比值"},
-                        "attacker_bonus_dice": {"type": "integer", "description": "攻擊方獎勵骰數量，預設 0"},
-                        "attacker_penalty_dice": {"type": "integer", "description": "攻擊方懲罰骰數量，預設 0"},
-                        "action_context": {
-                            "type": "string",
-                            "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事。",
-                        },
-                    },
-                    "required": ["investigator", "options", "attacker_skill_value"],
-                },
-            },
-        handler=check_handlers.offer_npc_attack_defense_choice,
-        kp_assistant=True,
-        kp_canonical_game=True,
-        creates_check=True,
-    ),
-    ToolSpec(
-        schema={
                 "name": "clear_pending_check",
                 "description": (
                     "取消某位角色目前『待處理』的 skill/SAN/CON 檢定或互斥選擇。預設模式下 skill_check／sanity_check"
@@ -398,8 +327,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "你自己口頭更正一筆先前建立的檢定時也要同步更正待處理狀態：先用這個工具清掉舊項目，"
                     "再依原本建立它的流程重新登記正確版本。若舊項目是 skill_check／sanity_check 建立的單一檢定，"
                     "用正確參數重新呼叫原本的 skill_check／sanity_check；若舊項目是 offer_check_choice 建立的互斥選擇，"
-                    "用修正後的完整選項重新呼叫 offer_check_choice；若舊項目是 offer_npc_attack_defense_choice 建立的防守選擇，"
-                    "用修正後的完整防守選項及攻擊情境重新呼叫 offer_npc_attack_defense_choice。"
+                    "用修正後的完整選項重新呼叫 offer_check_choice。"
                     "不要把互斥選項改成單一 skill_check／sanity_check，否則會丟失其他選項或對抗攻擊脈絡；"
                     "也不能只在敘述裡說『這筆不算』卻留著舊的待處理檢定，否則玩家之後 /coc check 會擲到你已經說不算的那一筆。"
                     "角色目前沒有待處理的檢定時呼叫這個工具是安全的 no-op，不會出錯。"
@@ -1220,7 +1148,6 @@ _SPECS += (
 _SPECS += (
     ToolSpec(schema={'name': 'declare_combat_effect', 'description': 'Keeper 明確指定來源/裁定的傷害severity及範圍、觸發、停止條件；特殊規則未支持時暫停。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'severity_id': {'type': 'string', 'enum': ['minor','moderate','severe','deadly','terminal','splat']}, 'scope': {'type': 'string','enum': ['incident','round']}, 'timing': {'type': 'string','enum': ['round_start','turn_start','turn_end','round_end']}, 'defense': {'type': 'string','enum': ['none']}, 'special_rule': {'type': 'string'}, 'stop_condition': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','target_id','severity_id','stop_condition','reason']}}, handler=managed_handlers.declare_combat_effect, invalidates_combat_status=True),
     ToolSpec(schema={'name': 'stop_combat_effect', 'description': 'Keeper 根據明確停止條件結束效果；保留原紀錄。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','event_id','reason']}}, handler=managed_handlers.stop_combat_effect, invalidates_combat_status=True),
-    ToolSpec(schema={'name': 'close_legacy_combat', 'description': '只用於關閉沒有安全基準的舊版戰鬥快照，不可用來結束正常戰鬥的回合（那用 advance_combat_turn skip）；Keeper 明確關閉；保留歷史與待處理證據，不猜測戰前值。', 'input_schema': {'type': 'object','properties': {'event_id': {'type': 'string'},'reason': {'type': 'string'}},'required': ['event_id','reason']}}, handler=managed_handlers.close_legacy_combat, invalidates_combat_status=True),
 )
 
 

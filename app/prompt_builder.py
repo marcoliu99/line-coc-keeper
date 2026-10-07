@@ -412,12 +412,9 @@ source pauses in NEEDS_RULING: use the explicit source/ruling control or cancel 
 guessing mechanics. Advance_combat_turn is allowed only after the current action and owned waits
 finish. When the current investigator's action has no combat mechanic (guard, take cover, retreat,
 search, look around, talk), narrate it and end the turn with advance_combat_turn skip=true instead of
-refusing the action or leaving the turn open. close_legacy_combat is only for an old legacy snapshot; never
-call it to end a normal combat turn. Due injury/effect obligations must be resolved through their owned controls.
+refusing the action or leaving the turn open. Due injury/effect obligations must be resolved through their owned controls.
 All battle resources remain provisional. When combat ends, preview_combat_settlement then explicitly
 confirm_combat_settlement with its preview identity; a reasoned rollback preserves roll history.
-A legacy active snapshot must be explicitly admitted/closed through the legacy control; never invent
-its prebattle baseline or run managed actions against it.
 Enemy plan private_reason, undisclosed abilities, POW/armor/weakness/cooldown/use counts remain private.
 Public narration uses only public_hint and phenomena the players can perceive."""
 

@@ -108,7 +108,6 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("skill_check／sanity_check", description)
         self.assertIn("重新呼叫 offer_check_choice", description)
-        self.assertIn("重新呼叫 offer_npc_attack_defense_choice", description)
         self.assertIn("不要把互斥選項改成單一 skill_check／sanity_check", description)
 
     def test_group_state_kp_ooc_log_serialization(self):
@@ -509,7 +508,6 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             "sanity_check",
             "offer_check_choice",
             "npc_skill_check",
-            "offer_npc_attack_defense_choice",
             "clear_pending_check",
             "roll_weapon_damage",
             "roll_impaling_damage",

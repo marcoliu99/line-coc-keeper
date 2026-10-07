@@ -166,7 +166,7 @@ def remember_check_result(state: GroupState, cache_key: str, result: dict[str, A
 def resolve_defense_options(
     char: Character, raw_options: list[dict], *, register_unknown: bool = True
 ) -> list[dict]:
-    """Expand offer_check_choice/offer_npc_attack_defense_choice's raw
+    """Expand offer_check_choice's raw
     {label, skill, bonus_dice, penalty_dice} option list into one with
     each option's actual resolved skill_value baked in.
 

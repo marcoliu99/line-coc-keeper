@@ -198,15 +198,6 @@ def stop_combat_effect(call: ToolCall) -> dict[str, Any]:
     )))
 
 
-def close_legacy_combat(call: ToolCall) -> dict[str, Any]:
-    def operation(state):
-        reason = str(call.input.get('reason') or '').strip()
-        if not reason:
-            raise ValueError('Explicit controller reason required for legacy closure')
-        return combat_engine.handle(state, act.CloseLegacy(event_id=call.input['event_id'], reason=reason))
-    return _mutate(call, operation)
-
-
 def resolve_combat_ruling(call: ToolCall) -> dict[str, Any]:
     def operation(state):
         from app import combat
