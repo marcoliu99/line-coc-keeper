@@ -42,7 +42,7 @@ def _settlement_pending(state: GroupState) -> dict[str, Any] | None:
     settlement_id = state.combat.settlement.get('settlement_id', '')
     return {'ok': False, 'settlement_id': settlement_id, 'error': (
         'A settlement preview is pending; the battle is over. Call confirm_combat_settlement with this '
-        f'settlement_id ({settlement_id}), or rollback_combat. Advancing or declaring would make the preview stale.')}
+        f'settlement_id ({settlement_id}), or rollback_combat. Advancing, declaring or running an NPC turn would make the preview stale.')}
 
 
 def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:
@@ -630,6 +630,8 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     identity = f'npc:{plan_id}'
     if identity in state.combat.actions:
         return run_action(state, identity)
+    if pending := _settlement_pending(state):
+        return pending
     actor = combat.find_combatant(state, plan.get('enemy_combatant_id', ''))
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     if not actor or actor is not current or plan.get('round_number') != state.combat.round_number:
@@ -1593,6 +1595,8 @@ class ManagedOps:
 
     def refuse_planning(self, state: GroupState) -> dict[str, Any] | None:
         _require_managed(state)
+        if pending := _settlement_pending(state):
+            return pending
         if state.combat.interaction:
             return {'ok': False, 'error': 'Resolve the current interaction before NPC planning'}
         return None

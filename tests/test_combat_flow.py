@@ -712,3 +712,18 @@ def test_a_pending_settlement_preview_refuses_advancing_and_declaring_and_can_st
         assert 'confirm_combat_settlement' in refused['error']
     assert (state.combat.revision, state.combat.round_number) == (revision, round_number)
     assert combat_resources.commit_settlement(state, settlement_id)['status'] == 'committed'
+
+
+def test_a_pending_settlement_preview_refuses_planning_and_running_an_enemy_turn():
+    state, _, _enemy = battle(npc_first=True)
+    plan = combat.plan_enemy_turn(state, 'Cultist', ops=combat_flow.MANAGED_OPS)
+    assert plan['ok']
+    settlement_id = combat_resources.get_settlement(state)['settlement_id']
+    revision = state.combat.revision
+    planned = combat.plan_enemy_turn(state, 'Cultist', ops=combat_flow.MANAGED_OPS)
+    ran = combat_flow.run_enemy_plan(state, plan['plan_id'])
+    for refused in (planned, ran):
+        assert not refused['ok'] and refused['settlement_id'] == settlement_id
+        assert 'confirm_combat_settlement' in refused['error']
+    assert state.combat.revision == revision and state.combat.phase == 'SETTLEMENT'
+    assert combat_resources.commit_settlement(state, settlement_id)['status'] == 'committed'

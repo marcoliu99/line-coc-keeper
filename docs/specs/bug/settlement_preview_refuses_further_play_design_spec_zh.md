@@ -6,7 +6,7 @@
 
 ## 修改
 
-戰鬥處於 `SETTLEMENT` 階段時，`advance_combat` 與 `declare_action` 會在改動任何東西之前拒絕。拒絕訊息說明戰鬥已結束，並指出下一步：用待確認的 `settlement_id` 呼叫 `confirm_combat_settlement`（這個 id 也會放在回傳欄位裡），或呼叫 `rollback_combat`。已經記錄過的推進重試，仍然重播原本的結果。
+戰鬥處於 `SETTLEMENT` 階段時，`advance_combat`、`declare_action`、NPC 規劃（`plan_enemy_turn`）與執行 NPC 計畫（`run_enemy_plan`）會在改動任何東西之前拒絕。拒絕訊息說明戰鬥已結束，並指出下一步：用待確認的 `settlement_id` 呼叫 `confirm_combat_settlement`（這個 id 也會放在回傳欄位裡），或呼叫 `rollback_combat`。已經記錄過的推進重試，仍然重播原本的結果。
 
 ## 不做
 
@@ -14,4 +14,4 @@
 
 ## 測試
 
-`tests/test_combat_flow.py`：預覽等待時，推進與宣告都被拒絕並附上結算 id，輪數與 revision 不變，同一份預覽之後可以正常提交。
+`tests/test_combat_flow.py`：預覽等待時，推進、宣告、規劃 NPC 回合與執行其計畫都被拒絕並附上結算 id，輪數與 revision 不變，同一份預覽之後可以正常提交。
