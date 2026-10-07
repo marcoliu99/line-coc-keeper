@@ -135,7 +135,7 @@
 >
 > 不要把 KP Assistant 的發言解讀成角色台詞、角色移動、角色檢定或戰鬥行動。不要問 KP Assistant「你要做什麼？」「你要去哪裡？」「你要擲什麼？」這類只適用於玩家角色的問題。
 >
-> 如果 KP Assistant 指定某個角色執行遊戲流程，應對那個角色呼叫對應 deterministic tool。例如：「讓 Marco 做偵查」→ skill_check；「讓 The Tough Guy 做 SAN 1/1D4」→ sanity_check；「讓他選閃避或反擊」→ offer_npc_attack_defense_choice。
+> 如果 KP Assistant 指定某個角色執行遊戲流程，應對那個角色呼叫對應 deterministic tool。例如：「讓 Marco 做偵查」→ skill_check；「讓 The Tough Guy 做 SAN 1/1D4」→ sanity_check；「讓敵人攻擊他」→ 先 initialize_combat，輪到敵人時用 plan_enemy_turn → run_enemy_combat_plan，由戰鬥引擎建立閃避／反擊選擇。
 >
 > **Canon vs Operation**
 >
@@ -211,7 +211,7 @@ Spec：`docs/specs/enhancement/enhancement-static-prompt-consolidation.md`（繁
 已證實：「autoroll」在 prompt 裡出現 11 次，至少 7 個不同規則重講「off→pending、on→系統立即代擲」，其中這句完全多餘可直接刪：「`skill_check`／`sanity_check` 在 autoroll 關閉（預設）時建立玩家擲骰 pending；只有 `autoroll on` 才會立即完成。」但不要無差別刪——有幾處是把同一條規則掛在特定工具（sanity_check、重傷 CON 檢定、孤注一擲）旁邊做就近提醒，這個要留，只是壓短成交叉引用，不要整條刪掉。收斂成一個標準版本 + 短提醒。純文字整併，邏輯不變。完成後跑一次聚焦 pending check 的短模擬（sim harness 路徑見下）驗證行為沒退化。
 
 **任務 3 — 戰鬥工具路由表**
-把散落的 start_combat／add_npc_to_combat／offer_npc_attack_defense_choice／roll_weapon_damage／roll_impaling_damage／apply_combat_damage／apply_final_combat_damage／add_combat_effect／adjust_ammo 指示，改成 concise routing list 格式（可參考 spec 裡英文提案的範例格式）。同種怪物多隻要不同名稱這條保留成單一規則。動到戰鬥機制，完成後要跑戰鬥 smoke 驗證。
+把散落的 start_combat／add_npc_to_combat／roll_weapon_damage／roll_impaling_damage／apply_combat_damage／apply_final_combat_damage／add_combat_effect／adjust_ammo 指示，改成 concise routing list 格式（可參考 spec 裡英文提案的範例格式）。同種怪物多隻要不同名稱這條保留成單一規則。動到戰鬥機制，完成後要跑戰鬥 smoke 驗證。
 
 **任務 4 — KP Assistant 權限層級**
 把 KP Assistant 區塊改成明確優先順序清單（engine state > KP 明確更正 > 劇本正典 > Keeper 敘事判斷），範例從長篇中文說明壓成 `"讓 Marco 做偵查" → skill_check(...)` 這種對照格式就好。

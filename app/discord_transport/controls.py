@@ -100,10 +100,8 @@ def defense_choice_hint(check: dict) -> str:
         if is_counter and needed_rank <= dice.TIER_RANK["fail"]:
             needed_rank = dice.TIER_RANK["regular"]
         if needed_rank >= len(_TIER_ORDER):
-            # A Fight Back option against a Critical attacker is filtered out
-            # server-side before this ever renders (by the managed combat's defense
-            # interaction) — this is just a defensive
-            # skip in case that invariant is ever violated, not an expected path.
+            # No success level beats a Critical attacker, so a Fight Back option
+            # has no threshold to show: leave its hint line out.
             continue
         needed_tier = _TIER_ORDER[needed_rank]
         threshold = tier_percentage_hint(needed_tier, o["skill_value"])
