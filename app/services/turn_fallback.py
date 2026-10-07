@@ -66,6 +66,37 @@ def guidance(reason: str | None, hints: str = "") -> str:
     return f"{text}\n{hints}" if hints and reason in _HINTED else text
 
 
+# Reasons whose generic wording talks about the scenario; in a battle the table needs to know whose turn it is instead.
+_COMBAT_REASONS: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_action", "unsupported_action"})
+
+
+def combat_guidance(state: GroupState, reason: str | None) -> str:
+    """What to tell the table when a turn in a running battle could not be played; empty outside one."""
+    battle = state.combat
+    if reason not in _COMBAT_REASONS or not battle.active or not battle.order:
+        return ""
+    if battle.phase == "SETTLEMENT":
+        return "戰鬥已經結束，正在等守密人結算；結算後就能繼續探索。"
+    enemies = [c for c in battle.order if c.side == "enemy"]
+    if enemies and all(c.defeated for c in enemies):
+        return "敵方已全數倒下，戰鬥等著結算；結算後就能繼續探索。"
+    if battle.phase == "NEEDS_RULING":
+        return "戰鬥暫停中，要等守密人裁定後才能繼續。"
+    if battle.phase == "LUCK_DECISION":
+        return "戰鬥暫停中，有人正在做 Luck 決定；請用 Luck 按鈕或輸入 /coc luck 完成，才能繼續。"
+    if (battle.interaction or battle.phase not in {"READY", "RESOLVE"}
+            or any(not action.get("completed") for action in battle.actions.values())):
+        return "戰鬥暫停中，還有尚未完成的檢定或選擇；請先完成它（按檢定按鈕或輸入 /coc check），才能繼續。"
+    current = battle.order[min(battle.current_index, len(battle.order) - 1)]
+    if current.defeated:
+        return f"「{current.display_name}」已經倒下，等守密人推進到下一位。"
+    if any(action.get("actor_id") == current.combatant_id and action.get("completed")
+           and action.get("round") == battle.round_number for action in battle.actions.values()):
+        return f"「{current.display_name}」這一輪已經行動完畢，等守密人推進到下一位。"
+    return (f"戰鬥進行中，現在輪到「{current.display_name}」行動。輪到你時，請說明要對哪個目標、用什麼方式攻擊或行動；"
+            "還沒輪到你時，請稍候。")
+
+
 def _public_narration(state: GroupState) -> list[str]:
     """What players have actually been told in this timeline, newest first.
 

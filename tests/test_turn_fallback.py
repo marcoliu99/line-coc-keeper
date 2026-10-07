@@ -18,7 +18,7 @@ from app.domain.models import (
     StateDelta,
     TurnResolution,
 )
-from app.models import GroupState
+from app.models import Combatant, CombatState, GroupState
 from app.services import prompt_config, turn_delivery, turn_fallback
 
 
@@ -449,3 +449,68 @@ def test_the_same_combat_notice_is_shown_once_even_when_only_some_calls_carry_th
     text = prompt_config.enforce_mechanic_check_consistency("", result)
     assert text.count(notice) == 1 and turn_delivery.PROVISIONAL_MARK in text
     assert turn_delivery.distinct_lines(["a", "b", "a"]) == ["a", "b"]
+
+
+def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_about_the_scenario() -> None:
+    state = _state()
+    state.scenario_npc_index = [{"name": "鼠群", "aliases": []}]
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=1, phase="READY",
+        order=[Combatant(name="鼠群", side="enemy", hp=5, hp_max=5), Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)],
+    )
+    result = _result("blocked", fallback_reason="unsupported_action")
+    reply = prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    assert "現在輪到「小雨」行動" in reply and "劇本" not in reply and "鼠群" not in reply
+    state.combat.phase = "SETTLEMENT"
+    assert "等守密人結算" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    state.combat.phase = "READY"
+    state.combat.order[0].defeated = True
+    assert "敵方已全數倒下" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    state.combat.active = False
+    assert "劇本" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    assert turn_fallback.combat_guidance(state, "tool_failure") == ""
+
+
+def test_a_battle_that_is_paused_or_whose_actor_has_acted_does_not_ask_for_a_declaration() -> None:
+    state = _state()
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=0, phase="READY",
+        order=[Combatant(name="小雨", side="pc", is_pc=True, combatant_id="pc:1", hp=10, hp_max=10),
+               Combatant(name="鼠群", side="enemy", hp=5, hp_max=5)],
+    )
+    asking = turn_fallback.combat_guidance(state, "unsupported_action")
+    assert "請說明要對哪個目標" in asking
+    state.combat.actions = {"a1": {"actor_id": "pc:1", "completed": True, "round": 2}}
+    assert "已經行動完畢" in turn_fallback.combat_guidance(state, "unsupported_action")
+    state.combat.actions = {"a2": {"actor_id": "pc:1", "completed": False, "round": 2}}
+    assert "尚未完成的檢定或選擇" in turn_fallback.combat_guidance(state, "unsupported_action")
+    state.combat.actions = {}
+    state.combat.phase = "PLAYER_ROLL"
+    assert "尚未完成的檢定或選擇" in turn_fallback.combat_guidance(state, "unsupported_action")
+    state.combat.phase = "NEEDS_RULING"
+    assert "等守密人裁定" in turn_fallback.combat_guidance(state, "unsupported_action")
+
+
+def test_a_luck_wait_names_the_luck_control_and_an_evidence_hold_keeps_its_own_wording() -> None:
+    state = _state()
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=0, phase="LUCK_DECISION",
+        order=[Combatant(name="小雨", side="pc", is_pc=True, combatant_id="pc:1", hp=10, hp_max=10),
+               Combatant(name="鼠群", side="enemy", hp=5, hp_max=5)],
+    )
+    assert "/coc luck" in turn_fallback.combat_guidance(state, "unsupported_action")
+    held = _result("blocked", fallback_reason="no_scenario_evidence",
+                   check_status={"tool_called": False, "pending": None, "scenario_evidence_blocked": True})
+    reply = prompt_config.enforce_mechanic_check_consistency("narration", held, state=state)
+    assert "劇本依據" in reply and "/coc luck" not in reply
+
+
+def test_a_defeated_current_actor_is_waiting_for_the_keeper_to_advance() -> None:
+    state = _state()
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=0, phase="READY",
+        order=[Combatant(name="小雨", side="pc", is_pc=True, combatant_id="pc:1", hp=0, hp_max=10, defeated=True),
+               Combatant(name="鼠群", side="enemy", hp=5, hp_max=5)],
+    )
+    text = turn_fallback.combat_guidance(state, "unsupported_action")
+    assert "已經倒下" in text and "請說明要對哪個目標" not in text
