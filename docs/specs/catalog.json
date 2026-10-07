@@ -2436,6 +2436,20 @@
       "source_revision": "4dcfcf433515bce446c43aa4521e374765b81bd1"
     },
     {
+      "title": "The same combat notice is shown once",
+      "zh": "同一句戰鬥提示只顯示一次",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_delivery.py",
+        "app/services/prompt_config.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/combat_notice_shown_once_design_spec.md",
+      "zh_path": "docs/specs/bug/combat_notice_shown_once_design_spec_zh.md",
+      "source_revision": "6d6451c6b667dd4203a68b45547e4eaa43a4bd34"
+    },
+    {
       "title": "The combat status says when one side is down",
       "zh": "一方全滅時，戰鬥狀態會說明",
       "category": "bug",

@@ -19,7 +19,7 @@ from app.domain.models import (
     TurnResolution,
 )
 from app.models import GroupState
-from app.services import prompt_config, turn_fallback
+from app.services import prompt_config, turn_delivery, turn_fallback
 
 
 def aio(test):
@@ -436,3 +436,16 @@ async def test_the_retry_time_is_checked_again_after_the_recovery_search(monkeyp
     _, run_executor, searched, _ = await _turn(
         _state(), [_crashed()], rag_status="empty", search=("找到的內容", "success"))
     assert searched.call_count == 1 and run_executor.await_count == 1
+
+
+def test_the_same_combat_notice_is_shown_once_even_when_only_some_calls_carry_the_provisional_mark() -> None:
+    notice = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
+    outcomes = [
+        ObservedOutcome("tool:1", "advance_combat_turn", True, notice, "public"),
+        ObservedOutcome("tool:2", "advance_combat_turn", True, notice + turn_delivery.PROVISIONAL_MARK, "public"),
+        ObservedOutcome("tool:3", "advance_combat_turn", True, notice, "public"),
+    ]
+    result = _result("blocked", "validated", observed_outcomes=outcomes, check_status={"tool_called": True, "pending": None})
+    text = prompt_config.enforce_mechanic_check_consistency("", result)
+    assert text.count(notice) == 1 and turn_delivery.PROVISIONAL_MARK in text
+    assert turn_delivery.distinct_lines(["a", "b", "a"]) == ["a", "b"]

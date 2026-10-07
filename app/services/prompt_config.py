@@ -6,7 +6,7 @@ import re
 from app import presentation
 from app.domain.models import MechanicResult
 from app.models import GroupState
-from app.services import opposed_checks, turn_fallback
+from app.services import opposed_checks, turn_delivery, turn_fallback
 
 # 【提示詞集中管理】
 # 這個檔案集中管理 Agentic Keeper 流水線裡「真的會呼叫 LLM」的階段用到的提示詞，
@@ -358,7 +358,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
-            confirmed = [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text]
+            confirmed = turn_delivery.distinct_lines(
+                [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text])
             if confirmed:
                 warning = "\n".join(confirmed) + "\n\n" + warning
             if status.get("state_changed"):

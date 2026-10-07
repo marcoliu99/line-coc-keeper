@@ -16,8 +16,19 @@ from app.domain.models import MechanicResult, ObservedOutcome
 from app.models import GroupState
 from app.services import canonical_facts
 
+PROVISIONAL_MARK = "【戰鬥暫定；尚未結算】"
 BLOCKED_NOTICE = "回覆需要核對後才能安全顯示。已結算的結果與待處理選擇仍保留；請查看目前狀態，勿重做這次行動。"
 _COUNT = {"一": 1, "兩": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def distinct_lines(lines: list[str]) -> list[str]:
+    """The same line said once. A line with and without the provisional mark is one line, kept with the mark."""
+    kept: dict[str, str] = {}
+    for line in lines:
+        base = line.replace(PROVISIONAL_MARK, "")
+        if base not in kept or PROVISIONAL_MARK in line:
+            kept[base] = line
+    return list(kept.values())
 
 
 def is_private(entry: dict) -> bool:
@@ -73,7 +84,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             # Do not expose enemy sheets/ability names through a generic dump.
             text = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
     if result.get('provisional') and text:
-        text += '【戰鬥暫定；尚未結算】'
+        text += PROVISIONAL_MARK
     record = result.get("record") if name in {"record_clue", "record_established_fact"} else None
     fact_ref = (str(record.get("fact_id", "")) if isinstance(record, dict)
                 and record.get("verification_status") == "verified" else "")
@@ -115,7 +126,7 @@ class DeliveryEnvelope:
         lines = [fact.public_text for fact in self.authorized_facts if fact.public_text]
         lines.extend(fact.text for fact in self.verified_fact_refs)
         lines.extend(dict.fromkeys(ref.instruction for ref in self.interactions))
-        return "\n".join(dict.fromkeys(lines))
+        return "\n".join(distinct_lines(lines))
 
     def render(self) -> str:
         additions = [line for line in self.projected_text().splitlines() if line not in self.narrative]
