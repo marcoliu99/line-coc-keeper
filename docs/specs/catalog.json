@@ -2346,6 +2346,19 @@
       "path": "docs/specs/bug/fuller_keeper_narration_design_spec.md",
       "zh_path": "docs/specs/bug/fuller_keeper_narration_design_spec_zh.md",
       "source_revision": "87413aed13ea9b6e9e2029698a126e3cae41debb"
+    },
+    {
+      "title": "An enemy attacks through the combat engine, not through the old defense check",
+      "zh": "敵人的攻擊要走戰鬥引擎，不要用舊的防守檢定",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/prompt_builder.py",
+        "app/keeper_tools/registry.py"
+      ],
+      "path": "docs/specs/bug/enemy_attack_through_combat_engine_design_spec.md",
+      "zh_path": "docs/specs/bug/enemy_attack_through_combat_engine_design_spec_zh.md",
+      "source_revision": "0c2b022847988776faaecb4f3f411466dd51d085"
     }
   ]
 }

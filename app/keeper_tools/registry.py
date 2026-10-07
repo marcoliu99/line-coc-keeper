@@ -329,7 +329,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "options 要不要給『反擊』選項看攻擊距離：近戰（engaged）才能反擊，給「閃避」「反擊」"
                     "兩個選項；遠程攻擊（near/any，例如槍械、投擲武器）COC7e 規則不允許反擊，只能給"
                     "「閃避」一個選項——這種情況 options 只給一個是合法的，不要為了湊兩個選項硬塞一個假的"
-                    "反擊選項。如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
+                    "反擊選項。戰鬥已開始或即將開始時不要用這個工具：先 initialize_combat，輪到敵人時用 plan_enemy_turn → run_enemy_combat_plan。如果只是一般多選一（不是被攻擊的防守情境），改用 offer_check_choice。"
                 ),
                 "input_schema": {
                     "type": "object",
