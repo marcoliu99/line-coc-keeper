@@ -1220,7 +1220,7 @@ _SPECS += (
 _SPECS += (
     ToolSpec(schema={'name': 'declare_combat_effect', 'description': 'Keeper 明確指定來源/裁定的傷害severity及範圍、觸發、停止條件；特殊規則未支持時暫停。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'severity_id': {'type': 'string', 'enum': ['minor','moderate','severe','deadly','terminal','splat']}, 'scope': {'type': 'string','enum': ['incident','round']}, 'timing': {'type': 'string','enum': ['round_start','turn_start','turn_end','round_end']}, 'defense': {'type': 'string','enum': ['none']}, 'special_rule': {'type': 'string'}, 'stop_condition': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','target_id','severity_id','stop_condition','reason']}}, handler=managed_handlers.declare_combat_effect, invalidates_combat_status=True),
     ToolSpec(schema={'name': 'stop_combat_effect', 'description': 'Keeper 根據明確停止條件結束效果；保留原紀錄。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','event_id','reason']}}, handler=managed_handlers.stop_combat_effect, invalidates_combat_status=True),
-    ToolSpec(schema={'name': 'close_legacy_combat', 'description': 'Keeper 明確關閉沒有安全基準的舊版戰鬥；保留歷史與待處理證據，不猜測戰前值。', 'input_schema': {'type': 'object','properties': {'event_id': {'type': 'string'},'reason': {'type': 'string'}},'required': ['event_id','reason']}}, handler=managed_handlers.close_legacy_combat, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'close_legacy_combat', 'description': '只用於關閉沒有安全基準的舊版戰鬥快照，不可用來結束正常戰鬥的回合（那用 advance_combat_turn skip）；Keeper 明確關閉；保留歷史與待處理證據，不猜測戰前值。', 'input_schema': {'type': 'object','properties': {'event_id': {'type': 'string'},'reason': {'type': 'string'}},'required': ['event_id','reason']}}, handler=managed_handlers.close_legacy_combat, invalidates_combat_status=True),
 )
 
 
@@ -1249,7 +1249,7 @@ for _spec in _SPECS:
     if _spec.schema['name'] == 'advance_combat_turn':
         _spec.schema['input_schema']['properties'].update({
             'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'},
-            'skip': {'type': 'boolean', 'description': '目前行動者這回合沒有引擎能結算的行動（護住自己、躲藏、撤退等）時設 true：不擲骰、不改資源，直接結束他的回合'},
+            'skip': {'type': 'boolean', 'description': '目前行動者這回合沒有引擎能結算的行動（護住自己、躲藏、撤退、搜索、查看、交談等）時設 true：不擲骰、不改資源，直接結束他的回合'},
         })
     if _spec.schema['name'] in {'adjust_character', 'adjust_ammo', 'add_status_tag', 'remove_status_tag'}:
         _spec.schema['input_schema']['properties'].update({

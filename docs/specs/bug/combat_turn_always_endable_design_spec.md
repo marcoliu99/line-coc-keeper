@@ -28,3 +28,7 @@ The engine only knows attacks: `declare_combat_action` takes a weapon, and `adva
 ## Tests
 
 `tests/test_combat_skip_turn.py`: without `skip` the turn is refused as before; with `skip` initiative moves; a skip is refused while an action is unresolved and for a non-current actor.
+
+## Follow-up: the Keeper has to know to skip
+
+A real run (the Haunting basement, 100 inputs) left the first investigator's turn open for 75 inputs: the player was searching and talking, the prompt's examples for `skip` were only guard, take cover and retreat, and the Keeper searched the scenario and tried `close_legacy_combat` (which only closes an old legacy snapshot and raised `CombatAdmissionError`) instead of ending the turn. The prompt and the `skip` tool description now also name searching, looking around and talking, and the prompt and the `close_legacy_combat` description say it is not for ending a normal combat turn. Wording only; the engine is unchanged.
