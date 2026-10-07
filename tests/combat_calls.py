@@ -1,9 +1,9 @@
 """The combat rules as tests call them, with the mode chosen the way the engine chooses it.
 
 Tests of the turn and damage rules drive them directly on a ``GroupState``. The
-rules no longer decide which mode a battle is in, so these wrappers pick the
-legacy or managed implementation from the state — the same decision
-``CombatEngine`` makes once per action — and otherwise keep the old call shape.
+rules no longer decide which mode a battle is in, so these wrappers hand them
+the managed implementation — and refuse, loudly, a battle that was not started
+through the production path, the same way ``CombatEngine`` does.
 """
 from __future__ import annotations
 
@@ -16,7 +16,10 @@ from app.services import combat_engine
 
 
 def ops_for(state: GroupState) -> combat.ModeOps:
-    return combat_flow.MANAGED_OPS if combat_resources.is_managed(state) else combat.LEGACY_OPS
+    """The managed rules for a managed (or idle) state; never a guess for anything else."""
+    if not combat_resources.is_managed(state):
+        raise AssertionError("test state was not started through combat.begin_combat / start_combat")
+    return combat_flow.MANAGED_OPS
 
 
 def advance_turn(state: GroupState) -> dict[str, Any]:

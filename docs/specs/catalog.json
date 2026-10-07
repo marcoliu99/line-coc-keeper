@@ -2389,6 +2389,24 @@
       "path": "docs/specs/bug/no_fight_back_against_critical_design_spec.md",
       "zh_path": "docs/specs/bug/no_fight_back_against_critical_design_spec_zh.md",
       "source_revision": "961c9cebec30f4149e25a1d4990dbe4a2f655b5e"
+    },
+    {
+      "title": "Remove the legacy combat mode",
+      "zh": "移除舊版戰鬥模式",
+      "category": "refactor",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "app/combat_resources.py",
+        "app/services/combat_engine.py",
+        "app/services/combat_actions.py",
+        "tests/combat_calls.py",
+        "tests/test_combat_engine.py",
+        "tests/test_architecture_combat.py"
+      ],
+      "path": "docs/specs/refactor/remove_legacy_combat_mode_design_spec.md",
+      "zh_path": "docs/specs/refactor/remove_legacy_combat_mode_design_spec_zh.md",
+      "source_revision": "95793774ab39f20f06400136767216c99d1bd78f"
     }
   ]
 }

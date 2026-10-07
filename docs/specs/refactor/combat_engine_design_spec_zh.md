@@ -14,21 +14,21 @@
 Keeper 工具（keeper_tools/combat.py、managed_combat.py）   /coc combat   檢定轉接   退出角色流程
                           \                                    |              |            /
                            app/services/combat_engine.py   CombatEngine.handle(state, action)
-                               |  只讀一次模式：IDLE / LEGACY / MANAGED
+                               |  只讀一次模式：IDLE / MANAGED（進行中但不是 managed 的戰鬥會被拒絕）
                                +--> combat_flow.py   （MANAGED_OPS：收據、玩家等待、後續義務）
-                               +--> combat.py        （LEGACY_OPS：即時保存；共用基本運算）
+                               +--> combat.py        （共用基本運算與規則）
                                          \               /
                                           combat_resources.py（葉：暫定資源、結算）   combat_rules.py（葉：純規則）
 ```
 
 * `app/services/combat_actions.py`：每一種可對戰鬥提出的要求一個不可變 dataclass（`Declare`、`Run`、`Choose`、`Advance`、`ApplyDamage`、`PreviewSettlement`…）。型別參數就是回傳型別。action 只攜帶意圖與穩定識別碼，不帶骰值。
-* `app/services/combat_engine.py`：`CombatEngine.handle(state, action)`。每個 action 只呼叫一次 `mode_of(state)`；handler 拿到模式後，需要依模式不同的規則使用 `combat_flow.MANAGED_OPS` 或 `combat.LEGACY_OPS`。只屬於 managed 的 action 在 `IDLE` 會直接拒絕且不寫入；在 `LEGACY` 則丟出一直以來的 admission 錯誤。
-* `combat.ModeOps`：回合中依模式不同的步驟——固定時點、傷害、HP 同步、推進與規劃的前置檢查、輪次時鐘、被擋下的推進如何還原。規則以必填參數接收它，不再自己問模式（`combat.py` 對旗標的讀取：15 → 2，一個防止傳錯 ops 的守門，加上明確的舊戰鬥關閉）。
+* `app/services/combat_engine.py`：`CombatEngine.handle(state, action)`。每個 action 只呼叫一次 `mode_of(state)`；handler 拿到模式後，把 `combat_flow.MANAGED_OPS` 交給共用規則。只屬於 managed 的 action 在 `IDLE` 會直接拒絕且不寫入；進行中但不是 managed 的戰鬥，在任何 handler 執行前就丟出 `CombatAdmissionError`（「unsupported legacy combat format. Start a new combat.」）。
+* `combat.ModeOps`：回合中屬於工作資源管線的步驟——固定時點、傷害、HP 同步、推進與規劃的前置檢查、輪次時鐘、被擋下的推進如何還原。規則以必填參數接收它，從不自己問模式（`combat.py` 已完全不讀這個旗標）。
 * 分層以匯入圖檢查（含延遲匯入）：`combat_rules`、`combat_resources` 是葉；`combat` 只會到 `combat_resources`；`combat_flow` 建立在 `combat` 上；只有引擎匯入 `combat_flow`。`app.models` 不再到達戰鬥程式碼：`GroupState.retire_active_character` 改由呼叫端傳入回合收尾函式。
 
 ## 保留的契約
 
-1. **模式。** 現在開始的戰鬥是 managed。在工作資源管線之前存下來的戰鬥維持 legacy：可以查看、規劃、推進；絕不自動轉換，並拒絕 managed action。（原本用來明確關閉它的 `close_legacy_combat` 工具已不在 Keeper 的工具表裡；見[敵人的攻擊要走戰鬥引擎](../bug/enemy_attack_through_combat_engine_design_spec_zh.md)。）兩種都能載入、序列化與續玩。
+1. **模式。** 所有戰鬥都是 managed。在工作資源管線之前存下來的戰鬥不再支援：絕不自動轉換或推算，對它的任何 action 一律拒絕（見[移除舊版戰鬥模式](remove_legacy_combat_mode_design_spec_zh.md)）。
 2. **原子 action。** 一個 state 交易包住一個 action，包括它等待的檢定、資源變更與結算項目。需要玩家回答的 action 帶著已保存的等待回傳（`PLAYER_CHOICE`、`PLAYER_ROLL`、`INJURY_CHECK`、`LUCK_DECISION`）；回答以帶同一識別碼的新 action 進來。
 3. **不重複結算。** 傷害、彈藥、效果與回合推進都以穩定的 ledger id（`action_id`、`event_id`）為鍵。重試、連點，或同一筆傷害先後經由舊工具與新入口送出，都只重播已存的收據。
 4. **不替玩家做選擇**：防禦、Luck、武器與耗材仍屬玩家；autoroll 預設仍為關閉。
@@ -38,7 +38,7 @@ Keeper 工具（keeper_tools/combat.py、managed_combat.py）   /coc combat   �
 
 ## 相容性
 
-工具名稱、schema 與輸出（但 `offer_npc_attack_defense_choice` 與 `close_legacy_combat` 已從 Keeper 的工具表移除）、Discord custom id、指令文字與儲存的戰鬥結構均不變；既有存檔不需遷移。原始結果類工具（`apply_combat_damage`、`damage_combatant`…）在戰鬥進行中仍然拒絕。`app.combat.apply_managed_damage`、`managed_single_hit` 與 `is_managed` 已搬走（到 `combat_flow` 與 `combat_resources`），本 repo 內沒有程式碼再從舊位置匯入它們。
+工具名稱、schema 與輸出（但 `offer_npc_attack_defense_choice` 與 `close_legacy_combat` 已從 Keeper 的工具表移除）、Discord custom id、指令文字與儲存的戰鬥結構均不變；在工作資源管線之前存下的戰鬥會被拒絕，不做遷移。原始結果類工具（`apply_combat_damage`、`damage_combatant`…）在戰鬥進行中仍然拒絕。`app.combat.apply_managed_damage`、`managed_single_hit` 與 `is_managed` 已搬走（到 `combat_flow` 與 `combat_resources`），本 repo 內沒有程式碼再從舊位置匯入它們。
 
 ## 驗證
 

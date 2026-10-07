@@ -511,7 +511,7 @@ def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     assert battle.effective().status_tags == []
 
 
-def test_legacy_active_history_is_never_run_without_a_guessed_baseline(battle):
+def test_unsupported_active_combat_is_refused_through_the_tool_without_a_guessed_baseline(battle):
     old = battle.load()
     old.characters_by_id['char:ada'].hp = 7
     old.characters['player'].hp = 7
@@ -520,7 +520,7 @@ def test_legacy_active_history_is_never_run_without_a_guessed_baseline(battle):
                   character_id='char:ada', combatant_id='pc:char:ada')])
     group_state.save_state(old)
     before = battle.load().to_dict()
-    with pytest.raises(combat_resources.CombatAdmissionError, match='No safely admitted combat working state'):
+    with pytest.raises(combat_resources.CombatAdmissionError, match='Start a new combat'):
         battle.tool('preview_combat_settlement')
     assert battle.load().to_dict() == before
 

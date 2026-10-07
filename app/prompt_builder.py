@@ -13,6 +13,7 @@ import logging
 import re
 
 from app import (
+    combat_resources,
     keeper_prompt_policy,
     observability,
     scenario_index,
@@ -48,7 +49,7 @@ KP_ASSISTANT_MECHANICS_PROMPT = """Generic deterministic dice: use `roll_dice` o
 - `ooc_randomizer` is only for private KP selection that does not itself establish a world fact; it stays in OOC history. Example: `roll_dice(expression="1d6", purpose="幕後決定下一幕使用哪個 NPC", roll_context="ooc_randomizer")`.
 正式 managed 戰鬥由 declare_combat_action/run_combat_action 或 plan_enemy_turn/run_enemy_combat_plan 執行 source-bound 判定、傷害、護甲與彈藥。不得另擲武器傷害、提供命中／傷害結果或重複扣彈藥。玩家使用 owned choice/check/Luck controls。
 環境／持續傷害須有明確 source/severity，使用 get_damage_severity/declare_combat_effect，由 engine 處理後續 tick。未知規則先 resolve_combat_ruling 或附理由取消，不猜測數值。
-所有 managed 戰鬥資源為 provisional，結束後 preview_combat_settlement/confirm_combat_settlement；一般主持資源調整須使用授權 controller route，不能代替武器攻擊 adjudication。舊 active snapshot 必須先明確 legacy admission/closure，不推算戰前狀態。
+所有 managed 戰鬥資源為 provisional，結束後 preview_combat_settlement/confirm_combat_settlement；一般主持資源調整須使用授權 controller route，不能代替武器攻擊 adjudication。不支援的舊格式 active 戰鬥不會被推算或轉換，需開新戰鬥。
 回覆 KP Assistant 時可以直接討論主持問題；只有要展示給玩家的文字才採用玩家敘事風格。"""
 
 
@@ -397,10 +398,15 @@ def build_dynamic_prompt(
 
     combat_block = ""
     if state.combat.active:
+        try:
+            combat_status = combat_engine.handle(
+                state, combat_act.Status(include_private=(speaker_role == "kp_assistant")))
+        except combat_resources.CombatAdmissionError as error:
+            combat_status = str(error)
         combat_block = f"""
 
 # 目前戰鬥狀態
-{combat_engine.handle(state, combat_act.Status(include_private=(speaker_role == "kp_assistant")))}
+{combat_status}
 
 Combat rule: follow the current actor and recorded initiative strictly. For investigator actions use
 declare_combat_action then run_combat_action. For an enemy turn call plan_enemy_turn then

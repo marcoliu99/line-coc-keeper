@@ -1,21 +1,20 @@
 """The one entry point to a battle: ``CombatEngine.handle(state, action)``.
 
-A battle is in one of three modes:
+A battle is in one of two modes:
 
 * ``IDLE``    — no battle is running.
-* ``MANAGED`` — running under the working-resource pipeline (every battle
-  started today): receipts for every roll, resources held as provisional
-  ``working_resources`` until a settlement, owned waits for a person's input.
-* ``LEGACY``  — a battle saved before that pipeline, with immediate
-  persistence. It can still be looked at, advanced and closed explicitly; it is
-  never silently converted.
+* ``MANAGED`` — running under the working-resource pipeline (every battle):
+  receipts for every roll, resources held as provisional ``working_resources``
+  until a settlement, owned waits for a person's input.
 
-The mode is read **once**, here, when an action arrives, and the matching
-implementation is chosen (``combat_flow.MANAGED_OPS`` or ``combat.LEGACY_OPS``
-for the rules that differ per mode). The rules in ``combat`` and
-``combat_flow`` never ask which mode they are in, and the two modules no longer
-import each other: ``combat_flow`` builds on ``combat``, and only this engine
-knows both.
+An active battle that is not managed was saved by a combat format that no longer
+exists. It is never converted or guessed at: every action on it is refused with
+a ``CombatAdmissionError`` asking for a new combat.
+
+The mode is read **once**, here, when an action arrives. The rules in ``combat``
+and ``combat_flow`` never ask which mode they are in, and the two modules no
+longer import each other: ``combat_flow`` builds on ``combat``, and only this
+engine knows both.
 
 Commands, Keeper tools and the check engine's combat port talk to the engine,
 so a tool, a button and a retry all reach the same action ledger and the same
@@ -49,32 +48,29 @@ RAW_OUTCOME_REJECTED = (
 
 class Mode(str, Enum):
     IDLE = "idle"
-    LEGACY = "legacy"
     MANAGED = "managed"
 
 
 def mode_of(state: GroupState) -> Mode:
-    """The mode of the battle in ``state`` right now."""
+    """The mode of the battle in ``state`` right now.
+
+    An active battle that is not managed is refused, not repaired.
+    """
     if not state.combat.active:
         return Mode.IDLE
-    return Mode.MANAGED if combat_resources.is_managed(state) else Mode.LEGACY
-
-
-def _ops(mode: Mode) -> combat.ModeOps:
-    return combat_flow.MANAGED_OPS if mode is Mode.MANAGED else combat.LEGACY_OPS
+    if not combat_resources.is_managed(state):
+        raise combat_resources.CombatAdmissionError(combat_resources.UNSUPPORTED_COMBAT_FORMAT)
+    return Mode.MANAGED
 
 
 def _live_managed(state: GroupState, mode: Mode) -> dict[str, Any] | None:
     """Refuse an action that only makes sense inside a running managed battle.
 
     Without this, asking an idle conversation to run an action used to
-    fabricate an empty battle as a side effect. A battle saved before the
-    pipeline still raises the admission error it always did.
+    fabricate an empty battle as a side effect.
     """
     if mode is Mode.MANAGED:
         return None
-    if mode is Mode.LEGACY:
-        raise combat_resources.CombatAdmissionError(combat_resources.LEGACY_NEEDS_ADMISSION)
     return {"ok": False, "error": NO_BATTLE}
 
 
@@ -121,11 +117,11 @@ def _obligations(state: GroupState, action: act.Obligations, mode: Mode) -> list
 def _advance(state: GroupState, action: act.Advance, mode: Mode) -> dict[str, Any]:
     if mode is Mode.MANAGED:
         return combat_flow.advance_combat(state, actor_id=action.actor_id, event_id=action.event_id, skip=action.skip)
-    return combat.advance_turn(state, ops=_ops(mode))
+    return combat.advance_turn(state, ops=combat_flow.MANAGED_OPS)
 
 
 def _plan_enemy(state: GroupState, action: act.PlanEnemy, mode: Mode) -> dict[str, Any]:
-    return combat.plan_enemy_turn(state, action.enemy_name, ops=_ops(mode))
+    return combat.plan_enemy_turn(state, action.enemy_name, ops=combat_flow.MANAGED_OPS)
 
 
 def _run_enemy_plan(state: GroupState, action: act.RunEnemyPlan, mode: Mode) -> dict[str, Any]:
@@ -133,11 +129,9 @@ def _run_enemy_plan(state: GroupState, action: act.RunEnemyPlan, mode: Mode) -> 
 
 
 def _resolve_enemy(state: GroupState, action: act.ResolveEnemy, mode: Mode) -> dict[str, Any]:
-    if mode is Mode.MANAGED:
-        if action.outcome is not None:
-            return {"ok": False, "error": "Managed actions do not accept caller hit/damage results"}
-        return combat_flow.run_enemy_plan(state, action.plan_id)
-    return combat.resolve_enemy_action(state, action.plan_id, outcome=action.outcome)
+    if action.outcome is not None:
+        return {"ok": False, "error": "Managed actions do not accept caller hit/damage results"}
+    return _live_managed(state, mode) or combat_flow.run_enemy_plan(state, action.plan_id)
 
 
 def _set_initiative(state: GroupState, action: act.SetInitiative, mode: Mode) -> dict[str, Any]:
@@ -150,7 +144,7 @@ def _set_initiative(state: GroupState, action: act.SetInitiative, mode: Mode) ->
 def _finish_retired_turn(state: GroupState, action: act.FinishRetiredTurn, mode: Mode) -> None:
     combat.finish_retired_current_turn(
         state, old_order=action.old_order, old_index=action.old_index,
-        removed_ids=action.removed_ids, ops=_ops(mode),
+        removed_ids=action.removed_ids, ops=combat_flow.MANAGED_OPS,
     )
 
 
@@ -196,14 +190,14 @@ def _check_result(state: GroupState, action: act.CheckResult, mode: Mode) -> dic
 
 def _apply_damage(state: GroupState, action: act.ApplyDamage, mode: Mode) -> dict[str, Any]:
     return combat.apply_combat_damage(
-        state, action.target, action.raw_damage, ops=_ops(mode), damage_type=action.damage_type,
+        state, action.target, action.raw_damage, ops=combat_flow.MANAGED_OPS, damage_type=action.damage_type,
         tags=action.tags, source_id=action.source_id, bypass_armor=action.bypass_armor,
         entry_point=action.entry_point, event_id=action.event_id,
     )
 
 
 def _damage_combatant(state: GroupState, action: act.DamageCombatant, mode: Mode) -> dict[str, Any]:
-    return combat.damage_combatant(state, action.name, action.delta, ops=_ops(mode))
+    return combat.damage_combatant(state, action.name, action.delta, ops=combat_flow.MANAGED_OPS)
 
 
 def _single_hit(state: GroupState, action: act.SingleHit, mode: Mode) -> dict[str, Any]:
@@ -345,10 +339,6 @@ def _reconcile_baseline(state: GroupState, action: act.ReconcileBaseline, mode: 
     return {"ok": True, "receipt": receipt, "provisional": True}
 
 
-def _close_legacy(state: GroupState, action: act.CloseLegacy, mode: Mode) -> dict[str, Any]:
-    return combat.close_legacy_combat(state, event_id=action.event_id, reason=action.reason)
-
-
 _HANDLERS: dict[type, Handler] = {
     act.Start: _start,
     act.AddCombatant: _add_combatant,
@@ -384,7 +374,6 @@ _HANDLERS: dict[type, Handler] = {
     act.Rollback: _rollback,
     act.CorrectEvent: _correct_event,
     act.ReconcileBaseline: _reconcile_baseline,
-    act.CloseLegacy: _close_legacy,
 }
 
 

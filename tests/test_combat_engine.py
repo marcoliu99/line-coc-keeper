@@ -22,6 +22,7 @@ from app.repositories import group_state, state_transaction
 from app.services import combat_actions as act
 from app.services import combat_engine
 from app.services.combat_engine import Mode
+from tests import combat_calls
 from tests.check_dice import ScriptedDice, module_dice
 
 SOURCE = {
@@ -363,8 +364,8 @@ def test_b6_an_investigator_put_down_while_an_attack_waits_for_the_roll_cannot_f
 # ---------------------------------------------------------------- B7
 
 
-def _legacy_battle() -> GroupState:
-    """A battle as it was saved before the working-resource pipeline."""
+def _unsupported_battle() -> GroupState:
+    """An active battle saved by a combat format that no longer exists (no working-resource pipeline)."""
     investigator = _investigator("p1", "調查員p1", 80)
     state = GroupState(
         GROUP, active=True, timeline_id="timeline-b", characters={"p1": investigator},
@@ -384,45 +385,40 @@ def _legacy_battle() -> GroupState:
     return GroupState.from_dict(state.to_dict())
 
 
-def test_b7_a_legacy_battle_loads_is_inspected_planned_and_advanced():
-    state = _legacy_battle()
-    assert combat_engine.mode_of(state) is Mode.LEGACY
-    text = combat_engine.handle(state, act.Status())
-    assert "Cultist" in text and "戰鬥暫定" not in text
-
-    plan = combat_engine.handle(state, act.PlanEnemy())
-    assert plan["ok"] and plan["selected_action"] == "attack"
-    resolved = combat_engine.handle(state, act.ResolveEnemy(
-        plan_id=plan["plan_id"], outcome={"hit": True, "damage": 3},
-    ))
-    assert resolved["ok"]
-    assert state.characters["p1"].hp == 7, "legacy damage lands on the sheet immediately"
-    advanced = combat_engine.handle(state, act.Advance())
-    assert advanced["ok"] and advanced["combatant_id"] == "pc:char:p1"
-    assert combat_engine.mode_of(GroupState.from_dict(state.to_dict())) is Mode.LEGACY
-
-
-def test_b7_a_legacy_battle_refuses_managed_actions_and_is_never_converted():
-    state = _legacy_battle()
+def test_b7_an_unsupported_battle_is_refused_by_every_action_and_never_converted():
+    state = _unsupported_battle()
     before = deepcopy(state.to_dict())
     for action in (
-        act.Start(), act.Run("x"), act.Declare(
+        act.Start(), act.Status(), act.PlanEnemy(), act.Advance(), act.Run("x"),
+        act.ApplyDamage(target="Cultist", raw_damage=3), act.Declare(
             action_id="a", actor_id="pc:char:p1", target_id="e", weapon_reference="unarmed",
         ),
     ):
-        with pytest.raises(combat_resources.CombatAdmissionError, match="explicit admission"):
+        with pytest.raises(combat_resources.CombatAdmissionError, match="Start a new combat"):
             combat_engine.handle(state, action)
     assert state.to_dict() == before
-    assert combat_engine.mode_of(state) is Mode.LEGACY
+    assert not combat_resources.is_managed(state)
 
 
-def test_b7_closing_a_legacy_battle_explicitly_lets_a_new_managed_one_start():
-    state = _legacy_battle()
-    receipt = combat_engine.handle(state, act.CloseLegacy(event_id="close:1", reason="old save"))
-    assert receipt["status"] == "legacy_closed" and combat_engine.mode_of(state) is Mode.IDLE
-    assert combat_engine.handle(state, act.CloseLegacy(event_id="close:1", reason="old save")) == receipt
+def test_b7_every_new_battle_started_through_the_engine_is_managed():
+    state = GroupState(GROUP, active=True, timeline_id="timeline-b")
+    investigator = _investigator("p1", "調查員p1", 80)
+    state.characters["p1"] = investigator
+    state.characters_by_id[investigator.character_id] = investigator
+    state.set_active_character("p1", investigator.character_id)
     combat_engine.handle(state, act.Start())
+    assert state.combat.active and combat_resources.is_managed(state)
     assert combat_engine.mode_of(state) is Mode.MANAGED
+
+
+def test_b7_an_unmanaged_state_never_falls_back_to_another_implementation():
+    unsupported = _unsupported_battle()
+    with pytest.raises(AssertionError, match="not started through"):
+        combat_calls.ops_for(unsupported)
+    with pytest.raises(AssertionError, match="not started through"):
+        combat_calls.ops_for(GroupState(GROUP))
+    assert combat_calls.ops_for(_battle()) is combat_flow.MANAGED_OPS
+    assert not hasattr(combat, "LEGACY_OPS") and not hasattr(act, "CloseLegacy")
 
 
 def test_b7_a_managed_battle_survives_a_save_and_continues():
@@ -531,7 +527,8 @@ def test_b9_a_failed_commit_leaves_the_battle_untouched_and_the_retry_applies_on
 def test_the_mode_is_read_from_the_battle():
     assert combat_engine.mode_of(GroupState(GROUP)) is Mode.IDLE
     assert combat_engine.mode_of(_battle()) is Mode.MANAGED
-    assert combat_engine.mode_of(_legacy_battle()) is Mode.LEGACY
+    with pytest.raises(combat_resources.CombatAdmissionError, match="unsupported legacy combat format"):
+        combat_engine.mode_of(_unsupported_battle())
 
 
 def test_a_managed_action_on_an_idle_conversation_refuses_instead_of_inventing_a_battle():
@@ -564,12 +561,9 @@ def test_administrative_actions_must_name_the_current_battle_and_give_a_reason()
         combat_engine.handle(state, act.Rollback(combat_id=state.combat.combat_id, event_id="e", reason=" "))
 
 
-def test_rules_refuse_the_other_modes_implementation():
-    managed, legacy = _battle(), _legacy_battle()
+def test_the_managed_rules_refuse_an_unsupported_battle():
     with pytest.raises(combat.ModeMismatch):
-        combat.advance_turn(managed, ops=combat.LEGACY_OPS)
-    with pytest.raises(combat.ModeMismatch):
-        combat.advance_turn(legacy, ops=combat_flow.MANAGED_OPS)
+        combat.advance_turn(_unsupported_battle(), ops=combat_flow.MANAGED_OPS)
 
 
 def test_an_unknown_action_is_a_type_error():

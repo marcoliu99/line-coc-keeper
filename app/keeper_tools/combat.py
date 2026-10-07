@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from app import combat
+from app import combat, combat_resources
 from app.keeper_tools import managed_combat, resource_bridge, support
 from app.models import ArmorRule, AttackRule, GroupState, SpecialAbility
 from app.services import combat_actions as act
@@ -370,4 +370,4 @@ def add_combat_effect(call: ToolCall) -> dict[str, Any]:
 def end_combat(call: ToolCall) -> dict[str, Any]:
     if resource_bridge.managed(call.state):
         return managed_combat.preview_combat_settlement(call)
-    return {"ok": False, "error": "Legacy battle requires explicit controller admission/closure; end cannot discard pending evidence"}
+    return {"ok": False, "error": combat_resources.UNSUPPORTED_COMBAT_FORMAT}

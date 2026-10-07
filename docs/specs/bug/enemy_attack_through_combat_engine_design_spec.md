@@ -19,7 +19,7 @@ Wording only:
 
 ## Not done
 
-The tool and the legacy combat mode are not removed; saved battles from before the managed pipeline still need them, and removing them is a separate decision. The engine is unchanged.
+The tool and the legacy combat mode are not removed in this change; the follow-up below removes the tool, and [removing the legacy combat mode](../refactor/remove_legacy_combat_mode_design_spec.md) removes the mode. The engine is unchanged here.
 
 ## Tests
 
@@ -31,4 +31,4 @@ With no saved battle from before the managed pipeline left to keep (confirmed by
 
 - `offer_npc_attack_defense_choice` (the older NPC attack and defense check) and `close_legacy_combat` are no longer in the Keeper's tool list, and their handlers and the tests that only exercised them are deleted. The Keeper can no longer resolve an enemy attack before a fight exists, or try to close a legacy battle.
 - `offer_check_choice`, `npc_skill_check`, `clear_pending_check` and the prompt no longer point at the removed tool. The older tool also dropped the Fight Back option against a Critical attacker; the managed combat's own defense choice now does the same (see [a Critical attack leaves the defender no Fight Back option](no_fight_back_against_critical_design_spec.md)). `offer_check_choice` also no longer takes `attacker_tier` (the second leg of the older two-call flow) and rejects it, so a defense choice against an NPC attack can only come from the combat engine.
-- Kept: the dodge and fight-back machinery in the check engine (the managed combat's own defense choice uses it), and the legacy combat mode inside `combat.py` and `combat_engine.py`. Removing that mode touches roughly 250 to 300 lines that only the legacy mode uses in `combat.py` and `combat_engine.py`, plus many tests that build battles through that mode; it is a separate piece of work, scoped in a report.
+- Kept: the dodge and fight-back machinery in the check engine (the managed combat's own defense choice uses it). The legacy combat mode inside `combat.py` and `combat_engine.py` was removed afterwards; see [removing the legacy combat mode](../refactor/remove_legacy_combat_mode_design_spec.md).

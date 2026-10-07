@@ -139,9 +139,8 @@ def _functions_referencing(path: Path, name: str) -> set[str]:
 
 
 def test_the_combat_rules_do_not_branch_on_the_mode():
-    """The only mode reads left in ``combat.py`` are the guard against the wrong ops and an explicit closure."""
-    owners = _functions_referencing(ROOT / "app" / "combat.py", "is_managed")
-    assert owners == {"_require_legacy", "close_legacy_combat"}
+    """``combat.py`` never asks whether a battle is managed; the engine decides and passes the ops down."""
+    assert not _functions_referencing(ROOT / "app" / "combat.py", "is_managed")
     assert not _functions_referencing(ROOT / "app" / "combat.py", "pipeline_version")
 
 
@@ -154,7 +153,6 @@ def test_the_engine_reads_the_mode_in_one_place():
 MODE_SENSITIVE = frozenset({
     "advance_turn", "plan_enemy_turn", "process_timing", "apply_combat_damage", "damage_combatant",
     "begin_combat", "add_combatant", "resolve_enemy_action", "finish_retired_current_turn", "status_text",
-    "close_legacy_combat",
 })
 
 
