@@ -727,3 +727,15 @@ def test_a_pending_settlement_preview_refuses_planning_and_running_an_enemy_turn
         assert 'confirm_combat_settlement' in refused['error']
     assert state.combat.revision == revision and state.combat.phase == 'SETTLEMENT'
     assert combat_resources.commit_settlement(state, settlement_id)['status'] == 'committed'
+
+
+def test_the_status_says_so_when_one_side_is_down_and_stays_quiet_otherwise():
+    state, pc, enemy = battle()
+    assert '可以結算' not in combat.status_text(state)
+    enemy.defeated = True
+    combat.card_for(state, enemy).hp = 0
+    assert '敵方已全數倒下，戰鬥可以結算了。' in combat.status_text(state)
+    enemy.defeated = False
+    combat.card_for(state, enemy).hp = 20
+    pc.away = True
+    assert '我方已全數倒下或離場，戰鬥可以結算了。' in combat.status_text(state)

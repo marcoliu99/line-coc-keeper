@@ -1450,4 +1450,10 @@ def status_text(state: GroupState, include_private: bool = False, *, provisional
             if card.incomplete:
                 line += "（戰鬥卡未完整）"
         lines.append(line)
+    enemies = [c for c in combat.order if c.side == "enemy"]
+    party = [c for c in combat.order if c.side == "pc"]
+    if enemies and all(c.defeated for c in enemies):
+        lines.append("敵方已全數倒下，戰鬥可以結算了。")
+    elif party and all(is_skippable(state, c) for c in party):
+        lines.append("我方已全數倒下或離場，戰鬥可以結算了。")
     return "\n".join(lines)
