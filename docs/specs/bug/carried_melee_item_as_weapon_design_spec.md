@@ -14,7 +14,7 @@ In a real *The Haunting* run the investigator 承翰 carried a 警棍 (a police 
 ## Change
 
 - `app/data/combat_weapons.json`: "Club, Small" also answers to `nightstick` and `警棍`.
-- `app/combat_flow.py` (`_weapon_actor_evidence`): a melee weapon that uses no ammunition counts as owned when one of the investigator's carried items is named exactly as the weapon, the declared reference or one of its aliases (a whole-name match, so "baseball batting gloves" is not a bat).
+- `app/combat_flow.py` (`_weapon_actor_evidence`): a melee weapon that uses no ammunition counts as owned when one of the investigator's carried items contains the weapon's name, the declared reference or one of its aliases (a fuzzy match on purpose, so "老舊警棍" counts as a 警棍). Accepted trade-off: an unrelated item whose name merely contains a weapon name ("baseball batting gloves") also counts as that weapon.
 
 ## Not done
 

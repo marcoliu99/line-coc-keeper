@@ -602,13 +602,12 @@ def test_a_carried_melee_item_can_be_used_as_a_weapon():
     assert _load().combat.actions["baton:1"]["weapon"]["id"] == "i.weapon.club-small"
 
 
-def test_an_item_that_only_contains_a_weapon_name_is_not_that_weapon():
+def test_a_carried_item_that_contains_the_weapon_name_counts_as_that_weapon():
     state = _battle(first_enemy=False)
-    state.characters["p1"].carried_items = ["baseball batting gloves"]
+    state.characters["p1"].carried_items = ["老舊警棍"]
     _save(state)
     enemy = next(p for p in _load().combat.order if p.side == "enemy")
     declared = _tool("declare_combat_action", {
-        "action_id": "bat:1", "actor_id": "pc:char:p1", "target_id": enemy.combatant_id,
-        "weapon_reference": "baseball bat",
+        "action_id": "baton:2", "actor_id": "pc:char:p1", "target_id": enemy.combatant_id, "weapon_reference": "警棍",
     })
-    assert declared["phase"] == "NEEDS_RULING", declared
+    assert declared["ok"] and declared["phase"] == "PLAYER_ROLL", declared
