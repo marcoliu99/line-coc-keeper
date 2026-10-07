@@ -694,3 +694,21 @@ def test_unknown_effect_stop_rejected_and_recorded_stop_replayed_after_reload():
     assert combat_flow.stop_effect(restored, effect_id='hazard', event_id='stop:hazard', reason='Left') == result
     assert restored.to_dict() == before
     assert not combat_flow.stop_effect(restored, effect_id='typo', event_id='stop:hazard', reason='Left')['ok']
+
+
+def test_a_pending_settlement_preview_refuses_advancing_and_declaring_and_can_still_be_confirmed():
+    state, _, enemy = battle()
+    enemy.hp = 0
+    enemy.defeated = True
+    combat.card_for(state, enemy).hp = 0
+    preview = combat_resources.get_settlement(state)
+    settlement_id = preview['settlement_id']
+    revision = state.combat.revision
+    round_number = state.combat.round_number
+    advanced = combat_flow.advance_combat(state, actor_id='pc:pc1', event_id='adv:1', skip=True)
+    declared = declare(state, enemy)
+    for refused in (advanced, declared):
+        assert not refused['ok'] and refused['settlement_id'] == settlement_id
+        assert 'confirm_combat_settlement' in refused['error']
+    assert (state.combat.revision, state.combat.round_number) == (revision, round_number)
+    assert combat_resources.commit_settlement(state, settlement_id)['status'] == 'committed'
