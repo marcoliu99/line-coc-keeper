@@ -211,9 +211,9 @@ def _weapon_actor_evidence(
         metadata = effective.weapon_instances.get(inventory_key)
         if weapon.id != 'i.weapon.brawl':
             # A melee weapon with nothing to track counts as owned when the investigator carries an item by that name.
-            names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases)}
+            names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases) if n.strip()}
             carried = (weapon.attack_mode == 'melee' and not weapon.ammo_per_attack
-                       and any(item.strip().casefold() in names for item in effective.carried_items))
+                       and any(n in item.casefold() for item in effective.carried_items for n in names))
             if inventory_key not in effective.weapons and not metadata and not carried:
                 raise ValueError('Weapon requires an existing owned instance or inventory mapping')
             if metadata and metadata.get('definition_id') not in (None, weapon.id):
@@ -323,6 +323,9 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
                  'bonus_dice': 0, 'penalty_dice': 0},
                 {'kind': 'counter', 'label': '反擊', 'skill': '格鬥（鬥毆）',
                  'skill_value': character.skills.get('格鬥（鬥毆）', 25), 'bonus_dice': 0, 'penalty_dice': 0}])
+    if not ranged and action['checks'].get('attack', {}).get('tier') == 'critical':
+        # No success level beats a Critical attack, so Fight Back could only lose.
+        options = [o for o in options if o['kind'] != 'counter']
     candidate: dict[str, Any] = {'type': 'choice', 'options': options,
                  'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
     registered = check_lifecycle.register(state, character.owner_id, candidate)
