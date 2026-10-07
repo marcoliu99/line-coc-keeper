@@ -210,7 +210,11 @@ def _weapon_actor_evidence(
         inventory_key = instance.instance_id if instance else reference
         metadata = effective.weapon_instances.get(inventory_key)
         if weapon.id != 'i.weapon.brawl':
-            if inventory_key not in effective.weapons and not metadata:
+            # A melee weapon with nothing to track counts as owned when the investigator carries an item by that name.
+            names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases)}
+            carried = (weapon.attack_mode == 'melee' and not weapon.ammo_per_attack
+                       and any(item.strip().casefold() in names for item in effective.carried_items))
+            if inventory_key not in effective.weapons and not metadata and not carried:
                 raise ValueError('Weapon requires an existing owned instance or inventory mapping')
             if metadata and metadata.get('definition_id') not in (None, weapon.id):
                 raise ValueError('Owned weapon definition does not match the declared weapon')
