@@ -108,7 +108,7 @@ class DefenseChoiceHintTests(unittest.TestCase):
         self.assertEqual(controls.defense_choice_hint(check), "")
 
     def test_fight_back_option_omitted_entirely_when_attacker_rolled_critical(self):
-        """Defensive fallback: keeper.py's offer_npc_attack_defense_choice
+        """Defensive fallback: the defense choice
         already filters Fight Back out server-side when attacker_tier is
         Critical (§4.2), so this option should never actually reach here —
         but if it somehow did, the hint builder must skip it rather than

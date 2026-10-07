@@ -83,7 +83,7 @@ class OfferCheckChoiceTests(unittest.TestCase):
 
 class RangedDefenseEndToEndTests(unittest.TestCase):
     """docs/specs/bug/bug-dodge-counter-tie-and-ranged-mechanics.md end-to-end:
-    a ranged offer_npc_attack_defense_choice all the way through /coc check's
+    a ranged attack's defense choice all the way through /coc check's
     resolution. Ranged combat is never dice.resolve_opposed — the attacker's
     shot is a standalone check, deferred until the defender's own
     dive-for-cover roll is known, with a penalty die added only if the dive
