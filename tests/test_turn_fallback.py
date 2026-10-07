@@ -456,3 +456,23 @@ def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_abo
     state.combat.active = False
     assert "劇本" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
     assert turn_fallback.combat_guidance(state, "tool_failure") == ""
+
+
+def test_a_battle_that_is_paused_or_whose_actor_has_acted_does_not_ask_for_a_declaration() -> None:
+    state = _state()
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=0, phase="READY",
+        order=[Combatant(name="小雨", side="pc", is_pc=True, combatant_id="pc:1", hp=10, hp_max=10),
+               Combatant(name="鼠群", side="enemy", hp=5, hp_max=5)],
+    )
+    asking = turn_fallback.combat_guidance(state, "unsupported_action")
+    assert "請說明要對哪個目標" in asking
+    state.combat.actions = {"a1": {"actor_id": "pc:1", "completed": True, "round": 2}}
+    assert "已經行動完畢" in turn_fallback.combat_guidance(state, "unsupported_action")
+    state.combat.actions = {"a2": {"actor_id": "pc:1", "completed": False, "round": 2}}
+    assert "尚未完成的檢定或選擇" in turn_fallback.combat_guidance(state, "unsupported_action")
+    state.combat.actions = {}
+    state.combat.phase = "PLAYER_ROLL"
+    assert "尚未完成的檢定或選擇" in turn_fallback.combat_guidance(state, "unsupported_action")
+    state.combat.phase = "NEEDS_RULING"
+    assert "等守密人裁定" in turn_fallback.combat_guidance(state, "unsupported_action")

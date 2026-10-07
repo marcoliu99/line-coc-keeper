@@ -80,7 +80,15 @@ def combat_guidance(state: GroupState, reason: str | None) -> str:
     enemies = [c for c in battle.order if c.side == "enemy"]
     if enemies and all(c.defeated for c in enemies):
         return "敵方已全數倒下，戰鬥等著結算；結算後就能繼續探索。"
+    if battle.phase == "NEEDS_RULING":
+        return "戰鬥暫停中，要等守密人裁定後才能繼續。"
+    if (battle.interaction or battle.phase not in {"READY", "RESOLVE"}
+            or any(not action.get("completed") for action in battle.actions.values())):
+        return "戰鬥暫停中，還有尚未完成的檢定或選擇；請先完成它（按檢定按鈕或輸入 /coc check），才能繼續。"
     current = battle.order[min(battle.current_index, len(battle.order) - 1)]
+    if any(action.get("actor_id") == current.combatant_id and action.get("completed")
+           and action.get("round") == battle.round_number for action in battle.actions.values()):
+        return f"「{current.display_name}」這一輪已經行動完畢，等守密人推進到下一位。"
     return (f"戰鬥進行中，現在輪到「{current.display_name}」行動。輪到你時，請說明要對哪個目標、用什麼方式攻擊或行動；"
             "還沒輪到你時，請稍候。")
 
