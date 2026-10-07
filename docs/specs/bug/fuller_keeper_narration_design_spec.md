@@ -16,7 +16,7 @@ One prompt rule in `app/prompt_builder.py` (the pacing section shared by the Exe
 
 - A reply still advances one scene beat, but writes it out: usually two to four paragraphs, about 150–300 characters.
 - When an investigator enters or looks at a place, describe what the scenario says is there (furnishings, objects, exits, sounds, smells, who is present) so the player has something to investigate.
-- What the scenario states is described directly; "not yet determined" is not the body of a reply. Details it does not state are covered by atmosphere that adds no key clue, and the reply points at what the player can do next.
+- What the scenario says is visible on entering, or has already been found, is described directly; "not yet determined" is not the body of a reply. What needs a check, an investigation or a trigger to be found (hidden doors, concealed clues, hidden people or monsters) stays undisclosed. Details the scenario does not state are covered by atmosphere that adds no key clue, and the reply points at what the player can do next.
 - Entering a new place may run longer than usual.
 
 The spoiler, secrecy and "do not invent" rules are unchanged.
