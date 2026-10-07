@@ -553,6 +553,14 @@ def test_a_damage_string_that_is_not_dice_is_refused_without_starting_a_battle()
             name="Knife", dex=50, hp=5, attacks=[{"id": "slash", "damage": "1D4+2；極限成功 6+1D4+2"}],
         ))
     assert not state.combat.active and not state.combat.combat_id
+    bad = [{"id": "slash", "damage": "1D4+2；極限成功 6+1D4+2"}]
+    for create in (
+        lambda: combat.add_npc(state, "Knife", 50, 5, attacks=bad),
+        lambda: combat.create_enemy_card(state, "Knife", attacks=bad),
+    ):
+        with pytest.raises(ValueError, match="extreme_rule"):
+            create()
+        assert not state.combat.active and not state.combat.combat_id
 
 
 def test_the_tools_do_not_fabricate_a_battle_when_none_is_running():

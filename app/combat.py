@@ -157,6 +157,7 @@ def create_enemy_card(
     source: dict[str, Any] | None = None,
     incomplete: bool = False,
 ) -> EnemyCombatCard:
+    coerced_attacks = _coerce_attacks(attacks)  # refuse a bad damage string before the fight is touched
     _ensure_started(state)
     card = EnemyCombatCard(
         id=_enemy_card_id(name),
@@ -166,7 +167,7 @@ def create_enemy_card(
         hp=max(0, hp),
         hp_max=max(1, hp),
         armor=_coerce_armor(armor),
-        attacks=_coerce_attacks(attacks),
+        attacks=coerced_attacks,
         abilities=_coerce_abilities(abilities),
         stats={"DEX": dex, **(stats or {})},
         skills=skills or {},
@@ -227,6 +228,8 @@ def add_npc(
     source: dict[str, Any] | None = None,
     skills: dict[str, int] | None = None,
 ) -> CombatState:
+    if not is_ally:
+        _coerce_attacks(attacks)  # refuse a bad damage string before the fight is touched
     _ensure_started(state)
     if is_ally:
         current_id = state.combat.order[state.combat.current_index].combatant_id if state.combat.order else None
