@@ -2407,6 +2407,20 @@
       "path": "docs/specs/refactor/remove_legacy_combat_mode_design_spec.md",
       "zh_path": "docs/specs/refactor/remove_legacy_combat_mode_design_spec_zh.md",
       "source_revision": "95793774ab39f20f06400136767216c99d1bd78f"
+    },
+    {
+      "title": "An enemy's damage must be a dice expression",
+      "zh": "敵人的傷害必須是骰子表示式",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "tests/test_combat_wiring.py",
+        "tests/test_combat_engine.py"
+      ],
+      "path": "docs/specs/bug/enemy_damage_must_be_dice_design_spec.md",
+      "zh_path": "docs/specs/bug/enemy_damage_must_be_dice_design_spec_zh.md",
+      "source_revision": "6b077092058abb099248615ff95e1861ec886627"
     }
   ]
 }

@@ -597,6 +597,19 @@ def reviewed_enemy_entry():
                        'sha256': 'a' * 64, 'attack_mode': 'melee', 'extreme_rule': 'maximum'}}
 
 
+def test_initializer_refuses_a_damage_string_that_is_not_dice_before_the_fight_starts(store):
+    entry = reviewed_enemy_entry()
+    entry['attacks'][0]['damage'] = '1D4+2；極限成功 6+1D4+2'
+    before = normalized(store['state'])
+    refused = tool(store, 'initialize_combat', {'enemies': [entry]})
+    assert not refused['ok']
+    assert 'extreme_rule' in refused['enemies'][0]['error'] and 'impale' in refused['enemies'][0]['error']
+    assert normalized(store['state']) == before
+    entry['attacks'][0]['damage'] = '1D4+2'
+    entry['source']['extreme_rule'] = 'impale'
+    assert tool(store, 'initialize_combat', {'enemies': [entry]})['ok']
+
+
 def test_public_initializer_supplies_reviewed_npc_dodge_to_ranged_action(store):
     state = store['state']
     state.characters['player'].skills['firearms-handgun'] = 50

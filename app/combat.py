@@ -121,6 +121,14 @@ def _coerce_armor(raw: list[dict[str, Any]] | None) -> list[ArmorRule]:
 
 def _coerce_attacks(raw: list[dict[str, Any]] | None) -> list[AttackRule]:
     attacks = [AttackRule.from_dict(a) for a in (raw or [])]
+    for attack in attacks:
+        try:
+            dice.max_expression_value(attack.damage)
+        except ValueError:
+            raise ValueError(
+                f"攻擊「{attack.label or attack.id}」的 damage 只能填骰子表示式（例如 1D4+2），收到 {attack.damage!r}。"
+                "極限成功的額外傷害不要寫在 damage；請在 source.extreme_rule 填 maximum，穿刺類武器填 impale。"
+            ) from None
     return attacks or [_default_attack()]
 
 
@@ -473,6 +481,7 @@ def add_combatant(
     reports the defeated namesake so the caller can ask whether it's really a
     new one, and the newcomer gets a numbered display name.
     """
+    _coerce_attacks(attacks)  # a bad damage string is refused before the fight is touched
     if not state.combat.active:
         begin_combat(state)
     if not is_ally and not force_new_instance:
