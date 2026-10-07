@@ -82,6 +82,8 @@ def combat_guidance(state: GroupState, reason: str | None) -> str:
         return "敵方已全數倒下，戰鬥等著結算；結算後就能繼續探索。"
     if battle.phase == "NEEDS_RULING":
         return "戰鬥暫停中，要等守密人裁定後才能繼續。"
+    if battle.phase == "LUCK_DECISION":
+        return "戰鬥暫停中，有人正在做 Luck 決定；請用 Luck 按鈕或輸入 /coc luck 完成，才能繼續。"
     if (battle.interaction or battle.phase not in {"READY", "RESOLVE"}
             or any(not action.get("completed") for action in battle.actions.values())):
         return "戰鬥暫停中，還有尚未完成的檢定或選擇；請先完成它（按檢定按鈕或輸入 /coc check），才能繼續。"

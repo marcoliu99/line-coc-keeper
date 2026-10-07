@@ -476,3 +476,17 @@ def test_a_battle_that_is_paused_or_whose_actor_has_acted_does_not_ask_for_a_dec
     assert "尚未完成的檢定或選擇" in turn_fallback.combat_guidance(state, "unsupported_action")
     state.combat.phase = "NEEDS_RULING"
     assert "等守密人裁定" in turn_fallback.combat_guidance(state, "unsupported_action")
+
+
+def test_a_luck_wait_names_the_luck_control_and_an_evidence_hold_keeps_its_own_wording() -> None:
+    state = _state()
+    state.combat = CombatState(
+        active=True, round_number=2, current_index=0, phase="LUCK_DECISION",
+        order=[Combatant(name="小雨", side="pc", is_pc=True, combatant_id="pc:1", hp=10, hp_max=10),
+               Combatant(name="鼠群", side="enemy", hp=5, hp_max=5)],
+    )
+    assert "/coc luck" in turn_fallback.combat_guidance(state, "unsupported_action")
+    held = _result("blocked", fallback_reason="no_scenario_evidence",
+                   check_status={"tool_called": False, "pending": None, "scenario_evidence_blocked": True})
+    reply = prompt_config.enforce_mechanic_check_consistency("narration", held, state=state)
+    assert "劇本依據" in reply and "/coc luck" not in reply
