@@ -6,7 +6,7 @@ Nothing told the Keeper that a battle was over. In a Haunting run the rat pack h
 
 ## Change
 
-`status_text` adds one line at the end when one side is out: "敵方已全數倒下，戰鬥可以結算了。" when every enemy is down, or "我方已全數倒下或離場，戰鬥可以結算了。" when every investigator is down or away. It says the battle can be settled; it does not settle it and does not name a tool, because the status is also what players see. Nothing is said while both sides still have someone standing.
+`status_text` adds one line at the end when one side is out: "敵方已全數倒下，戰鬥可以結算了。" when every enemy is down, or "我方已全數倒下或離場，戰鬥可以結算了。" when every investigator and NPC ally is down or away. It says the battle can be settled; it does not settle it and does not name a tool, because the status is also what players see. Nothing is said while both sides still have someone standing.
 
 ## Not done
 

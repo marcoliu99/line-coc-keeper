@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from app import combat, combat_flow, combat_resources, dice
-from app.models import Character, GroupState
+from app.models import Character, Combatant, GroupState
 from tests import combat_calls as calls
 
 SOURCE = {'url': 'https://example.test/reviewed-scenario', 'revision': 'v1', 'sha256': 'abc', 'accessed': '2026-10-01'}
@@ -738,4 +738,13 @@ def test_the_status_says_so_when_one_side_is_down_and_stays_quiet_otherwise():
     enemy.defeated = False
     combat.card_for(state, enemy).hp = 20
     pc.away = True
+    assert '我方已全數倒下或離場，戰鬥可以結算了。' in combat.status_text(state)
+
+
+def test_a_standing_npc_ally_keeps_the_party_from_being_called_down():
+    state, pc, _enemy = battle()
+    pc.away = True
+    state.combat.order.append(Combatant(name='Ally', hp=5, hp_max=5, is_ally=True, side='ally'))
+    assert '我方已全數倒下' not in combat.status_text(state)
+    state.combat.order[-1].defeated = True
     assert '我方已全數倒下或離場，戰鬥可以結算了。' in combat.status_text(state)
