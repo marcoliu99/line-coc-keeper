@@ -219,7 +219,9 @@
       "id": "i.weapon.club-small",
       "name": "Club, Small",
       "aliases": [
-        "small club"
+        "small club",
+        "nightstick",
+        "警棍"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
