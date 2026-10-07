@@ -28,7 +28,7 @@ Keeper tools (keeper_tools/combat.py, managed_combat.py)   /coc combat   check a
 
 ## Contract kept
 
-1. **Modes.** A battle started today is managed. A battle saved before the working-resource pipeline stays legacy: it can be looked at, planned, advanced and closed explicitly (`close_legacy_combat`), is never converted, and refuses managed actions. Both load, serialise and continue.
+1. **Modes.** A battle started today is managed. A battle saved before the working-resource pipeline stays legacy: it can be looked at, planned and advanced, is never converted, and refuses managed actions. (The `close_legacy_combat` tool that used to close one explicitly is no longer in the Keeper's tool list; see [an enemy attacks through the combat engine](../bug/enemy_attack_through_combat_engine_design_spec.md).) Both load, serialise and continue.
 2. **Atomic actions.** One state transaction wraps an action, including the check it waits on, resource changes and settlement entries. An action that needs a person's answer returns with that wait saved (`PLAYER_CHOICE`, `PLAYER_ROLL`, `INJURY_CHECK`, `LUCK_DECISION`); the answer arrives as a new action carrying the same identity.
 3. **No double settlement.** Damage, ammunition, effects and turn advance are keyed by stable ledger ids (`action_id`, `event_id`). A retry, a double click, or the same hit sent through an old tool and the new entry replays the stored receipt.
 4. **Player choices are never made for the player**: defence, Luck, weapon and consumable stay the player's; autoroll stays off by default.
@@ -38,7 +38,7 @@ Timing points (declaration, ammunition, malfunction, cancellation, weapon change
 
 ## Compatibility
 
-Tool names, schemas and outputs, Discord custom ids, command text and stored combat shapes are unchanged; existing saves need no migration. The raw-outcome tools (`apply_combat_damage`, `damage_combatant`, …) still refuse while a battle runs. `app.combat.apply_managed_damage`, `managed_single_hit` and `is_managed` moved (to `combat_flow` and `combat_resources`); no code in this repository imports them from the old place.
+Tool names, schemas and outputs (except that `offer_npc_attack_defense_choice` and `close_legacy_combat` have been removed from the Keeper's tools), Discord custom ids, command text and stored combat shapes are unchanged; existing saves need no migration. The raw-outcome tools (`apply_combat_damage`, `damage_combatant`, …) still refuse while a battle runs. `app.combat.apply_managed_damage`, `managed_single_hit` and `is_managed` moved (to `combat_flow` and `combat_resources`); no code in this repository imports them from the old place.
 
 ## Verification
 

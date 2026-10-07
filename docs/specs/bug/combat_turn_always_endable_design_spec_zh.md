@@ -31,4 +31,4 @@
 
 ## 後續：要讓 Keeper 知道該 skip
 
-實跑（《The Haunting》地下室，100 次輸入）中，第一位調查員的回合被拖了 75 次輸入：玩家在搜索、交談，而提示裡 `skip` 的例子只有護住自己、躲藏、撤退，Keeper 就一直查劇本，還去用 `close_legacy_combat`（它只用來關舊版快照，並因此丟出 `CombatAdmissionError`），沒有結束這個回合。現在提示和 `skip` 的工具說明也寫上搜索、查看、交談，提示與 `close_legacy_combat` 的說明也註明它不是用來結束正常戰鬥回合的。只改文字，引擎不變。
+實跑（《The Haunting》地下室，100 次輸入）中，第一位調查員的回合被拖了 75 次輸入：玩家在搜索、交談，而提示裡 `skip` 的例子只有護住自己、躲藏、撤退，Keeper 就一直查劇本，還去用 `close_legacy_combat`（它只用來關舊版快照，並因此丟出 `CombatAdmissionError`），沒有結束這個回合。現在提示和 `skip` 的工具說明也寫上搜索、查看、交談，提示與 `close_legacy_combat` 的說明也註明它不是用來結束正常戰鬥回合的。只改文字，引擎不變。（`close_legacy_combat` 後來已從 Keeper 的工具表整個移除；見[敵人的攻擊要走戰鬥引擎](enemy_attack_through_combat_engine_design_spec_zh.md)。）

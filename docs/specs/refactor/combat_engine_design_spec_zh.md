@@ -28,7 +28,7 @@ Keeper 工具（keeper_tools/combat.py、managed_combat.py）   /coc combat   �
 
 ## 保留的契約
 
-1. **模式。** 現在開始的戰鬥是 managed。在工作資源管線之前存下來的戰鬥維持 legacy：可以查看、規劃、推進，並以 `close_legacy_combat` 明確關閉；絕不自動轉換，並拒絕 managed action。兩種都能載入、序列化與續玩。
+1. **模式。** 現在開始的戰鬥是 managed。在工作資源管線之前存下來的戰鬥維持 legacy：可以查看、規劃、推進；絕不自動轉換，並拒絕 managed action。（原本用來明確關閉它的 `close_legacy_combat` 工具已不在 Keeper 的工具表裡；見[敵人的攻擊要走戰鬥引擎](../bug/enemy_attack_through_combat_engine_design_spec_zh.md)。）兩種都能載入、序列化與續玩。
 2. **原子 action。** 一個 state 交易包住一個 action，包括它等待的檢定、資源變更與結算項目。需要玩家回答的 action 帶著已保存的等待回傳（`PLAYER_CHOICE`、`PLAYER_ROLL`、`INJURY_CHECK`、`LUCK_DECISION`）；回答以帶同一識別碼的新 action 進來。
 3. **不重複結算。** 傷害、彈藥、效果與回合推進都以穩定的 ledger id（`action_id`、`event_id`）為鍵。重試、連點，或同一筆傷害先後經由舊工具與新入口送出，都只重播已存的收據。
 4. **不替玩家做選擇**：防禦、Luck、武器與耗材仍屬玩家；autoroll 預設仍為關閉。
@@ -38,7 +38,7 @@ Keeper 工具（keeper_tools/combat.py、managed_combat.py）   /coc combat   �
 
 ## 相容性
 
-工具名稱、schema 與輸出、Discord custom id、指令文字與儲存的戰鬥結構均不變；既有存檔不需遷移。原始結果類工具（`apply_combat_damage`、`damage_combatant`…）在戰鬥進行中仍然拒絕。`app.combat.apply_managed_damage`、`managed_single_hit` 與 `is_managed` 已搬走（到 `combat_flow` 與 `combat_resources`），本 repo 內沒有程式碼再從舊位置匯入它們。
+工具名稱、schema 與輸出（但 `offer_npc_attack_defense_choice` 與 `close_legacy_combat` 已從 Keeper 的工具表移除）、Discord custom id、指令文字與儲存的戰鬥結構均不變；既有存檔不需遷移。原始結果類工具（`apply_combat_damage`、`damage_combatant`…）在戰鬥進行中仍然拒絕。`app.combat.apply_managed_damage`、`managed_single_hit` 與 `is_managed` 已搬走（到 `combat_flow` 與 `combat_resources`），本 repo 內沒有程式碼再從舊位置匯入它們。
 
 ## 驗證
 
