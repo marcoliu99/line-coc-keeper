@@ -748,3 +748,28 @@ def test_a_standing_npc_ally_keeps_the_party_from_being_called_down():
     assert '我方已全數倒下' not in combat.status_text(state)
     state.combat.order[-1].defeated = True
     assert '我方已全數倒下或離場，戰鬥可以結算了。' in combat.status_text(state)
+
+
+def test_advance_accepts_the_character_id_and_wrong_actor_names_the_current_one():
+    state, _, enemy = battle()
+    declare(state, enemy)
+    with patch('app.dice.skill_check', return_value=check('fail', roll=80)):
+        finish(state, check('fail', roll=80))
+        redeclared = declare(state, enemy, 'attack-again')
+        assert not redeclared['ok'] and 'advance_combat_turn' in redeclared['error'] and 'pc:pc1' in redeclared['error']
+        wrong = combat_flow.advance_combat(state, actor_id='nobody', event_id='advance:wrong')
+        assert not wrong['ok'] and 'pc:pc1' in wrong['error']
+        advanced = combat_flow.advance_combat(state, actor_id='pc1', event_id='advance:by-character-id')
+        assert 'current actor' not in advanced.get('error', '')  # the NPC reply that follows is not under test
+
+
+def test_advance_by_name_when_a_same_named_ally_acted_first():
+    state, _, _enemy = battle()
+    for i in (1, 2):
+        combat.add_combatant(state, 'Guard', 100 - i, 5, is_ally=True)
+    state.combat.current_index = 1  # the second Guard shares its name, and its ID, with the first
+    current = state.combat.order[1]
+    state.combat.actions['skip:x'] = {'action_id': 'skip:x', 'kind': 'skip', 'actor_id': current.combatant_id,
+                                      'completed': True, 'round': state.combat.round_number}
+    result = combat_flow.advance_combat(state, actor_id='Guard', event_id='advance:guard')
+    assert 'current actor' not in result.get('error', '')

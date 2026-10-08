@@ -2516,6 +2516,19 @@
       "path": "docs/specs/bug/combat_start_counts_as_turn_effect_design_spec.md",
       "zh_path": "docs/specs/bug/combat_start_counts_as_turn_effect_design_spec_zh.md",
       "source_revision": "3410aa2f8c3660e1e10128febbf6250478641264"
+    },
+    {
+      "title": "advance_combat_turn accepts any actor reference; refusals say what to do",
+      "zh": "advance_combat_turn 接受任何角色指稱；拒絕訊息說明該怎麼做",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "tests/test_combat_flow.py"
+      ],
+      "path": "docs/specs/bug/advance_accepts_any_actor_reference_design_spec.md",
+      "zh_path": "docs/specs/bug/advance_accepts_any_actor_reference_design_spec_zh.md",
+      "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
     }
   ]
 }
