@@ -2585,7 +2585,7 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
-      "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
+      "source_revision": "6a6d5f7baa260a4af6aa39020369969a1bd86358"
     },
     {
       "title": "Combat turn latency: the prompt carries this round, and state loads leave the event loop",

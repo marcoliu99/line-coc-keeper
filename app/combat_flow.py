@@ -582,25 +582,16 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
         if defender:
             return _defense_choice(state, action, defender)
         card = state.combat.enemy_cards.get(target.enemy_card_id)
-        if not card:
-            return _ruling(state, action, 'NPC defense requires a reviewed combat card')
-        dodge = next((card.skills[k] for k in ('dodge', 'Dodge', '閃避') if k in card.skills), None)
-        counter = card.attacks[0] if card.attacks and not card.incomplete else None
+        skills = card.skills if card else {}
+        dodge = next((skills[k] for k in ('dodge', 'Dodge', '閃避') if k in skills), None)
+        # House rule: NPCs never Fight Back. They Dodge when their card lists it, otherwise take the blow undefended,
+        # so a card registered with attacks only, or an NPC ally with no card, never stalls the attack on a ruling.
         if dodge is not None:
             action['defense_kind'] = 'dive' if ranged else 'dodge'
             action['checks']['defense'] = _roll(state, action, 'defense', dodge)
-        elif counter and not ranged:
-            if not all(card.source.get(k) for k in ('url', 'revision', 'sha256')) or counter.max_targets != 1:
-                return _ruling(state, action, 'NPC counter damage requires reviewed scenario source')
-            try:
-                dice.max_expression_value(counter.damage)
-            except ValueError as exc:
-                return _ruling(state, action, str(exc))
-            action['defense_kind'] = 'counter'
-            action['counter_damage'] = counter.damage
-            action['checks']['defense'] = _roll(state, action, 'defense', counter.skill_value)
         else:
-            return _ruling(state, action, 'NPC defense has no explicit skill or supported attack')
+            action['defense_kind'] = 'no_defense'
+            action['checks']['defense'] = {'tier': 'fail', 'success': False}
     if ranged and 'attack' not in action['checks']:
         penalty = 1 if action['defense_kind'] == 'dive' and action['checks']['defense']['success'] else 0
         pc = _character(state, actor.combatant_id)

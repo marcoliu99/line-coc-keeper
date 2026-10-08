@@ -782,3 +782,15 @@ def test_advance_by_name_when_a_same_named_ally_acted_first():
                                       'completed': True, 'round': state.combat.round_number}
     result = combat_flow.advance_combat(state, actor_id='Guard', event_id='advance:guard')
     assert 'current actor' not in result.get('error', '')
+
+
+def test_an_npc_ally_without_a_card_takes_the_blow_instead_of_pausing_on_a_ruling():
+    state, _pc, _enemy = battle()
+    state.combat.order.append(Combatant(name='Ally', dex=10, hp=5, hp_max=5, is_ally=True, side='ally'))
+    ally = state.combat.order[-1]
+    combat_flow.declare_action(state, action_id='swing', actor_id='pc:pc1', target_id=ally.combatant_id,
+                               weapon_reference='unarmed', action_kind='melee')
+    with patch('app.dice.random.randint', return_value=2):
+        done = finish(state, check('regular', roll=30))
+    assert done['completed'] and not state.combat.actions['swing'].get('needs_ruling')
+    assert state.combat.actions['swing']['defense_kind'] == 'no_defense' and ally.hp == 3
