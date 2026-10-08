@@ -260,21 +260,25 @@ def _stat_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
-    """Whether every submitted attack's skill value and damage dice are written in the block: the provenance vouches
-    for values copied from the scenario, so values the block does not carry are the model's own and keep none."""
+    """Whether every submitted attack carries a numeric skill value and a damage, both written in the block: the
+    provenance vouches for values copied from the scenario, so a value the block does not carry, or an attack that
+    leaves either out (the card would fill in a default), is the model's own and keeps none."""
     compact = block.replace(" ", "")
     for attack in attacks:
         if not isinstance(attack, Mapping):
             return False
         value = attack.get("skill_value")
-        if (isinstance(value, (int, float)) and not isinstance(value, bool)
-                and not re.search(rf"(?<!\d){int(value)}(?!\d)", block)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if not re.search(rf"(?<!\d){int(value)}(?!\d)", block):
             return False
         damage = str(attack.get("damage") or "").casefold().replace(" ", "")
+        if not damage:
+            return False
         terms = _DICE_TERM.findall(damage)
         if terms and any(term not in compact for term in terms):
             return False
-        if not terms and damage and not re.search(rf"(?<!\d){re.escape(damage)}(?!\d)", block):
+        if not terms and not re.search(rf"(?<!\d){re.escape(damage)}(?!\d)", block):
             return False
     return True
 

@@ -311,6 +311,9 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     invented = [{"id": "claw", "skill_value": 75, "damage": "2d8"}]
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented) == given
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "2d8"}]) == given
+    # An attack that leaves the skill or the damage out would be filled with the card's defaults: not copied either.
+    for incomplete in ([{}], [{"skill_value": 50}], [{"damage": "1d3"}], [{"skill_value": "50", "damage": "1d3"}]):
+        assert support.enemy_source(state, given, None, name="Corbitt", attacks=incomplete) == given, incomplete
 
 
 def test_a_name_the_prose_only_mentions_or_that_stands_near_anothers_block_gets_no_provenance():
