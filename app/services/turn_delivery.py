@@ -41,9 +41,11 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
     if result.get("ok"):
         if name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} and "total" in result:
             text = f"骰子已結算：{result.get('expression', '傷害骰')}，總值 {result.get('total')}。"
-        elif name in {"add_carried_item", "remove_carried_item"} and args.get("item"):
-            item = args["item"].strip()
-            present = item in result.get("carried_items", [])
+        elif name in {"add_carried_item", "remove_carried_item"} and (result.get("item") or args.get("item")):
+            # The entry as the pack spells it (the receipt's ``item``: "Knife" for a "knife" already held, the stored
+            # text a partial name removed), judged the way the tool matched it, so this never contradicts the receipt.
+            item = str(result.get("item") or args["item"]).strip()
+            present = any(str(entry).strip().casefold() == item.casefold() for entry in result.get("carried_items", []))
             text = f"{result.get('investigator', '調查員')} 的背包已確認{'包含' if present else '不含'}「{item}」。"
         elif name == "transfer_item" and result.get("item") and not result.get("replayed"):
             quantity = int(result.get("quantity") or 1)

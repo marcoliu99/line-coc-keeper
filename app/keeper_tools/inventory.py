@@ -96,18 +96,22 @@ def add_carried_item(call: ToolCall) -> dict[str, Any]:
         target_char = support.require_character(target_state, tool_input.get("investigator", ""))
         # The same text again is the same item: the pack already proves possession, so nothing is written and the
         # turn validator treats the call as a no-op rather than a failed mutation.
-        changed = not any(_same_item(entry, item) for entry in target_char.carried_items)
+        stored = next((entry for entry in target_char.carried_items if _same_item(entry, item)), None)
+        changed = stored is None
         if changed:
             target_char.carried_items.append(item)
             _note_inventory_edit(target_state, target_char, item)
         return support.ToolStateMutation(
-            (target_char.name, target_char.carried_items, _character_key(target_char), changed), should_save=changed)
-    investigator, carried_items, character_id, changed = support.mutate_tool_state(state, _mutate_add_item)
+            (target_char.name, target_char.carried_items, _character_key(target_char), changed, stored or item),
+            should_save=changed)
+    investigator, carried_items, character_id, changed, stored = support.mutate_tool_state(state, _mutate_add_item)
+    # ``item`` is the entry as the pack spells it ("Knife" for a "knife" the pack already held), so what is said
+    # about the pack afterwards names the thing the pack lists.
     result = {"ok": True, "investigator": investigator, "character_id": character_id,
-              "carried_items": carried_items, "changed": changed}
+              "carried_items": carried_items, "item": stored, "changed": changed}
     if not changed:
         result["already_carried"] = True
-        result["note"] = f"「{investigator}」已經帶著「{item}」，背包沒有改變"
+        result["note"] = f"「{investigator}」已經帶著「{stored}」，背包沒有改變"
     return result
 
 
@@ -152,7 +156,8 @@ def remove_carried_item(call: ToolCall) -> dict[str, Any]:
         })
         return support.ToolStateMutation({
             "ok": True, "investigator": target_char.name, "character_id": _character_key(target_char),
-            "carried_items": target_char.carried_items, "removed": stored, "changed": True}, should_save=True)
+            "carried_items": target_char.carried_items, "item": stored, "removed": stored, "changed": True},
+            should_save=True)
     result: dict[str, Any] = support.mutate_tool_state(state, _mutate_remove_item)
     return result
 

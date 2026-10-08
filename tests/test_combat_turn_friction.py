@@ -284,16 +284,37 @@ def test_a_look_up_does_not_spend_the_codex_action_budget():
     assert codex_provider.counts_against_tool_budget("declare_combat_action")
 
 
-def test_an_enemy_the_scenario_names_gets_the_scenarios_provenance_without_an_index_entry():
+STAT_BLOCK = ("... The body of Walter Corbitt is buried in the basement ...\n\n### Walter Corbitt, Undead Fiend\n\n"
+              "STR 90  CON 115  SIZ 55  INT 80\nPOW 90  DEX 35  APP 05  EDU 80\nHP: 16\nDamage bonus: +1D4\n"
+              "Fighting 50% (Hard 25%/Extreme 10%), damage 1D3 + damage bonus\n")
+
+
+def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_without_an_index_entry():
     from app.keeper_tools import support
     from app.models import GroupState
     state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
-                       scenario_text="... The body of Walter Corbitt is buried in the basement ...")
+                       scenario_text=STAT_BLOCK)
     given = {"attack_mode": "melee"}
     assert support.enemy_source(state, given, None, name="Walter Corbitt")["sha256"] == "abc123"
     assert support.enemy_source(state, given, None, name="walter corbitt")["url"] == "scenario:the-haunting"
+    assert support.enemy_source(state, given, None, name="Corbitt 2")["sha256"] == "abc123"  # instance suffix
     assert support.enemy_source(state, given, None, name="Invented Thing") == given  # not in the scenario: a ruling
     assert support.enemy_source(state, given, None, name="W") == given  # one character proves nothing
+
+
+def test_a_name_the_prose_only_mentions_gets_no_provenance_for_invented_stats():
+    from app.keeper_tools import support
+    from app.models import GroupState
+    prose = ("The landlord, Mr. Knott, remembers the Macarios well. A stray dog sleeps on the porch. " * 20
+             + "\n\nA guard in the hallway nods.\n")
+    state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                       scenario_text=prose)
+    given = {"attack_mode": "melee"}
+    assert support.enemy_source(state, given, None, name="Mr. Knott") == given
+    assert support.enemy_source(state, given, None, name="guard") == given
+    # The same mention with a stat block in reach is the scenario's enemy.
+    state.scenario_text = prose + "\n### Guard\n\nSTR 60  CON 50  SIZ 65  DEX 55\nHP: 12\nFighting 45%, damage 1D3\n"
+    assert support.enemy_source(state, given, None, name="guard")["sha256"] == "abc123"
 
 
 def test_the_sheet_s_own_spelling_of_a_weapon_skill_beats_the_base_chance():

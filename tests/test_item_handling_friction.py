@@ -99,10 +99,23 @@ def test_remove_of_an_item_another_commit_already_took_is_refused_not_a_silent_n
 def test_adding_an_item_already_carried_succeeds_as_a_no_op():
     state = _state(["手電筒"])
     result = _call(state, "add_carried_item", "手電筒 ")
-    assert result["ok"] and result["changed"] is False and result["already_carried"]
+    assert result["ok"] and result["changed"] is False and result["already_carried"] and result["item"] == "手電筒"
     assert state.characters["u1"].carried_items == ["手電筒"]
     added = _call(state, "add_carried_item", "鑰匙")
     assert added["ok"] and added["changed"] is True and added["carried_items"] == ["手電筒", "鑰匙"]
+    assert added["item"] == "鑰匙"
+
+
+def test_what_is_said_about_the_pack_names_the_entry_as_the_pack_spells_it():
+    from app.services import turn_delivery
+    state = _state(["Knife", "地下室鑰匙"])
+    duplicate = _call(state, "add_carried_item", "knife")
+    assert duplicate["already_carried"] and duplicate["item"] == "Knife"
+    said = turn_delivery.observe_tool("add_carried_item", duplicate, 1, {"investigator": "Ann", "item": "knife"})
+    assert said.public_text == "Ann 的背包已確認包含「Knife」。"
+    removed = _call(state, "remove_carried_item", "鑰匙")
+    said = turn_delivery.observe_tool("remove_carried_item", removed, 2, {"investigator": "Ann", "item": "鑰匙"})
+    assert said.public_text == "Ann 的背包已確認不含「地下室鑰匙」。"
 
 
 def test_inventory_tools_are_offered_to_the_narrator_after_a_settled_check():

@@ -200,11 +200,12 @@ ENEMY_SOURCE_FUZZY_THRESHOLD = 0.5
 
 def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None, *, name: str = "") -> dict | None:
     """The provenance an enemy's attacks need. What the model gave stays; for an enemy the scenario's own NPC index
-    or text names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote.
-    An enemy the scenario never mentions keeps only what the model supplied, so it still needs a ruling."""
+    lists, or whose stat block the scenario text carries, the rest comes from the loaded scenario, since a model has
+    no real revision or hash to quote. An enemy the scenario gives no stats keeps only what the model supplied, so it
+    still needs a ruling."""
     if not state.active_scenario_source_hash:
         return given
-    if index_entry is None and not scenario_names(state, name):
+    if index_entry is None and not scenario_stat_block(state, name):
         return given
     return {
         "url": f"scenario:{state.scenario_library_id}", "revision": state.active_chapter_id or "scenario",
@@ -213,11 +214,27 @@ def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None
     }
 
 
-def scenario_names(state: GroupState, name: str) -> bool:
-    """Whether the loaded scenario text mentions ``name``: the Keeper's spelling, trimmed and case-insensitive,
-    without the instance suffix the prompt asks for when several of one kind are active (「魚人（左）」, "Cultist 2")."""
+_STAT_LINE = re.compile(r"(?:^|[\s|])(?:str|con|siz|dex|pow|int|edu|app|hp|生命值?|力量|體質|體型|敏捷)\s*[:：]?\s*\d", re.IGNORECASE)
+_STAT_BLOCK_BEFORE, _STAT_BLOCK_AFTER = 300, 1500
+
+
+def scenario_stat_block(state: GroupState, name: str) -> bool:
+    """Whether the loaded scenario text carries a stat block for ``name``: the Keeper's spelling, trimmed and
+    case-insensitive, without the instance suffix the prompt asks for when several of one kind are active
+    (「魚人（左）」, "Cultist 2"), with a characteristics line (STR/CON/SIZ/DEX/HP and a number) within a stat block's
+    reach of some mention of it. A name the prose only mentions, or a short name inside another word, proves nothing
+    about the attack values the model supplies, so it keeps what the model gave and needs a ruling."""
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
-    return bool(wanted) and len(wanted) > 1 and wanted in (state.scenario_text or "").casefold()
+    text = (state.scenario_text or "").casefold()
+    if not wanted or len(wanted) < 2:
+        return False
+    start = text.find(wanted)
+    while start != -1:
+        window = text[max(0, start - _STAT_BLOCK_BEFORE):start + len(wanted) + _STAT_BLOCK_AFTER]
+        if _STAT_LINE.search(window):
+            return True
+        start = text.find(wanted, start + 1)
+    return False
 
 
 def find_npc_index_entry(

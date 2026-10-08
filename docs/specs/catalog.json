@@ -2554,7 +2554,8 @@
         "app/data/combat_weapons.json",
         "app/combat_rules.py",
         "app/combat_flow.py",
-        "tests/test_item_handling_friction.py"
+        "tests/test_item_handling_friction.py",
+        "app/services/turn_delivery.py"
       ],
       "path": "docs/specs/enhancement/item_handling_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/item_handling_friction_design_spec_zh.md",
