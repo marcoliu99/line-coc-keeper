@@ -308,7 +308,14 @@ def _confirm_settlement(state: GroupState, action: act.ConfirmSettlement, mode: 
             ],
             "last_damage": last_damage,
         }
-    return {"ok": True, "receipt": receipt, "provisional": False}
+    result: dict[str, Any] = {"ok": True, "receipt": receipt, "provisional": False}
+    present = [c for c in combat.active_characters(state) if not c.away]
+    if first_commit and present and all(c.hp <= 0 for c in present):
+        # House rule: once every investigator is down the scenario ends here; nobody is left to play it on.
+        state.active = False
+        result["scenario_ended"] = ("所有調查員都已倒下（HP 0），劇本到此結束。只描寫結局，不要再推進劇情或開新的戰鬥；"
+                                    "告訴玩家可以用 /coc newgame 開新的一局。")
+    return result
 
 
 def _rollback(state: GroupState, action: act.Rollback, mode: Mode) -> dict[str, Any]:

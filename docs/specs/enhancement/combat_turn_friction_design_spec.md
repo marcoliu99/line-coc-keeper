@@ -54,6 +54,10 @@ A live Haunting run (2026-10-08) found the knife in the basement storage on a Sp
 
 The rat pack run registered 「鼠群」 against the heading "RAT PACK", so the name never matched and the card got no provenance; a Chinese name for Corbitt would stall his knife the same way. `support.scenario_stat_block` now accepts either: the name as a whole word in a stat block's heading (whatever attack values were submitted), or every submitted attack's skill value and damage written as an attack in some stat block (whatever the name). Both still need at least one attack, each with a numeric skill value and damage, so the card's defaults never ride on the provenance; a name the prose only mentions, a short name inside another word, or values no block carries still get none. This supersedes the stricter rule above that required both the name and the values.
 
+## When every investigator is down, the scenario ends
+
+A 100-turn Haunting replay (`3a6f0bd`, 2026-10-09) fought Corbitt cleanly for four rounds until Evelyn, the only investigator, fell to 0 HP; the battle settled. Ten turns later a Spot Hidden roll's follow-up started a new fight, `_seed_from_characters` left her out at 0 HP, and Corbitt fought alone: no player turn ever came, and the remaining 58 turns stalled on rulings and 36 refused skips. House rule: confirming a settlement that leaves every present investigator at 0 HP ends the scenario (`state.active = False`), and the result carries `scenario_ended` telling the Keeper to narrate the ending and point to `/coc newgame`. `initialize_combat`/`add_npc_to_combat` also refuse to start a fight when no investigator can take part (all at 0 HP or away), unless an NPC ally is being added.
+
 ## Not done
 
 - Fight Back still uses Brawl and 1D3 for an investigator rather than the held weapon.

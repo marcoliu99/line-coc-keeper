@@ -690,3 +690,23 @@ def test_a_roll_that_sets_off_the_scenarios_fight_can_start_it_in_the_follow_up(
     assert "initialize_combat" in {t["name"] for t in tool_gateway.tools_for_speaker_role("player")}
     instruction = prompt_config.build_tool_enabled_narrator_static_prompt("", "resolved_check_followup")
     assert "initialize_combat" in instruction and "不要自己擲攻擊" in instruction
+
+
+def test_a_fight_is_not_started_once_every_investigator_is_down():
+    # The Haunting replay: Evelyn fell to 0 HP, the fight settled, and a later roll started a new one with Corbitt
+    # alone; no player turn ever came, and 58 turns stalled on rulings and refused skips.
+    _battle(first_enemy=False)
+    state = _load()
+    combat_resources.rollback_combat(state, event_id="test:rollback", reason="test")
+    state.characters["p1"].hp = 0
+    _save(state)
+    corbitt = {"name": "Walter Corbitt", "dex": 35, "hp": 16,
+               "attacks": [{"id": "knife", "skill_value": 90, "damage": "1d4+2"}]}
+    refused = _tool("initialize_combat", {"enemies": [corbitt]})
+    assert not refused["ok"] and "沒有人能參戰" in refused["error"] and not _load().combat.active
+    alone = _tool("add_npc_to_combat", {"name": "Walter Corbitt", "dex": 35, "hp": 16})
+    assert not alone["ok"] and not _load().combat.active
+    state = _load()
+    state.characters["p1"].hp = 5
+    _save(state)
+    assert _tool("initialize_combat", {"enemies": [corbitt]})["ok"]

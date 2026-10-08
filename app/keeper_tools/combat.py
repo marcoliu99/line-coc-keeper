@@ -24,6 +24,20 @@ def _reviewed_skills(payload):
     return dict(payload)
 
 
+_NO_ONE_CAN_FIGHT = ("所有調查員都已倒下（HP 0）或不在場，沒有人能參戰：不要開戰，"
+                     "改以敘事處理劇本寫的後果（例如敵人怎麼對待倒地的調查員）。")
+
+
+def _no_one_can_fight(state: GroupState, *, ally: bool) -> dict[str, Any] | None:
+    """Refuse a new fight with no investigator able to act: it has no player turn and can never settle."""
+    if state.combat.active or ally:
+        return None
+    characters = combat.active_characters(state)
+    if characters and not any(c.hp > 0 and not c.away for c in characters):
+        return {"ok": False, "error": _NO_ONE_CAN_FIGHT}
+    return None
+
+
 def start_combat(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
@@ -41,6 +55,8 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
     npc_name = tool_input["name"]
     requested_hp = int(tool_input["hp"])
+    if refusal := _no_one_can_fight(state, ally=bool(tool_input.get("is_ally", False))):
+        return refusal
 
     def mutate(target_state: GroupState) -> Any:
         hp = requested_hp
@@ -117,6 +133,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
     state = call.state
     enemies = call.input.get("enemies") or []
     opening: dict[str, Any] = {}
+    if refusal := _no_one_can_fight(state, ally=any(isinstance(e, dict) and e.get("is_ally") for e in enemies)):
+        return refusal
 
     def mutate(target_state: GroupState) -> Any:
         results: list[dict[str, Any]] = []

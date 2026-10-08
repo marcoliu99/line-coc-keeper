@@ -244,6 +244,22 @@ def test_settling_commits_the_working_resources_once_and_closes_the_battle(battl
     assert public.audience == 'public' and public.success
 
 
+def test_settling_a_battle_every_investigator_lost_ends_the_scenario(battle):
+    # House rule: with every investigator at 0 HP there is no one to play on, so the settlement ends the scenario
+    # instead of leaving the Keeper to start another fight with no player turn in it.
+    battle.start()
+    for step, delta in enumerate((-4, -4, -2)):  # each blow under the major-wound threshold
+        battle.tool('adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': delta,
+                                         'event_id': f'blow:{step}', 'reason': 'x'})
+    before = battle.load()
+    preview = battle.tool('preview_combat_settlement')['preview']
+    settled = battle.tool('confirm_combat_settlement', {'combat_id': before.combat.combat_id,
+                                                        'settlement_id': preview['settlement_id'], 'reason': 'all down'})
+    assert settled['ok'] and '劇本到此結束' in settled['scenario_ended']
+    after = battle.load()
+    assert not after.active and after.characters_by_id['char:ada'].hp == 0
+
+
 # --- narration matches the state -------------------------------------------------------------------------
 
 def test_the_result_text_the_player_receives_matches_the_state_and_shows_no_raw_tier(battle):
