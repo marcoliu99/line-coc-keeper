@@ -1,0 +1,38 @@
+# 物品：名稱沒寫得一模一樣也找得到，沒變動的呼叫不會讓玩家白講一次
+
+[English](item_handling_friction_design_spec.md) | [文件索引](../../README.md)
+
+分類：`enhancement`。狀態：**已實作**。基於 `main_v2` 的 `ac6c943` 加上 PR #241。
+
+## 問題
+
+對照實際跑局檢視物品流程後發現，玩家感受到的「機器人忘了我的東西」「同一句要講三次」，多半來自工具拒絕或默默沒動，然後回合驗證把整個回合丟掉：
+
+- `remove_carried_item` 只比對一模一樣的文字。「鑰匙」永遠移不掉「地下室鑰匙」，工具卻仍回 `ok: true` 且背包沒變，`turn_resolution._mutation_evidence` 把「背包沒變」當成失敗的變更（`inventory_or_combat_not_verified`）。玩家看到「請再說一次你的行動」，再講一次又撞同一面牆。
+- `add_carried_item` 加入已經持有的物品是沒有反應的 no-op，後果一樣：一個 `ok: true` 讓回合作廢。
+- 回合裡任何一次被拒絕的物品呼叫都會讓回合作廢，所以守密人連用正確名稱重試的機會都沒有。
+- `add_carried_item`／`remove_carried_item` 不提供給檢定結算後的敘事者，成功的偵查找到的東西要等玩家再送一句話才登記得了。
+- `/coc sheet` 把近戰武器印在「彈藥：」底下又沒有數字，看起來像槍。
+- 武器目錄只有少數武器有中文別名；小刀、匕首、菜刀、開山刀、球棒、指虎都解析不到，宣告攻擊就讓戰鬥停在 `NEEDS_RULING`。角色卡 `weapons["小刀"]` 這種用別名登記的武器不算持有，因為只掃 `carried_items`。
+
+## 修改
+
+- `inventory.match_carried_items(items, reference)`：先完全相符，再忽略大小寫，再取包含該字串或被該字串包含的項目。`remove_carried_item` 移除它對應到的那筆原文（回執帶 `removed`）；完全對不到時以 `refusal: item_not_held` 拒絕並列出背包；對到多個不同項目時以 `refusal: ambiguous_item` 拒絕並列出候選。每個回執都帶 `changed`。
+- `add_carried_item` 加入已持有（忽略大小寫）的物品回 `ok: true, changed: false, already_carried: true`，不寫入。
+- `turn_resolution`：no-op（`changed: false`）既不是證據也不是失敗；被拒絕的呼叫，若之後同一工具對同一角色成功過（守密人重試了），就忽略它。真的變更之後沒有重試的拒絕仍會讓「已完成」的裁決作廢，和以前一樣。只有沒變動的物品呼叫的回合可以用 `no_mechanics` 結束。
+- Executor 不為 no-op 記 `inventory_change` 事件。
+- `add_carried_item`／`remove_carried_item` 加上 `resolved_check_followup`；結算後敘事者的指示點名它們。
+- `Character.weapon_lines` 把沒有彈藥的項目印成「武器」、有追蹤彈藥的印成「彈藥」，角色卡與動態提示那行都是。
+- `combat_weapons.json`：近戰與常見槍械加上中文（及少量英文）別名，每個別名只對應一種武器，除了刻意共用的（手槍、霰彈槍，以及新增的雙管霰彈槍——它同時指 12、16、20 號雙管，所以仍要守密人指定口徑）。武器仍是 CoC 7e 武器表的項目；表上標明需要裁定的武器仍回 `needs_ruling`。
+- `combat_flow._weapon_actor_evidence` 也掃角色卡 `weapons` 的鍵來比對近戰武器的名稱。
+
+`transfer_item` 維持物品完全相符：[物品交接規格](../bug/inventory_transfer_design_spec_zh.md) 對兩位調查員之間的交接刻意這樣選。
+
+## 未做
+
+- 交接規格其餘未完成的步驟（移除數量與理由、伺服器端意圖閘門、留在房間的物品）。
+- 槍械的彈藥仍需要角色卡上一模一樣的鍵。
+
+## 測試
+
+`tests/test_item_handling_friction.py`：比對器；用部分名稱移除；列出背包或候選的拒絕；重複加入是 no-op；重試過的拒絕回合仍完成而未重試的不完成；no-op 以 `no_mechanics` 結束；角色卡標籤；別名可解析且唯一；沒寫口徑的雙管霰彈槍需要裁定。

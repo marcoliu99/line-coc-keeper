@@ -374,9 +374,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "代擲並回傳結果。不要自行判斷重傷檢定結果。"
                     "只能用在 investigator 參數指名的那位角色自己的數值變化（例如角色自己受傷、花費自己"
                     "的幸運點）；不能拿來記錄或暫存跟這位角色無關的擲骰結果（例如別人的傷害骰、環境效果"
-                    "骰），也不能用來對敵人造成傷害——敵人傷害一律用 apply_combat_damage（傳未扣護甲的"
-                    "raw_damage）、apply_final_combat_damage（傳已扣除護甲的 final_damage，避免重複扣"
-                    "護甲）或 damage_combatant。"
+                    "骰），也不能用來對敵人造成傷害——敵人傷害由戰鬥流程結算：調查員攻擊用 declare_combat_action，"
+                    "敵人攻擊用 plan_enemy_turn／run_enemy_combat_plan。"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -802,7 +801,7 @@ _SPECS: tuple[ToolSpec, ...] = (
         schema={
                 "name": "damage_combatant",
                 "description": (
-                    "調整戰鬥中某位角色或敵人的 HP（受傷用負數，治療用正數）。適用於戰鬥中的任何一方，"
+                    "【正式戰鬥中會被拒絕，請勿呼叫】傷害與效果由 declare_combat_action、run_enemy_combat_plan、declare_combat_effect 結算。調整戰鬥中某位角色或敵人的 HP（受傷用負數，治療用正數）。適用於戰鬥中的任何一方，"
                     "包含玩家角色與 NPC。負數 delta 會走正式傷害流程並套用護甲；若輸入的是已計算完成、不可再扣護甲的"
                     "最終傷害，請改用 apply_final_combat_damage。"
                 ),
@@ -839,7 +838,7 @@ _SPECS: tuple[ToolSpec, ...] = (
         schema={
                 "name": "resolve_enemy_action",
                 "description": (
-                    "敵人 plan 對應的行動已敘事/擲骰處理後呼叫；特殊能力會消耗次數與冷卻，攻擊命中時會在此正式套用傷害。"
+                    "【正式戰鬥中會被拒絕，請勿呼叫】傷害與效果由 declare_combat_action、run_enemy_combat_plan、declare_combat_effect 結算。敵人 plan 對應的行動已敘事/擲骰處理後呼叫；特殊能力會消耗次數與冷卻，攻擊命中時會在此正式套用傷害。"
                     "若 plan 的特殊能力 effect 宣告 on_success=apply_effect，必須把正式檢定結果放在 outcome.success；"
                     "攻擊則傳 outcome.hit 與 outcome.damage；只有成功的正式結果才會改變戰鬥狀態。"
                 ),
@@ -869,7 +868,7 @@ _SPECS: tuple[ToolSpec, ...] = (
         schema={
                 "name": "apply_combat_damage",
                 "description": (
-                    "套用正式戰鬥傷害。raw_damage 是尚未扣除護甲的原始傷害，系統會計算護甲抵銷、final damage 與 HP。"
+                    "【正式戰鬥中會被拒絕，請勿呼叫】傷害與效果由 declare_combat_action、run_enemy_combat_plan、declare_combat_effect 結算。套用正式戰鬥傷害。raw_damage 是尚未扣除護甲的原始傷害，系統會計算護甲抵銷、final damage 與 HP。"
                     "若傷害數字已經是扣除護甲後的最終值，改用 apply_final_combat_damage，避免重複扣除護甲。"
                     "玩家未發現前，公開敘事不可洩漏護甲/弱點的精確數值。"
                 ),
@@ -895,7 +894,7 @@ _SPECS: tuple[ToolSpec, ...] = (
         schema={
                 "name": "apply_final_combat_damage",
                 "description": (
-                    "套用已經確定的最終傷害數字；final_damage 已包含護甲等減免，不會再次扣除護甲。"
+                    "【正式戰鬥中會被拒絕，請勿呼叫】傷害與效果由 declare_combat_action、run_enemy_combat_plan、declare_combat_effect 結算。套用已經確定的最終傷害數字；final_damage 已包含護甲等減免，不會再次扣除護甲。"
                     "仍會正式更新戰鬥 HP、傷害觸發與重傷檢定。只有在傷害數字已是最終值時使用；"
                     "若要由系統依目標護甲計算，請用 apply_combat_damage 並傳入 raw_damage。"
                 ),
@@ -921,7 +920,7 @@ _SPECS: tuple[ToolSpec, ...] = (
         schema={
                 "name": "add_combat_effect",
                 "description": (
-                    "替戰鬥中的角色、敵人、全體或環境加入固定時點效果，例如燃燒、流血、場景壓迫。"
+                    "【正式戰鬥中會被拒絕，請勿呼叫】傷害與效果由 declare_combat_action、run_enemy_combat_plan、declare_combat_effect 結算。替戰鬥中的角色、敵人、全體或環境加入固定時點效果，例如燃燒、流血、場景壓迫。"
                     "target 可填角色名稱、all/全體或 environment/環境；環境效果可作為全場狀態，傷害效果請指定角色或全體。"
                     "damage 可填固定整數字串（例如 '1'）或骰式（例如 '1d6+1'）；"
                     "效果會在 round/turn timing 由系統正式結算。"

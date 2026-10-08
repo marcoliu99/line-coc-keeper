@@ -692,7 +692,7 @@ async def _handle_text_message_impl(
         async with turn_scope.conversation_turn(conversation_id, reply, post_turn_hook,
                                               route=coc_subcommand or "text",
                                               speaker_role="player"):
-            state = load_state(conversation_id)
+            state = await asyncio.to_thread(load_state, conversation_id)
             await reply(help_service.get_page(state, user_id).text)
         return
 
@@ -702,7 +702,9 @@ async def _handle_text_message_impl(
     # jump ahead of queued player messages); otherwise this intentionally
     # bypasses the gate and keeps the plain conversation-lock-only path —
     # see app/locks.py's get_keeper_priority_gate docstring.
-    scheduling_state = load_state(conversation_id)
+    # A full-row SQLite read and JSON parse (the scenario text included) is kept off the event loop: it would
+    # stall every other channel's turn for its duration.
+    scheduling_state = await asyncio.to_thread(load_state, conversation_id)
     # Retrieval is read-only and keys on the scenario, not on mutable state, so
     # it runs before this turn queues rather than inside the lock the queue is
     # waiting on. build_context re-checks that binding under the lock and
@@ -766,7 +768,7 @@ async def _handle_ordinary_text_message_locked(
     function always reloads state itself; any pre-gate scheduling snapshot is
     only a priority hint and never authoritative game state.
     """
-    state = load_state(conversation_id)
+    state = await asyncio.to_thread(load_state, conversation_id)
     if not state.active or not state.game_started:
         # Two separate conditions on purpose: a scenario must be loaded
         # (state.active) AND /coc start must have actually run for it
@@ -820,12 +822,12 @@ async def _handle_ordinary_text_message_locked(
     async with held:
         # Reload under the lock. The snapshot above was taken before it, so
         # anything committed while this turn queued for it is missing from it.
-        state = load_state(conversation_id)
+        state = await asyncio.to_thread(load_state, conversation_id)
         if not is_kp_assistant:
             resolved_location = await asyncio.to_thread(
                 resolve_map_action, conversation_id, user_id, text
             )
-            state = load_state(conversation_id)
+            state = await asyncio.to_thread(load_state, conversation_id)
         # The hold and the turn share one id, so a lock.held_too_long names the turn that holds it.
         turn_id = handoff.turn_id if handoff is not None else observability.new_id("turn")
         with observability.context(turn_id=turn_id):

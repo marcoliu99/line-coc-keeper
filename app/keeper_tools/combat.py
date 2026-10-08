@@ -284,10 +284,10 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                     return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
                 named = combat.find_combatant(target_state, tool_input.get('actor_id', '')) or current
                 tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{named.combatant_id}'
+            skipper = combat.find_combatant(target_state, tool_input.get('actor_id', '')) if tool_input.get('skip') else None
+            blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
             if tool_input.get('skip'):
-                skipper = combat.find_combatant(target_state, tool_input.get('actor_id', ''))
                 owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None
-                blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
                 if skipper is not None and skipper.side == 'enemy' and skipper is current and not blocker:
                     return support.ToolStateMutation({'ok': False, 'error': (
                         'Only the acting investigator can skip their own turn. This is an enemy turn: '
@@ -306,6 +306,10 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                 event_id=resource_bridge.mutation_id(call.name, tool_input),
                 skip=bool(tool_input.get('skip')),
             ))
+            if result.get('ok') and tool_input.get('skip') and skipper is not None and skipper.side == 'enemy':
+                result = {**result, 'note': (
+                    f'{skipper.display_name} took no action this round because {blocker}. If the scenario gives it '
+                    'attacks, register them with add_npc_to_combat (same name, with attacks and source) so it can act.')}
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
 

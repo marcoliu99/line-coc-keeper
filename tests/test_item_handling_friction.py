@@ -159,8 +159,13 @@ def test_common_chinese_weapon_names_resolve(reference, weapon_id):
     assert resolution.status == "resolved" and resolution.definition.id == weapon_id
 
 
+def test_a_gauge_less_double_barrel_needs_the_keeper_to_pick_the_gauge():
+    resolution = combat_rules.resolve_weapon("雙管霰彈槍")
+    assert resolution.status == "needs_ruling" and len(resolution.candidates) == 3
+
+
 def test_every_alias_names_one_weapon_unless_deliberately_shared():
-    shared = {"handgun", "pistol", "手槍", "shotgun", "霰彈槍", ".45"}
+    shared = {"handgun", "pistol", "手槍", "shotgun", "霰彈槍", "雙管霰彈槍", ".45"}
     seen: dict[str, str] = {}
     for definition in combat_rules.weapon_catalog():
         for alias in definition.aliases:
