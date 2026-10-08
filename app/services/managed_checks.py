@@ -19,7 +19,7 @@ from app.checks import events, narration
 from app.checks import luck as luck_policy
 from app.checks.models import CheckOutcome, outcome_for
 from app.keeper_tools import resource_bridge
-from app.models import GroupState
+from app.models import CombatCheckIdentity, GroupState
 from app.services import combat_actions as act
 from app.services import combat_engine
 
@@ -96,9 +96,7 @@ class ManagedCombatChecks:
         return settled
 
     def _choose(self, state: GroupState, user_id: str, pending: dict, skill_arg: str | None) -> CheckOutcome:
-        option = next((o for o in pending.get("options", []) if skill_arg and (
-            narration.skill_names_match(o["label"], skill_arg) or narration.skill_names_match(o["skill"], skill_arg)
-            or o.get("kind") == skill_arg)), None)
+        option = narration.match_choice_option(pending.get("options", []), skill_arg)
         if option is None:
             labels = "、".join(o["label"] for o in pending.get("options", []))
             return outcome_for(user_id, pending, reply_text=f"請選擇：{labels}")
@@ -110,7 +108,7 @@ class ManagedCombatChecks:
             return outcome_for(user_id, pending, reply_text=outcome.get("error", "選擇遭拒"))
         chosen = f"已選擇「{option['label']}」。"
         rolled = state.pending_checks.get(user_id)
-        if rolled is not None and rolled.get("type") == "skill":
+        if rolled is not None and _is_defence_roll_for(rolled, pending, option):
             # The button says "choose and roll": the choice registered the defence check, so roll it now rather
             # than asking for a second click. Luck, if offered, is still the player's own decision afterwards.
             result = self.resolve_check(state, user_id, "/coc check", rolled)
@@ -121,7 +119,12 @@ class ManagedCombatChecks:
             result.changed = True
             result.save_reason = result.save_reason or "combat_choice"
             return result
-        reply_text = chosen + "已依系統紀錄處理；請依目前戰鬥狀態繼續。"
+        if rolled is not None and rolled.get("type") == "skill":
+            # Not the defence this choice created (a CON check for the wound a no-defence shot just dealt): that
+            # roll is the player's own next click, never folded into the choice they made.
+            reply_text = chosen + f"攻擊已結算；接下來是你的{rolled.get('skill', '')}檢定，請按鈕擲骰。"
+        else:
+            reply_text = chosen + "已依系統紀錄處理；請依目前戰鬥狀態繼續。"
         resource_bridge.record_choice_control_receipt(state, pending, user_id, option, reply_text)
         result = outcome_for(user_id, pending, reply_text=reply_text, changed=True)
         result.save_reason = "combat_choice"
@@ -166,6 +169,22 @@ class ManagedCombatChecks:
         settled = _feedback(state, character, user_id, pending, result, outcome, before, luck_spent=spend.cost)
         settled.save_reason = "combat_luck"
         return settled
+
+
+def _is_defence_roll_for(rolled: dict, choice: dict, option: dict) -> bool:
+    """Whether ``rolled`` is the defence check the player's choice just registered for the same action.
+
+    A no-defence choice registers none; the check left after it (the wound's CON roll) belongs to the player's
+    next click.
+    """
+    if option.get("kind") == "no_defense" or rolled.get("type") != "skill":
+        return False
+    context, chosen = rolled.get("combat_context") or {}, choice.get("combat_context") or {}
+    try:
+        role = CombatCheckIdentity.from_serialized(str(context.get("check_role", ""))).role
+    except (TypeError, ValueError):
+        return False
+    return role == "defense" and context.get("action_id") == chosen.get("action_id")
 
 
 def _paused(user_id: str, pending: dict, text: str, reason: str) -> CheckOutcome:

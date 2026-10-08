@@ -391,3 +391,57 @@ def test_only_a_provider_that_budgets_actions_gets_the_search_rounds_on_top():
     from app.providers import anthropic_provider, codex_provider
     assert executor.tool_iterations(codex_provider) == config.MAX_TOOL_ITERATIONS + config.SCENARIO_SEARCH_MAX_PER_TURN
     assert executor.tool_iterations(anthropic_provider) == config.MAX_TOOL_ITERATIONS
+
+
+def test_no_defence_against_a_shot_leaves_the_wounds_con_check_to_the_players_own_click():
+    _battle(claw_damage="1d6")
+    state = _load()
+    enemy = next(c for c in state.combat.order if c.side == "enemy")
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.source.update(attack_mode="single_shot", distance_yards=10, base_range_yards=20)
+    card.attacks[0].range_band = "near"
+    card.attacks[0].ammo_or_uses = 3
+    _save(state)
+    run, _ = _enemy_turn([])  # the shot waits for the defender's choice
+    assert run["phase"] == "PLAYER_CHOICE"
+    assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dive", "no_defense"]
+    outcome, script = _player("/coc check 不閃躲", [20], damage=6)  # the shot hits for 6: a major wound
+    assert script.rolls_taken == 1, "only the shot was rolled; the CON check is the player's"
+    state = _load()
+    assert state.combat.phase == "INJURY_CHECK" and state.pending_checks["p1"]["skill"] == "CON"
+    assert "CON" in outcome.reply_text and not outcome.should_finalize
+    survived, _ = _player("/coc check", [10])
+    assert survived.should_finalize and "p1" not in _load().pending_checks
+
+
+def test_the_defence_the_choice_registered_is_still_rolled_in_the_same_click():
+    _battle()
+    _enemy_turn([20])
+    outcome, script = _player("/coc check 閃避", [20])
+    assert outcome.should_finalize and script.rolls_taken == 1
+
+
+def test_a_solo_investigators_settled_defence_lets_the_next_enemy_reach_their_choice():
+    """The settled check is gone before the engine plays the next enemy, so a second enemy attacking the same
+    investigator reaches the defence choice instead of a stale-check refusal."""
+    _battle("p1", enemies=(("Cultist", 90), ("Thug", 85)))
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "PLAYER_CHOICE"
+    outcome, _ = _player("/coc check 閃避", [20, 20])  # the dodge ties; then the Thug's claw rolls 20
+    assert outcome.should_finalize
+    state = _load()
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["auto_advanced"]["next_actor"] == "Thug" and receipt["auto_advanced"]["phase"] == "PLAYER_CHOICE"
+    assert state.pending_checks["p1"]["type"] == "choice" and state.combat.phase == "PLAYER_CHOICE"
+    assert all(t["ok"] for t in receipt["auto_advanced"]["enemy_turns"])
+
+
+def test_a_typed_option_is_matched_exactly_before_by_containment_so_a_negation_is_not_its_opposite():
+    from app.checks import narration
+    options = [{"kind": "dive", "label": "閃躲", "skill": "閃避"}, {"kind": "no_defense", "label": "不閃躲", "skill": ""}]
+    assert narration.match_choice_option(options, "不閃躲")["kind"] == "no_defense"
+    assert narration.match_choice_option(options, "閃躲")["kind"] == "dive"
+    assert narration.match_choice_option(options, "閃避")["kind"] == "dive"
+    assert narration.match_choice_option(options, "dive")["kind"] == "dive"
+    assert narration.match_choice_option(options, "閃") is None  # names both: ask, do not pick the first
+    assert narration.match_choice_option(options, "") is None

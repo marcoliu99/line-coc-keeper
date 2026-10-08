@@ -14,6 +14,25 @@ def skill_names_match(a: str, b: str) -> bool:
     return bool(a) and bool(b) and (a == b or a in b or b in a)
 
 
+def match_choice_option(options: list[dict], wanted: str | None) -> dict | None:
+    """The one option ``wanted`` names, or None when it names none or several.
+
+    The option's own label, kind or skill, spelled exactly, wins outright: a Chinese negation is a prefix (「不閃躲」
+    contains 「閃躲」), so a containment match alone would pick the opposite choice whenever it is listed first.
+    Only then the looser containment match, and only when it singles out one option; several (「閃」) is a question
+    back to the player, not the first in the list.
+    """
+    key = (wanted or "").strip().lower()
+    if not key:
+        return None
+    for option in options:
+        if key in {str(option.get(field) or "").strip().lower() for field in ("label", "kind", "skill")}:
+            return option
+    loose = [option for option in options
+             if skill_names_match(str(option.get("label") or ""), key) or skill_names_match(str(option.get("skill") or ""), key)]
+    return loose[0] if len(loose) == 1 else None
+
+
 # Code review: this used to be its own independently-maintained copy of
 # dice.TIER_ZH, and had silently drifted from app/discord_bot.py's copy on
 # "regular" ("成功" vs "一般成功"). Now a plain alias to the single source.
