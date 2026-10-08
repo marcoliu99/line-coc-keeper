@@ -645,3 +645,13 @@ def test_a_side_that_falls_during_the_auto_advance_makes_the_receipt_settlement_
     assert receipt["settlement_ready"] is True
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
     assert "結算" in block and "現在輪到" not in block
+
+
+def test_a_specialisation_written_the_way_players_write_it_is_the_investigators_own_value():
+    from app import combat_flow
+    from app.models import Character
+    sheet = Character("調查員", "p", skills={"衝鋒槍": 60, "斧": 45, "格鬥": 70, "射擊": 55})
+    assert combat_flow._skill(sheet, "firearms-submachine-gun") == ("射擊（衝鋒槍）", 60)
+    assert combat_flow._skill(sheet, "fighting-axe") == ("格鬥（斧）", 45)
+    # A bare family name names no specialisation: the sword is still at its base chance.
+    assert combat_flow._skill(sheet, "fighting-sword") == ("格鬥（劍）", 20)

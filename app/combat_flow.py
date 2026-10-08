@@ -5,6 +5,7 @@ Authoritative check callbacks are server-only; tools never accept die results.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from copy import deepcopy
 from dataclasses import asdict
@@ -88,6 +89,14 @@ def _skill(character: Character, skill_id: str) -> tuple[str, int] | None:
     # base. The static alias table only: this runs inside the attack's state mutation, not a database lookup.
     for spelled, value in character.skills.items():
         if skill_aliases.SKILL_ALIASES.get(spelled.strip()) == label:
+            return label, value
+    # A specialisation written the way players write it ("衝鋒槍: 60", "斧: 45") is the investigator's own value too:
+    # the sheet key is the label's specialisation (the part in the brackets), or contains or is contained in it.
+    # A bare "格鬥" names no specialisation, and a one-character key only counts when it is exactly the specialisation.
+    specialisation = re.sub(r"^.*[（(]|[）)].*$", "", label).strip() or label
+    for spelled, value in character.skills.items():
+        key = re.sub(r"[（(）)]", "", spelled).strip()
+        if key and (key == specialisation or (len(key) >= 2 and (key in specialisation or specialisation in key))):
             return label, value
     if skill_id in _BASE_SKILLS:
         return label, _BASE_SKILLS[skill_id]
