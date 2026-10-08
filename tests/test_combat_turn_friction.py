@@ -613,3 +613,35 @@ def test_a_stuck_enemy_turn_after_an_auto_advance_names_the_ruling_tool_the_narr
         "auto_advanced": {"next_actor": "Thing", "round_now": 2, "phase": "NEEDS_RULING",
                           "enemy_turn": {"ok": False, "error": "NPC special/movement plan requires an explicit ruling"}}}})
     assert "resolve_combat_ruling" in block and "取消" in block and "advance_combat_turn skip" in block
+
+
+def test_a_firearm_registered_under_one_spelling_is_fired_by_its_chinese_alias():
+    from app import combat_flow
+    from tests.test_combat_flow import battle
+    state, _pc, enemy = battle(weapons={"Crossbow": {"ammo": 1, "ammo_max": 1}})
+    declared = combat_flow.declare_action(state, action_id="bolt", actor_id="pc:pc1", target_id=enemy.combatant_id,
+                                          weapon_reference="十字弓", action_kind="single_shot", distance_yards=10)
+    assert declared["ok"], declared
+    assert state.combat.actions["bolt"]["ammo_key"] == "Crossbow"
+
+
+def test_a_side_that_falls_during_the_auto_advance_makes_the_receipt_settlement_ready():
+    from app import combat_flow
+    _battle(first_enemy=False)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+
+    def effect_kills_the_last_enemy(state, **_kwargs):  # a round-start burn finishing the enemy as the turn moves
+        for combatant in state.combat.order:
+            if combatant.side == "enemy":
+                combatant.defeated = True
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.side == "enemy")
+        return {"ok": True}
+
+    with patch.object(combat_flow, "advance_combat", side_effect=effect_kills_the_last_enemy):
+        outcome, _ = _player("/coc check", [10, 90])  # the swing misses: the enemy's dodge beats it
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["settlement_ready"] is True
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
+    assert "preview_combat_settlement" in block and "現在輪到" not in block

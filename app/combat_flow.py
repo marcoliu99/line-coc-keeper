@@ -264,6 +264,10 @@ def _weapon_actor_evidence(
     if character:
         effective = combat_resources.effective_character(state, character)
         inventory_key = instance.instance_id if instance else reference
+        if weapon.ammo_per_attack and not instance and inventory_key not in effective.weapons:
+            # The sheet tracks the firearm under one spelling ("Crossbow") and the declaration names it by another
+            # (「十字弓」): the entry that is this weapon, read the way the declaration is, carries its ammunition.
+            inventory_key = next((key for key in effective.weapons if _item_is_weapon(key, weapon)), inventory_key)
         metadata = effective.weapon_instances.get(inventory_key)
         if weapon.id != 'i.weapon.brawl':
             # A weapon with nothing to track (melee, or thrown) counts as owned when a weapons entry or a carried
@@ -748,6 +752,9 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
     # advance again; the completed action itself is unchanged.
     action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
                          'interaction': deepcopy(state.combat.interaction), 'auto_advanced': summary}
+    if _side_down(state):
+        # A timed effect finished the last of a side as the turn moved: the fight is over, not with the next actor.
+        action['receipt']['settlement_ready'] = True
 
 
 def request_injury_check(state: GroupState, character: Character, event_id: str) -> dict[str, Any]:
