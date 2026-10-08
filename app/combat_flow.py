@@ -239,6 +239,21 @@ def _base_range(state: GroupState, actor: combat.Combatant, weapon: combat_rules
     return combat_rules.base_range_for(weapon, character.str_ if character else None)
 
 
+def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
+    """Whether a carried entry is ``weapon``: it resolves to it the way a declaration does (exact name or alias,
+    else the longest contained name), lists it among its candidates when it names several of a kind ("刀" for
+    any knife), or carries the weapon's full name (a scenario weapon the catalog does not know)."""
+    text = item.strip().casefold()
+    if not text:
+        return False
+    if weapon.name.strip().casefold() in text:
+        return True
+    lookup = combat_rules.resolve_weapon(item)
+    if lookup.definition is not None:
+        return lookup.definition.id == weapon.id
+    return any(candidate.id == weapon.id for candidate in lookup.candidates)
+
+
 def _weapon_actor_evidence(
     state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition,
     reference: str, instance: combat_rules.WeaponInstance | None = None,
@@ -250,14 +265,11 @@ def _weapon_actor_evidence(
         inventory_key = instance.instance_id if instance else reference
         metadata = effective.weapon_instances.get(inventory_key)
         if weapon.id != 'i.weapon.brawl':
-            # A melee weapon with nothing to track counts as owned when the investigator carries an item by that name.
-            names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases) if n.strip()}
-            # The sheet may list the weapon under another of its names ("小刀" for Knife, Small, "一把生鏽的小刀"
-            # in the pack): a weapons entry or a carried item containing any of the catalog's names is that weapon.
-            # Anything with no ammunition to track (melee, or thrown) is owned that way; a firearm needs its entry.
+            # A weapon with nothing to track (melee, or thrown) counts as owned when a weapons entry or a carried
+            # item, read the way a declaration is, is this weapon ("小刀" or "一把生鏽的小刀" for Knife, Small); a
+            # firearm needs its entry. Read that way, 「手裏劍」 is the shuriken and never proves a sword.
             listed = [*effective.carried_items, *effective.weapons]
-            carried = (not weapon.ammo_per_attack
-                       and any(n in item.casefold() for item in listed for n in names))
+            carried = not weapon.ammo_per_attack and any(_item_is_weapon(item, weapon) for item in listed)
             if inventory_key not in effective.weapons and not metadata and not carried:
                 raise ValueError('Weapon requires an existing owned instance or inventory mapping')
             if metadata and metadata.get('definition_id') not in (None, weapon.id):

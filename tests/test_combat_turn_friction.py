@@ -312,6 +312,14 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented) == given
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "2d8"}]) == given
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "1d3+100"}]) == given
+    # "1D3 + damage bonus(1D4)" is two dice: the Keeper may submit the weapon's die or both, in either spelling.
+    for both in ("1d3+1d4", "1D3 + 1D4", "1d3"):
+        assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": both}])["sha256"] == "abc123", both
+    zh = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                    scenario_text="### 鼠群\n\n力量 35  體質 55\n格鬥 40%，傷害 1D3 + 傷害加值（-1）\n")
+    assert support.enemy_source(zh, given, None, name="鼠群", attacks=[{"skill_value": 40, "damage": "1d3-1"}])["sha256"] == "abc123"
+    zh.scenario_text = "### Rat Pack\n\nSTR 35  CON 55\nFighting 40%, damage 1D3 + damage bonus(-1)\n"
+    assert support.enemy_source(zh, given, None, name="Rat Pack", attacks=[{"skill_value": 40, "damage": "1D3 - 1"}])["sha256"] == "abc123"
     # An attack that leaves the skill or the damage out would be filled with the card's defaults: not copied either.
     for incomplete in ([{}], [{"skill_value": 50}], [{"damage": "1d3"}], [{"skill_value": "50", "damage": "1d3"}]):
         assert support.enemy_source(state, given, None, name="Corbitt", attacks=incomplete) == given, incomplete
@@ -513,3 +521,32 @@ def test_a_crossbow_fired_last_round_is_still_being_reloaded_this_round():
     allowed = combat_flow.declare_action(state, action_id="shot3", actor_id="pc:pc1", target_id=enemy.combatant_id,
                                          weapon_reference="Crossbow", action_kind="single_shot", distance_yards=10)
     assert allowed["ok"], allowed
+
+
+def _declare_with_pack(items: list[str], weapon_reference: str, action_id: str) -> dict:
+    _battle(first_enemy=False)
+    state = _load()
+    state.characters["p1"].carried_items.extend(items)
+    _save(state)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    return _tool("declare_combat_action", {"action_id": action_id, "actor_id": "調查員p1",
+                                           "target_id": enemy.combatant_id, "weapon_reference": weapon_reference})
+
+
+def test_a_carried_shuriken_does_not_prove_a_sword():
+    sword = _declare_with_pack(["手裏劍"], "劍", "sword")
+    assert not sword["ok"] and sword["phase"] == "NEEDS_RULING" and "owned" in sword["error"]
+    # Read the way the declaration is, the pack's "一把生鏽的小刀" is Knife, Small and "刀" names every knife.
+    assert _declare_with_pack(["一把生鏽的小刀"], "小刀", "knife")["ok"]
+    assert _declare_with_pack(["刀"], "小刀", "knife2")["ok"]
+
+
+def test_a_skip_in_a_one_combatant_fight_needs_an_explicit_id_even_by_combatant_id():
+    from app.keeper_tools import combat as combat_tools
+    state = _battle()
+    lone = state.combat.order[0]
+    for other in state.combat.order[1:]:
+        other.defeated = True
+    assert combat_tools._skip_needs_explicit_id(state, lone, lone.combatant_id)
+    assert combat_tools._skip_needs_explicit_id(state, lone, lone.name)
+

@@ -290,15 +290,15 @@ def _derived_advance_id(state: GroupState, actor: combat.Combatant) -> str:
 
 
 def _skip_needs_explicit_id(state: GroupState, actor: combat.Combatant, reference: str) -> bool:
-    """A derived id for a skip is unsafe when a retry would name someone else: a name two live combatants share
-    (the second becomes current once the first is skipped), or a single-combatant order that wraps to the same
-    actor every round. A combatant id names one combatant, so it is always safe."""
-    wanted = reference.strip().casefold()
-    if wanted == actor.combatant_id.casefold():
-        return False
+    """A derived id for a skip is unsafe when a retry would skip again: a single-combatant order wraps to the same
+    actor every round, so even its exact combatant id would derive the next round's id; and a name two live
+    combatants share names the second once the first is skipped. Otherwise a combatant id names one combatant."""
     live = [c for c in state.combat.order if not c.defeated]
     if len(live) <= 1:
         return True
+    wanted = reference.strip().casefold()
+    if wanted == actor.combatant_id.casefold():
+        return False
     return any(c is not actor and wanted in {c.name.strip().casefold(), (c.display_name or '').strip().casefold()}
                for c in live)
 

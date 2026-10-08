@@ -227,6 +227,10 @@ def _characteristics_at(lines: list[str], index: int) -> set[str]:
 
 
 _BLOCK_MAX_LINES = 80
+_DAMAGE_BONUS_WRAPPED = re.compile(r"(?:damagebonus|傷害加值|db)[（(]([+-]?\d*d?\d+)[）)]", re.IGNORECASE)
+_DAMAGE_BONUS_TRAILING = re.compile(r"([+-]?\d*d?\d+)(?:damagebonus|傷害加值|db)\b", re.IGNORECASE)
+_DAMAGE_BONUS_LINE = re.compile(r"(?:damagebonus|傷害加值)[:：]([+-]?\d*d?\d+)", re.IGNORECASE)
+_DAMAGE_BONUS_BARE = re.compile(r"(?:damagebonus|傷害加值|\bdb\b)(?![（(]|[:：])", re.IGNORECASE)
 
 
 def _stat_blocks(text: str) -> list[tuple[str, str]]:
@@ -262,7 +266,13 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
     """Whether every submitted attack carries a numeric skill value and a damage expression, both written in the
     block as submitted: the provenance vouches for values copied from the scenario, so a value the block does not
     carry, or an attack that leaves either out (the card would fill in a default), is the model's own and keeps none."""
-    compact = block.replace(" ", "")
+    # "1D3 + damage bonus(1D4)" is two dice, the weapon's and the creature's damage bonus: the Keeper may submit
+    # the weapon's die alone or both, so the bonus wording is folded into its value (given in place, or on the
+    # block's own "Damage bonus: +1D4" line) and either spelling is in the block.
+    compact = _DAMAGE_BONUS_WRAPPED.sub(r"\1", _DAMAGE_BONUS_TRAILING.sub(r"\1", block.replace(" ", "")))
+    if (bonus := _DAMAGE_BONUS_LINE.search(compact)) is not None:
+        compact = _DAMAGE_BONUS_BARE.sub(bonus.group(1).lstrip("+"), compact)
+    compact = compact.replace("+-", "-").replace("++", "+")
     for attack in attacks:
         if not isinstance(attack, Mapping):
             return False
