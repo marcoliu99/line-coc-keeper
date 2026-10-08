@@ -44,7 +44,7 @@ A 100-turn run of *The Haunting* (operator-supplied `turns.jsonl`/`tool-events.j
 
 ## Enemies do not Fight Back (house rule)
 
-The next 100-turn run (2026-10-08, after this change merged) reached only round 2: 75 tool calls failed with "NPC counter damage requires reviewed scenario source". The Keeper registered the rat pack under 「鼠群」 with its attacks but not its Dodge, and the stat block's heading is the English "RAT PACK", so the card had neither a Dodge to roll nor provenance for a Fight Back; every investigator attack paused on a ruling, and resuming the ruling reran the same refusal. An NPC defender now never Fights Back: it Dodges when its card lists Dodge (dodge／Dodge／閃避), otherwise it takes the attack undefended, the same as an investigator's 不閃躲. The investigator's own Fight Back choice is unchanged.
+The next 100-turn run (2026-10-08, after this change merged) reached only round 2: 75 tool calls failed with "NPC counter damage requires reviewed scenario source". The Keeper registered the rat pack under 「鼠群」 with its attacks but not its Dodge, and the stat block's heading is the English "RAT PACK", so the card had neither a Dodge to roll nor provenance for a Fight Back; every investigator attack paused on a ruling, and resuming the ruling reran the same refusal. An NPC defender now never Fights Back: it Dodges when its card lists Dodge (dodge／Dodge／閃避), otherwise (including an NPC ally registered without a card) it takes the attack undefended, the same as an investigator's 不閃躲. The investigator's own Fight Back choice is unchanged.
 
 ## Not done
 
