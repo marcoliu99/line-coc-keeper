@@ -182,7 +182,7 @@
         "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
         "accessed": "2026-10-08"
       },
-      "follow_up": "命中後目標擲幸運：失敗則著火，之後每輪再受 1D6 燒傷直到撲滅（守密人用 create_triggered_check 建幸運檢定，著火則用 declare_combat_effect 登記每輪燒傷）"
+      "follow_up": "命中的目標可能著火（規則：目標擲幸運，失敗則著火；NPC 沒有幸運值，由守密人判定）：著火就用 declare_combat_effect 登記持續燃燒（每輪 1D6，選對應的 severity，stop_condition 寫撲滅），引擎不會自己擲"
     },
     {
       "id": "i.weapon.blackjack",

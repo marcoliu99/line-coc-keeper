@@ -228,6 +228,7 @@ def _feedback(
                 "phase": outcome.get("phase"), "completed": outcome.get("completed"),
                 "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
                 "follow_up": (outcome.get("result") or {}).get("follow_up") if isinstance(outcome.get("result"), dict) else None,
+                "settlement_ready": outcome.get("settlement_ready"),
             },
             "luck_spent": luck_spent,
         },

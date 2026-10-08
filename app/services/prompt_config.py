@@ -352,6 +352,9 @@ def _combat_turn_step(receipt: dict) -> str:
         return (f"\n【戰鬥下一步】這個行動結束後引擎已自動推進：現在輪到 {advanced.get('next_actor', '下一位')}"
                 f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}。不要再呼叫 advance_combat_turn；"
                 "敘事要包含剛結算的結果，以及（若有）敵人接著的攻擊。")
+    if receipt.get("settlement_ready"):
+        return ("\n【戰鬥下一步】這個行動結束後有一方已全數倒下，戰鬥可以結算：不要呼叫 advance_combat_turn（那會跳過倒下的人再開一輪）。"
+                "先敘事這一擊的結果，再用 preview_combat_settlement 取得結算預覽，經確認後 confirm_combat_settlement。")
     if receipt.get("auto_advance_error"):
         return (f"\n【戰鬥下一步】這個行動已結束，但引擎無法自動推進（{receipt['auto_advance_error']}）："
                 "先處理它說的事，再呼叫 advance_combat_turn。")

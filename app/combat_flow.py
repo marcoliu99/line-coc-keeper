@@ -670,9 +670,13 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
     from app import config
     if not config.COMBAT_AUTO_ADVANCE or state.combat.combat_id in _auto_advancing:
         return
+    if _side_down(state):
+        # The fight is over, not stalled: another round would skip the fallen and start again instead of settling.
+        action['receipt'] = {**action['receipt'], 'settlement_ready': True}
+        return
     current = combat.current_actor(state)
     if (current is None or action.get('actor_id') != current.combatant_id or state.combat.interaction
-            or state.combat.phase != 'READY' or action.get('needs_ruling') or _side_down(state)):
+            or state.combat.phase != 'READY' or action.get('needs_ruling')):
         return
     before = {'round': state.combat.round_number, 'actor': current.display_name or current.name,
               'actor_id': current.combatant_id, 'index': state.combat.current_index}

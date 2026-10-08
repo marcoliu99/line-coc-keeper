@@ -65,7 +65,8 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
             source=support.enemy_source(target_state, tool_input.get("source"), support.find_npc_index_entry(
-                target_state, npc_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD), name=npc_name),
+                target_state, npc_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD), name=npc_name,
+                attacks=tool_input.get("attacks") or ()),
             skills=_reviewed_skills(tool_input.get("skills")),
         ))
         if added.reused:
@@ -154,7 +155,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
                     source=support.enemy_source(target_state, entry.get("source"), support.find_npc_index_entry(
                         target_state, requested_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD),
-                        name=requested_name),
+                        name=requested_name, attacks=entry.get("attacks") or ()),
                     skills=_reviewed_skills(entry.get("skills")),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids

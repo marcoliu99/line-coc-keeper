@@ -223,12 +223,17 @@ def test_a_settled_attack_does_not_advance_once_every_enemy_is_down():
     enemy = next(c for c in _load().combat.order if c.side == "enemy")
     _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
                                     "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
-    _player("/coc check", [10, 90])  # the hit lands; the enemy's dodge fails
+    outcome, _ = _player("/coc check", [10, 90])  # the hit lands; the enemy's dodge fails
+    assert outcome.resolved_event["combat_receipt"]["settlement_ready"] is True
     state = _load()
     assert next(c for c in state.combat.order if c.side == "enemy").defeated
-    assert "auto_advanced" not in state.combat.actions["swing"]["receipt"]
+    receipt = state.combat.actions["swing"]["receipt"]
+    assert "auto_advanced" not in receipt and receipt["settlement_ready"] is True
     assert state.combat.order[state.combat.current_index].name == "調查員p1" and state.combat.phase == "READY"
     assert "戰鬥可以結算" in combat.status_text(state)
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
+        "combat_id": state.combat.combat_id, "completed": True, "settlement_ready": True}})
+    assert "preview_combat_settlement" in block and "先呼叫 advance_combat_turn" not in block
 
 
 def test_a_settled_enemy_attack_ends_the_enemys_turn():
@@ -300,6 +305,12 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     assert support.enemy_source(state, given, None, name="Corbitt 2")["sha256"] == "abc123"  # instance suffix
     assert support.enemy_source(state, given, None, name="Invented Thing") == given  # not in the scenario: a ruling
     assert support.enemy_source(state, given, None, name="W") == given  # one character proves nothing
+    # The provenance vouches for the attack values the model copied: they must be written in the named block.
+    copied = [{"id": "claw", "skill_value": 50, "damage": "1d3"}]
+    assert support.enemy_source(state, given, None, name="Corbitt", attacks=copied)["sha256"] == "abc123"
+    invented = [{"id": "claw", "skill_value": 75, "damage": "2d8"}]
+    assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented) == given
+    assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "2d8"}]) == given
 
 
 def test_a_name_the_prose_only_mentions_or_that_stands_near_anothers_block_gets_no_provenance():
