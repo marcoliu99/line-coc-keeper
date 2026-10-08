@@ -316,8 +316,10 @@ def build_resolved_check_outcome_block(result: dict) -> str:
     return (
         "【已結算檢定：權威機制結果】\n"
         f"調查員：{result.get('investigator', '未知')}；檢定：{skill}；"
-        f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
-        f"難度：{presentation.difficulty_label(result.get('difficulty', 'regular'))}；最終結果：{outcome}。\n"
+        + ("未擲骰（玩家的選擇本身結算了攻擊）；" if result.get("no_roll") else
+           f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
+           f"難度：{presentation.difficulty_label(result.get('difficulty', 'regular'))}；")
+        + f"最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
         '【行動及對抗交接；來源與對手數值不得公開】\n'
         f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"

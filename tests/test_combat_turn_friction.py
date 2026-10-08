@@ -559,3 +559,24 @@ def test_a_skip_in_a_one_combatant_fight_needs_an_explicit_id_even_by_combatant_
     assert combat_tools._skip_needs_explicit_id(state, lone, lone.combatant_id)
     assert combat_tools._skip_needs_explicit_id(state, lone, lone.name)
 
+
+
+def test_no_defence_that_settles_the_shot_is_narrated_from_its_receipt():
+    _battle()
+    state = _load()
+    enemy = next(c for c in state.combat.order if c.side == "enemy")
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.source.update(attack_mode="single_shot", distance_yards=10, base_range_yards=20)
+    card.attacks[0].range_band = "near"
+    card.attacks[0].ammo_or_uses = 3
+    _save(state)
+    _enemy_turn([])
+    outcome, script = _player("/coc check 不閃躲", [20], damage=2)  # the shot hits for 2: no wound check owed
+    assert outcome.should_finalize and script.rolls_taken == 1
+    event = outcome.resolved_event
+    assert event["no_roll"] and event["combat_receipt"]["completed"]
+    assert event["combat_receipt"]["auto_advanced"]["next_actor"] == "調查員p1", "the enemy's turn ended itself"
+    block = prompt_config.build_resolved_check_outcome_block(event)
+    assert "未擲骰" in block and "【戰鬥下一步】" in block
+    after = _load()
+    assert combat_resources.effective_character(after, after.characters["p1"]).hp == 8

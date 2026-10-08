@@ -100,6 +100,8 @@ class ManagedCombatChecks:
         if option is None:
             labels = "、".join(o["label"] for o in pending.get("options", []))
             return outcome_for(user_id, pending, reply_text=f"請選擇：{labels}")
+        character = resource_bridge.owned_character(state, pending, user_id)
+        before = events.character_attribute_snapshot(character)
         outcome = combat_engine.handle(state, act.Choose(
             interaction_id=pending["combat_context"]["interaction_id"],
             owner_id=user_id, choice=option["kind"],
@@ -108,6 +110,12 @@ class ManagedCombatChecks:
             return outcome_for(user_id, pending, reply_text=outcome.get("error", "選擇遭拒"))
         chosen = f"已選擇「{option['label']}」。"
         rolled = state.pending_checks.get(user_id)
+        if option["kind"] == "no_defense" and outcome.get("completed") and rolled is None:
+            # No roll, but the shot was settled by the choice (damage applied, the turn possibly moved on): the
+            # Keeper narrates it from the receipt, as after any settled roll, instead of the thread ending here.
+            settled = _settled_without_roll(state, character, user_id, pending, option, outcome, before)
+            resource_bridge.record_choice_control_receipt(state, pending, user_id, option, settled.roll_feedback_text)
+            return settled
         if rolled is not None and _is_defence_roll_for(rolled, pending, option):
             # The button says "choose and roll": the choice registered the defence check, so roll it now rather
             # than asking for a second click. Luck, if offered, is still the player's own decision afterwards.
@@ -187,6 +195,45 @@ def _is_defence_roll_for(rolled: dict, choice: dict, option: dict) -> bool:
     return role == "defense" and context.get("action_id") == chosen.get("action_id")
 
 
+def _settled_without_roll(
+    state: GroupState, character, user_id: str, pending: dict, option: dict, outcome: dict, before: dict,
+) -> CheckOutcome:
+    """A choice that settled the attack with no roll of the player's (no defence against a shot)."""
+    header = f"{character.name} 選擇「{option['label']}」"
+    feedback = f"{header}，攻擊已由系統結算。\n【戰鬥機械結果暫定；尚未結算】"
+    return outcome_for(
+        user_id, pending,
+        roll_line=feedback, keeper_message=f"（{header}；戰鬥機械結果暫定；尚未結算。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
+        roll_feedback_text=feedback, keeper_header=header, should_finalize=True,
+        check_id=pending["check_id"], decision_id=pending.get("decision_id", ""),
+        timeline_id=pending.get("timeline_id", ""), action_context=pending.get("action_context", ""),
+        changed=True,
+        resolved_event={
+            **events.event_seed(
+                check_id=pending["check_id"],
+                timeline_id=pending.get("timeline_id", state.timeline_id or f"legacy-{state.group_id}"),
+                owner_id=user_id, character_id=character.character_id, investigator=character.name,
+                skill=option["label"], skill_value=0, roll=0, difficulty="regular",
+                outcome=f"{option['label']}，攻擊已結算", before=before, tracked_roll_fields=(), check_context=pending,
+            ),
+            "no_roll": True, "provisional": True,
+            "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
+            "combat_receipt": _combat_receipt(outcome),
+            "luck_spent": 0,
+        },
+    )
+
+
+def _combat_receipt(outcome: dict) -> dict:
+    return {
+        "combat_id": outcome.get("combat_id"), "action_id": outcome.get("action_id"),
+        "phase": outcome.get("phase"), "completed": outcome.get("completed"),
+        "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
+        "follow_up": (outcome.get("result") or {}).get("follow_up") if isinstance(outcome.get("result"), dict) else None,
+        "settlement_ready": outcome.get("settlement_ready"),
+    }
+
+
 def _paused(user_id: str, pending: dict, text: str, reason: str) -> CheckOutcome:
     """A roll that is kept but whose battle step could not complete yet."""
     outcome = outcome_for(user_id, pending, reply_text=text, changed=True)
@@ -223,13 +270,7 @@ def _feedback(
                 tracked_roll_fields=(), check_context=pending, success=result.success,
             ),
             "provisional": provisional, "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
-            "combat_receipt": {
-                "combat_id": outcome.get("combat_id"), "action_id": outcome.get("action_id"),
-                "phase": outcome.get("phase"), "completed": outcome.get("completed"),
-                "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
-                "follow_up": (outcome.get("result") or {}).get("follow_up") if isinstance(outcome.get("result"), dict) else None,
-                "settlement_ready": outcome.get("settlement_ready"),
-            },
+            "combat_receipt": _combat_receipt(outcome),
             "luck_spent": luck_spent,
         },
     )
