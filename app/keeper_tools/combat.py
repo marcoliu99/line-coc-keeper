@@ -65,7 +65,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
             source=support.enemy_source(target_state, tool_input.get("source"), support.find_npc_index_entry(
-                target_state, npc_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD)),
+                target_state, npc_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD), name=npc_name),
             skills=_reviewed_skills(tool_input.get("skills")),
         ))
         if added.reused:
@@ -153,7 +153,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
                     source=support.enemy_source(target_state, entry.get("source"), support.find_npc_index_entry(
-                        target_state, requested_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD)),
+                        target_state, requested_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD),
+                        name=requested_name),
                     skills=_reviewed_skills(entry.get("skills")),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids
@@ -333,7 +334,6 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                                         include_private=call.speaker_role == 'kp_assistant')
 
 
-
 def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
@@ -342,10 +342,6 @@ def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
         )
 
     return support.mutate_tool_state(call.state, mutate)
-
-
-
-
 
 
 def end_combat(call: ToolCall) -> dict[str, Any]:

@@ -2575,7 +2575,10 @@
         "app/discord_transport/controls.py",
         "tests/test_combat_turn_friction.py",
         "app/config.py",
-        ".env.example"
+        ".env.example",
+        "app/providers/codex_provider.py",
+        "app/keeper_tools/support.py",
+        "app/prompt_builder.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",

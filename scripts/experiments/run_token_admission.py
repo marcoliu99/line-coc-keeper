@@ -29,12 +29,7 @@ KEN = _fixtures[1]["user_id"]
 COMBAT_ONLY = {
     "get_combat_status",
     "advance_combat_turn",
-    "damage_combatant",
-    "apply_combat_damage",
-    "apply_final_combat_damage",
     "plan_enemy_turn",
-    "resolve_enemy_action",
-    "add_combat_effect",
     "end_combat",
     "offer_npc_attack_defense_choice",
     "npc_skill_check",

@@ -270,3 +270,44 @@ def test_a_thrown_spear_takes_its_range_from_the_throwers_str():
                                            "weapon_reference": "投矛", "action_kind": "single_shot", "distance_yards": 10})
     assert near["ok"] and near["phase"] == "PLAYER_ROLL", near
     assert _load().combat.actions["throw"]["difficulty"] == "regular"
+
+
+def test_a_look_up_does_not_spend_the_codex_action_budget():
+    from app.providers import codex_provider
+    assert not codex_provider.counts_against_tool_budget("search_scenario")
+    assert not codex_provider.counts_against_tool_budget("get_weapon_definition")
+    assert codex_provider.counts_against_tool_budget("initialize_combat")
+    assert codex_provider.counts_against_tool_budget("declare_combat_action")
+
+
+def test_an_enemy_the_scenario_names_gets_the_scenarios_provenance_without_an_index_entry():
+    from app.keeper_tools import support
+    from app.models import GroupState
+    state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                       scenario_text="... The body of Walter Corbitt is buried in the basement ...")
+    given = {"attack_mode": "melee"}
+    assert support.enemy_source(state, given, None, name="Walter Corbitt")["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="walter corbitt")["url"] == "scenario:the-haunting"
+    assert support.enemy_source(state, given, None, name="Invented Thing") == given  # not in the scenario: a ruling
+    assert support.enemy_source(state, given, None, name="W") == given  # one character proves nothing
+
+
+def test_the_sheet_s_own_spelling_of_a_weapon_skill_beats_the_base_chance():
+    from app import combat_flow
+    from app.models import Character
+    assert combat_flow._skill(Character(name="A", owner_id="u", skills={"手槍": 60}), "firearms-handgun") == ("射擊（手槍）", 60)
+    assert combat_flow._skill(Character(name="A", owner_id="u", skills={}), "firearms-handgun") == ("射擊（手槍）", 20)
+
+
+def test_an_advance_that_could_not_move_is_reported_as_blocked_not_advanced():
+    from app import combat_flow
+    _battle(first_enemy=False)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    with patch.object(combat_flow, "advance_combat", return_value={"ok": True, "pending": True, "phase": "INJURY_CHECK"}):
+        outcome, _ = _player("/coc check", [10, 90])
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["auto_advance_error"] and not receipt.get("auto_advanced")
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
+    assert "無法自動推進" in block and "advance_combat_turn" in block

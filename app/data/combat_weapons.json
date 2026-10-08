@@ -1,5 +1,5 @@
 {
-  "version": "coc7-reviewed-2026-10-01",
+  "version": "coc7-reviewed-2026-10-08",
   "distance_unit_source": {
     "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/static/lang/en.json",
     "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
@@ -128,12 +128,12 @@
         "馬鞭"
       ],
       "skill_id": "fighting-whip",
-      "attack_mode": "single_shot",
+      "attack_mode": "melee",
       "damage": "1d3",
       "db_policy": "half",
       "extreme_rule": "maximum",
       "distance_bands": [],
-      "base_range_yards": 3,
+      "base_range_yards": null,
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,

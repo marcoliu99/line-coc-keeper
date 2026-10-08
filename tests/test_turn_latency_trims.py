@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
+from app import config
 from app.keeper_tools import registry
 from app.models import GroupState
 from app.services import combat_actions as act
@@ -64,3 +66,17 @@ def test_the_tools_a_battle_always_refused_are_gone():
         assert name not in registry.REGISTRY and all(tool["name"] != name for tool in registry.TOOLS)
     state = GroupState(group_id="idle")
     combat_engine.handle(state, act.Status())  # the engine actions behind them stay for the managed pipeline
+
+
+def test_the_projection_never_trims_the_live_state():
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        _battle()
+        _enemy_turn([20])
+        _player("/coc check 閃避", [90])
+    state = _load()
+    before = state.combat.to_dict()
+    assert any(a.get("control_delivery_receipts") or a.get("choice_receipts") or a.get("receipt")
+               for a in state.combat.actions.values()), "the battle has receipts to lose"
+    turn_context.combat_projection(state)
+    turn_context.authority_block(state)
+    assert state.combat.to_dict() == before

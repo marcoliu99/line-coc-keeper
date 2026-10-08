@@ -31,6 +31,14 @@ The CoC 7e mechanics are unchanged: Dodge and Fight Back are still the defender'
 - Luck tiers in the combat prompt read 一般成功／困難成功／極限成功. Prompt text says `declare_combat_action` runs the action and `run_combat_action` only resumes one; `adjust_character` points enemy damage at the combat flow; the five tools a managed battle always refuses say so first in their descriptions.
 - `/coc combat next` during a battle answers with the status and whose turn it is instead of a bare refusal.
 
+## A fight that would not start: the Corbitt finale
+
+A 100-turn run of *The Haunting* (operator-supplied `turns.jsonl`/`tool-events.jsonl`, 2026-10-08) never reached the final fight. On turns 30–32 three players broke into Room 4 and threatened the corpse; each turn the Keeper searched the scenario three or four times, every search returned Corbitt's stat block and the trigger ("he is reluctant to move at all unless threatened"), and every turn still ended with 「劇本裡沒有足夠的內容可以據以裁決這個行動」. Two causes:
+
+- Under Codex every tool call counted against `MAX_TOOLS_PER_TURN` (4), so four searches left no call for `initialize_combat`. `codex_provider.counts_against_tool_budget` now exempts the read-only look-ups (`search_scenario`, the `get_*` queries), which keep their own per-turn cap; the budget is for actions.
+- `initialize_combat`/`add_npc_to_combat` ask for a `source` with a url, revision and sha256 the model cannot know, and `support.enemy_source` filled it from the loaded scenario only for an enemy the NPC index listed. It now also fills it for any enemy the scenario text names (`support.scenario_names`), so a stat block found by search is enough to register; an enemy the scenario never mentions still keeps only what the model gave and needs a ruling.
+- The combat routing prompt says that when a search hit or the index shows the stat block and the written trigger has just happened, the enemy is registered in the same turn with the stats in hand, never searched again for provenance, and never answered as "the scenario lacks the content".
+
 ## Not done
 
 - Fight Back still uses Brawl and 1D3 for an investigator rather than the held weapon.

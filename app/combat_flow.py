@@ -10,8 +10,17 @@ from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Literal
 
-from app import check_lifecycle, combat, combat_resources, combat_rules, dice, luck
+from app import (
+    check_lifecycle,
+    combat,
+    combat_resources,
+    combat_rules,
+    dice,
+    luck,
+    skill_aliases,
+)
 from app.models import (
+    BASE_SKILLS,
     Character,
     CombatAction,
     Combatant,
@@ -31,10 +40,12 @@ _SKILLS = {'fighting-brawl': '格鬥（鬥毆）', 'fighting-axe': '格鬥（斧
            'firearms-rifle-shotgun': '射擊（步槍/霰彈槍）', 'firearms-bow': '射擊（弓）',
            'firearms-submachine-gun': '射擊（衝鋒槍）', 'firearms-machine-gun': '射擊（機槍）', 'throw': '投擲'}
 # CoC 7e base values: an investigator may always try a weapon skill the sheet does not list, at its base chance.
-_BASE_SKILLS = {'fighting-brawl': 25, 'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear': 20,
-                'fighting-whip': 5, 'fighting-flail': 10, 'fighting-garrote': 15,
-                'firearms-handgun': 20, 'firearms-rifle-shotgun': 25, 'firearms-bow': 15,
-                'firearms-submachine-gun': 15, 'firearms-machine-gun': 10, 'throw': 20}
+# The sheet's own table (models.BASE_SKILLS) is the source where it lists the skill; the rest are weapon-only.
+_WEAPON_ONLY_BASES = {'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear': 20, 'fighting-whip': 5,
+                      'fighting-flail': 10, 'fighting-garrote': 15, 'firearms-bow': 15,
+                      'firearms-submachine-gun': 15, 'firearms-machine-gun': 10}
+_BASE_SKILLS = {skill_id: BASE_SKILLS.get(label, _WEAPON_ONLY_BASES.get(skill_id, 0))
+                for skill_id, label in _SKILLS.items()}
 
 
 def _error(message: str) -> dict[str, Any]:
@@ -73,6 +84,10 @@ def _skill(character: Character, skill_id: str) -> tuple[str, int] | None:
     for candidate in (label, skill_id):
         if candidate in character.skills:
             return label, character.skills[candidate]
+    # The sheet may spell the skill another way ("手槍" for 射擊（手槍）): that value is the investigator's, not the base.
+    for spelled, value in character.skills.items():
+        if skill_aliases.canonical_skill_name(spelled) == label:
+            return label, value
     if skill_id in _BASE_SKILLS:
         return label, _BASE_SKILLS[skill_id]
     return None
@@ -640,10 +655,27 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
     try:
         advanced = advance_combat(state, actor_id=current.combatant_id,
                                   event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}")
+        # An enemy turn the advance played may itself complete at once (its target was an NPC ally, say); the
+        # nested completion could not advance, so move those turns on here until a player decision or an
+        # unplayed turn is reached. Bounded by the order: every actor ends at most once per pass.
+        for _ in range(len(state.combat.order)):
+            now = combat.current_actor(state)
+            if (now is None or now.is_pc or state.combat.interaction or state.combat.phase != 'READY'
+                    or _side_down(state) or not combat.completed_actions_this_round(state, now.combatant_id)):
+                break
+            chained = advance_combat(state, actor_id=now.combatant_id,
+                                     event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}:{now.combatant_id}")
+            if not chained.get('ok') or combat.current_actor(state) is now:
+                break
+            advanced = chained if chained.get('action_id') else {**advanced, 'enemy_turn': chained.get('enemy_turn', advanced.get('enemy_turn'))}
     finally:
         _auto_advancing.discard(state.combat.combat_id)
-    if not advanced.get('ok') and not advanced.get('phase'):
-        action['receipt'] = {**action['receipt'], 'auto_advance_error': advanced.get('error', '')}
+    moved = (combat.current_actor(state) is not current or state.combat.round_number != before['round'])
+    if not moved:
+        # A pending check, a Luck decision or a blocked timing kept the turn where it was: say so, and let the
+        # Keeper advance once that is settled.
+        action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
+                             'auto_advance_error': advanced.get('error') or 'the turn could not move yet'}
         return
     now = combat.current_actor(state)
     summary = {

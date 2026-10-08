@@ -31,6 +31,14 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 - 戰鬥提示的幸運等級改為一般成功／困難成功／極限成功。提示文字改為 `declare_combat_action` 會執行行動、`run_combat_action` 只用來恢復；`adjust_character` 把敵人傷害指向戰鬥流程；管理式戰鬥一定拒絕的五個工具在描述開頭先說明。
 - 戰鬥中的 `/coc combat next` 回覆戰鬥狀態與目前輪到誰，而不是單純拒絕。
 
+## 喚不醒的最後一戰：Corbitt
+
+一場 100 回合的《The Haunting》跑局（操作者提供的 `turns.jsonl`／`tool-events.jsonl`，2026-10-08）始終打不到最後一戰。第 30～32 回合三位玩家破牆進入第 4 房並威脅屍體；每回合守密人都搜了劇本三到四次，每次都找到 Corbitt 的數值與觸發條件（「除非受到威脅，否則他不願移動」），但每回合仍以「劇本裡沒有足夠的內容可以據以裁決這個行動」收場。兩個原因：
+
+- Codex 之下每次工具呼叫都算進 `MAX_TOOLS_PER_TURN`（4），搜四次就沒有額度呼叫 `initialize_combat`。`codex_provider.counts_against_tool_budget` 現在排除唯讀查詢（`search_scenario`、各 `get_*`），它們有自己的每回合上限；額度是給行動用的。
+- `initialize_combat`／`add_npc_to_combat` 要求的 `source` 含模型根本不知道的 url、revision、sha256，而 `support.enemy_source` 只對 NPC 索引有收錄的敵人才從已載入的劇本補上。現在劇本文字裡有名字的敵人也會補（`support.scenario_names`），搜尋找到的數值就足以登記；劇本裡沒提到的敵人仍只留模型給的資料、仍需裁定。
+- 戰鬥提示改為：搜尋命中或索引已顯示數值、且書面觸發條件剛發生時，就在同一回合用手上的數值登記，不再為了來源多搜，也不得回答「劇本沒有這段內容」。
+
 ## 未做
 
 - 調查員的反擊仍用鬥毆與 1D3，而不是手上的武器。

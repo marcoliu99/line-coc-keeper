@@ -31,7 +31,7 @@ def test_reviewed_representative_values(reference, damage, db, impaling):
     assert (definition.damage, definition.db_policy, definition.impaling) == (damage, db, impaling)
     assert definition.source.sha256
     assert definition.rule_source.sha256
-    assert definition.catalog_version == 'coc7-reviewed-2026-10-01'
+    assert definition.catalog_version == 'coc7-reviewed-2026-10-08'
 
 
 def test_aliases_are_exact_and_ambiguity_retains_candidates():

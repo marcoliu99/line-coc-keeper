@@ -197,16 +197,25 @@ _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-
 ENEMY_SOURCE_FUZZY_THRESHOLD = 0.5
 
 
-def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None) -> dict | None:
+def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None, *, name: str = "") -> dict | None:
     """The provenance an enemy's attacks need. What the model gave stays; for an enemy the scenario's own NPC index
-    names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote."""
-    if index_entry is None or not state.active_scenario_source_hash:
+    or text names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote.
+    An enemy the scenario never mentions keeps only what the model supplied, so it still needs a ruling."""
+    if not state.active_scenario_source_hash:
+        return given
+    if index_entry is None and not scenario_names(state, name):
         return given
     return {
         "url": f"scenario:{state.scenario_library_id}", "revision": state.active_chapter_id or "scenario",
         "sha256": state.active_scenario_source_hash, "extreme_rule": "maximum",
         **{key: value for key, value in (given or {}).items() if value not in ("", None)},
     }
+
+
+def scenario_names(state: GroupState, name: str) -> bool:
+    """Whether the loaded scenario text mentions ``name`` (the Keeper's spelling, trimmed and case-insensitive)."""
+    wanted = (name or "").strip().casefold()
+    return bool(wanted) and len(wanted) > 1 and wanted in (state.scenario_text or "").casefold()
 
 
 def find_npc_index_entry(
