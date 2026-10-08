@@ -30,13 +30,14 @@ _DISPOSITIONS = {
 _INVENTORY_TOOLS = frozenset({'add_carried_item', 'remove_carried_item', 'transfer_item'})
 
 
-def _changed_nothing(event: dict[str, Any], later: Sequence[dict[str, Any]] = ()) -> bool:
+def _changed_nothing(event: dict[str, Any], others: Sequence[dict[str, Any]] = ()) -> bool:
     """An inventory call that wrote nothing and that the turn may ignore.
 
     A no-op the tool reported as ``changed: False`` (the pack already held the item) always is. A refused add or
-    remove is only when a later call of the same tool on the same investigator succeeded: the Keeper retried with
-    the right name, and the refusal is not a half-done change to hide. An unretried refusal, and a refused
-    transfer (which names no investigator and replays through its own ledger), still void a completion claim.
+    remove is only when another call of the same tool on the same investigator and item succeeded this turn: later
+    (the Keeper retried with the right name) or earlier (the thing was already taken, so the retry found it gone).
+    Neither is a half-done change to hide. An unretried refusal, and a refused transfer (which names no
+    investigator and replays through its own ledger), still void a completion claim.
     """
     result = event['result']
     if event['name'] not in _INVENTORY_TOOLS:
@@ -59,7 +60,12 @@ def _changed_nothing(event: dict[str, Any], later: Sequence[dict[str, Any]] = ()
         return False
 
     return any(e['name'] == event['name'] and e['result'].get('ok') and e['result'].get('changed') is not False
-               and (e.get('arguments') or {}).get('investigator') == who and same_item(e) for e in later)
+               and (e.get('arguments') or {}).get('investigator') == who and same_item(e) for e in others)
+
+
+def _combat_changed(event: dict[str, Any]) -> bool:
+    """Whether the call left the battle different from how it found it; a replayed receipt leaves it the same."""
+    return bool((event.get('gameplay_before') or {}).get('combat') != (event.get('gameplay_after') or {}).get('combat'))
 
 
 def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: list[str], actor_name: str) -> tuple[bool, bool]:
@@ -81,7 +87,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                         if e['name'] == 'transfer_item' and f'tool:{i}' in refs and e['result'].get('operation_id')}
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
-        if _changed_nothing(event, events[i:]):
+        if _changed_nothing(event, events):
             # A retried refusal or an item the pack already held wrote nothing: it is neither evidence nor a
             # failure, and the calls that did change the pack prove the final state below.
             continue
@@ -158,12 +164,15 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             combat_completed = combat_completed or any(
                 before_combat.get(key) != after_combat.get(key) for key in ('round_number', 'current_index'))
         if result.get('ok') and f'tool:{i}' in refs and name == 'run_enemy_combat_plan':
-            # An enemy's attack that completed, or now waits on its target's choice or roll, is the effect.
+            # An enemy's attack that completed, or now waits on its target's choice or roll, is the effect: only
+            # when this call played it. A completed plan run again returns its stored receipt and moves nothing.
             combat_completed = combat_completed or bool(
-                result.get('combat_id') == state.combat.combat_id
+                result.get('combat_id') == state.combat.combat_id and _combat_changed(event)
                 and (result.get('completed') or result.get('phase') in {'PLAYER_CHOICE', 'PLAYER_ROLL'}))
         if result.get('ok') and f'tool:{i}' in refs and name == 'resolve_combat_ruling':
-            combat_completed = combat_completed or result.get('combat_id') == state.combat.combat_id
+            # A ruling re-sent with its event id replays the recorded one; the first resolved the pause.
+            combat_completed = combat_completed or bool(
+                result.get('combat_id') == state.combat.combat_id and _combat_changed(event))
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
@@ -283,7 +292,7 @@ def validate_resolution(
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
         if disposition in {"resolved", "resolved_without_check"}:
             if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
-                   and not _changed_nothing(e, tool_events[i:]) for i, e in enumerate(tool_events, 1)) and not mutation:
+                   and not _changed_nothing(e, tool_events) for i, e in enumerate(tool_events, 1)) and not mutation:
                 return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據", "inventory_or_combat_not_verified")
             # A newly created/replaced check for any participant is still work.
             changed_wait = any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())
@@ -308,7 +317,7 @@ def validate_resolution(
             return incomplete("免檢定完成缺少劇本或可核對的工具變更依據", "missing_scenario_or_mutation_evidence")
         # A tool that wrote nothing (refused, or an inventory no-op) leaves "no mechanics" true; the state check below
         # still catches anything that did change.
-        effects = [e for i, e in enumerate(tool_events, 1) if not _changed_nothing(e, tool_events[i:])]
+        effects = [e for i, e in enumerate(tool_events, 1) if not _changed_nothing(e, tool_events)]
         if disposition == "no_mechanics" and tool_events and (
             any(e["name"] not in INFORMATION_QUERY_TOOLS or not e["result"].get("ok") for e in effects)
             or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, "no_mechanics")

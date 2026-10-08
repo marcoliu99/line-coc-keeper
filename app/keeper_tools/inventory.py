@@ -121,36 +121,40 @@ def remove_carried_item(call: ToolCall) -> dict[str, Any]:
     item = tool_input.get("item", "").strip()
     if not item:
         return {"ok": False, "error": "item 不能是空字串"}
-    carried = list(char.carried_items)
-    matches = match_carried_items(carried, item)
-    if not matches:
-        held = "、".join(carried) or "（背包是空的）"
-        return {"ok": False, "refusal": "item_not_held", "investigator": char.name,
-                "carried_items": carried, "changed": False,
-                "error": f"「{char.name}」的背包裡沒有「{item}」。目前持有：{held}。"
-                         "請改用背包裡的寫法再呼叫一次，或不要移除。"}
-    if len({entry.strip().casefold() for entry in matches}) > 1:
-        return {"ok": False, "refusal": "ambiguous_item", "investigator": char.name,
-                "carried_items": carried, "candidates": matches, "changed": False,
-                "error": f"「{item}」對應到多個物品：{'、'.join(matches)}。請用其中一個完整寫法再呼叫一次。"}
-    stored = matches[0]
     def _mutate_remove_item(target_state: GroupState) -> Any:
+        # Matched against the state the transaction is about to write, not the caller's snapshot: a pack another
+        # commit changed since the snapshot (a second 鑰匙 added, this one already taken) is judged as it is now,
+        # so a refusal or an ambiguity is never decided on a stale list.
         target_char = support.require_character(target_state, tool_input.get("investigator", ""))
-        changed = stored in target_char.carried_items
-        if changed:
-            target_char.carried_items.remove(stored)
-            _note_inventory_edit(target_state, target_char, stored)
-            target_state.consumed_or_removed_items.append({
-                "item": stored,
-                "character_id": target_char.owner_id,
-                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
-            })
-        return support.ToolStateMutation(
-            (target_char.name, target_char.carried_items, _character_key(target_char), changed), should_save=changed)
-    investigator, carried_items, character_id, changed = support.mutate_tool_state(state, _mutate_remove_item)
-    return {"ok": True, "investigator": investigator, "character_id": character_id,
-            "carried_items": carried_items, "removed": stored, "changed": changed}
+        carried = list(target_char.carried_items)
+        matches = match_carried_items(carried, item)
+        if not matches:
+            held = "、".join(carried) or "（背包是空的）"
+            return support.ToolStateMutation({
+                "ok": False, "refusal": "item_not_held", "investigator": target_char.name,
+                "carried_items": carried, "changed": False,
+                "error": f"「{target_char.name}」的背包裡沒有「{item}」。目前持有：{held}。"
+                         "請改用背包裡的寫法再呼叫一次，或不要移除。"}, should_save=False)
+        if len({entry.strip().casefold() for entry in matches}) > 1:
+            return support.ToolStateMutation({
+                "ok": False, "refusal": "ambiguous_item", "investigator": target_char.name,
+                "carried_items": carried, "candidates": matches, "changed": False,
+                "error": f"「{item}」對應到多個物品：{'、'.join(matches)}。請用其中一個完整寫法再呼叫一次。"},
+                should_save=False)
+        stored = matches[0]
+        target_char.carried_items.remove(stored)
+        _note_inventory_edit(target_state, target_char, stored)
+        target_state.consumed_or_removed_items.append({
+            "item": stored,
+            "character_id": target_char.owner_id,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
+        })
+        return support.ToolStateMutation({
+            "ok": True, "investigator": target_char.name, "character_id": _character_key(target_char),
+            "carried_items": target_char.carried_items, "removed": stored, "changed": True}, should_save=True)
+    result: dict[str, Any] = support.mutate_tool_state(state, _mutate_remove_item)
+    return result
 
 
 class _TransferRefused(Exception):

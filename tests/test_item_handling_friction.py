@@ -75,6 +75,27 @@ def test_remove_of_an_ambiguous_name_is_refused_with_the_candidates():
     assert state.characters["u1"].carried_items == ["地下室鑰匙", "閣樓鑰匙"]
 
 
+def test_remove_judges_the_pack_as_it_is_committed_not_as_the_callers_snapshot_had_it():
+    """Another commit put a second 鑰匙 in the pack after this Keeper's snapshot: the partial name is ambiguous now."""
+    stale = _state(["地下室鑰匙"])
+    fresh = group_state.load_state("items")
+    fresh.characters["u1"].carried_items.append("車鑰匙")
+    group_state.save_state(fresh)
+    result = _call(stale, "remove_carried_item", "鑰匙")
+    assert not result["ok"] and result["refusal"] == "ambiguous_item"
+    assert result["candidates"] == ["地下室鑰匙", "車鑰匙"]
+    assert group_state.load_state("items").characters["u1"].carried_items == ["地下室鑰匙", "車鑰匙"]
+
+
+def test_remove_of_an_item_another_commit_already_took_is_refused_not_a_silent_no_op():
+    stale = _state(["地下室鑰匙"])
+    fresh = group_state.load_state("items")
+    fresh.characters["u1"].carried_items.clear()
+    group_state.save_state(fresh)
+    result = _call(stale, "remove_carried_item", "地下室鑰匙")
+    assert not result["ok"] and result["refusal"] == "item_not_held" and "背包是空的" in result["error"]
+
+
 def test_adding_an_item_already_carried_succeeds_as_a_no_op():
     state = _state(["手電筒"])
     result = _call(state, "add_carried_item", "手電筒 ")
@@ -265,3 +286,19 @@ def test_a_sentence_naming_a_specific_gun_resolves_to_it():
     assert combat_rules.resolve_weapon("我拔出點四五左輪").definition.id == "i.weapon.45-revolver"
     assert combat_rules.resolve_weapon("鋸短散彈槍").definition.id == "i.weapon.12-gauge-shotgun-2b-sawed-off"
     assert combat_rules.resolve_weapon("我丟出手裏劍").definition.id == "i.weapon.shuriken"  # 劍 alone would be the sword
+
+
+def test_a_refusal_after_the_same_item_was_already_removed_is_the_retry_that_found_it_gone():
+    state = _state(["地下室鑰匙"])
+    state.characters["u1"].to_dict()
+    gameplay = turn_resolution.gameplay_snapshot(state)
+    state.characters["u1"].carried_items = []
+    removed = _event("remove_carried_item", {"ok": True, "investigator": "Ann", "character_id": state.characters["u1"].character_id,
+                                             "carried_items": [], "removed": "地下室鑰匙", "changed": True},
+                     {"Ann": ["地下室鑰匙"]}, gameplay)
+    removed["arguments"] = {"investigator": "Ann", "item": "鑰匙"}
+    again = _event("remove_carried_item", {"ok": False, "refusal": "item_not_held", "investigator": "Ann",
+                                           "carried_items": [], "changed": False}, {"Ann": []}, gameplay)
+    again["arguments"] = {"investigator": "Ann", "item": "鑰匙"}
+    resolution = _validate(state, [removed, again], "resolved_without_check", ["tool:1"], gameplay)
+    assert resolution.disposition == "resolved_without_check", resolution.reason

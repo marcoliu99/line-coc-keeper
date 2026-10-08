@@ -17,9 +17,9 @@
 
 ## 修改
 
-- `inventory.match_carried_items(items, reference)`：先完全相符，再忽略大小寫，再取包含該字串、或（長度兩字以上時）被該字串包含的項目；單字物品如「信」在太多無關的詞裡（信號槍），不能證明指的就是它。`remove_carried_item` 移除它對應到的那筆原文（回執帶 `removed`）；完全對不到時以 `refusal: item_not_held` 拒絕並列出背包；對到多個不同項目時以 `refusal: ambiguous_item` 拒絕並列出候選。每個回執都帶 `changed`。
+- `inventory.match_carried_items(items, reference)`：先完全相符，再忽略大小寫，再取包含該字串、或（長度兩字以上時）被該字串包含的項目；單字物品如「信」在太多無關的詞裡（信號槍），不能證明指的就是它。`remove_carried_item` 移除它對應到的那筆原文（回執帶 `removed`）；完全對不到時以 `refusal: item_not_held` 拒絕並列出背包；對到多個不同項目時以 `refusal: ambiguous_item` 拒絕並列出候選。比對與兩種拒絕都在狀態交易裡、以已提交的背包為準決定，而不是呼叫端的快照：快照之後別的提交多放進一把鑰匙就是歧義，別的提交已經拿走的東西就是 `item_not_held`，絕不會默默變成 no-op。每個回執都帶 `changed`。
 - `add_carried_item` 加入已持有（忽略大小寫）的物品回 `ok: true, changed: false, already_carried: true`，不寫入。
-- `turn_resolution`：no-op（`changed: false`）既不是證據也不是失敗；被拒絕的加入／移除，若之後同一工具對同一角色、同一物品（兩種寫法互相包含）成功過（守密人重試了），就忽略它。真的變更之後沒有重試的拒絕、以及被拒絕的 `transfer_item`，仍會讓「已完成」的裁決作廢，和以前一樣。只有沒變動的物品呼叫的回合可以用 `no_mechanics` 結束。舊式「先移除再加入」的交接以部分名稱實際移除的那筆原文來核對。
+- `turn_resolution`：no-op（`changed: false`）既不是證據也不是失敗；被拒絕的加入／移除，若本回合同一工具對同一角色、同一物品（兩種寫法互相包含）另一次成功過，就忽略它：之後成功（守密人重試了）或之前成功（東西已經拿走，重試發現它不在了）都算。真的變更之後沒有重試的拒絕、以及被拒絕的 `transfer_item`，仍會讓「已完成」的裁決作廢，和以前一樣。只有沒變動的物品呼叫的回合可以用 `no_mechanics` 結束。舊式「先移除再加入」的交接以部分名稱實際移除的那筆原文來核對。
 - Executor 不為 no-op 記 `inventory_change` 事件。
 - `add_carried_item`／`remove_carried_item` 加上 `resolved_check_followup`；結算後敘事者的指示點名它們。
 - `Character.weapon_lines` 把沒有彈藥的項目印成「武器」、有追蹤彈藥的印成「彈藥」，角色卡與動態提示那行都是。
@@ -37,4 +37,4 @@
 
 ## 測試
 
-`tests/test_item_handling_friction.py`：比對器；用部分名稱移除；列出背包或候選的拒絕；重複加入是 no-op；重試過的拒絕回合仍完成而未重試的不完成；no-op 以 `no_mechanics` 結束；角色卡標籤；別名可解析且唯一；沒寫口徑的雙管霰彈槍需要裁定。
+`tests/test_item_handling_friction.py`：比對器；用部分名稱移除；列出背包或候選的拒絕；重複加入是 no-op；重試過的拒絕回合仍完成而未重試的不完成；同一次移除已成功之後的拒絕；呼叫端快照過期時以已提交的背包為準；no-op 以 `no_mechanics` 結束；角色卡標籤；別名可解析且唯一；沒寫口徑的雙管霰彈槍需要裁定。

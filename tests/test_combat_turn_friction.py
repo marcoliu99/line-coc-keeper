@@ -339,3 +339,29 @@ def test_a_rolled_back_advance_is_reported_as_blocked_even_though_the_objects_ch
         outcome, _ = _player("/coc check", [10, 90])
     receipt = outcome.resolved_event["combat_receipt"]
     assert receipt["auto_advance_error"] == "已有待處理檢定" and not receipt.get("auto_advanced")
+
+
+def test_a_replayed_enemy_plan_or_ruling_receipt_is_not_the_turns_effect():
+    _battle()
+    state = _load()
+    before = turn_resolution.gameplay_snapshot(state)
+    replayed = {"name": "run_enemy_combat_plan", "arguments": {"plan_id": "p"}, "inventory_before": {},
+                "result": {"ok": True, "combat_id": state.combat.combat_id, "completed": True},
+                "gameplay_before": before, "gameplay_after": before}
+    assert turn_resolution._mutation_evidence(state, [replayed], ["tool:1"], "調查員p1") == (False, False)
+    after = turn_resolution.gameplay_snapshot(state)
+    after["combat"]["actions"]["npc:p"] = {"completed": True}
+    played = {**replayed, "gameplay_after": after}
+    assert turn_resolution._mutation_evidence(state, [played], ["tool:1"], "調查員p1") == (True, False)
+    ruling = {"name": "resolve_combat_ruling", "arguments": {}, "inventory_before": {},
+              "result": {"ok": True, "combat_id": state.combat.combat_id},
+              "gameplay_before": before, "gameplay_after": before}
+    assert turn_resolution._mutation_evidence(state, [ruling], ["tool:1"], "調查員p1") == (False, False)
+    assert turn_resolution._mutation_evidence(state, [{**ruling, "gameplay_after": after}], ["tool:1"], "調查員p1") == (True, False)
+
+
+def test_only_a_provider_that_budgets_actions_gets_the_search_rounds_on_top():
+    from app.agents import executor
+    from app.providers import anthropic_provider, codex_provider
+    assert executor.tool_iterations(codex_provider) == config.MAX_TOOL_ITERATIONS + config.SCENARIO_SEARCH_MAX_PER_TURN
+    assert executor.tool_iterations(anthropic_provider) == config.MAX_TOOL_ITERATIONS

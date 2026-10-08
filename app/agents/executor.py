@@ -25,6 +25,7 @@ from app.domain.models import (
     TurnResolution,
 )
 from app.keeper_tools import resource_bridge
+from app.providers import registry as provider_registry
 from app.providers.conversation_session import ConversationSession
 from app.services import (
     canonical_facts,
@@ -37,6 +38,19 @@ from app.services import (
 
 _logger = logging.getLogger(__name__)
 
+
+
+def tool_iterations(provider) -> int:
+    """Rounds the conversation loop may run this turn.
+
+    A provider that caps state-changing calls itself (Codex: ``MAX_TOOLS_PER_TURN``) gets the bounded searches'
+    rounds on top of the action rounds, so a Keeper that searched four times can still register the enemy it
+    found. A provider whose only guard is the iteration count keeps ``MAX_TOOL_ITERATIONS``: more rounds there
+    would be more mutations, not more look-ups.
+    """
+    if provider_registry.budgets_actions_separately(provider):
+        return MAX_TOOL_ITERATIONS + config.SCENARIO_SEARCH_MAX_PER_TURN
+    return MAX_TOOL_ITERATIONS
 
 async def run_executor(message: AgentMessage) -> MechanicResult:
     """Runs the Executor Agent's tool-calling loop for a GAMEPLAY_ACTION turn.
@@ -240,9 +254,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             with turn_phases.phase("executor_llm"):
                 completion = await provider.run_conversation(
                     static_system, dynamic_system, tools, session.history(state.log), new_message,
-                    # Searching is bounded by its own per-turn cap, so the rounds it takes come on top of the
-                    # action rounds: a Keeper that searched four times can still register the enemy it found.
-                    execute_turn_tool, MAX_TOOL_ITERATIONS + config.SCENARIO_SEARCH_MAX_PER_TURN,
+                    execute_turn_tool, tool_iterations(provider),
                     # Reuse the existing completion; never force an extra wrap-up.
                     enable_wrapup=False,
                     **provider_options,
