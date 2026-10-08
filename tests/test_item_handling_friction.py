@@ -120,6 +120,7 @@ def test_what_is_said_about_the_pack_names_the_entry_as_the_pack_spells_it():
 
 def test_inventory_tools_are_offered_to_the_narrator_after_a_settled_check():
     assert {"add_carried_item", "remove_carried_item"} <= registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+    assert "declare_combat_effect" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES, "a torch's burn is registered here"
 
 
 def _event(name: str, result: dict, before: dict, gameplay: dict) -> dict:

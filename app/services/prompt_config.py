@@ -209,7 +209,8 @@ def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_ki
             "若原檢定已預先附上劇本引文與後果授權，傷害須用 apply_resolved_check_damage 真正提交；"
             "獨立的後續檢定須用 create_triggered_check 建立新 pending，不能替玩家擲骰。"
             "檢定結果讓調查員取得或失去物品時，用 add_carried_item／remove_carried_item 登記，不要只在敘事裡提到。"
-            "戰鬥中若【已結算檢定】區塊指出目前行動已完成，先依它給的參數呼叫 advance_combat_turn 推進，再敘事。"
+            "戰鬥中依【已結算檢定】區塊裡的【戰鬥下一步】處理回合：它說引擎已自動推進就不要再呼叫 advance_combat_turn；"
+            "只有它要你推進時才依它給的參數呼叫，再敘事。"
             "未授權的後果保持未發生，可使用 /coc correct 處理爭議。\n"
         )
     elif turn_kind == "opening_fallback":
