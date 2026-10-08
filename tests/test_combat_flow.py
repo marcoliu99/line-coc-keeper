@@ -761,3 +761,15 @@ def test_advance_accepts_the_character_id_and_wrong_actor_names_the_current_one(
         assert not wrong['ok'] and 'pc:pc1' in wrong['error']
         advanced = combat_flow.advance_combat(state, actor_id='pc1', event_id='advance:by-character-id')
         assert 'current actor' not in advanced.get('error', '')  # the NPC reply that follows is not under test
+
+
+def test_advance_by_name_when_a_same_named_ally_acted_first():
+    state, _, _enemy = battle()
+    for i in (1, 2):
+        combat.add_combatant(state, 'Guard', 100 - i, 5, is_ally=True)
+    state.combat.current_index = 1  # the second Guard shares its name, and its ID, with the first
+    current = state.combat.order[1]
+    state.combat.actions['skip:x'] = {'action_id': 'skip:x', 'kind': 'skip', 'actor_id': current.combatant_id,
+                                      'completed': True, 'round': state.combat.round_number}
+    result = combat_flow.advance_combat(state, actor_id='Guard', event_id='advance:guard')
+    assert 'current actor' not in result.get('error', '')
