@@ -227,6 +227,7 @@ def _feedback(
                 "combat_id": outcome.get("combat_id"), "action_id": outcome.get("action_id"),
                 "phase": outcome.get("phase"), "completed": outcome.get("completed"),
                 "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
+                "follow_up": (outcome.get("result") or {}).get("follow_up") if isinstance(outcome.get("result"), dict) else None,
             },
             "luck_spent": luck_spent,
         },

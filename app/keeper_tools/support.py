@@ -214,21 +214,30 @@ def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None
     }
 
 
-_STAT_LINE = re.compile(r"(?:^|[\s|])(?:str|con|siz|dex|pow|int|edu|app|hp|生命值?|力量|體質|體型|敏捷)\s*[:：]?\s*\d", re.IGNORECASE)
-_HEADING_LINES_ABOVE, _HEADING_MAX_CHARS = 6, 80
+_CHARACTERISTIC = re.compile(r"(?:^|[\s|])(str|con|siz|dex|pow|int|edu|app|力量|體質|體型|敏捷|意志|智力|教育|外貌)\s*[:：]?\s*\d",
+                             re.IGNORECASE)
+_HEADING_LINES_ABOVE, _HEADING_MAX_CHARS, _BLOCK_LINES = 6, 80, 4
+
+
+def _characteristics_at(lines: list[str], index: int) -> set[str]:
+    """The distinct characteristics (STR, CON, SIZ …, each with a number) a block starting at ``index`` lists in
+    its first lines; an HP line alone, or any single token, is not a stat block."""
+    return {match.group(1).lower() for line in lines[index:index + _BLOCK_LINES] for match in _CHARACTERISTIC.finditer(line)}
 
 
 def _stat_block_headings(text: str) -> list[str]:
-    """The title of every stat block in the scenario text: the nearest short, non-stat line above a characteristics
-    line (STR/CON/SIZ/DEX/HP and a number), as 7e lays a block out (「### Walter Corbitt, Undead Fiend」, then STR …)."""
+    """The title of every stat block in the scenario text: the nearest short, non-stat line above the block's
+    characteristics (at least two of STR/CON/SIZ/DEX/POW/INT/EDU/APP with numbers, on that line or the next few),
+    as 7e lays a block out (「### Walter Corbitt, Undead Fiend」, then STR …). A line giving HP alone is the kind of
+    card the engine already treats as incomplete, not a block."""
     lines = text.splitlines()
     headings: list[str] = []
     for index, line in enumerate(lines):
-        if not _STAT_LINE.search(line):
+        if not _CHARACTERISTIC.search(line) or len(_characteristics_at(lines, index)) < 2:
             continue
         for above in range(index - 1, max(-1, index - 1 - _HEADING_LINES_ABOVE), -1):
             candidate = lines[above].strip().strip("#*_ ").strip()
-            if not candidate or _STAT_LINE.search(candidate):
+            if not candidate or _CHARACTERISTIC.search(candidate):
                 continue
             if len(candidate) <= _HEADING_MAX_CHARS:
                 headings.append(candidate.casefold())
@@ -239,7 +248,7 @@ def _stat_block_headings(text: str) -> list[str]:
 def scenario_stat_block(state: GroupState, name: str) -> bool:
     """Whether the loaded scenario text carries a stat block titled with ``name``: the Keeper's spelling, trimmed and
     case-insensitive, without the instance suffix the prompt asks for when several of one kind are active
-    (「魚人（左）」, "Cultist 2"), found as a whole word in a stat block's own heading. A name the prose only mentions,
+    (「魚人（左）」, "Cultist 2"), found as a whole word in a stat block's own heading (a block lists at least two characteristics; an HP line alone is not one). A name the prose only mentions,
     one that merely stands near someone else's block, or a short name inside another word ("rat" in "pirate") proves
     nothing about the attack values the model supplies, so it keeps what the model gave and needs a ruling."""
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()

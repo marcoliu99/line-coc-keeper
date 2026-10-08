@@ -332,6 +332,12 @@ def declare_action(
     weapon = lookup.definition
     if action_kind not in ('melee', 'single_shot') or weapon.attack_mode != action_kind:
         return _ruling(state, action, 'Unsupported attack mode')
+    if (reloading := _reloading_until(state, actor, weapon)) is not None:
+        # The table's rate of fire (1/2, 1/3): the shot before this one spends the rounds between. Not a ruling,
+        # which would pause the fight: the actor is told and may do something else this round.
+        del state.combat.actions[action_id]
+        return _error(f'{weapon.name} is still being reloaded (rate of fire 1/{weapon.rounds_per_shot}): the next '
+                      f'shot is possible in round {reloading}. Declare another action this round.')
     damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance_yards)
     if damage.damage is None:
         return _ruling(state, action, damage.reason)
@@ -353,6 +359,20 @@ def declare_action(
     action.update({'weapon': asdict(weapon), 'damage': damage.damage, 'difficulty': difficulty})
     combat_resources.record_event(state, action_id + ':declaration', 'action', data=deepcopy(action))
     return run_action(state, action_id)
+
+
+def _reloading_until(state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition) -> int | None:
+    """The round in which ``actor`` may next fire ``weapon``, when its rate of fire still holds the last shot's
+    reload; None when the weapon is ready."""
+    if weapon.rounds_per_shot <= 1:
+        return None
+    fired = [a['round'] for a in state.combat.actions.values()
+             if a.get('actor_id') == actor.combatant_id and a.get('completed') and a.get('kind') != 'skip'
+             and (a.get('weapon') or {}).get('id') == weapon.id and isinstance(a.get('round'), int)]
+    if not fired:
+        return None
+    ready = max(fired) + weapon.rounds_per_shot
+    return ready if state.combat.round_number < ready else None
 
 
 def _defense_choice(state: GroupState, action: CombatAction, character: Character) -> dict[str, Any]:
@@ -605,6 +625,10 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
     if not damage_result['ok']:
         return damage_result
     action['result'] = {'hit': True, 'opposed': opposed, 'damage': damage_result, 'damage_receipt': receipt}
+    if not counter_hit and action.get('weapon', {}).get('follow_up'):
+        # What the table says a hit with this weapon also does (a torch: the target may catch fire). The engine
+        # does not roll it; the receipt hands it to the Keeper, who has the tools for it.
+        action['result']['follow_up'] = action['weapon']['follow_up']
     if state.combat.interaction:
         injury_action = state.combat.actions[state.combat.interaction['action_id']]
         injury_action['parent_action_id'] = action_id

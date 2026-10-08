@@ -445,3 +445,48 @@ def test_a_typed_option_is_matched_exactly_before_by_containment_so_a_negation_i
     assert narration.match_choice_option(options, "dive")["kind"] == "dive"
     assert narration.match_choice_option(options, "閃") is None  # names both: ask, do not pick the first
     assert narration.match_choice_option(options, "") is None
+
+
+def test_a_heading_over_an_hp_line_alone_is_not_a_stat_block():
+    from app.keeper_tools import support
+    from app.models import GroupState
+    state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                       scenario_text="### Rat\n\nHP 10\n\nIt bites.\n")
+    given = {"attack_mode": "melee"}
+    assert support.enemy_source(state, given, None, name="Rat") == given
+    state.scenario_text = "### Rat\n\nSTR 35\nCON 55\nHP 10\n"  # one characteristic per line still is a block
+    assert support.enemy_source(state, given, None, name="Rat")["sha256"] == "abc123"
+
+
+def test_a_torch_hit_hands_the_keeper_the_burn_the_table_states():
+    _battle(first_enemy=False)
+    state = _load()
+    state.characters["p1"].carried_items.append("火把")
+    _save(state)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    declared = _tool("declare_combat_action", {"action_id": "torch", "actor_id": "調查員p1",
+                                               "target_id": enemy.combatant_id, "weapon_reference": "火把"})
+    assert declared["ok"], declared
+    outcome, _ = _player("/coc check", [10, 90, 20])  # the swing lands; the enemy's claw follows
+    result = _load().combat.actions["torch"]["result"]
+    assert result["hit"] and "著火" in result["follow_up"]
+    receipt = outcome.resolved_event["combat_receipt"]
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
+    assert "【武器後續】" in block and "著火" in block
+
+
+def test_a_crossbow_fired_last_round_is_still_being_reloaded_this_round():
+    from app import combat_flow
+    from tests.test_combat_flow import battle
+    state, _pc, enemy = battle(weapons={"Crossbow": {"ammo": 1, "ammo_max": 1}})
+    state.combat.actions["shot1"] = {"action_id": "shot1", "actor_id": "pc:pc1", "target_id": enemy.combatant_id,
+                                     "completed": True, "round": 1, "weapon": {"id": "i.weapon.crossbow"}}
+    state.combat.round_number = 2
+    refused = combat_flow.declare_action(state, action_id="shot2", actor_id="pc:pc1", target_id=enemy.combatant_id,
+                                         weapon_reference="Crossbow", action_kind="single_shot", distance_yards=10)
+    assert not refused["ok"] and "round 3" in refused["error"] and "shot2" not in state.combat.actions
+    assert state.combat.phase != "NEEDS_RULING", "a reload is not a ruling: the fight goes on"
+    state.combat.round_number = 3
+    allowed = combat_flow.declare_action(state, action_id="shot3", actor_id="pc:pc1", target_id=enemy.combatant_id,
+                                         weapon_reference="Crossbow", action_kind="single_shot", distance_yards=10)
+    assert allowed["ok"], allowed

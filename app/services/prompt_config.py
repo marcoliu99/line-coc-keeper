@@ -337,6 +337,11 @@ def _combat_next_step(result: dict) -> str:
     receipt = result.get("combat_receipt") or {}
     if not receipt.get("combat_id"):
         return ""
+    follow_up = f"\n【武器後續】這次命中依武器表還有後續，引擎沒有擲：{receipt['follow_up']}" if receipt.get("follow_up") else ""
+    return follow_up + _combat_turn_step(receipt)
+
+
+def _combat_turn_step(receipt: dict) -> str:
     advanced = receipt.get("auto_advanced")
     if isinstance(advanced, dict):
         waiting = ("" if advanced.get("phase") not in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}

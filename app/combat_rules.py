@@ -62,11 +62,15 @@ class WeaponDefinition:
     malfunction: int | None = None
     ruling_reason: str = ''
     base_range_formula: str = ''  # 'STR/5': a thrown weapon's base range comes from the thrower, in yards
+    rounds_per_shot: int = 1  # the table's rate of fire 1/2, 1/3: one shot, then that many rounds before the next
+    follow_up: str = ''  # a consequence of a hit the table states and the engine does not roll; the Keeper applies it
 
     def __post_init__(self) -> None:
         _validate_damage(self.damage)
         if self.base_range_formula not in ('', 'STR/5'):
             raise ValueError('Unsupported base range formula')
+        if self.rounds_per_shot < 1:
+            raise ValueError('Rounds per shot must be at least 1')
         if not self.id or not self.name or not self.skill_id or not self.catalog_version:
             raise ValueError('Definition requires identity, skill and catalog version')
         if self.attack_mode not in ('melee', 'single_shot'):
