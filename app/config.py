@@ -343,6 +343,10 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 # a mislaid conversation lock is a channel that deadlocks until restart. See
 # docs/specs/enhancement/measured_turn_latency_priorities_design_spec.md WP3.5.
 NARRATION_OUTSIDE_MUTATION_LOCK = _env_bool("NARRATION_OUTSIDE_MUTATION_LOCK", False)
+# When a combat action completes (the hit or miss is settled), the engine ends that actor's turn itself and plays
+# the next enemy's turn to the next player boundary, instead of waiting for the Keeper to call advance_combat_turn.
+# See docs/specs/enhancement/combat_turn_friction_design_spec.md.
+COMBAT_AUTO_ADVANCE = _env_bool("COMBAT_AUTO_ADVANCE", True)
 OPENAI_DYNAMIC_PROMPT_AFTER_INPUT = _env_bool("OPENAI_DYNAMIC_PROMPT_AFTER_INPUT", True)
 OPENAI_HISTORY_TOKEN_BUDGET = _env_int("OPENAI_HISTORY_TOKEN_BUDGET", 4000)
 OPENAI_HISTORY_MIN_TURNS = _env_int("OPENAI_HISTORY_MIN_TURNS", 2, minimum=1)

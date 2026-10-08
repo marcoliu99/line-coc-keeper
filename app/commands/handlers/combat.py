@@ -14,7 +14,9 @@ def _apply_combat_command(state: GroupState, parts: list[str]) -> Outcome:
     if state.combat.active and action == 'end':
         return refuse('請由 Keeper 取得結算預覽，再明確確認；當前待處理事項仍保留。')
     if state.combat.active and action == 'next':
-        return refuse('請由 Keeper 完成目前行動後推進；玩家指令不能略過待處理選擇或檢定。')
+        # A player asking to move on usually wants to know what the fight is waiting for: say so, with the status.
+        status = combat_engine.handle(state, act.Status())
+        return refuse(f'{status}\n戰鬥中由守密人推進回合；標 => 的是目前輪到的人，待處理的選擇或檢定要先完成。')
 
     if action == "start":
         combat_engine.handle(state, act.Start())

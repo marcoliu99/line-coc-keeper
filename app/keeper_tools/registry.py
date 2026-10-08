@@ -374,9 +374,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "代擲並回傳結果。不要自行判斷重傷檢定結果。"
                     "只能用在 investigator 參數指名的那位角色自己的數值變化（例如角色自己受傷、花費自己"
                     "的幸運點）；不能拿來記錄或暫存跟這位角色無關的擲骰結果（例如別人的傷害骰、環境效果"
-                    "骰），也不能用來對敵人造成傷害——敵人傷害一律用 apply_combat_damage（傳未扣護甲的"
-                    "raw_damage）、apply_final_combat_damage（傳已扣除護甲的 final_damage，避免重複扣"
-                    "護甲）或 damage_combatant。"
+                    "骰），也不能用來對敵人造成傷害——敵人傷害由戰鬥流程結算：調查員攻擊用 declare_combat_action，"
+                    "敵人攻擊用 plan_enemy_turn／run_enemy_combat_plan。"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -487,6 +486,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                 },
             },
         handler=inventory_handlers.add_carried_item,
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={
@@ -496,12 +496,13 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "type": "object",
                     "properties": {
                         "investigator": {"type": "string"},
-                        "item": {"type": "string", "description": "要移除的物品描述，需跟 add_carried_item 當初加入時的文字相符或明顯對應"},
+                        "item": {"type": "string", "description": "要移除的物品；可用背包裡的寫法或其中一部分（例如「鑰匙」對應「地下室鑰匙」），找不到或有歧義時工具會列出背包內容"},
                     },
                     "required": ["investigator", "item"],
                 },
             },
         handler=inventory_handlers.remove_carried_item,
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={
@@ -789,31 +790,11 @@ _SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         schema={
                 "name": "advance_combat_turn",
-                "description": "把戰鬥推進到下一位戰鬥員的回合（已倒下的會自動跳過）。每次處理完一位戰鬥員的行動後都必須呼叫這個工具，不可以自己心裡默默跳過。",
+                "description": "把戰鬥推進到下一位戰鬥員的回合（已倒下的會自動跳過）。攻擊結算完成時引擎會自動推進，不用再呼叫；只在目前行動者這回合沒有引擎能結算的行動（skip=true），或狀態顯示回合仍停在已完成行動的人身上時呼叫。",
                 "input_schema": {"type": "object", "properties": {}},
             },
         handler=combat_handlers.advance_combat_turn,
         resolved_check_followup=True,
-        invalidates_combat_status=True,
-    ),
-    ToolSpec(
-        schema={
-                "name": "damage_combatant",
-                "description": (
-                    "調整戰鬥中某位角色或敵人的 HP（受傷用負數，治療用正數）。適用於戰鬥中的任何一方，"
-                    "包含玩家角色與 NPC。負數 delta 會走正式傷害流程並套用護甲；若輸入的是已計算完成、不可再扣護甲的"
-                    "最終傷害，請改用 apply_final_combat_damage。"
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "delta": {"type": "integer"},
-                    },
-                    "required": ["name", "delta"],
-                },
-            },
-        handler=combat_handlers.damage_combatant,
         invalidates_combat_status=True,
     ),
     ToolSpec(
@@ -832,120 +813,6 @@ _SPECS: tuple[ToolSpec, ...] = (
             },
         handler=combat_handlers.plan_enemy_turn,
         invalidates_combat_status=True,
-    ),
-    ToolSpec(
-        schema={
-                "name": "resolve_enemy_action",
-                "description": (
-                    "敵人 plan 對應的行動已敘事/擲骰處理後呼叫；特殊能力會消耗次數與冷卻，攻擊命中時會在此正式套用傷害。"
-                    "若 plan 的特殊能力 effect 宣告 on_success=apply_effect，必須把正式檢定結果放在 outcome.success；"
-                    "攻擊則傳 outcome.hit 與 outcome.damage；只有成功的正式結果才會改變戰鬥狀態。"
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "plan_id": {"type": "string"},
-                        "outcome": {
-                            "type": "object",
-                            "description": "特殊能力使用 success；攻擊使用 hit 與命中後的非負整數 damage。",
-                            "properties": {
-                                "success": {"type": "boolean"},
-                                "hit": {"type": "boolean"},
-                                "damage": {"type": "integer", "minimum": 0},
-                                "damage_type": {"type": "string"},
-                                "tags": {"type": "array", "items": {"type": "string"}},
-                            },
-                        },
-                    },
-                    "required": ["plan_id"],
-                },
-            },
-        handler=combat_handlers.resolve_enemy_action,
-        invalidates_combat_status=True,
-    ),
-    ToolSpec(
-        schema={
-                "name": "apply_combat_damage",
-                "description": (
-                    "套用正式戰鬥傷害。raw_damage 是尚未扣除護甲的原始傷害，系統會計算護甲抵銷、final damage 與 HP。"
-                    "若傷害數字已經是扣除護甲後的最終值，改用 apply_final_combat_damage，避免重複扣除護甲。"
-                    "玩家未發現前，公開敘事不可洩漏護甲/弱點的精確數值。"
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "target": {"type": "string"},
-                        "raw_damage": {"type": "integer"},
-                        "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "source_id": {"type": "string"},
-                    },
-                    "required": ["target", "raw_damage"],
-                },
-            },
-        handler=combat_handlers.apply_combat_damage,
-        resolved_check_followup=True,
-        kp_assistant=True,
-        kp_canonical_game=True,
-        invalidates_combat_status=True,
-    ),
-    ToolSpec(
-        schema={
-                "name": "apply_final_combat_damage",
-                "description": (
-                    "套用已經確定的最終傷害數字；final_damage 已包含護甲等減免，不會再次扣除護甲。"
-                    "仍會正式更新戰鬥 HP、傷害觸發與重傷檢定。只有在傷害數字已是最終值時使用；"
-                    "若要由系統依目標護甲計算，請用 apply_combat_damage 並傳入 raw_damage。"
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "target": {"type": "string"},
-                        "final_damage": {"type": "integer", "minimum": 0},
-                        "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "source_id": {"type": "string"},
-                    },
-                    "required": ["target", "final_damage"],
-                },
-            },
-        handler=combat_handlers.apply_final_combat_damage,
-        resolved_check_followup=True,
-        kp_assistant=True,
-        kp_canonical_game=True,
-        invalidates_combat_status=True,
-    ),
-    ToolSpec(
-        schema={
-                "name": "add_combat_effect",
-                "description": (
-                    "替戰鬥中的角色、敵人、全體或環境加入固定時點效果，例如燃燒、流血、場景壓迫。"
-                    "target 可填角色名稱、all/全體或 environment/環境；環境效果可作為全場狀態，傷害效果請指定角色或全體。"
-                    "damage 可填固定整數字串（例如 '1'）或骰式（例如 '1d6+1'）；"
-                    "效果會在 round/turn timing 由系統正式結算。"
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "target": {"type": "string"},
-                        "label": {"type": "string"},
-                        "timing": {
-                            "type": "string",
-                            "enum": ["round_start", "turn_start", "turn_end", "round_end"],
-                        },
-                        "damage": {"type": "string", "description": "固定整數字串或骰式，例如 '1'、'3'、'1d6+1'"},
-                        "damage_type": {"type": "string", "description": "physical/fire/bullet/melee/magic 等"},
-                        "remaining_rounds": {"type": "integer", "description": "持續幾次成功觸發；省略表示無限期"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                        "source_id": {"type": "string"},
-                        "public_description": {"type": "string"},
-                    },
-                    "required": ["target", "label", "timing"],
-                },
-            },
-        handler=combat_handlers.add_combat_effect,
-        kp_assistant=True,
-        kp_canonical_game=True,
     ),
     ToolSpec(
         schema={
@@ -1140,13 +1007,13 @@ _SPECS += (
 )
 
 _SPECS += (
-    ToolSpec(schema={'name': 'declare_combat_effect', 'description': 'Keeper 明確指定來源/裁定的傷害severity及範圍、觸發、停止條件；特殊規則未支持時暫停。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'severity_id': {'type': 'string', 'enum': ['minor','moderate','severe','deadly','terminal','splat']}, 'scope': {'type': 'string','enum': ['incident','round']}, 'timing': {'type': 'string','enum': ['round_start','turn_start','turn_end','round_end']}, 'defense': {'type': 'string','enum': ['none']}, 'special_rule': {'type': 'string'}, 'stop_condition': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','target_id','severity_id','stop_condition','reason']}}, handler=managed_handlers.declare_combat_effect, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'declare_combat_effect', 'description': 'Keeper 明確指定來源/裁定的傷害severity及範圍、觸發、停止條件；特殊規則未支持時暫停。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'target_id': {'type': 'string'}, 'severity_id': {'type': 'string', 'enum': ['minor','moderate','severe','deadly','terminal','splat']}, 'scope': {'type': 'string','enum': ['incident','round']}, 'timing': {'type': 'string','enum': ['round_start','turn_start','turn_end','round_end']}, 'defense': {'type': 'string','enum': ['none']}, 'special_rule': {'type': 'string'}, 'stop_condition': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','target_id','severity_id','stop_condition','reason']}}, handler=managed_handlers.declare_combat_effect, invalidates_combat_status=True, resolved_check_followup=True),
     ToolSpec(schema={'name': 'stop_combat_effect', 'description': 'Keeper 根據明確停止條件結束效果；保留原紀錄。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'effect_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}}, 'required': ['combat_id','effect_id','event_id','reason']}}, handler=managed_handlers.stop_combat_effect, invalidates_combat_status=True),
 )
 
 
 _SPECS += (
-    ToolSpec(schema={'name': 'resolve_combat_ruling', 'description': 'Keeper 明確裁定暫停的行動：指定已核對的武器ID或物理距離後恢復，或明確取消；不接受任意命中、傷害或骰值。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'action_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'decision': {'type': 'string', 'enum': ['resume','cancel']}, 'weapon_reference': {'type': 'string'}, 'distance_yards': {'type': 'number','minimum': 0}}, 'required': ['combat_id','action_id','event_id','reason','decision']}}, handler=managed_handlers.resolve_combat_ruling, invalidates_combat_status=True),
+    ToolSpec(schema={'name': 'resolve_combat_ruling', 'description': 'Keeper 明確裁定暫停的行動：指定已核對的武器ID或物理距離後恢復，或明確取消；不接受任意命中、傷害或骰值。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'action_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'decision': {'type': 'string', 'enum': ['resume','cancel']}, 'weapon_reference': {'type': 'string'}, 'distance_yards': {'type': 'number','minimum': 0}}, 'required': ['combat_id','action_id','event_id','reason','decision']}}, handler=managed_handlers.resolve_combat_ruling, invalidates_combat_status=True, resolved_check_followup=True),
     ToolSpec(schema={'name': 'reconcile_combat_correction', 'description': 'Keeper 明確核對更正後的傷害/重傷狀態與受影響行動；保留原骰與原選擇，不默默丟棄。', 'input_schema': {'type': 'object', 'properties': {'combat_id': {'type': 'string'}, 'event_id': {'type': 'string'}, 'reason': {'type': 'string'}, 'injury_by_character': {'type': 'object', 'additionalProperties': {'type': 'object','properties': {'major_wound': {'type': 'boolean'},'unconscious': {'type': 'boolean'},'dying': {'type': 'boolean'},'dead': {'type': 'boolean'}}, 'additionalProperties': False}}, 'acknowledge_action_ids': {'type': 'array','items': {'type': 'string'}}}, 'required': ['combat_id','event_id','reason','injury_by_character','acknowledge_action_ids']}}, handler=managed_handlers.reconcile_combat_correction, invalidates_combat_status=True),
 )
 
@@ -1169,7 +1036,8 @@ for _spec in _SPECS:
                                  'description': '已核對NPC技能值，例如dodge；不得推測預設閃避'}
     if _spec.schema['name'] == 'advance_combat_turn':
         _spec.schema['input_schema']['properties'].update({
-            'actor_id': {'type': 'string'}, 'event_id': {'type': 'string'},
+            'actor_id': {'type': 'string', 'description': '目前行動者：戰鬥者 ID、角色 ID 或名字都可以'},
+            'event_id': {'type': 'string', 'description': '可省略，系統會自動推導；只有重試同一次推進時才沿用同一個'},
             'skip': {'type': 'boolean', 'description': '目前行動者這回合沒有引擎能結算的行動（護住自己、躲藏、撤退、搜索、查看、交談等）時設 true：不擲骰、不改資源，直接結束他的回合'},
         })
     if _spec.schema['name'] in {'adjust_character', 'adjust_ammo', 'add_status_tag', 'remove_status_tag'}:

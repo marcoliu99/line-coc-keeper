@@ -1,5 +1,5 @@
 {
-  "version": "coc7-reviewed-2026-10-01",
+  "version": "coc7-reviewed-2026-10-08",
   "distance_unit_source": {
     "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/static/lang/en.json",
     "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
@@ -15,7 +15,13 @@
         "punch",
         "kick",
         "brawl",
-        "徒手"
+        "徒手",
+        "拳頭",
+        "拳",
+        "揍",
+        "踢",
+        "赤手空拳",
+        "肉搏"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -45,7 +51,12 @@
       "id": "i.weapon.bow",
       "name": "Bow",
       "aliases": [
-        "弓"
+        "弓",
+        "弓箭",
+        "長弓",
+        "短弓",
+        "複合弓",
+        "弓與箭"
       ],
       "skill_id": "firearms-bow",
       "attack_mode": "single_shot",
@@ -74,7 +85,12 @@
     {
       "id": "i.weapon.brass-knuckles",
       "name": "Brass Knuckles",
-      "aliases": [],
+      "aliases": [
+        "指虎",
+        "拳套",
+        "手指虎",
+        "knuckle duster"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d3+1",
@@ -102,35 +118,47 @@
     {
       "id": "i.weapon.bullwhip",
       "name": "Bullwhip",
-      "aliases": [],
+      "aliases": [
+        "horsewhip",
+        "皮鞭",
+        "鞭",
+        "長鞭",
+        "鞭子",
+        "牛鞭",
+        "馬鞭"
+      ],
       "skill_id": "fighting-whip",
-      "attack_mode": "single_shot",
+      "attack_mode": "melee",
       "damage": "1d3",
       "db_policy": "half",
       "extreme_rule": "maximum",
       "distance_bands": [],
-      "base_range_yards": 3,
+      "base_range_yards": null,
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,
-      "ruling_reason": "Special attack or continuing effect requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.burning-torch",
       "name": "Burning Torch",
-      "aliases": [],
+      "aliases": [
+        "火把",
+        "火炬",
+        "燃燒的火把"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d6",
@@ -141,24 +169,30 @@
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,
-      "ruling_reason": "Special attack or continuing effect requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "follow_up": "命中的目標可能著火（規則：目標擲幸運，失敗則著火；NPC 沒有幸運值，由守密人判定）：著火就用 declare_combat_effect 登記持續燃燒，本桌採固定量：每輪 1D6 直到撲滅（武器表的逐輪加劇規則刻意簡化，不要逐輪調整），stop_condition 寫撲滅，引擎不會自己擲"
     },
     {
       "id": "i.weapon.blackjack",
       "name": "Blackjack",
-      "aliases": [],
+      "aliases": [
+        "沙包棍",
+        "皮棍",
+        "鉛頭棍",
+        "短棒"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d8",
@@ -189,7 +223,20 @@
       "aliases": [
         "large club",
         "baseball bat",
-        "大型棍棒"
+        "球棒",
+        "棒球棒",
+        "板球棒",
+        "大棍",
+        "大型棍棒",
+        "木棒",
+        "鐵棍",
+        "撬棍",
+        "鐵撬",
+        "火鉗",
+        "大木棍",
+        "crowbar",
+        "poker",
+        "cricket bat"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -220,8 +267,19 @@
       "name": "Club, Small",
       "aliases": [
         "small club",
+        "警棍",
+        "小棍",
+        "短棍",
+        "甩棍",
+        "棍子",
+        "棍",
+        "木棍",
+        "手杖",
+        "拐杖",
+        "警用短棍",
+        "billy club",
         "nightstick",
-        "警棍"
+        "cane"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -250,35 +308,45 @@
     {
       "id": "i.weapon.crossbow",
       "name": "Crossbow",
-      "aliases": [],
+      "aliases": [
+        "弩",
+        "十字弓",
+        "弩弓"
+      ],
       "skill_id": "firearms-bow",
       "attack_mode": "single_shot",
       "damage": "1d8+2",
-      "db_policy": "half",
+      "db_policy": "none",
       "extreme_rule": "impale",
       "distance_bands": [],
       "base_range_yards": 50,
       "ammo_per_attack": 1,
       "capacity": 1,
       "malfunction": 96,
-      "ruling_reason": "Reload cadence requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "rounds_per_shot": 2
     },
     {
       "id": "i.weapon.garrote",
       "name": "Garrote",
-      "aliases": [],
+      "aliases": [
+        "絞索",
+        "絞繩",
+        "勒繩",
+        "鋼絲"
+      ],
       "skill_id": "fighting-garrote",
       "attack_mode": "melee",
       "damage": "1d6",
@@ -309,7 +377,11 @@
       "aliases": [
         "hatchet",
         "sickle",
-        "手斧"
+        "手斧",
+        "柴刀",
+        "鐮刀",
+        "短柄斧",
+        "小斧"
       ],
       "skill_id": "fighting-axe",
       "attack_mode": "melee",
@@ -336,9 +408,131 @@
       }
     },
     {
+      "id": "i.weapon.axe",
+      "name": "Axe",
+      "aliases": [
+        "axe",
+        "wood axe",
+        "fire axe",
+        "斧頭",
+        "斧",
+        "伐木斧",
+        "消防斧",
+        "大斧",
+        "長柄斧",
+        "戰斧"
+      ],
+      "skill_id": "fighting-axe",
+      "attack_mode": "melee",
+      "damage": "1d8+2",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7e weapons table, Investigator Handbook melee rows (operator-supplied, 2026-10-08)",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7e weapons table, Investigator Handbook melee rows (operator-supplied, 2026-10-08)",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.sword",
+      "name": "Sword",
+      "aliases": [
+        "sword",
+        "劍",
+        "長劍",
+        "軍刀",
+        "佩劍",
+        "馬刀",
+        "刀劍",
+        "彎刀",
+        "sabre",
+        "cavalry sabre",
+        "long sword"
+      ],
+      "skill_id": "fighting-sword",
+      "attack_mode": "melee",
+      "damage": "1d8",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7e weapons table, Investigator Handbook melee rows (operator-supplied, 2026-10-08)",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7e weapons table, Investigator Handbook melee rows (operator-supplied, 2026-10-08)",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
+      "id": "i.weapon.rapier",
+      "name": "Rapier",
+      "aliases": [
+        "西洋劍",
+        "刺劍",
+        "細劍",
+        "擊劍",
+        "rapier",
+        "thrusting sword"
+      ],
+      "skill_id": "fighting-sword",
+      "attack_mode": "melee",
+      "damage": "1d6+1",
+      "db_policy": "full",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": null,
+      "ammo_per_attack": 0,
+      "capacity": null,
+      "malfunction": null,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7e weapons table, Investigator Handbook melee rows (operator-supplied, 2026-10-08)",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      },
+      "rule_source": {
+        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
+        "revision": "7e weapons table, Investigator Handbook melee rows (operator-supplied, 2026-10-08)",
+        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
+        "accessed": "2026-10-01"
+      }
+    },
+    {
       "id": "i.weapon.knife-large",
       "name": "Knife, Large",
-      "aliases": [],
+      "aliases": [
+        "大刀",
+        "砍刀",
+        "開山刀",
+        "大型刀",
+        "山刀",
+        "machete",
+        "large knife"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d8",
@@ -366,7 +560,16 @@
     {
       "id": "i.weapon.knife-medium",
       "name": "Knife, Medium",
-      "aliases": [],
+      "aliases": [
+        "中型刀",
+        "獵刀",
+        "菜刀",
+        "刺刀",
+        "切肉刀",
+        "hunting knife",
+        "carving knife",
+        "medium knife"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d4+2",
@@ -394,7 +597,24 @@
     {
       "id": "i.weapon.knife-small",
       "name": "Knife, Small",
-      "aliases": [],
+      "aliases": [
+        "小刀",
+        "短刀",
+        "匕首",
+        "摺疊刀",
+        "小型刀",
+        "剃刀",
+        "直剃刀",
+        "水果刀",
+        "美工刀",
+        "彈簧刀",
+        "瑞士刀",
+        "dagger",
+        "pocket knife",
+        "switchblade",
+        "small knife",
+        "straight razor"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d4",
@@ -422,7 +642,10 @@
     {
       "id": "i.weapon.nunchaku",
       "name": "Nunchaku",
-      "aliases": [],
+      "aliases": [
+        "雙節棍",
+        "雙截棍"
+      ],
       "skill_id": "fighting-flail",
       "attack_mode": "melee",
       "damage": "1d8",
@@ -433,24 +656,30 @@
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,
-      "ruling_reason": "Special/range classification requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.rock-thrown",
       "name": "Rock, Thrown",
-      "aliases": [],
+      "aliases": [
+        "石頭",
+        "投石",
+        "石塊",
+        "丟石頭",
+        "石子"
+      ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
       "damage": "1d4",
@@ -461,52 +690,66 @@
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,
-      "ruling_reason": "Special/range classification requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "base_range_formula": "STR/5"
     },
     {
       "id": "i.weapon.shuriken",
       "name": "Shuriken",
-      "aliases": [],
+      "aliases": [
+        "手裏劍",
+        "飛鏢",
+        "鏢"
+      ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
       "damage": "1d3",
       "db_policy": "half",
-      "extreme_rule": "maximum",
+      "extreme_rule": "impale",
       "distance_bands": [],
       "base_range_yards": null,
       "ammo_per_attack": 0,
       "capacity": null,
-      "malfunction": 97,
-      "ruling_reason": "Special/range classification requires explicit ruling.",
+      "malfunction": 100,
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "base_range_formula": "STR/5"
     },
     {
       "id": "i.weapon.spear",
       "name": "Spear",
-      "aliases": [],
+      "aliases": [
+        "長矛",
+        "矛",
+        "槍矛",
+        "騎槍",
+        "騎兵長矛",
+        "cavalry lance",
+        "lance"
+      ],
       "skill_id": "fighting-spear",
       "attack_mode": "melee",
       "damage": "1d8+1",
@@ -517,24 +760,29 @@
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,
-      "ruling_reason": "Source omits damage bonus flag; requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.spear-thrown",
       "name": "Spear, Thrown",
-      "aliases": [],
+      "aliases": [
+        "投矛",
+        "標槍",
+        "投擲矛",
+        "javelin"
+      ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
       "damage": "1d8",
@@ -545,19 +793,20 @@
       "ammo_per_attack": 0,
       "capacity": null,
       "malfunction": null,
-      "ruling_reason": "Source duplicates shuriken ID; DB/impaling classification requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "base_range_formula": "STR/5"
     },
     {
       "id": "i.weapon.22-short-automatic",
@@ -565,7 +814,11 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        ".22 自動手槍",
+        "點二二自動手槍",
+        "點二二手槍",
+        ".22 手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -597,7 +850,11 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        "德林加手槍",
+        "德林加",
+        "袖珍手槍",
+        "derringer"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -629,7 +886,14 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        ".32 左輪",
+        "點三二左輪",
+        ".32 左輪手槍",
+        "7.65mm 左輪",
+        "左輪",
+        "左輪手槍",
+        "revolver"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -661,7 +925,10 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        ".32 自動手槍",
+        "點三二自動手槍",
+        "7.65mm 自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -693,7 +960,11 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        "魯格手槍",
+        "魯格",
+        "luger",
+        "p08"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -727,7 +998,14 @@
         "handgun",
         "pistol",
         "手槍",
-        ".45"
+        ".45",
+        ".45 左輪",
+        "點四五左輪",
+        "柯特左輪",
+        ".45 左輪手槍",
+        "左輪",
+        "左輪手槍",
+        "revolver"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -761,7 +1039,13 @@
         "handgun",
         "pistol",
         "手槍",
-        ".45"
+        ".45",
+        ".45 自動手槍",
+        "點四五自動手槍",
+        "colt 1911",
+        "m1911",
+        "柯特手槍",
+        "柯特 1911"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -790,7 +1074,14 @@
     {
       "id": "i.weapon.22-bolt-action-rifle",
       "name": ".22 Bolt-Action Rifle",
-      "aliases": [],
+      "aliases": [
+        ".22 步槍",
+        "點二二步槍",
+        "小口徑步槍",
+        ".22 栓式步槍",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "1d6+1",
@@ -818,7 +1109,16 @@
     {
       "id": "i.weapon.30-lever-action-carbine",
       "name": ".30 Lever-Action Carbine",
-      "aliases": [],
+      "aliases": [
+        ".30 卡賓槍",
+        "槓桿式卡賓槍",
+        "槓桿步槍",
+        "溫徹斯特",
+        "溫徹斯特步槍",
+        "winchester",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6",
@@ -846,7 +1146,13 @@
     {
       "id": "i.weapon.45-martini-henry-rifle",
       "name": ".45 Martini-Henry Rifle",
-      "aliases": [],
+      "aliases": [
+        "馬提尼亨利",
+        "馬提尼亨利步槍",
+        "martini-henry",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "1d8+1d6+3",
@@ -857,24 +1163,32 @@
       "ammo_per_attack": 1,
       "capacity": 1,
       "malfunction": 100,
-      "ruling_reason": "Reload cadence requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "rounds_per_shot": 3
     },
     {
       "id": "i.weapon.col-moran-s-air-rifle",
       "name": "Col. Moran's Air Rifle",
-      "aliases": [],
+      "aliases": [
+        "莫蘭氣槍",
+        "氣槍",
+        "莫蘭上校的氣槍",
+        "air rifle",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6+1",
@@ -885,24 +1199,33 @@
       "ammo_per_attack": 1,
       "capacity": 1,
       "malfunction": 88,
-      "ruling_reason": "Reload cadence requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
-      }
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "rounds_per_shot": 3
     },
     {
       "id": "i.weapon.303-lee-enfield",
       "name": ".303 Lee-Enfield",
-      "aliases": [],
+      "aliases": [
+        "李恩菲爾德步槍",
+        "李恩菲爾德",
+        "恩菲爾德",
+        "lee-enfield",
+        "lee enfield",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -930,7 +1253,14 @@
     {
       "id": "i.weapon.30-06-bolt-action-rifle",
       "name": ".30-06 Bolt-Action Rifle",
-      "aliases": [],
+      "aliases": [
+        ".30-06 步槍",
+        "栓式步槍",
+        "春田步槍",
+        "springfield",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -958,7 +1288,13 @@
     {
       "id": "i.weapon.elephant-gun-2b",
       "name": "Elephant Gun (2B)",
-      "aliases": [],
+      "aliases": [
+        "象槍",
+        "大口徑獵槍",
+        "elephant gun",
+        "步槍",
+        "rifle"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "3d6+4",
@@ -988,7 +1324,15 @@
       "name": "20-gauge Shotgun (2B)",
       "aliases": [
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "雙管霰彈槍",
+        "20 號霰彈槍",
+        "20 號散彈槍",
+        "20 gauge",
+        "散彈槍",
+        "獵槍",
+        "雙管散彈槍",
+        "double barrel shotgun"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1035,7 +1379,15 @@
       "name": "16-gauge Shotgun (2B)",
       "aliases": [
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "雙管霰彈槍",
+        "16 號霰彈槍",
+        "16 號散彈槍",
+        "16 gauge",
+        "散彈槍",
+        "獵槍",
+        "雙管散彈槍",
+        "double barrel shotgun"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1081,9 +1433,18 @@
       "id": "i.weapon.12-gauge-shotgun-2b",
       "name": "12-gauge Shotgun (2B)",
       "aliases": [
-        "12 gauge double barrel shotgun",
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "雙管霰彈槍",
+        "12 號雙管霰彈槍",
+        "12 號霰彈槍",
+        "12 號散彈槍",
+        "12 gauge",
+        "12 gauge double barrel shotgun",
+        "散彈槍",
+        "獵槍",
+        "雙管散彈槍",
+        "double barrel shotgun"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1130,7 +1491,12 @@
       "name": "12-gauge Shotgun (semi-auto)",
       "aliases": [
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "半自動霰彈槍",
+        "半自動散彈槍",
+        "semi-auto shotgun",
+        "散彈槍",
+        "獵槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1177,7 +1543,18 @@
       "name": "12-gauge Shotgun (2B sawed off)",
       "aliases": [
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "鋸短霰彈槍",
+        "短管霰彈槍",
+        "鋸短散彈槍",
+        "短管散彈槍",
+        "sawed-off shotgun",
+        "sawn-off shotgun",
+        "散彈槍",
+        "獵槍",
+        "雙管霰彈槍",
+        "雙管散彈槍",
+        "double barrel shotgun"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1217,7 +1594,15 @@
     {
       "id": "i.weapon.bergmann-mp181-mp2811",
       "name": "Bergmann MP181/MP2811",
-      "aliases": [],
+      "aliases": [
+        "柏格曼",
+        "柏格曼衝鋒槍",
+        "mp18",
+        "bergmann",
+        "衝鋒槍",
+        "submachine gun",
+        "smg"
+      ],
       "skill_id": "firearms-submachine-gun",
       "attack_mode": "single_shot",
       "damage": "1d10",
@@ -1228,24 +1613,35 @@
       "ammo_per_attack": 1,
       "capacity": 20,
       "malfunction": 96,
-      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.thompson",
       "name": "Thompson",
-      "aliases": [],
+      "aliases": [
+        "湯普森衝鋒槍",
+        "湯姆森衝鋒槍",
+        "湯普森",
+        "湯姆森",
+        "芝加哥打字機",
+        "thompson submachine gun",
+        "tommy gun",
+        "衝鋒槍",
+        "submachine gun",
+        "smg"
+      ],
       "skill_id": "firearms-submachine-gun",
       "attack_mode": "single_shot",
       "damage": "1d10+2",
@@ -1256,24 +1652,65 @@
       "ammo_per_attack": 1,
       "capacity": 20,
       "malfunction": 96,
-      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      }
+    },
+    {
+      "id": "i.weapon.uzi",
+      "name": "Uzi",
+      "aliases": [
+        "烏茲",
+        "烏茲衝鋒槍",
+        "uzi",
+        "衝鋒槍",
+        "submachine gun",
+        "smg"
+      ],
+      "skill_id": "firearms-submachine-gun",
+      "attack_mode": "single_shot",
+      "damage": "1d10",
+      "db_policy": "none",
+      "extreme_rule": "impale",
+      "distance_bands": [],
+      "base_range_yards": 20,
+      "ammo_per_attack": 1,
+      "capacity": 32,
+      "malfunction": 98,
+      "ruling_reason": "",
+      "source": {
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "modern weapons table, Uzi (operator-supplied values, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
+      },
+      "rule_source": {
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "modern weapons table, Uzi (operator-supplied values, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.browning-auto-rifle-m1918",
       "name": "Browning Auto Rifle M1918",
-      "aliases": [],
+      "aliases": [
+        "白朗寧自動步槍",
+        "bar",
+        "m1918",
+        "機槍",
+        "machine gun"
+      ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -1284,24 +1721,30 @@
       "ammo_per_attack": 1,
       "capacity": 20,
       "malfunction": 100,
-      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.30-browning-m1917a1",
       "name": ".30 Browning M1917A1",
-      "aliases": [],
+      "aliases": [
+        "白朗寧重機槍",
+        "水冷機槍",
+        "m1917",
+        "機槍",
+        "machine gun"
+      ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -1329,7 +1772,13 @@
     {
       "id": "i.weapon.bren-gun",
       "name": "Bren Gun",
-      "aliases": [],
+      "aliases": [
+        "布倫",
+        "布倫機槍",
+        "bren",
+        "機槍",
+        "machine gun"
+      ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -1340,24 +1789,30 @@
       "ammo_per_attack": 1,
       "capacity": 30,
       "malfunction": 96,
-      "ruling_reason": "Automatic weapon handling requires explicit ruling.",
+      "ruling_reason": "",
       "source": {
-        "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/7974aaca08dd15e78959e71f8ce2e0a0ee008a01/compendiums/en-wiki-weapons.yaml",
-        "revision": "7974aaca08dd15e78959e71f8ce2e0a0ee008a01",
-        "sha256": "8f698ed9ba1cbd6dc423cd063227c119d6d4bb4c05f531641169bcba8ca47d54",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       },
       "rule_source": {
-        "url": "https://cthulhuwiki.chaosium.com/rules/combat.html",
-        "revision": "snapshot-2026-10-01",
-        "sha256": "60bcf86d7ca776378d348d96b3e2a2a184997ee6d3ea1a45cc4b3d5aad6ec786",
-        "accessed": "2026-10-01"
+        "url": "https://cthulhuwiki.chaosium.com/equipment/weapons.html",
+        "revision": "7e weapons table (operator-supplied copy, 2026-10-08)",
+        "sha256": "45b0c731344288ed9d3984512702dde245b8e0c65808592fda8bab3e27c9f514",
+        "accessed": "2026-10-08"
       }
     },
     {
       "id": "i.weapon.mark-i-lewis-gun",
       "name": "Mark I Lewis Gun",
-      "aliases": [],
+      "aliases": [
+        "路易士",
+        "路易士機槍",
+        "lewis gun",
+        "機槍",
+        "machine gun"
+      ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -1385,7 +1840,13 @@
     {
       "id": "i.weapon.vickers-303",
       "name": "Vickers .303",
-      "aliases": [],
+      "aliases": [
+        "維克斯",
+        "維克斯機槍",
+        "vickers",
+        "機槍",
+        "machine gun"
+      ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",

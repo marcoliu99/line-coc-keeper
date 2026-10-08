@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat, combat_flow, combat_resources, db, dice, tool_dispatch
+from app import combat, combat_flow, combat_resources, config, db, dice, tool_dispatch
 from app.commands.handlers import checks as check_commands
 from app.models import Character, Combatant, CombatState, GroupState
 from app.repositories import group_state, state_transaction
@@ -24,6 +24,15 @@ from app.services import combat_engine
 from app.services.combat_engine import Mode
 from tests import combat_calls
 from tests.check_dice import ScriptedDice, module_dice
+
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
+
 
 SOURCE = {
     "url": "https://example.test/scenario", "revision": "reviewed-v1", "sha256": "abc",
@@ -116,8 +125,7 @@ def test_b1_a_dodge_that_ties_the_attack_goes_to_the_defender():
     _battle()
     run, _ = _enemy_turn([20])  # claw 50: Hard
     assert run["phase"] == "PLAYER_CHOICE"
-    _player("/coc check 閃避")
-    outcome, script = _player("/coc check", [20])  # Dodge 40: Hard as well
+    outcome, script = _player("/coc check 閃避", [20])  # one click chooses and rolls; Dodge 40: Hard as well
     assert outcome.should_finalize and script.rolls_taken == 1
     action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
     assert action["result"] == {"hit": False, "opposed": "tie_defender_wins"}
@@ -127,8 +135,7 @@ def test_b1_a_dodge_that_ties_the_attack_goes_to_the_defender():
 def test_b1_a_fight_back_that_ties_the_attack_goes_to_the_attacker():
     _battle()
     _enemy_turn([20])
-    _player("/coc check 反擊")
-    _player("/coc check", [30])  # brawl 60: Hard, the same tier as the claw
+    _player("/coc check 反擊", [30])  # brawl 60: Hard, the same tier as the claw
     action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
     assert action["result"]["opposed"] == "tie_attacker_wins"
     assert _hp() == 8
@@ -137,8 +144,7 @@ def test_b1_a_fight_back_that_ties_the_attack_goes_to_the_attacker():
 def test_b1_a_fight_back_that_beats_a_failed_attack_hurts_the_enemy():
     _battle()
     _enemy_turn([90])
-    _player("/coc check 反擊")
-    _player("/coc check", [5])
+    _player("/coc check 反擊", [5])
     state = _load()
     enemy = next(p for p in state.combat.order if p.side == "enemy")
     assert enemy.hp == 18
@@ -254,13 +260,12 @@ def test_b4_the_same_choice_twice_replays_the_first_answer():
 def test_b4_a_double_clicked_roll_deals_damage_and_ends_the_action_once():
     _battle()
     _enemy_turn([20])
-    _player("/coc check 閃避")
     script = ScriptedDice([90])  # Dodge fails: the claw hits
     barrier = threading.Barrier(2)
 
-    def click():
+    def click():  # the choice button rolls, so a double click is two concurrent choices
         barrier.wait()
-        return check_commands.resolve_check(GROUP, "p1", "/coc check")
+        return check_commands.resolve_check(GROUP, "p1", "/coc check 閃避")
 
     # Patched once around both clicks: entering the same patch from two threads
     # would let the second one restore the first one's mock as "the original".
@@ -297,8 +302,7 @@ def test_b5_two_investigators_and_two_enemies_keep_every_action_with_its_owner()
     }, actor=other)
     assert not stranger["ok"]
 
-    _player("/coc check 閃避", owner=defender)
-    _player("/coc check", [90], owner=defender)
+    _player("/coc check 閃避", [90], owner=defender)
     after = _load()
     assert _hp(defender) == 8
     assert _hp(other) == 10
@@ -313,8 +317,7 @@ def test_b5_two_investigators_and_two_enemies_keep_every_action_with_its_owner()
 def test_b6_a_major_wound_waits_for_the_con_check_and_blocks_the_advance():
     _battle(claw_damage="1d6")
     _enemy_turn([20], damage=6)
-    _player("/coc check 閃避")
-    outcome, _ = _player("/coc check", [90], damage=6)
+    outcome, _ = _player("/coc check 閃避", [90], damage=6)
     state = _load()
     assert outcome.should_finalize
     assert state.combat.phase == "INJURY_CHECK" and state.pending_checks["p1"]["skill"] == "CON"
@@ -427,8 +430,7 @@ def test_b7_a_managed_battle_survives_a_save_and_continues():
     restored = _load()
     assert combat_engine.mode_of(restored) is Mode.MANAGED
     assert restored.combat.phase == "PLAYER_CHOICE"
-    _player("/coc check 閃避")
-    outcome, _ = _player("/coc check", [90])
+    outcome, _ = _player("/coc check 閃避", [90])
     assert outcome.should_finalize and _hp() == 8
 
 
@@ -467,13 +469,13 @@ def test_b8_an_explicit_hit_and_the_same_entry_sent_again_settle_once():
 
 def test_b8_the_raw_damage_tools_cannot_settle_anything_while_a_battle_runs():
     _battle()
-    for name, arguments in (
+    for name, arguments in (  # retired: a managed battle refused them and nothing else used them
         ("apply_combat_damage", {"target": "Cultist", "raw_damage": 5}),
         ("apply_final_combat_damage", {"target": "Cultist", "final_damage": 5}),
         ("damage_combatant", {"name": "Cultist", "delta": -5}),
     ):
         refused = _tool(name, arguments)
-        assert not refused["ok"] and "not authoritative" in refused["error"]
+        assert not refused["ok"] and "未知工具" in refused["error"]
     state = _load()
     assert next(p for p in state.combat.order if p.side == "enemy").hp == 20
 
@@ -630,8 +632,7 @@ def test_a_critical_attack_leaves_the_defender_no_fight_back_option():
     run, _ = _enemy_turn([1])  # claw 50: a roll of 1 is a Critical
     assert run["phase"] == "PLAYER_CHOICE"
     assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dodge"]
-    _player("/coc check 閃避")
-    outcome, _ = _player("/coc check", [20])  # Dodge 40 cannot reach a Critical
+    outcome, _ = _player("/coc check 閃避", [20])  # Dodge 40 cannot reach a Critical
     assert outcome.should_finalize
     action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
     assert action["result"]["hit"] is True

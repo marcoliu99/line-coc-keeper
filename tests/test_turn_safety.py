@@ -456,7 +456,7 @@ def test_private_information_and_raw_search_are_never_public_fallback_facts(stat
         ("send_private_info", {"ok": True, "delivered_to": "Ada", "message": "secret"}),
         ("search_scenario", {"ok": True, "results": "SECRET SCENARIO"}),
         ("record_clue", {"ok": True, "record": {"text": "secret clue", "visibility": "kp_only"}}),
-        ("apply_combat_damage", {"ok": True}),
+        ("get_character_sheet", {"ok": True}),
     ])]
     msg = message(state)
     msg.payload["observed_outcomes"] = observations
@@ -632,13 +632,3 @@ def test_noncombat_attribute_commit_survives_provider_failure(state, delta):
     reply, _ = turn_delivery.finalize(msg, '行動未完成')
     assert 'Ada' in reply and f'hp 已更新為 {6 + delta}' in reply
     assert load_state(state.group_id).get_active_character('u').hp == 6 + delta
-
-
-def test_enemy_damage_combatant_recovery_uses_only_filtered_result():
-    for result in ({'ok': True, 'name': 'Enemy', 'side': 'enemy', 'final_damage': 2, 'hp': 71, 'hp_before': 73},
-                   {'ok': True, 'name': 'Enemy', 'side': 'enemy', 'hp': 73, 'hp_before': 71}):
-        with patch.object(spoiler_policy, 'is_privacy_isolation_enabled', return_value=True):
-            public = support.filter_public_combat_damage_result(result, 'player')
-        fact = turn_delivery.observe_tool('damage_combatant', public, 1)
-        assert fact.public_text and 'Enemy' in fact.public_text
-        assert '71' not in fact.public_text and '73' not in fact.public_text

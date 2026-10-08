@@ -30,6 +30,7 @@ from app.models import (
     ArmorRule,
     AttackRule,
     Character,
+    CombatAction,
     Combatant,
     CombatState,
     EffectState,
@@ -731,6 +732,51 @@ def character_for_combatant(state: GroupState, combatant: Combatant) -> Characte
     # collide, so an ambiguous stale entry is never silently rebound here.
     matches = [character for character in state.all_characters() if character.name == combatant.name]
     return matches[0] if len(matches) == 1 else None
+
+
+def current_actor(state: GroupState) -> Combatant | None:
+    """The combatant whose turn it is, or None when there is no order or the index is stale."""
+    combat = state.combat
+    if combat.order and 0 <= combat.current_index < len(combat.order):
+        return combat.order[combat.current_index]
+    return None
+
+
+def resolve_actor_reference(state: GroupState, reference: str) -> Combatant | None:
+    """The combatant a Keeper's ``actor_id`` names: the current actor when any of its own fields match (whitespace
+    and case aside, as every lookup here), else the global lookup. Same-named combatants share a name, so the one
+    whose turn it is wins."""
+    current = current_actor(state)
+    wanted = _normalize(reference)
+    if current is not None and wanted and wanted in {
+            _normalize(current.combatant_id), _normalize(current.character_id),
+            _normalize(current.name), _normalize(current.display_name)}:
+        return current
+    return find_combatant(state, reference) if wanted else None
+
+
+def completed_actions_this_round(state: GroupState, combatant_id: str, *, include_skips: bool = True) -> list[CombatAction]:
+    """The actions ``combatant_id`` completed in the current round, the engine's one notion of "has acted"."""
+    combat = state.combat
+    return [a for a in combat.actions.values()
+            if a.get('actor_id') == combatant_id and a.get('completed') and a.get('round') == combat.round_number
+            and (include_skips or a.get('kind') != 'skip')]
+
+
+def enemy_turn_blocker(state: GroupState, combatant: Combatant) -> str:
+    """Why the engine cannot play this enemy's turn, or an empty string when it can.
+
+    An enemy registered with HP alone (``/coc combat addnpc``, or a card given neither attacks nor abilities) is
+    ``incomplete``: the enemy flow refuses to run it, so its turn can only be given up.
+    """
+    if combatant.side != 'enemy':
+        return ''
+    card = card_for(state, combatant)
+    if card is None:
+        return 'this enemy has no combat card'
+    if card.incomplete:
+        return 'this enemy was registered without attacks or abilities'
+    return ''
 
 
 def is_skippable(state: GroupState, combatant: Combatant) -> bool:

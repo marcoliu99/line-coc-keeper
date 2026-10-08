@@ -215,6 +215,36 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(followup.await_args.kwargs["resolved_location"])
         maintenance.assert_awaited_once()
 
+    async def test_the_combat_receipt_and_no_roll_reach_the_narrator_handoff(self):
+        character = Character(name="調查員", owner_id="player")
+        state = GroupState(group_id="check-entry", timeline_id="timeline-current",
+                           game_started=True, characters={"player": character})
+        followup = AsyncMock(return_value=("後續敘事", [], []))
+        receipt = {"combat_id": "c", "completed": True, "follow_up": "著火", "settlement_ready": None}
+        outcome = CheckOutcome(
+            roll_line="選擇「不閃躲」", keeper_message="（攻擊已結算）", should_finalize=True,
+            timeline_id="timeline-current", action_context="敵人開槍",
+            resolved_event={
+                "investigator": "調查員", "skill": "不閃躲", "skill_value": 0, "roll": 0, "difficulty": "regular",
+                "outcome": "不閃躲，攻擊已結算", "action_context": "敵人開槍", "check_id": "check-2",
+                "timeline_id": "timeline-current", "state_before": {}, "no_roll": True, "combat_receipt": receipt,
+            },
+        )
+        with (
+            StateStorePatch() as store,
+            patch.object(check_commands, "supervisor") as pipeline,
+            patch.object(check_commands, "run_post_turn_maintenance_after_output", AsyncMock()),
+            patch.object(check_commands.events, "persist_resolved_event"),
+        ):
+            store.put(state)
+            pipeline.run_turn = followup
+            await check_commands.finalize_check_result(
+                "check-entry", "player", outcome, AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(),
+            )
+        context = followup.await_args.kwargs["resolved_check_context"]
+        self.assertEqual(context["combat_receipt"], receipt)
+        self.assertTrue(context["no_roll"])
+
     async def test_start_fallback_enters_supervisor_and_extracted_opening_does_not(self):
         character = Character(name="調查員", owner_id="player")
         state = GroupState(group_id="start-entry", active=True, scenario_text="書房是起點。",
@@ -320,7 +350,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
                 self.dynamic = dynamic
                 self.offered = {tool["name"] for tool in tools}
                 self.rejected = await execute_tool("skill_check", {"skill": "STR"})
-                self.damage = await execute_tool("apply_combat_damage", {"target": "魚人", "raw_damage": 3})
+                self.damage = await execute_tool("roll_dice", {"expression": "1d6"})
                 return "木門應聲而開，魚人受到傷害。"
 
         provider = Provider()
@@ -344,7 +374,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.calls, 1)
         self.assertIn("擲出 32", provider.dynamic)
         self.assertNotIn("skill_check", provider.offered)
-        self.assertIn("apply_combat_damage", provider.offered)
+        self.assertIn("roll_dice", provider.offered)
         self.assertEqual(provider.rejected["error"], "tool_not_allowed_for_turn")
         execute.assert_called_once()
         self.assertIn("魚人受到傷害", reply)

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat_resources, db, dice, tool_dispatch
+from app import combat_resources, config, db, dice, tool_dispatch
 from app.checks import rules as check_rules
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import checks as check_commands
@@ -17,6 +17,14 @@ from app.models import Character, Combatant, GroupState
 from app.repositories import group_state, state_transaction
 from app.services import canonical_facts, turn_delivery
 from tests import state_store
+
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
 
 
 def normalized(state):
@@ -679,7 +687,9 @@ def test_advance_says_what_it_needs_when_the_event_id_is_missing_or_the_actor_is
     assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
     enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')
     missing = tool(store, 'advance_combat_turn', {'actor_id': enemy.combatant_id})
-    assert not missing['ok'] and 'stable event_id' in missing['error'] and store['state'].combat.combat_id in missing['error']
+    # No event_id is no longer a refusal: it is derived from the battle, round and actor. The enemy is not the
+    # current actor yet, so the refusal names who is.
+    assert not missing['ok'] and 'stable event_id' not in missing['error'] and 'current actor' in missing['error']
     # The enemy is not the current actor yet: no pointer to the enemy flow.
     early = tool(store, 'advance_combat_turn', {'actor_id': enemy.combatant_id, 'skip': True, 'event_id': 'skip:early'})
     assert not early['ok'] and 'plan_enemy_turn' not in early['error']

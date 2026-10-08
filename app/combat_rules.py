@@ -61,9 +61,16 @@ class WeaponDefinition:
     capacity: int | None = None
     malfunction: int | None = None
     ruling_reason: str = ''
+    base_range_formula: str = ''  # 'STR/5': a thrown weapon's base range comes from the thrower, in yards
+    rounds_per_shot: int = 1  # the table's rate of fire 1/2, 1/3: one shot, then that many rounds before the next
+    follow_up: str = ''  # a consequence of a hit the table states and the engine does not roll; the Keeper applies it
 
     def __post_init__(self) -> None:
         _validate_damage(self.damage)
+        if self.base_range_formula not in ('', 'STR/5'):
+            raise ValueError('Unsupported base range formula')
+        if self.rounds_per_shot < 1:
+            raise ValueError('Rounds per shot must be at least 1')
         if not self.id or not self.name or not self.skill_id or not self.catalog_version:
             raise ValueError('Definition requires identity, skill and catalog version')
         if self.attack_mode not in ('melee', 'single_shot'):
@@ -180,8 +187,36 @@ def weapon_catalog() -> tuple[WeaponDefinition, ...]:
 
 
 def _matching(reference: str, definitions: tuple[WeaponDefinition, ...]) -> tuple[WeaponDefinition, ...]:
+    """The definitions ``reference`` names: exactly, or else by the longest name or alias it contains or is part of.
+
+    The Keeper often passes the item as the sheet spells it ("一把生鏽的小刀") rather than the catalog's name, and
+    Chinese has no word boundaries, so containment is the match. Several definitions explained by names of the
+    same length ("刀" is in every knife) stay ambiguous for the Keeper to settle.
+    """
     key = reference.strip().casefold()
-    return tuple(d for d in definitions if key in {d.id.casefold(), d.name.casefold(), *(a.casefold() for a in d.aliases)})
+    if not key:
+        return ()
+    exact = tuple(d for d in definitions if key in {d.id.casefold(), d.name.casefold(), *(a.casefold() for a in d.aliases)})
+    if exact:
+        return exact
+    scored: dict[str, tuple[int, WeaponDefinition]] = {}
+    for definition in definitions:
+        for name in (definition.name, *definition.aliases):
+            candidate = name.strip().casefold()
+            if not candidate:
+                continue
+            if candidate in key:
+                score = len(candidate)
+            elif key in candidate:
+                score = len(key)
+            else:
+                continue
+            if score > scored.get(definition.id, (0, definition))[0]:
+                scored[definition.id] = (score, definition)
+    if not scored:
+        return ()
+    best = max(score for score, _ in scored.values())
+    return tuple(definition for score, definition in scored.values() if score == best)
 
 
 def resolve_weapon(
@@ -190,7 +225,7 @@ def resolve_weapon(
     scenario_definitions: tuple[WeaponDefinition, ...] = (),
     instance: WeaponInstance | None = None,
 ) -> WeaponResolution:
-    """Exact ID/name/declared alias only; scenario > explicit pin > generic.
+    """Exact ID/name/alias, else the longest contained name; scenario > explicit pin > generic.
 
     A reference must identify the supplied instance or its pinned type; merely
     supplying an instance never authorizes substituting it for an unknown name.
@@ -230,6 +265,15 @@ def resolve_weapon(
 class RangeResolution:
     difficulty: CheckDifficulty | None = None
     reason: str = ''
+
+
+def base_range_for(weapon: WeaponDefinition, thrower_str: int | None) -> float | None:
+    """The weapon's base range in yards: the catalog's, or for a thrown weapon the thrower's STR/5."""
+    if weapon.base_range_yards is not None:
+        return weapon.base_range_yards
+    if weapon.base_range_formula == 'STR/5' and thrower_str is not None:
+        return max(1.0, thrower_str / 5)
+    return None
 
 
 def resolve_range_difficulty(distance_yards: float | None, base_range_yards: float | None) -> RangeResolution:

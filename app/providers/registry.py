@@ -60,3 +60,12 @@ def supports_dynamic_tools(provider) -> bool:
 
 def supports_response_stage(provider) -> bool:
     return bool(getattr(provider, 'SUPPORTS_RESPONSE_STAGE', False))
+
+
+def budgets_actions_separately(provider) -> bool:
+    """Whether the provider caps the turn's state-changing calls on its own (``counts_against_tool_budget``).
+
+    Only then may the Executor grant the conversation loop extra rounds for bounded look-ups: a provider whose
+    only guard is the iteration count keeps the configured cap, or those rounds would become extra mutations.
+    """
+    return callable(getattr(provider, 'counts_against_tool_budget', None))

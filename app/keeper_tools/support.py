@@ -7,7 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -197,16 +198,124 @@ _NPC_INDEX_FUZZY_THRESHOLD = 0.6  # same calibration as app/scene_map.py's room-
 ENEMY_SOURCE_FUZZY_THRESHOLD = 0.5
 
 
-def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None) -> dict | None:
+def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None, *, name: str = "",
+                 attacks: Sequence[Mapping[str, Any]] | None = None) -> dict | None:
     """The provenance an enemy's attacks need. What the model gave stays; for an enemy the scenario's own NPC index
-    names, the rest comes from the loaded scenario, since a model has no real revision or hash to quote."""
-    if index_entry is None or not state.active_scenario_source_hash:
+    lists, or whose stat block the scenario text carries, the rest comes from the loaded scenario, since a model has
+    no real revision or hash to quote. An enemy the scenario gives no stats keeps only what the model supplied, so it
+    still needs a ruling."""
+    if not state.active_scenario_source_hash:
+        return given
+    if index_entry is None and not scenario_stat_block(state, name, attacks or ()):
         return given
     return {
         "url": f"scenario:{state.scenario_library_id}", "revision": state.active_chapter_id or "scenario",
         "sha256": state.active_scenario_source_hash, "extreme_rule": "maximum",
         **{key: value for key, value in (given or {}).items() if value not in ("", None)},
     }
+
+
+_CHARACTERISTIC = re.compile(r"(?:^|[\s|])(str|con|siz|dex|pow|int|edu|app|力量|體質|體型|敏捷|意志|智力|教育|外貌)\s*[:：]?\s*\d",
+                             re.IGNORECASE)
+_HEADING_LINES_ABOVE, _HEADING_MAX_CHARS, _BLOCK_LINES = 6, 80, 4
+
+
+def _characteristics_at(lines: list[str], index: int) -> set[str]:
+    """The distinct characteristics (STR, CON, SIZ …, each with a number) a block starting at ``index`` lists in
+    its first lines; an HP line alone, or any single token, is not a stat block."""
+    return {match.group(1).lower() for line in lines[index:index + _BLOCK_LINES] for match in _CHARACTERISTIC.finditer(line)}
+
+
+_BLOCK_MAX_LINES = 80
+_DAMAGE_BONUS_WRAPPED = re.compile(r"(?:damagebonus|傷害加值|db)[（(]([+-]?\d*d?\d+)[）)]", re.IGNORECASE)
+_DAMAGE_BONUS_TRAILING = re.compile(r"([+-]?\d*d?\d+)(?:damagebonus|傷害加值|db)\b", re.IGNORECASE)
+_DAMAGE_BONUS_LINE = re.compile(r"(?:damagebonus|傷害加值)[:：]([+-]?\d*d?\d+)", re.IGNORECASE)
+_DAMAGE_BONUS_BARE = re.compile(r"(?:damagebonus|傷害加值|\bdb\b)(?![（(]|[:：])", re.IGNORECASE)
+
+
+def _stat_blocks(text: str) -> list[tuple[str, str]]:
+    """Every stat block in the scenario text as (heading, block text), both casefolded.
+
+    A block starts at the nearest short, non-stat line above its characteristics (at least two of STR/CON/SIZ/DEX/
+    POW/INT/EDU/APP with numbers, on that line or the next few, as 7e lays a block out: 「### Walter Corbitt, Undead
+    Fiend」, then STR …) and runs to the next block or a bounded number of lines, so its attack lines are in it. A
+    line giving HP alone is the kind of card the engine already treats as incomplete, not a block.
+    """
+    lines = text.splitlines()
+    starts: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if not _CHARACTERISTIC.search(line) or len(_characteristics_at(lines, index)) < 2:
+            continue
+        if starts and index < starts[-1][0] + _HEADING_LINES_ABOVE + _BLOCK_LINES:
+            continue  # the same block's next characteristics line
+        for above in range(index - 1, max(-1, index - 1 - _HEADING_LINES_ABOVE), -1):
+            candidate = lines[above].strip().strip("#*_ ").strip()
+            if not candidate or _CHARACTERISTIC.search(candidate):
+                continue
+            if len(candidate) <= _HEADING_MAX_CHARS:
+                starts.append((above, candidate.casefold()))
+            break
+    blocks: list[tuple[str, str]] = []
+    for position, (start, heading) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        blocks.append((heading, "\n".join(lines[start:min(end, start + _BLOCK_MAX_LINES)]).casefold()))
+    return blocks
+
+
+_ATTACK_LINE = re.compile(r"fighting|格鬥|攻擊|attack|damage|傷害|bite|claw|咬|爪|weapon|武器", re.IGNORECASE)
+_ATTACK_WINDOW_LINES = 3
+
+
+def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
+    """Whether every submitted attack is written in the block as an attack: a numeric skill value given as a
+    percentage, or on a line that speaks of fighting, attacks or damage (never a characteristic such as CON 55),
+    with the submitted damage expression on that line or the next two. The provenance vouches for values copied
+    from the scenario, so an attack the block does not state this way, or one that leaves the skill or the damage
+    out (the card would fill in a default), is the model's own and keeps none."""
+    # "1D3 + damage bonus(1D4)" is two dice, the weapon's and the creature's damage bonus: the Keeper may submit
+    # the weapon's die alone or both, so the bonus wording is folded into its value (given in place, or on the
+    # block's own "Damage bonus: +1D4" line) and either spelling is in the block.
+    compact = _DAMAGE_BONUS_WRAPPED.sub(r"\1", _DAMAGE_BONUS_TRAILING.sub(r"\1", block.replace(" ", "")))
+    if (bonus := _DAMAGE_BONUS_LINE.search(compact)) is not None:
+        compact = _DAMAGE_BONUS_BARE.sub(bonus.group(1).lstrip("+"), compact)
+    lines = compact.replace("+-", "-").replace("++", "+").splitlines()
+    for attack in attacks:
+        if not isinstance(attack, Mapping):
+            return False
+        value = attack.get("skill_value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        damage = str(attack.get("damage") or "").casefold().replace(" ", "")
+        if not damage:
+            return False
+        skill = re.compile(rf"(?<!\d){int(value)}(?!\d)")
+        wanted = re.compile(r"(?<!\d)" + re.escape(damage) + r"(?!\d)")
+        for index, line in enumerate(lines):
+            states_skill = (re.search(rf"(?<!\d){int(value)}\s*[%％]", line) is not None
+                            or (_ATTACK_LINE.search(line) is not None and skill.search(line) is not None))
+            if states_skill and wanted.search("\n".join(lines[index:index + _ATTACK_WINDOW_LINES])):
+                break
+        else:
+            return False
+    return True
+
+
+def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[str, Any]] = ()) -> bool:
+    """Whether the loaded scenario text carries a stat block titled with ``name`` that states the ``attacks`` given:
+    the Keeper's spelling, trimmed and case-insensitive, without the instance suffix the prompt asks for when several
+    of one kind are active (「魚人（左）」, "Cultist 2"), found as a whole word in a stat block's own heading, with
+    every submitted attack's skill value and damage dice written in that block. A name the prose only mentions, one
+    that merely stands near someone else's block, a short name inside another word ("rat" in "pirate"), or attack
+    values the block does not carry prove nothing about what the model supplies, so the enemy keeps what the model
+    gave and needs a ruling."""
+    wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
+    if not wanted or len(wanted) < 2 or not attacks:
+        # Nothing submitted means the card's default unarmed attack would ride on the provenance: no attack, none.
+        return False
+    # Word-bounded for letters and digits; CJK characters have no word boundary, so a Chinese name is contained.
+    pattern = re.compile(r"(?<![a-z0-9])" + re.escape(wanted) + r"(?![a-z0-9])")
+    return any(pattern.search(heading) and _attacks_in_block(attacks, block)
+               for heading, block in _stat_blocks(state.scenario_text or ""))
 
 
 def find_npc_index_entry(
@@ -380,27 +489,6 @@ def skip_save_if_blocked(result: dict) -> ToolStateMutation[dict]:
     return ToolStateMutation(result, should_save="blocked_by" not in result)
 
 
-def filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict:
-    if (
-        speaker_role == "kp_assistant"
-        or result.get("side") != "enemy"
-        or not spoiler_policy.is_privacy_isolation_enabled()
-    ):
-        return result
-    public_keys = {
-        "ok",
-        "name",
-        "target",
-        "target_id",
-        "side",
-        "damage_type",
-        "final_damage",
-        "major_wound_triggered",
-        "defeated",
-        "public_summary",
-        "effect_id",
-    }
-    return {key: result[key] for key in public_keys if key in result}
 
 
 def scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:

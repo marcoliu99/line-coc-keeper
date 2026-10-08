@@ -65,7 +65,8 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
             attacks=tool_input.get("attacks"),
             abilities=tool_input.get("abilities"),
             source=support.enemy_source(target_state, tool_input.get("source"), support.find_npc_index_entry(
-                target_state, npc_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD)),
+                target_state, npc_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD), name=npc_name,
+                attacks=tool_input.get("attacks") or ()),
             skills=_reviewed_skills(tool_input.get("skills")),
         ))
         if added.reused:
@@ -153,7 +154,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                     is_ally=bool(entry.get("is_ally", False)),
                     armor=entry.get("armor"), attacks=entry.get("attacks"), abilities=entry.get("abilities"),
                     source=support.enemy_source(target_state, entry.get("source"), support.find_npc_index_entry(
-                        target_state, requested_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD)),
+                        target_state, requested_name, threshold=support.ENEMY_SOURCE_FUZZY_THRESHOLD),
+                        name=requested_name, attacks=entry.get("attacks") or ()),
                     skills=_reviewed_skills(entry.get("skills")),
                     force_new_instance=(
                         matching is not None and matching.combatant_id in seen_batch_ids
@@ -269,54 +271,90 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     return response
 
 
+def _derived_advance_id(state: GroupState, actor: combat.Combatant) -> str:
+    """The event id for an advance the Keeper did not name.
+
+    ``<combat>:advance:round<N>:<actor>:<k>``, with ``k`` the smallest unused number unless the latest used one is a
+    retry: the actor is no longer current, so the advance it recorded already happened and is replayed. An actor
+    who is current again in the same round (``set_initiative`` moved them back) gets the next number and a real
+    advance. A retry after the round wrapped derives the next round's id and is refused as not current, which
+    names who is; it cannot advance twice.
+    """
+    managed = state.combat
+    base = f'{managed.combat_id}:advance:round{managed.round_number}:{actor.combatant_id}:'
+    used = sorted(int(e['event_id'][len(base):]) for e in managed.events
+                  if e['event_id'].startswith(base) and e['event_id'][len(base):].isdigit())
+    if used and combat.current_actor(state) is not actor:
+        return f'{base}{used[-1]}'
+    return f'{base}{(used[-1] + 1) if used else 0}'
+
+
+def _skip_needs_explicit_id(state: GroupState, actor: combat.Combatant, reference: str) -> bool:
+    """A derived id for a skip is unsafe when a retry would skip again: a single-combatant order wraps to the same
+    actor every round, so even its exact combatant id would derive the next round's id; and a name two live
+    combatants share names the second once the first is skipped. Otherwise a combatant id names one combatant."""
+    live = [c for c in state.combat.order if not c.defeated]
+    if len(live) <= 1:
+        return True
+    wanted = reference.strip().casefold()
+    if wanted == actor.combatant_id.casefold():
+        return False
+    return any(c is not actor and wanted in {c.name.strip().casefold(), (c.display_name or '').strip().casefold()}
+               for c in live)
+
+
 def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
-            if not str(call.input.get('event_id') or '').strip():
-                return support.ToolStateMutation({'ok': False, 'error': (
-                    'advance_combat_turn needs a stable event_id, for example '
-                    f'"{target_state.combat.combat_id}:advance:round{target_state.combat.round_number}:<actor>"; '
-                    'reuse the same id only to retry the same call')}, should_save=False)
-            if call.input.get('skip'):
-                # Only the investigator whose turn it is can give it up: not an enemy's, not another player's.
-                skipper = combat.find_combatant(target_state, call.input.get('actor_id', ''))
+            current = combat.current_actor(target_state)
+            tool_input = dict(call.input)
+            if current is None:
+                return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
+            reference = str(tool_input.get('actor_id') or '')
+            named = combat.resolve_actor_reference(target_state, reference)
+            if not str(tool_input.get('event_id') or '').strip():
+                if tool_input.get('skip') and named is not None and _skip_needs_explicit_id(target_state, named, reference):
+                    # A retry of this skip could not be told from a new one: the same name now names the next
+                    # combatant, or the one combatant is current again. Give the Keeper the exact id to pass.
+                    return support.ToolStateMutation({'ok': False, 'error': (
+                        f'This skip needs an explicit event_id: pass actor_id "{named.combatant_id}" and an event_id '
+                        f'such as "{target_state.combat.combat_id}:skip:round{target_state.combat.round_number}:'
+                        f'{named.combatant_id}"')}, should_save=False)
+                tool_input['event_id'] = _derived_advance_id(target_state, named or current)
+            skipper = named if tool_input.get('skip') else None
+            blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
+            if tool_input.get('skip'):
                 owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None
-                current = target_state.combat.order[target_state.combat.current_index] if target_state.combat.order else None
-                if skipper is not None and skipper.side == 'enemy' and skipper is current:
+                if skipper is not None and skipper.side == 'enemy' and skipper is current and not blocker:
                     return support.ToolStateMutation({'ok': False, 'error': (
                         'Only the acting investigator can skip their own turn. This is an enemy turn: '
                         'run plan_enemy_turn then run_enemy_combat_plan, and advance without skip afterwards')},
                         should_save=False)
-                if owner is None or not call.actor_id or owner.owner_id != call.actor_id:
+                # The engine plays neither an NPC ally's turn nor an enemy it cannot run, and nobody owns those turns:
+                # the Keeper gives them up so the fight moves on. An investigator's turn is still the player's own.
+                unowned_npc = skipper is not None and skipper is current and (skipper.side != 'enemy' or blocker) \
+                    and not skipper.is_pc
+                if not unowned_npc and (owner is None or not call.actor_id or owner.owner_id != call.actor_id):
                     return support.ToolStateMutation(
                         {'ok': False, 'error': 'Only the acting investigator can skip their own turn'}, should_save=False)
             before = deepcopy(target_state.to_dict())
             result = combat_engine.handle(target_state, act.Advance(
-                actor_id=call.input.get('actor_id', ''),
-                event_id=resource_bridge.mutation_id(call.name, call.input),
-                skip=bool(call.input.get('skip')),
+                actor_id=tool_input.get('actor_id', ''),
+                event_id=resource_bridge.mutation_id(call.name, tool_input),
+                skip=bool(tool_input.get('skip')),
             ))
+            if result.get('ok') and tool_input.get('skip') and skipper is not None and skipper.side == 'enemy':
+                # Beside the result, not in its receipt: what follows may already be the next enemy's attack.
+                result = {**result, 'skipped': {
+                    'name': skipper.display_name, 'reason': blocker,
+                    'hint': 'If the scenario gives this enemy attacks, register them with add_npc_to_combat '
+                            '(same name, with attacks and source) so it can act next round.'}}
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
 
     return managed_combat.public_result(support.mutate_tool_state(call.state, mutate),
                                         include_private=call.speaker_role == 'kp_assistant')
-
-
-def damage_combatant(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(
-            target_state, act.DamageCombatant(tool_input["name"], int(tool_input["delta"])),
-        ))
-
-    result = support.mutate_tool_state(call.state, mutate)
-    return support.filter_public_combat_damage_result(result, call.speaker_role)
 
 
 def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
@@ -325,83 +363,6 @@ def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
         return support.skip_save_if_blocked(
             combat_engine.handle(target_state, act.PlanEnemy(call.input.get("enemy", "")))
         )
-
-    return support.mutate_tool_state(call.state, mutate)
-
-
-def resolve_enemy_action(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(
-            target_state,
-            act.ResolveEnemy(plan_id=tool_input["plan_id"], outcome=tool_input.get("outcome")),
-        ))
-
-    return support.mutate_tool_state(call.state, mutate)
-
-
-def apply_combat_damage(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
-            target=tool_input["target"],
-            raw_damage=int(tool_input["raw_damage"]),
-            damage_type=tool_input.get("damage_type", "physical"),
-            tags=tool_input.get("tags") or [],
-            source_id=tool_input.get("source_id", ""),
-        )))
-
-    result = support.mutate_tool_state(call.state, mutate)
-    return support.filter_public_combat_damage_result(result, call.speaker_role)
-
-
-def apply_final_combat_damage(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
-            target=tool_input["target"],
-            raw_damage=int(tool_input["final_damage"]),
-            damage_type=tool_input.get("damage_type", "physical"),
-            tags=tool_input.get("tags") or [],
-            source_id=tool_input.get("source_id", ""),
-            bypass_armor=True,
-            entry_point="apply_final_combat_damage",
-        )))
-
-    result = support.mutate_tool_state(call.state, mutate)
-    return support.filter_public_combat_damage_result(result, call.speaker_role)
-
-
-def add_combat_effect(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return combat_engine.handle(target_state, act.AddEffect(
-            target=tool_input["target"],
-            label=tool_input["label"],
-            timing=tool_input.get("timing", "turn_start"),
-            damage=tool_input.get("damage", ""),
-            damage_type=tool_input.get("damage_type", "physical"),
-            remaining_rounds=tool_input.get("remaining_rounds"),
-            tags=tool_input.get("tags") or [],
-            source_id=tool_input.get("source_id", ""),
-            public_description=tool_input.get("public_description", ""),
-        ))
 
     return support.mutate_tool_state(call.state, mutate)
 

@@ -259,12 +259,12 @@ class KeeperToolTests(unittest.TestCase):
         self.assertEqual(result["blocked_by"], "pending_luck_decision")
         self.assertEqual(saves, [])
 
-    def test_combat_damage_tool_skips_the_save_when_blocked(self):
+    def test_a_retired_damage_tool_is_unknown_and_saves_nothing(self):
         stored = _combat_state("Mark")
         stored.pending_checks["u1"] = dict(SEARCH_CHECK)
         result, saves = self._run(stored, "apply_combat_damage", {"target": "Mark", "raw_damage": 6})
         self.assertFalse(result["ok"])
-        self.assertIn("source-bound", result["error"])
+        self.assertIn("未知工具", result["error"])
         self.assertEqual(saves, [])
 
     def test_advance_combat_turn_tool_skips_the_save_when_blocked(self):

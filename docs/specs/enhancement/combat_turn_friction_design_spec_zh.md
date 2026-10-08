@@ -1,0 +1,52 @@
+# 戰鬥回合：一鍵防守、回合一定結束得了、守密人知道下一步
+
+[English](combat_turn_friction_design_spec.md) | [文件索引](../../README.md)
+
+分類：`enhancement`。狀態：**已實作**。基於 `main_v2` 的 `ac6c943` 加上 PR #241。
+
+## 問題
+
+一次攻防要玩家打一句話、按兩到五次按鈕、等六到八次依序的模型請求，而且下列任何一件事都會讓戰鬥停住：
+
+- 防守按鈕寫著「選擇並擲 閃避」，卻只記錄選擇；擲骰要再按一次，幸運再一次。提示沒說是誰在攻擊，「要擲到多少」的提示也從未出現，因為管理式引擎從不設定 `attacker_tier`。
+- `advance_combat_turn` 在守密人漏掉 `event_id` 時被拒（PR #241 修角色指稱之前一局就被拒 12 次），重複使用同一個 id 則默默重播舊的推進。
+- 只登記 HP 的敵人（`/coc combat addnpc`，或沒有攻擊的戰鬥卡）不能行動（`run_enemy_plan` 拒絕不完整的卡）也不能跳過（敵方回合的跳過會被指回敵人流程），先攻就凍住。NPC 友軍的回合根本結束不了。
+- 推進明明已經換人，卻在下一位敵人的回合跑不起來時被回報成失敗，守密人重試，玩家看到「工具失敗了」。
+- 回合驗證只把宣告攻擊、登記、結算或跳過算成回合效果；單純推進、敵人計畫或裁定都算「未驗證」，玩家拿到通用的退路訊息。
+- 檢定結算後的敘事者從未被告知要推進；戰鬥停在已完成行動的人身上，直到有人再打字。
+- 戰鬥中的幸運提示把等級列成 `regular`／`hard`；靜態提示寫「declare_combat_action 然後 run_combat_action」但宣告本身就會執行行動；`adjust_character` 把守密人導向管理式戰鬥會拒絕的傷害工具。
+
+CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗擲骰解決，幸運仍由玩家決定，只有引擎本來就無法執行的回合可以放棄。
+
+## 修改
+
+- `ManagedCombatChecks._choose` 在同一筆交易裡直接擲剛登記的防守檢定，而且只擲這一個：戰鬥脈絡是同一個行動的 `defense` 角色的那筆技能檢定（`_is_defence_roll_for`）。一次點擊完成選擇與擲骰；幸運決定若有提供仍是另一次點擊。選「不閃躲」不會登記防守檢定，之後留下的檢定（那一槍造成重傷的 CON 檢定）是玩家自己的下一次點擊，回覆會說明；若這個選擇本身就把那一槍結算完、玩家沒有技能檢定要擲（下一個敵人的選擇可能已在等），結果會像結算過的擲骰一樣定案，事件帶戰鬥回執（傷害已套用、回合已推進）與 `no_roll`，由守密人敘事，而不是在選擇這一步就結束。玩家打字選項時先用標籤、kind 或技能的完全相符，再用包含比對，而且包含比對只在剛好指到一個選項時才算（`narration.match_choice_option`，舊式選擇路徑也共用）：中文否定詞是前綴，「不閃躲」絕不能因為「閃躲」排在前面而被選成閃躲。選擇回執存下擲骰結果，重複點擊會重播。`_defense_choice` 在待處理選擇上記 `attacker_name` 與 `attacker_tier`；提示會說是誰攻擊、每個選項需要什麼。
+- `advance_combat_turn` 省略 `event_id` 時自動推導為 `<combat_id>:advance:round<N>:<行動者戰鬥者 ID>:<k>`：`k` 是下一個未用過的號碼，除非最後一個用過的是重試（行動者已不是目前行動者，表示那次推進已經發生，就重播它）。同一輪被 `set_initiative` 調回的行動者又是目前行動者，所以拿到下一個號碼、真的推進。回合換輪之後的重試會推導出下一輪的 id，被以「不是目前行動者」拒絕並指出是誰；不會推進兩次。行動者指稱經 `combat.resolve_actor_reference` 解析（先比對目前行動者自己的欄位，不計空白與大小寫，再全域查找；PR #241 的規則，現在引擎與工具共用）。`combat.completed_actions_this_round` 是引擎與工具共用的唯一「已行動」規則。守密人不會再因為漏掉 id 被拒。
+- `skip=true` 接受目前行動的 NPC 友軍，以及引擎無法執行其回合的目前敵人（`combat.enemy_turn_blocker`：沒有卡，或攻擊與能力都沒登記的 `incomplete` 卡）；結果的 `skipped` 欄位（放在下一位行動者回傳的內容旁邊）說明原因與符合規則的替代做法（用 `add_npc_to_combat` 登記劇本的攻擊）。有攻擊的敵人仍不能跳過；調查員的回合仍只有玩家自己能跳。
+- `prompt_config._combat_next_step` 把待履行的 CON 檢定（`INJURY_CHECK`）當成其他待擲骰一樣處理：不要推進。
+- **行動結算後由引擎自己結束該回合**（`COMBAT_AUTO_ADVANCE`，預設開）。攻擊在 `combat_flow._complete` 完成（命中或未命中已定、傷害已套用）且沒有未了事項時，引擎以一筆以行動為鍵的先攻事件（`<combat>:advance:auto:<action_id>`，重播的完成不會推進兩次）替目前行動者推進，並把下一位敵人的回合跑到下一個需要玩家決定的點，和守密人自己呼叫 `advance_combat_turn` 完全一樣。一方已倒下時不會自動推進，回合移動時被持續效果打倒最後一人的一方也同樣處理：回執改說 `settlement_ready`，已結算檢定區塊把守密人導向 `preview_combat_settlement`，絕不再推進一次（那會跳過倒下的人再開一輪）。行動暫停、或推進正在進行中時也不會自動推進。行動的回執改為回報推進後的戰況（`auto_advanced`：輪到誰、第幾輪、階段、卡住的敵方回合），已結算檢定區塊會說回合已經推進、不要再推進，提示文字改為守密人只推進沒有引擎行動的回合（`skip`）。推進時播放的敵方回合若當場就完成（沒有玩家要決定的事），會在同一趟裡繼續推進，回執列出所有播放過的敵方回合（`auto_advanced.enemy_turns`）；有沒有推進成功是看回合數、索引與戰鬥者 ID，絕不看物件身分，因為被阻擋的推進會把狀態回滾成新物件，那種情況回報為 `auto_advance_error`，不是推進。旗標關閉時一切如舊。
+- 省略 `event_id` 的跳過只替指稱明確的行動者推導 id：兩個活著的戰鬥者共用的名字會讓重試指到別人；只有一名戰鬥者的順位每輪都繞回同一人，連精確的戰鬥者 ID 都會推導出下一輪的 id。兩種情況工具都要求明確的戰鬥者 ID 與 event_id，並直接給出兩者。
+- Executor 的迭代額度（`executor.tool_iterations`）只有在供應商自己會限制會改狀態的呼叫時（`provider_registry.budgets_actions_separately`：Codex，透過 `counts_against_tool_budget`）才是 `MAX_TOOL_ITERATIONS + SCENARIO_SEARCH_MAX_PER_TURN`：搜尋有自己的上限，它用掉的回合疊加在行動回合之上。只靠迭代次數把關的供應商（Anthropic、OpenAI、Gemini）維持 `MAX_TOOL_ITERATIONS`，否則多出來的回合就是多出來的變更。
+- `combat_flow.advance_combat` 在下一位敵人的計畫或執行失敗時，回傳成功的轉換並附上 `enemy_turn`，而不是只回傳失敗。
+- `turn_resolution._mutation_evidence` 把下列引用過的工具算成回合效果：改變了回合數或目前行動者的 `advance_combat_turn`（玩家自己的回合結束了，或卡住的 NPC 回合被放棄讓戰鬥繼續）、已完成或正在等目標選擇／擲骰的 `run_enemy_combat_plan`、以及 `resolve_combat_ruling`，但都只在這次呼叫讓戰鬥和呼叫前不同時才算（`gameplay_before`／`gameplay_after`）：已完成的計畫再跑一次、或帶同一個事件 id 重送的裁定，回的是記錄下來的回執，不是本回合的效果。玩家一句話讓戰鬥動起來，不該因為被推進的不是他的戰鬥者就吃到退路訊息；敘事者拿到的事實與狀態會說明是誰的回合結束了。
+- 回執透過 `finalize_check_result` 的 `resolved_check_context` 交給敘事者，該清單明列鍵名：`combat_receipt` 與 `no_roll` 都在清單上（有測試走真正的交接），所以下面這些行是實際遊玩時建出來的，不只存在於區塊建構函式。戰鬥可以結算時只叫敘事者敘事；結算交給下一次守密人回合，因為結算後敘事者沒有結算工具。
+- `prompt_config` 依戰鬥回執在已結算檢定區塊加上【戰鬥下一步】：行動完成就推進（附要傳的參數）、另一位玩家的選擇或擲骰待處理就不要推進、暫停就先裁定。結算後敘事者的靜態指示依這一行處理：它說引擎已推進就不推，它要你推才推。自動推進後敵方回合卡住也在這裡處理：`resolve_combat_ruling`（為此開放給結算後敘事者）恢復或取消暫停中的敵方行動，`advance_combat_turn skip` 只用在沒有行動可結算的敵人。
+- 戰鬥提示的幸運等級改為一般成功／困難成功／極限成功。提示文字改為 `declare_combat_action` 會執行行動、`run_combat_action` 只用來恢復；`adjust_character` 把敵人傷害指向戰鬥流程；管理式戰鬥一定拒絕的五個工具在描述開頭先說明。
+- 戰鬥中的 `/coc combat next` 回覆戰鬥狀態與目前輪到誰，而不是單純拒絕。
+
+## 喚不醒的最後一戰：Corbitt
+
+一場 100 回合的《The Haunting》跑局（操作者提供的 `turns.jsonl`／`tool-events.jsonl`，2026-10-08）始終打不到最後一戰。第 30～32 回合三位玩家破牆進入第 4 房並威脅屍體；每回合守密人都搜了劇本三到四次，每次都找到 Corbitt 的數值與觸發條件（「除非受到威脅，否則他不願移動」），但每回合仍以「劇本裡沒有足夠的內容可以據以裁決這個行動」收場。兩個原因：
+
+- Codex 之下每次工具呼叫都算進 `MAX_TOOLS_PER_TURN`（4），搜四次就沒有額度呼叫 `initialize_combat`。`codex_provider.counts_against_tool_budget` 現在排除唯讀查詢（`search_scenario`、各 `get_*`），它們有自己的每回合上限；額度是給行動用的。
+- `initialize_combat`／`add_npc_to_combat` 要求的 `source` 含模型根本不知道的 url、revision、sha256，而 `support.enemy_source` 只對 NPC 索引有收錄的敵人才從已載入的劇本補上。現在劇本文字裡帶有數值表的敵人也會補（`support.scenario_stat_block`：名字以整個字詞出現在數值表的標題列，標題列即屬性列上方最近的一行短文字，屬性列要有至少兩項 STR／CON／SIZ／DEX／POW／INT／EDU／APP 加數字（同一行或接下來幾行），和 7e 排版一樣；只有一行 HP 的標題是引擎本來就不跑的不完整卡片，不是數值表；而且至少要送來一個攻擊（一個都沒有時卡片會補上預設的徒手攻擊，不能讓它搭上來源），且每個攻擊都必須以攻擊的形式寫在那張表裡：數值型的技能值以百分比出現、或出現在講格鬥／攻擊／傷害的那一行（CON 55 這種屬性不算），而傷害算式照送來的樣子（「1d6+100」不是表上的「1d6」；表上寫的傷害加值會折成骰子）出現在同一行或接下來兩行，因為來源是替從劇本抄來的數值背書，少了任一項的攻擊會被卡片用預設值補上），搜尋找到的數值就足以登記；只在敘述裡被提到、只是剛好站在別人數值表旁邊、藏在別的字裡（pirate 裡的 rat）、或劇本沒給數值的敵人仍只留模型給的資料、仍需裁定，因為來源是替模型抄來的攻擊數值背書，敘述裡沒有數值可抄。
+- 戰鬥提示改為：搜尋命中或索引已顯示數值、且書面觸發條件剛發生時，就在同一回合用手上的數值登記，不再為了來源多搜，也不得回答「劇本沒有這段內容」。
+
+## 未做
+
+- 調查員的反擊仍用鬥毆與 1D3，而不是手上的武器。
+- `/coc combat damage`／`end` 的說明仍描述戰鬥中會被拒絕的指令。
+
+## 測試
+
+`tests/test_combat_turn_friction.py`（自動推進的案例以旗標開啟執行）；手動驅動先攻的情境套件（`tests/test_combat_flow.py`、`test_combat_engine.py`、`test_combat_wiring.py`、`test_combat_state_machine_integration.py`、`test_combat_mechanics_coverage.py`）固定旗標關閉，B 系列情境一次呼叫完成防守。

@@ -1611,7 +1611,11 @@
       "zh": "保留低文字 PDF 頁面中有證據支持的豐富 OCR 候選",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_rich_ocr.py"],
+      "evidence": [
+        "app/pdf_quality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_rich_ocr.py"
+      ],
       "path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_rich_ocr_candidate_selection_design_spec_zh.md"
     },
@@ -1620,7 +1624,11 @@
       "zh": "防止 PDF 邊飾字形插入正文閱讀順序",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_decorative_reading_order.py"],
+      "evidence": [
+        "app/pdf_quality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_decorative_reading_order.py"
+      ],
       "path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_reading_order_decorative_interleave_design_spec_zh.md"
     },
@@ -1629,7 +1637,11 @@
       "zh": "依 PDF 來源證據去重，不依正文文字去重",
       "category": "bug",
       "status": "implemented",
-      "evidence": ["app/pdf_quality.py", "app/pdf_loader.py", "tests/test_pdf_duplicate_source.py"],
+      "evidence": [
+        "app/pdf_quality.py",
+        "app/pdf_loader.py",
+        "tests/test_pdf_duplicate_source.py"
+      ],
       "path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec.md",
       "zh_path": "docs/specs/bug/pdf_reading_order_duplicate_source_design_spec_zh.md"
     },
@@ -2528,6 +2540,68 @@
       ],
       "path": "docs/specs/bug/advance_accepts_any_actor_reference_design_spec.md",
       "zh_path": "docs/specs/bug/advance_accepts_any_actor_reference_design_spec_zh.md",
+      "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
+    },
+    {
+      "title": "Items: a near-miss name still finds the item, and a no-op call never costs the turn",
+      "zh": "物品：名稱沒寫得一模一樣也找得到，沒變動的呼叫不會讓玩家白講一次",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper_tools/inventory.py",
+        "app/services/turn_resolution.py",
+        "app/models.py",
+        "app/data/combat_weapons.json",
+        "app/combat_rules.py",
+        "app/combat_flow.py",
+        "tests/test_item_handling_friction.py",
+        "app/services/turn_delivery.py"
+      ],
+      "path": "docs/specs/enhancement/item_handling_friction_design_spec.md",
+      "zh_path": "docs/specs/enhancement/item_handling_friction_design_spec_zh.md",
+      "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
+    },
+    {
+      "title": "Combat turns: one click defends, a turn can always be ended, and the Keeper is told the next step",
+      "zh": "戰鬥回合：一鍵防守、回合一定結束得了、守密人知道下一步",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/managed_checks.py",
+        "app/combat_flow.py",
+        "app/combat.py",
+        "app/keeper_tools/combat.py",
+        "app/services/turn_resolution.py",
+        "app/services/prompt_config.py",
+        "app/discord_transport/controls.py",
+        "tests/test_combat_turn_friction.py",
+        "app/config.py",
+        ".env.example",
+        "app/providers/codex_provider.py",
+        "app/keeper_tools/support.py",
+        "app/prompt_builder.py",
+        "app/agents/executor.py",
+        "app/providers/registry.py"
+      ],
+      "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
+      "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
+      "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
+    },
+    {
+      "title": "Combat turn latency: the prompt carries this round, and state loads leave the event loop",
+      "zh": "戰鬥回合延遲：提示只帶本回合，讀取狀態離開事件迴圈",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_context.py",
+        "app/commands/router.py",
+        "app/keeper_tools/registry.py",
+        "tests/test_turn_latency_trims.py",
+        "app/keeper_tools/combat.py",
+        "app/services/turn_delivery.py"
+      ],
+      "path": "docs/specs/enhancement/combat_prompt_and_router_latency_design_spec.md",
+      "zh_path": "docs/specs/enhancement/combat_prompt_and_router_latency_design_spec_zh.md",
       "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
     }
   ]

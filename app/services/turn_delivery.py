@@ -41,9 +41,11 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
     if result.get("ok"):
         if name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} and "total" in result:
             text = f"骰子已結算：{result.get('expression', '傷害骰')}，總值 {result.get('total')}。"
-        elif name in {"add_carried_item", "remove_carried_item"} and args.get("item"):
-            item = args["item"].strip()
-            present = item in result.get("carried_items", [])
+        elif name in {"add_carried_item", "remove_carried_item"} and (result.get("item") or args.get("item")):
+            # The entry as the pack spells it (the receipt's ``item``: "Knife" for a "knife" already held, the stored
+            # text a partial name removed), judged the way the tool matched it, so this never contradicts the receipt.
+            item = str(result.get("item") or args["item"]).strip()
+            present = any(str(entry).strip().casefold() == item.casefold() for entry in result.get("carried_items", []))
             text = f"{result.get('investigator', '調查員')} 的背包已確認{'包含' if present else '不含'}「{item}」。"
         elif name == "transfer_item" and result.get("item") and not result.get("replayed"):
             quantity = int(result.get("quantity") or 1)
@@ -52,20 +54,12 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
         elif name in {"skill_check", "sanity_check"} and result.get("resolved"):
             text = (f"{result.get('investigator', '調查員')} 的檢定已結算："
                     f"骰值 {result.get('roll')}，等級 {presentation.tier_label(str(result.get('tier')))}。")
-        elif name in {"apply_combat_damage", "apply_final_combat_damage", "damage_combatant"} and "final_damage" in result:
-            text = f"{result.get('name', result.get('target', '目標'))} 已結算傷害 {result['final_damage']}。"
         elif name == "apply_resolved_check_damage":
             text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"
                     f"HP {result.get('hp_before')} → {result.get('hp_after')}。")
         elif name == "create_triggered_check" and result.get("pending"):
             text = (f"{result.get('investigator', '調查員')} 的{result.get('skill', '後續')}檢定已建立，"
                     "等待玩家擲骰。")
-        elif name == "damage_combatant":
-            # Enemy HP may already have been removed by the public tool projection.
-            if "hp" in result and "hp_before" in result:
-                text = f"{result.get('name', '目標')} 已結算治療，HP {result['hp_before']} → {result['hp']}。"
-            else:
-                text = f"{result.get('name', '目標')} 的治療已結算。"
         elif name == "adjust_ammo":
             text = f"{result.get('investigator')} 的 {result.get('weapon')} 彈藥已更新為 {result.get('ammo')}。"
         elif name == "adjust_character":
@@ -80,7 +74,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             text = f"{result.get('investigator')} 的狀態標記已更新：{'、'.join(result.get('status_tags', [])) or '無'}。"
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
-        elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "resolve_enemy_action", "add_npc_to_combat", "add_combat_effect", "declare_combat_action", "run_combat_action", "run_enemy_combat_plan", "submit_combat_choice", "preview_combat_settlement", "confirm_combat_settlement", "rollback_combat", "correct_combat_event", "reconcile_combat_baseline", "change_combat_initiative", "declare_combat_effect", "run_combat_effect", "stop_combat_effect", "resolve_combat_ruling", "reconcile_combat_correction", "process_postcombat_obligations", "stabilize_investigator", "request_stabilization_check"}:
+        elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "add_npc_to_combat", "declare_combat_action", "run_combat_action", "run_enemy_combat_plan", "submit_combat_choice", "preview_combat_settlement", "confirm_combat_settlement", "rollback_combat", "correct_combat_event", "reconcile_combat_baseline", "change_combat_initiative", "declare_combat_effect", "run_combat_effect", "stop_combat_effect", "resolve_combat_ruling", "reconcile_combat_correction", "process_postcombat_obligations", "stabilize_investigator", "request_stabilization_check"}:
             # Do not expose enemy sheets/ability names through a generic dump.
             text = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
     if result.get('provisional') and text:

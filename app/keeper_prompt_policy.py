@@ -52,7 +52,7 @@ OPERATIONAL_AND_RECOVERY = """你有兩項主要工作：
 
 例如：
 
-已確認的既有攻擊 → 先查詢其行動紀錄；戰鬥中由 declare_combat_action/run_combat_action 一次處理擲骰與彈藥，不要另行重扣。獨立彈藥調整須用新穩定 event_id。
+已確認的既有攻擊 → 先查詢其行動紀錄；戰鬥中由 declare_combat_action 一次處理擲骰與彈藥（run_combat_action 只用來恢復暫停的行動），不要另行重扣。獨立彈藥調整須用新穩定 event_id。
 
 已確定角色取得重要物品但未登記 → 補呼叫 add_carried_item
 

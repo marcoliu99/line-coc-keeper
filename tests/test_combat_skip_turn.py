@@ -81,14 +81,17 @@ def test_a_successful_skip_counts_as_evidence_only_for_the_call_that_made_it():
         return {"name": "advance_combat_turn", "arguments": arguments, "result": result,
                 "gameplay_before": before, "gameplay_after": turn_resolution.gameplay_snapshot(_load())}
 
-    def evidence(event):
-        return turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")[0]
+    def evidence(event):  # the evidence belongs to the player whose turn ended
+        return turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], _load().characters[owner].name)[0]
 
     first = call()
     assert evidence(first) is True
     assert evidence(call()) is False  # the same event id again: the engine replays, nothing new happened
+    # An advance that moved the turn is the turn's effect whether or not it was a skip
+    # (docs/specs/enhancement/combat_turn_friction_design_spec.md); one that moved nothing is not.
     plain = {**first, "arguments": {}}
-    assert evidence(plain) is False
+    assert evidence(plain) is True
+    assert evidence({**plain, "gameplay_after": plain["gameplay_before"]}) is False
 
 
 def test_a_skip_still_succeeds_when_the_next_enemy_needs_a_ruling():
@@ -106,7 +109,7 @@ def test_a_skip_still_succeeds_when_the_next_enemy_needs_a_ruling():
     assert result["enemy_turn"]["ok"] is False
     event = {"name": "advance_combat_turn", "arguments": arguments, "result": result,
              "gameplay_before": before, "gameplay_after": turn_resolution.gameplay_snapshot(_load())}
-    assert turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], "x")[0] is True
+    assert turn_resolution._mutation_evidence(_load(), [event], ["tool:1"], _load().characters[owner].name)[0] is True
 
 
 def test_a_skip_is_refused_when_the_actor_already_acted_this_round():

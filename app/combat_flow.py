@@ -5,13 +5,23 @@ Authoritative check callbacks are server-only; tools never accept die results.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Literal
 
-from app import check_lifecycle, combat, combat_resources, combat_rules, dice, luck
+from app import (
+    check_lifecycle,
+    combat,
+    combat_resources,
+    combat_rules,
+    dice,
+    luck,
+    skill_aliases,
+)
 from app.models import (
+    BASE_SKILLS,
     Character,
     CombatAction,
     Combatant,
@@ -25,10 +35,18 @@ from app.models import (
 )
 
 ActionKind = Literal['melee', 'single_shot']
-_SKILLS = {'fighting-brawl': '格鬥（鬥毆）', 'fighting-axe': '格鬥（斧）',
-           'fighting-sword': '格鬥（劍）', 'firearms-handgun': '射擊（手槍）',
+_SKILLS = {'fighting-brawl': '格鬥（鬥毆）', 'fighting-axe': '格鬥（斧）', 'fighting-sword': '格鬥（劍）',
+           'fighting-spear': '格鬥（矛）', 'fighting-whip': '格鬥（鞭）', 'fighting-flail': '格鬥（連枷）',
+           'fighting-garrote': '格鬥（絞殺）', 'firearms-handgun': '射擊（手槍）',
            'firearms-rifle-shotgun': '射擊（步槍/霰彈槍）', 'firearms-bow': '射擊（弓）',
-           'throw': '投擲'}
+           'firearms-submachine-gun': '射擊（衝鋒槍）', 'firearms-machine-gun': '射擊（機槍）', 'throw': '投擲'}
+# CoC 7e base values: an investigator may always try a weapon skill the sheet does not list, at its base chance.
+# The sheet's own table (models.BASE_SKILLS) is the source where it lists the skill; the rest are weapon-only.
+_WEAPON_ONLY_BASES = {'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear': 20, 'fighting-whip': 5,
+                      'fighting-flail': 10, 'fighting-garrote': 15, 'firearms-bow': 15,
+                      'firearms-submachine-gun': 15, 'firearms-machine-gun': 10}
+_BASE_SKILLS = {skill_id: BASE_SKILLS[label] if label in BASE_SKILLS else _WEAPON_ONLY_BASES[skill_id]
+                for skill_id, label in _SKILLS.items()}  # a weapon skill without a base is a programming error
 
 
 def _error(message: str) -> dict[str, Any]:
@@ -67,6 +85,21 @@ def _skill(character: Character, skill_id: str) -> tuple[str, int] | None:
     for candidate in (label, skill_id):
         if candidate in character.skills:
             return label, character.skills[candidate]
+    # The sheet may spell the skill another way ("手槍" for 射擊（手槍）): that value is the investigator's, not the
+    # base. The static alias table only: this runs inside the attack's state mutation, not a database lookup.
+    for spelled, value in character.skills.items():
+        if skill_aliases.SKILL_ALIASES.get(spelled.strip()) == label:
+            return label, value
+    # A specialisation written the way players write it ("衝鋒槍: 60", "斧: 45") is the investigator's own value too:
+    # the sheet key is the label's specialisation (the part in the brackets), or contains or is contained in it.
+    # A bare "格鬥" names no specialisation, and a one-character key only counts when it is exactly the specialisation.
+    specialisation = re.sub(r"^.*[（(]|[）)].*$", "", label).strip() or label
+    for spelled, value in character.skills.items():
+        key = re.sub(r"[（(）)]", "", spelled).strip()
+        if key and (key == specialisation or (len(key) >= 2 and (key in specialisation or specialisation in key))):
+            return label, value
+    if skill_id in _BASE_SKILLS:
+        return label, _BASE_SKILLS[skill_id]
     return None
 
 
@@ -209,6 +242,37 @@ def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRol
     return _result(state, action)
 
 
+def _base_range(state: GroupState, actor: combat.Combatant, weapon: combat_rules.WeaponDefinition) -> float | None:
+    """A thrown weapon's range is the thrower's STR/5 yards; anything else is the catalog's."""
+    character = _character(state, actor.combatant_id)
+    return combat_rules.base_range_for(weapon, character.str_ if character else None)
+
+
+_SAME_OBJECT = {'i.weapon.spear-thrown': 'i.weapon.spear'}  # two attack profiles of one physical weapon
+
+
+def _same_object(weapon_id: str) -> str:
+    return _SAME_OBJECT.get(weapon_id, weapon_id)
+
+
+def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
+    """Whether a carried entry is ``weapon``: it resolves to it the way a declaration does (exact name or alias,
+    else the longest contained name), lists it among its candidates when it names several of a kind ("刀" for
+    any knife), or, only when the catalog knows nothing by that text, carries the weapon's full name (a scenario
+    weapon the catalog does not list)."""
+    text = item.strip().casefold()
+    if not text:
+        return False
+    lookup = combat_rules.resolve_weapon(item)
+    if lookup.definition is not None:
+        # "thrusting sword" is the rapier, so it is not the sword; a spear is the same physical object whether it is
+        # held to thrust or thrown, so one entry serves both profiles.
+        return _same_object(lookup.definition.id) == _same_object(weapon.id)
+    if lookup.candidates:
+        return any(candidate.id == weapon.id for candidate in lookup.candidates)
+    return weapon.name.strip().casefold() in text
+
+
 def _weapon_actor_evidence(
     state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition,
     reference: str, instance: combat_rules.WeaponInstance | None = None,
@@ -218,12 +282,17 @@ def _weapon_actor_evidence(
     if character:
         effective = combat_resources.effective_character(state, character)
         inventory_key = instance.instance_id if instance else reference
+        if weapon.ammo_per_attack and not instance and inventory_key not in effective.weapons:
+            # The sheet tracks the firearm under one spelling ("Crossbow") and the declaration names it by another
+            # (「十字弓」): the entry that is this weapon, read the way the declaration is, carries its ammunition.
+            inventory_key = next((key for key in effective.weapons if _item_is_weapon(key, weapon)), inventory_key)
         metadata = effective.weapon_instances.get(inventory_key)
         if weapon.id != 'i.weapon.brawl':
-            # A melee weapon with nothing to track counts as owned when the investigator carries an item by that name.
-            names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases) if n.strip()}
-            carried = (weapon.attack_mode == 'melee' and not weapon.ammo_per_attack
-                       and any(n in item.casefold() for item in effective.carried_items for n in names))
+            # A weapon with nothing to track (melee, or thrown) counts as owned when a weapons entry or a carried
+            # item, read the way a declaration is, is this weapon ("小刀" or "一把生鏽的小刀" for Knife, Small); a
+            # firearm needs its entry. Read that way, 「手裏劍」 is the shuriken and never proves a sword.
+            listed = [*effective.carried_items, *effective.weapons]
+            carried = not weapon.ammo_per_attack and any(_item_is_weapon(item, weapon) for item in listed)
             if inventory_key not in effective.weapons and not metadata and not carried:
                 raise ValueError('Weapon requires an existing owned instance or inventory mapping')
             if metadata and metadata.get('definition_id') not in (None, weapon.id):
@@ -282,8 +351,7 @@ def declare_action(
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     if actor is None or current is None or actor.combatant_id != current.combatant_id or actor.defeated:
         return _error('Only the current capable actor can declare an action')
-    if any(a.get('actor_id') == actor.combatant_id and a.get('completed') and a.get('round') == state.combat.round_number
-           for a in state.combat.actions.values()):
+    if combat.completed_actions_this_round(state, actor.combatant_id):
         return _error(f'{actor.display_name or actor.name} already completed this turn. Do not declare again: '
                       f'call advance_combat_turn with actor_id "{actor.combatant_id}" and a new event_id')
     if target is None or target.defeated or actor is target:
@@ -299,12 +367,18 @@ def declare_action(
     weapon = lookup.definition
     if action_kind not in ('melee', 'single_shot') or weapon.attack_mode != action_kind:
         return _ruling(state, action, 'Unsupported attack mode')
+    if (reloading := _reloading_until(state, actor, weapon)) is not None:
+        # The table's rate of fire (1/2, 1/3): the shot before this one spends the rounds between. Not a ruling,
+        # which would pause the fight: the actor is told and may do something else this round.
+        del state.combat.actions[action_id]
+        return _error(f'{weapon.name} is still being reloaded (rate of fire 1/{weapon.rounds_per_shot}): the next '
+                      f'shot is possible in round {reloading}. Declare another action this round.')
     damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance_yards)
     if damage.damage is None:
         return _ruling(state, action, damage.reason)
     difficulty = 'regular'
     if action_kind == 'single_shot':
-        range_result = combat_rules.resolve_range_difficulty(distance_yards, weapon.base_range_yards)
+        range_result = combat_rules.resolve_range_difficulty(distance_yards, _base_range(state, actor, weapon))
         if range_result.difficulty is None:
             return _ruling(state, action, range_result.reason)
         difficulty = range_result.difficulty
@@ -320,6 +394,20 @@ def declare_action(
     action.update({'weapon': asdict(weapon), 'damage': damage.damage, 'difficulty': difficulty})
     combat_resources.record_event(state, action_id + ':declaration', 'action', data=deepcopy(action))
     return run_action(state, action_id)
+
+
+def _reloading_until(state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition) -> int | None:
+    """The round in which ``actor`` may next fire ``weapon``, when its rate of fire still holds the last shot's
+    reload; None when the weapon is ready."""
+    if weapon.rounds_per_shot <= 1:
+        return None
+    fired = [a['round'] for a in state.combat.actions.values()
+             if a.get('actor_id') == actor.combatant_id and a.get('completed') and a.get('kind') != 'skip'
+             and (a.get('weapon') or {}).get('id') == weapon.id and isinstance(a.get('round'), int)]
+    if not fired:
+        return None
+    ready = max(fired) + weapon.rounds_per_shot
+    return ready if state.combat.round_number < ready else None
 
 
 def _defense_choice(state: GroupState, action: CombatAction, character: Character) -> dict[str, Any]:
@@ -339,7 +427,12 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
     if not ranged and action['checks'].get('attack', {}).get('tier') == 'critical':
         # No success level beats a Critical attack, so Fight Back could only lose.
         options = [o for o in options if o['kind'] != 'counter']
+    attacker = combat.find_combatant(state, action['actor_id'])
     candidate: dict[str, Any] = {'type': 'choice', 'options': options,
+                 # What the defender is told: who attacks and how well they rolled, so the buttons can say what each
+                 # choice needs. The tier is already public once the attack lands or misses.
+                 'attacker_name': attacker.display_name if attacker else '',
+                 'attacker_tier': action['checks'].get('attack', {}).get('tier'),
                  'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
     registered = check_lifecycle.register(state, character.owner_id, candidate)
     if registered.pending is None:
@@ -567,6 +660,10 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
     if not damage_result['ok']:
         return damage_result
     action['result'] = {'hit': True, 'opposed': opposed, 'damage': damage_result, 'damage_receipt': receipt}
+    if not counter_hit and action.get('weapon', {}).get('follow_up'):
+        # What the table says a hit with this weapon also does (a torch: the target may catch fire). The engine
+        # does not roll it; the receipt hands it to the Keeper, who has the tools for it.
+        action['result']['follow_up'] = action['weapon']['follow_up']
     if state.combat.interaction:
         injury_action = state.combat.actions[state.combat.interaction['action_id']]
         injury_action['parent_action_id'] = action_id
@@ -581,7 +678,101 @@ def _complete(state: GroupState, action: CombatAction, result: dict[str, Any]) -
     state.combat.phase = 'READY'
     combat_resources.record_event(state, action['action_id'] + ':complete', 'action', data=deepcopy(action))
     action['receipt'] = _result(state, action)
+    _auto_advance(state, action)
     return deepcopy(action['receipt'])
+
+
+_auto_advancing: set[str] = set()
+
+
+def _side_down(state: GroupState) -> bool:
+    enemies = [c for c in state.combat.order if c.side == 'enemy']
+    party = [c for c in state.combat.order if c.side in ('pc', 'ally')]
+    return bool(enemies and all(c.defeated for c in enemies)) or bool(
+        party and all(combat.is_skippable(state, c) for c in party))
+
+
+def _auto_advance(state: GroupState, action: CombatAction) -> None:
+    """End the actor's turn once their action is settled, the way a table does, and play the next enemy's turn
+    to the next player boundary.
+
+    Only for the current actor's own completed action with nothing left open, while both sides still stand (a
+    finished fight waits for settlement, not another round). The advance is one initiative event keyed on the
+    action, so a replayed completion does not advance twice; an advance that fails leaves the turn where it was
+    and says so in the receipt. Not while an advance is already running: the enemy turn it plays completes its
+    own actions.
+    """
+    from app import config
+    if not config.COMBAT_AUTO_ADVANCE or state.combat.combat_id in _auto_advancing:
+        return
+    if _side_down(state):
+        # The fight is over, not stalled: another round would skip the fallen and start again instead of settling.
+        action['receipt'] = {**action['receipt'], 'settlement_ready': True}
+        return
+    current = combat.current_actor(state)
+    if (current is None or action.get('actor_id') != current.combatant_id or state.combat.interaction
+            or state.combat.phase != 'READY' or action.get('needs_ruling')):
+        return
+    before = {'round': state.combat.round_number, 'actor': current.display_name or current.name,
+              'actor_id': current.combatant_id, 'index': state.combat.current_index}
+
+    def enemy_outcome(result: dict[str, Any]) -> dict[str, Any] | None:
+        """What an advance says about the enemy turn it played, if it played one."""
+        played = result.get('enemy_turn') if isinstance(result.get('enemy_turn'), dict) else (
+            result if result.get('action_id') and result.get('action_id') != action['action_id'] else None)
+        return {key: played.get(key) for key in ('ok', 'error', 'phase', 'action_id')} if played else None
+
+    enemy_turns: list[dict[str, Any]] = []
+    _auto_advancing.add(state.combat.combat_id)
+    try:
+        advanced = advance_combat(state, actor_id=current.combatant_id,
+                                  event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}")
+        if (played := enemy_outcome(advanced)) is not None:
+            enemy_turns.append(played)
+        # An enemy turn the advance played may itself complete at once; the nested completion could not advance,
+        # so move those turns on here until a player decision or an unplayed turn is reached. Bounded by the
+        # order: every actor ends at most once per pass.
+        for _ in range(len(state.combat.order)):
+            now = combat.current_actor(state)
+            if (now is None or now.is_pc or state.combat.interaction or state.combat.phase != 'READY'
+                    or _side_down(state) or not combat.completed_actions_this_round(state, now.combatant_id)):
+                break
+            index_before = state.combat.current_index
+            chained = advance_combat(state, actor_id=now.combatant_id,
+                                     event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}:{now.combatant_id}")
+            after = combat.current_actor(state)
+            if not chained.get('ok') or (after is not None and after.combatant_id == now.combatant_id
+                                         and state.combat.current_index == index_before):
+                break
+            if (played := enemy_outcome(chained)) is not None:
+                enemy_turns.append(played)
+    finally:
+        _auto_advancing.discard(state.combat.combat_id)
+    # Compare ids and the index, not objects: a blocked advance rolls the state back to fresh objects.
+    now = combat.current_actor(state)
+    moved = (state.combat.round_number != before['round'] or state.combat.current_index != before['index']
+             or now is None or now.combatant_id != before['actor_id'])
+    if not moved:
+        # A pending check, a Luck decision or a blocked timing kept the turn where it was: say so, and let the
+        # Keeper advance once that is settled.
+        action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
+                             'auto_advance_error': advanced.get('error') or 'the turn could not move yet'}
+        return
+    summary = {
+        **{key: before[key] for key in ('round', 'actor', 'actor_id')}, 'round_now': state.combat.round_number,
+        'next_actor': (now.display_name or now.name) if now else '', 'next_actor_id': now.combatant_id if now else '',
+        'next_side': now.side if now else '', 'phase': state.combat.phase,
+    }
+    if enemy_turns:
+        summary['enemy_turn'] = enemy_turns[-1]  # the one the next player decision belongs to
+        summary['enemy_turns'] = enemy_turns
+    # The receipt reports the battle as it is after the turn moved, so a Keeper or narrator reading it does not
+    # advance again; the completed action itself is unchanged.
+    action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
+                         'interaction': deepcopy(state.combat.interaction), 'auto_advanced': summary}
+    if _side_down(state):
+        # A timed effect finished the last of a side as the turn moved: the fight is over, not with the next actor.
+        action['receipt']['settlement_ready'] = True
 
 
 def request_injury_check(state: GroupState, character: Character, event_id: str) -> dict[str, Any]:
@@ -704,16 +895,13 @@ def advance_combat(
         return pending
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     # The Keeper often passes the character ID or name instead of the combatant ID; any of them names the same actor.
-    # Same-named combatants share a name, so check the current one's own fields before the global lookup.
-    named = current is not None and actor_id in {current.combatant_id, current.character_id, current.name, current.display_name}
-    if not current or not event_id or not actor_id or not (named or combat.find_combatant(state, actor_id) is current):
+    if not current or not event_id or not actor_id or combat.resolve_actor_reference(state, actor_id) is not current:
         who = f' It is {current.display_name or current.name} ({current.combatant_id}): pass that as actor_id.' if current else ''
         return _error(f'Only the current actor may advance with a stable event ID.{who}')
     actor_id = current.combatant_id
     if state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values()):
         return _error('Resolve the current action/interaction before advancing')
-    acted = any(a.get('actor_id') == actor_id and a.get('completed') and a.get('round') == state.combat.round_number
-                for a in state.combat.actions.values()) or current.defeated
+    acted = bool(combat.completed_actions_this_round(state, actor_id)) or current.defeated
     if skip and acted:
         return _error('Nothing to skip: this actor already acted or is down; advance without skip')
     if not acted:
@@ -736,8 +924,11 @@ def advance_combat(
             plan = combat.plan_enemy_turn(state, next_actor.display_name, ops=MANAGED_OPS)
             if plan.get('ok'):
                 enemy = run_enemy_plan(state, plan['plan_id'])
-                # A skip that ended the turn succeeded; an enemy that then needs a ruling is a pending item beside it.
-                result = {**transition, 'enemy_turn': enemy} if skip and not enemy.get('ok') else enemy
+                # The turn did end; an enemy that then needs a ruling or cannot act is a pending item beside that,
+                # not a failure of the advance the Keeper asked for.
+                result = enemy if enemy.get('ok') else {**transition, 'enemy_turn': enemy}
+            else:
+                result = {**transition, 'enemy_turn': plan}
     combat_resources.record_event(state, event_id, 'initiative',
                                   data={'transition': transition, 'final_response': deepcopy(result)})
     return result
@@ -1102,6 +1293,10 @@ def resolve_ruling(
         if lookup.definition is None:
             return _ruling(state, action, lookup.reason)
         weapon = lookup.definition
+        if (reloading := _reloading_until(state, actor, weapon)) is not None:
+            # The same rate of fire as at declaration: a paused shot mapped to a slow weapon cannot skip its reload.
+            return _ruling(state, action, f'{weapon.name} is still being reloaded (rate of fire 1/{weapon.rounds_per_shot}): '
+                           f'the next shot is possible in round {reloading}. Cancel this action or map it to another weapon.')
         distance = distance_yards if distance_yards is not None else action.get('distance_yards')
         damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance)
         if damage.damage is None or weapon.attack_mode != action.get('action_kind'):
@@ -1113,7 +1308,7 @@ def resolve_ruling(
         if action.get('checks') and action.get('skill') != evidence['skill']:
             return _ruling(state, action, 'Changed skill invalidates retained player result; explicit cancellation required')
         if weapon.attack_mode == 'single_shot':
-            range_result = combat_rules.resolve_range_difficulty(distance, weapon.base_range_yards)
+            range_result = combat_rules.resolve_range_difficulty(distance, _base_range(state, actor, weapon))
             if range_result.difficulty is None:
                 return _ruling(state, action, range_result.reason)
             action['difficulty'] = range_result.difficulty

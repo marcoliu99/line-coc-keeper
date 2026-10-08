@@ -31,13 +31,14 @@ def test_reviewed_representative_values(reference, damage, db, impaling):
     assert (definition.damage, definition.db_policy, definition.impaling) == (damage, db, impaling)
     assert definition.source.sha256
     assert definition.rule_source.sha256
-    assert definition.catalog_version == 'coc7-reviewed-2026-10-01'
+    assert definition.catalog_version == 'coc7-reviewed-2026-10-08'
 
 
 def test_aliases_are_exact_and_ambiguity_retains_candidates():
     assert weapon('  LARGE CLUB ').id == 'i.weapon.club-large'
     assert weapon('手斧').id == 'i.weapon.hatchet-sickle'
-    for reference in ['unknown weapon', 'I have a large club', 'revolver']:
+    assert weapon('I have a large club').id == 'i.weapon.club-large'  # the reference contains the catalog name
+    for reference in ['unknown weapon', 'revolver']:  # nothing, or several revolvers
         assert resolve_weapon(reference).status == 'needs_ruling'
     result = resolve_weapon('.45')
     assert result.status == 'needs_ruling'
@@ -87,15 +88,19 @@ def test_shotgun_missing_invalid_or_conflicting_distance_requires_ruling():
 
 def test_full_catalog_contains_no_example_prototype_and_gates_special_rules():
     catalog = weapon_catalog()
-    assert len(catalog) == 45
+    assert len(catalog) == 49
     assert len({d.id for d in catalog}) == len(catalog)
     assert not any('example' in d.id or 'prototype' in d.name.casefold() for d in catalog)
-    for reference in ['Death ray (prototype)', 'Experimental weapon', 'Bullwhip', 'Garrote',
-                      'Burning Torch', 'Spear', 'Spear, Thrown', 'Thompson', 'Crossbow']:
-        assert resolve_weapon(reference).status == 'needs_ruling'
+    for reference in ['Death ray (prototype)', 'Experimental weapon', 'Garrote', 'Vickers .303', 'Mark I Lewis Gun']:
+        assert resolve_weapon(reference).status == 'needs_ruling'  # a special manoeuvre, or full auto only
+    # The 7e weapons table settles these (docs/specs/enhancement/item_handling_friction_design_spec.md).
+    for reference, damage in [('Burning Torch', '1d6'), ('Spear', '1d8+1'), ('Spear, Thrown', '1d8'),
+                              ('Thompson', '1d10+2'), ('Uzi', '1d10'), ('Crossbow', '1d8+2'), ('Bullwhip', '1d3'),
+                              ('Nunchaku', '1d8'), ('Bren Gun', '2d6+4'), ('.45 Martini-Henry Rifle', '1d8+1d6+3')]:
+        resolved = resolve_weapon(reference)
+        assert resolved.status == 'resolved' and resolved.definition.damage == damage
     slow = next(d for d in catalog if d.name == '.45 Martini-Henry Rifle')
-    assert slow.damage == '1d8+1d6+3'
-    assert resolve_weapon(slow.id).status == 'needs_ruling'
+    assert slow.damage == '1d8+1d6+3' and slow.capacity == 1  # one round: reloading is the 1/3 cadence
 
 
 @pytest.mark.parametrize(('severity', 'damage'), [

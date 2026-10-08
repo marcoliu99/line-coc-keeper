@@ -511,9 +511,6 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             "clear_pending_check",
             "roll_weapon_damage",
             "roll_impaling_damage",
-            "apply_combat_damage",
-            "apply_final_combat_damage",
-            "add_combat_effect",
         }
         self.assertTrue(expected_allowed.issubset(tool_names))
         self.assertFalse({"adjust_character", "adjust_ammo", "set_skill", "damage_combatant", "start_combat"} & tool_names)
@@ -546,74 +543,6 @@ class KPAssistantV2Tests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertFalse(rejected["ok"])
             self.assertIn("已允許的查詢與主持流程工具", rejected["error"])
-
-    def test_kp_assistant_raw_damage_tools_cannot_bypass_managed_source_authority(self):
-        state = GroupState(group_id="g")
-        state.autoroll_checks = True
-        char = Character(name="Marco", owner_id="p1", character_id="char-marco", dex=50, hp=12, hp_max=12)
-        state.characters["p1"] = char
-        state.characters_by_id["char-marco"] = char
-        state.active_character_id_by_user["p1"] = "char-marco"
-        combat.start_combat(state)
-        combat.add_npc(
-            state,
-            "Armored Thing",
-            40,
-            10,
-            armor=[{"id": "hide", "label": "Thick Hide", "value": 3, "applies_to": "physical"}],
-        )
-
-        with StateStorePatch() as store:
-            store.put(state)
-            effect_result = tool_dispatch.execute_tool(
-                state,
-                "add_combat_effect",
-                {
-                    "target": "Marco",
-                    "label": "Burning Curtain",
-                    "timing": "turn_start",
-                    "damage": "1",
-                    "damage_type": "fire",
-                    "remaining_rounds": 1,
-                    "tags": ["fire"],
-                },
-                [],
-                [],
-                speaker_role="kp_assistant",
-            )
-            damage_result = tool_dispatch.execute_tool(
-                state,
-                "apply_combat_damage",
-                {"target": "Marco", "raw_damage": 1, "damage_type": "physical", "source_id": "glass"},
-                [],
-                [],
-                speaker_role="kp_assistant",
-            )
-            final_damage_result = tool_dispatch.execute_tool(
-                state,
-                "apply_final_combat_damage",
-                {"target": "Armored Thing", "final_damage": 5, "source_id": "established-hit"},
-                [],
-                [],
-                speaker_role="kp_assistant",
-            )
-            blocked_result = tool_dispatch.execute_tool(
-                state,
-                "damage_combatant",
-                {"name": "Marco", "delta": -1},
-                [],
-                [],
-                speaker_role="kp_assistant",
-            )
-
-        for name, result in (
-            ('add_combat_effect', effect_result), ('apply_combat_damage', damage_result),
-            ('apply_final_combat_damage', final_damage_result), ('damage_combatant', blocked_result),
-        ):
-            self.assertFalse(result['ok'])
-            self.assertFalse(tool_dispatch.kp_tool_result_creates_canon(name, {}, result))
-        self.assertEqual(store.get('g').characters_by_id['char-marco'].hp, 12)
-        self.assertEqual(combat.find_combatant(store.get('g'), 'Armored Thing').hp, 10)
 
     def test_kp_assistant_can_see_private_enemy_hp_in_combat_status(self):
         state = GroupState(group_id="g")

@@ -208,6 +208,9 @@ def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_ki
             "再向玩家敘事。不可重建、重擲或改判原檢定，也不可重扣已提交的數值。"
             "若原檢定已預先附上劇本引文與後果授權，傷害須用 apply_resolved_check_damage 真正提交；"
             "獨立的後續檢定須用 create_triggered_check 建立新 pending，不能替玩家擲骰。"
+            "檢定結果讓調查員取得或失去物品時，用 add_carried_item／remove_carried_item 登記，不要只在敘事裡提到。"
+            "戰鬥中依【已結算檢定】區塊裡的【戰鬥下一步】處理回合：它說引擎已自動推進就不要再呼叫 advance_combat_turn；"
+            "只有它要你推進時才依它給的參數呼叫，再敘事。"
             "未授權的後果保持未發生，可使用 /coc correct 處理爭議。\n"
         )
     elif turn_kind == "opening_fallback":
@@ -314,8 +317,10 @@ def build_resolved_check_outcome_block(result: dict) -> str:
     return (
         "【已結算檢定：權威機制結果】\n"
         f"調查員：{result.get('investigator', '未知')}；檢定：{skill}；"
-        f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
-        f"難度：{presentation.difficulty_label(result.get('difficulty', 'regular'))}；最終結果：{outcome}。\n"
+        + ("未擲骰（玩家的選擇本身結算了攻擊）；" if result.get("no_roll") else
+           f"技能值：{result.get('skill_value', '未知')}；擲出 {result.get('roll', '未知')}；"
+           f"難度：{presentation.difficulty_label(result.get('difficulty', 'regular'))}；")
+        + f"最終結果：{outcome}。\n"
         f"行動情境：{str(result.get('action_context', '')).strip() or '未提供'}\n"
         '【行動及對抗交接；來源與對手數值不得公開】\n'
         f"{json.dumps({'player_declaration': result.get('player_declaration'), 'opposed_outcome': opposed_checks.public_outcome(result.get('opposed_outcome'))}, ensure_ascii=False)}\n"
@@ -326,8 +331,46 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
         "原檢定不可重建；若有來源授權，可用專用工具提交非戰鬥傷害或建立獨立的後續檢定。"
         "若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
-        + consequence_note
+        + consequence_note + _combat_next_step(result)
     )
+
+
+def _combat_next_step(result: dict) -> str:
+    """What the Keeper must do with the battle after this roll, when the engine already knows."""
+    receipt = result.get("combat_receipt") or {}
+    if not receipt.get("combat_id"):
+        return ""
+    follow_up = f"\n【武器後續】這次命中依武器表還有後續，引擎沒有擲：{receipt['follow_up']}" if receipt.get("follow_up") else ""
+    return follow_up + _combat_turn_step(receipt)
+
+
+def _combat_turn_step(receipt: dict) -> str:
+    if receipt.get("settlement_ready"):
+        return ("\n【戰鬥下一步】這個行動結束後有一方已全數倒下，戰鬥可以結算：不要呼叫 advance_combat_turn（那會跳過倒下的人再開一輪）。"
+                "只敘事這一擊的結果與戰鬥結束的情景；結算由下一次守密人回合依戰鬥狀態取得預覽並確認，這裡不要結算。")
+    advanced = receipt.get("auto_advanced")
+    if isinstance(advanced, dict):
+        waiting = ("" if advanced.get("phase") not in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}
+                   else "，正在等玩家的選擇或擲骰")
+        enemy = advanced.get("enemy_turn") or {}
+        stuck = (f"；下一位敵人的回合卡住（{enemy.get('error')}）：暫停中的敵方行動用 resolve_combat_ruling 恢復"
+                 "（給武器或距離）或取消；沒有行動可結算的敵人才用 advance_combat_turn skip 跳過"
+                 if enemy and enemy.get("ok") is False else "")
+        return (f"\n【戰鬥下一步】這個行動結束後引擎已自動推進：現在輪到 {advanced.get('next_actor', '下一位')}"
+                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}。剛結束的行動不要再呼叫 advance_combat_turn；"
+                "敘事要包含剛結算的結果，以及（若有）敵人接著的攻擊。")
+    if receipt.get("auto_advance_error"):
+        return (f"\n【戰鬥下一步】這個行動已結束，但引擎無法自動推進（{receipt['auto_advance_error']}）："
+                "先處理它說的事，再呼叫 advance_combat_turn。")
+    if receipt.get("completed"):
+        return ("\n【戰鬥下一步】這個行動已經結束，但回合仍停在原行動者：先呼叫 advance_combat_turn"
+                "（actor_id 填目前行動者的名字或 ID，event_id 可省略），讓下一位行動，再敘事。")
+    phase = receipt.get("phase")
+    if phase in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}:
+        return "\n【戰鬥下一步】這個行動還在等另一位玩家的選擇或擲骰：不要推進回合，敘事到這裡為止。"
+    if phase == "NEEDS_RULING":
+        return "\n【戰鬥下一步】這個行動暫停等待裁定：用 resolve_combat_ruling 解決或取消它，再推進。"
+    return ""
 
 
 def enforce_resolved_check_consistency(
