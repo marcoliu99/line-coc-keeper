@@ -301,34 +301,34 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
                        scenario_text=STAT_BLOCK)
     given = {"attack_mode": "melee"}
     copied = [{"id": "claw", "skill_value": 50, "damage": "1d3"}]
+    invented = [{"id": "claw", "skill_value": 75, "damage": "2d8"}]
+    # By name: the block's heading names the enemy, whatever attack values the Keeper wrote down.
     assert support.enemy_source(state, given, None, name="Walter Corbitt", attacks=copied)["sha256"] == "abc123"
-    assert support.enemy_source(state, given, None, name="walter corbitt", attacks=copied)["url"] == "scenario:the-haunting"
-    assert support.enemy_source(state, given, None, name="Corbitt 2", attacks=copied)["sha256"] == "abc123"  # instance suffix
-    assert support.enemy_source(state, given, None, name="Invented Thing", attacks=copied) == given  # not in the scenario
-    assert support.enemy_source(state, given, None, name="W", attacks=copied) == given  # one character proves nothing
+    assert support.enemy_source(state, given, None, name="walter corbitt", attacks=invented)["url"] == "scenario:the-haunting"
+    assert support.enemy_source(state, given, None, name="Corbitt 2", attacks=invented)["sha256"] == "abc123"  # instance suffix
+    # By attack values: a name the heading does not carry (a translation) is found by what the block states.
+    assert support.enemy_source(state, given, None, name="柯比特", attacks=copied)["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="柯比特", attacks=invented) == given
+    assert support.enemy_source(state, given, None, name="Invented Thing", attacks=invented) == given
+    assert support.enemy_source(state, given, None, name="W", attacks=invented) == given  # one character proves nothing
     # No attack submitted means the card's default unarmed attack would ride on the provenance: none is granted.
     assert support.enemy_source(state, given, None, name="Walter Corbitt") == given
     assert support.enemy_source(state, given, None, name="Walter Corbitt", attacks=[]) == given
-    # The provenance vouches for the attack values the model copied: they must be written in the named block.
-    assert support.enemy_source(state, given, None, name="Corbitt", attacks=copied)["sha256"] == "abc123"
-    invented = [{"id": "claw", "skill_value": 75, "damage": "2d8"}]
-    assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented) == given
-    assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "2d8"}]) == given
-    assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "1d3+100"}]) == given
+    assert support.enemy_source(state, given, None, name="柯比特", attacks=[{"skill_value": 50, "damage": "1d3+100"}]) == given
     # "1D3 + damage bonus(1D4)" is two dice: the Keeper may submit the weapon's die or both, in either spelling.
     for both in ("1d3+1d4", "1D3 + 1D4", "1d3"):
-        assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": both}])["sha256"] == "abc123", both
+        assert support.enemy_source(state, given, None, name="柯比特", attacks=[{"skill_value": 50, "damage": both}])["sha256"] == "abc123", both
     zh = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
                     scenario_text="### 鼠群\n\n力量 35  體質 55\n格鬥 40%，傷害 1D3 + 傷害加值（-1）\n")
     assert support.enemy_source(zh, given, None, name="鼠群", attacks=[{"skill_value": 40, "damage": "1d3-1"}])["sha256"] == "abc123"
     zh.scenario_text = "### Rat Pack\n\nSTR 35  CON 55\nFighting 40%, damage 1D3 + damage bonus(-1)\n"
-    assert support.enemy_source(zh, given, None, name="Rat Pack", attacks=[{"skill_value": 40, "damage": "1D3 - 1"}])["sha256"] == "abc123"
+    assert support.enemy_source(zh, given, None, name="鼠群", attacks=[{"skill_value": 40, "damage": "1D3 - 1"}])["sha256"] == "abc123"
     # A number the block gives as a characteristic, not as an attack, proves no attack: CON 55 is not a 55% Laser.
     laser = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
                        scenario_text="### Thing\n\nSTR 40  CON 55  SIZ 60\nHP 11\nBite 30%, damage 1d3\n")
-    assert support.enemy_source(laser, given, None, name="Thing", attacks=[{"skill_value": 55, "damage": "1d3"}]) == given
-    assert support.enemy_source(laser, given, None, name="Thing", attacks=[{"skill_value": 30, "damage": "1d3"}])["sha256"] == "abc123"
-    # An attack that leaves the skill or the damage out would be filled with the card's defaults: not copied either.
+    assert support.enemy_source(laser, given, None, name="Laser", attacks=[{"skill_value": 55, "damage": "1d3"}]) == given
+    assert support.enemy_source(laser, given, None, name="Laser", attacks=[{"skill_value": 30, "damage": "1d3"}])["sha256"] == "abc123"
+    # An attack that leaves the skill or the damage out would be filled with the card's defaults, even by name.
     for incomplete in ([{}], [{"skill_value": 50}], [{"damage": "1d3"}], [{"skill_value": "50", "damage": "1d3"}]):
         assert support.enemy_source(state, given, None, name="Corbitt", attacks=incomplete) == given, incomplete
 
@@ -341,18 +341,20 @@ def test_a_name_the_prose_only_mentions_or_that_stands_near_anothers_block_gets_
     state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
                        scenario_text=prose + STAT_BLOCK)  # Knott and the pirate sit right above Corbitt's block
     given = {"attack_mode": "melee"}
-    claw = [{"id": "claw", "skill_value": 50, "damage": "1d3"}]
-    assert support.enemy_source(state, given, None, name="Mr. Knott", attacks=claw) == given
-    assert support.enemy_source(state, given, None, name="rat", attacks=claw) == given  # inside "pirate", not a title
-    assert support.enemy_source(state, given, None, name="Corbitt", attacks=claw)["sha256"] == "abc123"  # the block's title
-    assert support.enemy_source(state, given, None, name="Undead Fiend", attacks=claw)["sha256"] == "abc123"  # as the title calls him
+    invented = [{"id": "bite", "skill_value": 75, "damage": "2d8"}]
+    assert support.enemy_source(state, given, None, name="Mr. Knott", attacks=invented) == given
+    assert support.enemy_source(state, given, None, name="rat", attacks=invented) == given  # inside "pirate", not a title
+    assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented)["sha256"] == "abc123"  # the block's title
+    assert support.enemy_source(state, given, None, name="Undead Fiend", attacks=invented)["sha256"] == "abc123"  # as the title calls him
     # The same name with its own block, in Chinese or English, is the scenario's enemy.
-    bite = [{"id": "bite", "skill_value": 40, "damage": "1d3"}]
     state.scenario_text = prose + "\n### 鼠群\n\n力量 35  體質 55  體型 35  敏捷 70\n生命值：9\n格鬥 40%，傷害 1D3\n"
-    assert support.enemy_source(state, given, None, name="鼠群（左）", attacks=bite)["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="鼠群（左）", attacks=invented)["sha256"] == "abc123"
     state.scenario_text = prose + "\n### RAT PACK\n\nSTR 35  CON 55  SIZ 35  POW 50  DEX 70\nHP: 9\nFighting 40%, damage 1D3\n"
-    assert support.enemy_source(state, given, None, name="Rat Pack 2", attacks=bite)["sha256"] == "abc123"
-    assert support.enemy_source(state, given, None, name="rats", attacks=bite) == given  # not a word of the title
+    assert support.enemy_source(state, given, None, name="Rat Pack 2", attacks=invented)["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="rats", attacks=invented) == given  # not a word of the title
+    # The soak run's 「鼠群」 against the English heading: the block's own values find it.
+    bite = [{"id": "teeth_claws", "skill_value": 40, "damage": "1d3"}]
+    assert support.enemy_source(state, given, None, name="鼠群", attacks=bite)["sha256"] == "abc123"
 
 
 def test_the_sheet_s_own_spelling_of_a_weapon_skill_beats_the_base_chance():

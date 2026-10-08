@@ -50,6 +50,10 @@ The next 100-turn run (2026-10-08, after this change merged) reached only round 
 
 A live Haunting run (2026-10-08) found the knife in the basement storage on a Spot Hidden roll. By the scenario the knife then rises and strikes, but the follow-up narrator after the roll had no `initialize_combat`; it told the player the fight could not be registered, and the next turn's dodge failed because no battle existed. `initialize_combat` is now offered after a resolved roll, and the follow-up instruction says: when the result sets off an attack the scenario writes and no battle is running, register the stat block's enemy (for an animated object, the being that moves it); the attack itself is left to the combat flow, not rolled or narrated as damage there.
 
+## A stat block is found by its name or by its attack values
+
+The rat pack run registered 「鼠群」 against the heading "RAT PACK", so the name never matched and the card got no provenance; a Chinese name for Corbitt would stall his knife the same way. `support.scenario_stat_block` now accepts either: the name as a whole word in a stat block's heading (whatever attack values were submitted), or every submitted attack's skill value and damage written as an attack in some stat block (whatever the name). Both still need at least one attack, each with a numeric skill value and damage, so the card's defaults never ride on the provenance; a name the prose only mentions, a short name inside another word, or values no block carries still get none. This supersedes the stricter rule above that required both the name and the values.
+
 ## Not done
 
 - Fight Back still uses Brawl and 1D3 for an investigator rather than the held weapon.
