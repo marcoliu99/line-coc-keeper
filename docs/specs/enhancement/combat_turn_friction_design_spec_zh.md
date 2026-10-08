@@ -38,7 +38,7 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 一場 100 回合的《The Haunting》跑局（操作者提供的 `turns.jsonl`／`tool-events.jsonl`，2026-10-08）始終打不到最後一戰。第 30～32 回合三位玩家破牆進入第 4 房並威脅屍體；每回合守密人都搜了劇本三到四次，每次都找到 Corbitt 的數值與觸發條件（「除非受到威脅，否則他不願移動」），但每回合仍以「劇本裡沒有足夠的內容可以據以裁決這個行動」收場。兩個原因：
 
 - Codex 之下每次工具呼叫都算進 `MAX_TOOLS_PER_TURN`（4），搜四次就沒有額度呼叫 `initialize_combat`。`codex_provider.counts_against_tool_budget` 現在排除唯讀查詢（`search_scenario`、各 `get_*`），它們有自己的每回合上限；額度是給行動用的。
-- `initialize_combat`／`add_npc_to_combat` 要求的 `source` 含模型根本不知道的 url、revision、sha256，而 `support.enemy_source` 只對 NPC 索引有收錄的敵人才從已載入的劇本補上。現在劇本文字裡帶有數值表的敵人也會補（`support.scenario_stat_block`：名字出現處附近有屬性列，STR／CON／SIZ／DEX／HP 加數字），搜尋找到的數值就足以登記；只在敘述裡被提到、劇本沒給數值的敵人仍只留模型給的資料、仍需裁定，因為來源是替模型抄來的攻擊數值背書，敘述裡沒有數值可抄。
+- `initialize_combat`／`add_npc_to_combat` 要求的 `source` 含模型根本不知道的 url、revision、sha256，而 `support.enemy_source` 只對 NPC 索引有收錄的敵人才從已載入的劇本補上。現在劇本文字裡帶有數值表的敵人也會補（`support.scenario_stat_block`：名字以整個字詞出現在數值表的標題列，標題列即屬性列（STR／CON／SIZ／DEX／HP 加數字）上方最近的一行短文字，和 7e 排版一樣），搜尋找到的數值就足以登記；只在敘述裡被提到、只是剛好站在別人數值表旁邊、藏在別的字裡（pirate 裡的 rat）、或劇本沒給數值的敵人仍只留模型給的資料、仍需裁定，因為來源是替模型抄來的攻擊數值背書，敘述裡沒有數值可抄。
 - 戰鬥提示改為：搜尋命中或索引已顯示數值、且書面觸發條件剛發生時，就在同一回合用手上的數值登記，不再為了來源多搜，也不得回答「劇本沒有這段內容」。
 
 ## 未做

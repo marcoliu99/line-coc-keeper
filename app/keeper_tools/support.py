@@ -215,26 +215,39 @@ def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None
 
 
 _STAT_LINE = re.compile(r"(?:^|[\s|])(?:str|con|siz|dex|pow|int|edu|app|hp|生命值?|力量|體質|體型|敏捷)\s*[:：]?\s*\d", re.IGNORECASE)
-_STAT_BLOCK_BEFORE, _STAT_BLOCK_AFTER = 300, 1500
+_HEADING_LINES_ABOVE, _HEADING_MAX_CHARS = 6, 80
+
+
+def _stat_block_headings(text: str) -> list[str]:
+    """The title of every stat block in the scenario text: the nearest short, non-stat line above a characteristics
+    line (STR/CON/SIZ/DEX/HP and a number), as 7e lays a block out (「### Walter Corbitt, Undead Fiend」, then STR …)."""
+    lines = text.splitlines()
+    headings: list[str] = []
+    for index, line in enumerate(lines):
+        if not _STAT_LINE.search(line):
+            continue
+        for above in range(index - 1, max(-1, index - 1 - _HEADING_LINES_ABOVE), -1):
+            candidate = lines[above].strip().strip("#*_ ").strip()
+            if not candidate or _STAT_LINE.search(candidate):
+                continue
+            if len(candidate) <= _HEADING_MAX_CHARS:
+                headings.append(candidate.casefold())
+            break
+    return headings
 
 
 def scenario_stat_block(state: GroupState, name: str) -> bool:
-    """Whether the loaded scenario text carries a stat block for ``name``: the Keeper's spelling, trimmed and
+    """Whether the loaded scenario text carries a stat block titled with ``name``: the Keeper's spelling, trimmed and
     case-insensitive, without the instance suffix the prompt asks for when several of one kind are active
-    (「魚人（左）」, "Cultist 2"), with a characteristics line (STR/CON/SIZ/DEX/HP and a number) within a stat block's
-    reach of some mention of it. A name the prose only mentions, or a short name inside another word, proves nothing
-    about the attack values the model supplies, so it keeps what the model gave and needs a ruling."""
+    (「魚人（左）」, "Cultist 2"), found as a whole word in a stat block's own heading. A name the prose only mentions,
+    one that merely stands near someone else's block, or a short name inside another word ("rat" in "pirate") proves
+    nothing about the attack values the model supplies, so it keeps what the model gave and needs a ruling."""
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
-    text = (state.scenario_text or "").casefold()
     if not wanted or len(wanted) < 2:
         return False
-    start = text.find(wanted)
-    while start != -1:
-        window = text[max(0, start - _STAT_BLOCK_BEFORE):start + len(wanted) + _STAT_BLOCK_AFTER]
-        if _STAT_LINE.search(window):
-            return True
-        start = text.find(wanted, start + 1)
-    return False
+    # Word-bounded for letters and digits; CJK characters have no word boundary, so a Chinese name is contained.
+    pattern = re.compile(r"(?<![a-z0-9])" + re.escape(wanted) + r"(?![a-z0-9])")
+    return any(pattern.search(heading) for heading in _stat_block_headings(state.scenario_text or ""))
 
 
 def find_npc_index_entry(

@@ -302,19 +302,24 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     assert support.enemy_source(state, given, None, name="W") == given  # one character proves nothing
 
 
-def test_a_name_the_prose_only_mentions_gets_no_provenance_for_invented_stats():
+def test_a_name_the_prose_only_mentions_or_that_stands_near_anothers_block_gets_no_provenance():
     from app.keeper_tools import support
     from app.models import GroupState
-    prose = ("The landlord, Mr. Knott, remembers the Macarios well. A stray dog sleeps on the porch. " * 20
-             + "\n\nA guard in the hallway nods.\n")
+    prose = ("The landlord, Mr. Knott, remembers the Macarios well. A stray dog sleeps on the porch.\n"
+             "A pirate captain's portrait hangs in the hall.\n")
     state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
-                       scenario_text=prose)
+                       scenario_text=prose + STAT_BLOCK)  # Knott and the pirate sit right above Corbitt's block
     given = {"attack_mode": "melee"}
     assert support.enemy_source(state, given, None, name="Mr. Knott") == given
-    assert support.enemy_source(state, given, None, name="guard") == given
-    # The same mention with a stat block in reach is the scenario's enemy.
-    state.scenario_text = prose + "\n### Guard\n\nSTR 60  CON 50  SIZ 65  DEX 55\nHP: 12\nFighting 45%, damage 1D3\n"
-    assert support.enemy_source(state, given, None, name="guard")["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="rat") == given  # inside "pirate", and not a block's title
+    assert support.enemy_source(state, given, None, name="Corbitt")["sha256"] == "abc123"  # the block's own title
+    assert support.enemy_source(state, given, None, name="Undead Fiend")["sha256"] == "abc123"  # as the title calls him
+    # The same name with its own block, in Chinese or English, is the scenario's enemy.
+    state.scenario_text = prose + "\n### 鼠群\n\n力量 35  體質 55  體型 35  敏捷 70\n生命值：9\n格鬥 40%，傷害 1D3\n"
+    assert support.enemy_source(state, given, None, name="鼠群（左）")["sha256"] == "abc123"
+    state.scenario_text = prose + "\n### RAT PACK\n\nSTR 35  CON 55  SIZ 35  POW 50  DEX 70\nHP: 9\n"
+    assert support.enemy_source(state, given, None, name="Rat Pack 2")["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="rats") == given  # not a word of the title
 
 
 def test_the_sheet_s_own_spelling_of_a_weapon_skill_beats_the_base_chance():
