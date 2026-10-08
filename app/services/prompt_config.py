@@ -347,7 +347,7 @@ def _combat_next_step(result: dict) -> str:
 def _combat_turn_step(receipt: dict) -> str:
     if receipt.get("settlement_ready"):
         return ("\n【戰鬥下一步】這個行動結束後有一方已全數倒下，戰鬥可以結算：不要呼叫 advance_combat_turn（那會跳過倒下的人再開一輪）。"
-                "先敘事這一擊的結果，再用 preview_combat_settlement 取得結算預覽，經確認後 confirm_combat_settlement。")
+                "只敘事這一擊的結果與戰鬥結束的情景；結算由下一次守密人回合依戰鬥狀態取得預覽並確認，這裡不要結算。")
     advanced = receipt.get("auto_advanced")
     if isinstance(advanced, dict):
         waiting = ("" if advanced.get("phase") not in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}

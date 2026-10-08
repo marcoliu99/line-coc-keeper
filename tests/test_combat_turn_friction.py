@@ -233,7 +233,7 @@ def test_a_settled_attack_does_not_advance_once_every_enemy_is_down():
     assert "戰鬥可以結算" in combat.status_text(state)
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
         "combat_id": state.combat.combat_id, "completed": True, "settlement_ready": True}})
-    assert "preview_combat_settlement" in block and "先呼叫 advance_combat_turn" not in block
+    assert "結算" in block and "先呼叫 advance_combat_turn" not in block
 
 
 def test_a_settled_enemy_attack_ends_the_enemys_turn():
@@ -644,4 +644,4 @@ def test_a_side_that_falls_during_the_auto_advance_makes_the_receipt_settlement_
     receipt = outcome.resolved_event["combat_receipt"]
     assert receipt["settlement_ready"] is True
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
-    assert "preview_combat_settlement" in block and "現在輪到" not in block
+    assert "結算" in block and "現在輪到" not in block

@@ -264,6 +264,9 @@ async def finalize_check_result(
                         "outcome", "action_context", "check_id", "timeline_id",
                         "opposed_outcome", "player_declaration", "action_basis",
                         "visibility", "recipient_id", "event_id", "success", "consequences",
+                        # What the battle did and what the narrator does next (the 【戰鬥下一步】 and weapon
+                        # follow-up lines are built from the receipt), and whether the player rolled at all.
+                        "combat_receipt", "no_roll",
                     )
                     if key in resolved_event
                 }
