@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app import combat, combat_resources, config
+from app import combat, combat_resources, combat_rules, config
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
@@ -179,7 +179,11 @@ def test_the_second_of_two_same_named_allies_is_skipped_by_name_when_it_is_curre
     state.combat.current_index = guards[1]
     _save(state)
     second = _load().combat.order[guards[1]].combatant_id
-    skipped = _tool("advance_combat_turn", {"actor_id": "Guard", "skip": True})
+    # A skip by a shared name could not be told from its own retry once the first Guard is skipped: the tool
+    # asks for the exact combatant id (and gives it), and the skip by id then derives its own event id.
+    by_name = _tool("advance_combat_turn", {"actor_id": "Guard", "skip": True})
+    assert not by_name["ok"] and second in by_name["error"]
+    skipped = _tool("advance_combat_turn", {"actor_id": second, "skip": True})
     assert skipped["ok"], skipped
     assert any(e["event_id"].endswith(f":advance:round1:{second}:0") for e in _load().combat.events)
     assert _load().combat.order[_load().combat.current_index].combatant_id != second
@@ -311,3 +315,27 @@ def test_an_advance_that_could_not_move_is_reported_as_blocked_not_advanced():
     assert receipt["auto_advance_error"] and not receipt.get("auto_advanced")
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
     assert "無法自動推進" in block and "advance_combat_turn" in block
+
+
+def test_the_bullwhip_is_a_melee_weapon_now():
+    whip = combat_rules.resolve_weapon("皮鞭").definition
+    assert (whip.attack_mode, whip.base_range_yards, whip.damage, whip.db_policy) == ("melee", None, "1d3", "half")
+
+
+def test_a_rolled_back_advance_is_reported_as_blocked_even_though_the_objects_changed():
+    from copy import deepcopy
+
+    from app import combat_flow
+    _battle(first_enemy=False)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+
+    def rolled_back(state, **_kwargs):  # what combat._all_or_nothing does: the same battle, fresh objects
+        state.combat.order = deepcopy(state.combat.order)
+        return {"ok": False, "error": "已有待處理檢定", "blocked_by": "pending_check"}
+
+    with patch.object(combat_flow, "advance_combat", side_effect=rolled_back):
+        outcome, _ = _player("/coc check", [10, 90])
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["auto_advance_error"] == "已有待處理檢定" and not receipt.get("auto_advanced")

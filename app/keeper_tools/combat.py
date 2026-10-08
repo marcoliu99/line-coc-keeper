@@ -288,6 +288,20 @@ def _derived_advance_id(state: GroupState, actor: combat.Combatant) -> str:
     return f'{base}{(used[-1] + 1) if used else 0}'
 
 
+def _skip_needs_explicit_id(state: GroupState, actor: combat.Combatant, reference: str) -> bool:
+    """A derived id for a skip is unsafe when a retry would name someone else: a name two live combatants share
+    (the second becomes current once the first is skipped), or a single-combatant order that wraps to the same
+    actor every round. A combatant id names one combatant, so it is always safe."""
+    wanted = reference.strip().casefold()
+    if wanted == actor.combatant_id.casefold():
+        return False
+    live = [c for c in state.combat.order if not c.defeated]
+    if len(live) <= 1:
+        return True
+    return any(c is not actor and wanted in {c.name.strip().casefold(), (c.display_name or '').strip().casefold()}
+               for c in live)
+
+
 def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
@@ -296,8 +310,16 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
             tool_input = dict(call.input)
             if current is None:
                 return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
-            named = combat.resolve_actor_reference(target_state, str(tool_input.get('actor_id') or ''))
+            reference = str(tool_input.get('actor_id') or '')
+            named = combat.resolve_actor_reference(target_state, reference)
             if not str(tool_input.get('event_id') or '').strip():
+                if tool_input.get('skip') and named is not None and _skip_needs_explicit_id(target_state, named, reference):
+                    # A retry of this skip could not be told from a new one: the same name now names the next
+                    # combatant, or the one combatant is current again. Give the Keeper the exact id to pass.
+                    return support.ToolStateMutation({'ok': False, 'error': (
+                        f'This skip needs an explicit event_id: pass actor_id "{named.combatant_id}" and an event_id '
+                        f'such as "{target_state.combat.combat_id}:skip:round{target_state.combat.round_number}:'
+                        f'{named.combatant_id}"')}, should_save=False)
                 tool_input['event_id'] = _derived_advance_id(target_state, named or current)
             skipper = named if tool_input.get('skip') else None
             blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''

@@ -2578,7 +2578,8 @@
         ".env.example",
         "app/providers/codex_provider.py",
         "app/keeper_tools/support.py",
-        "app/prompt_builder.py"
+        "app/prompt_builder.py",
+        "app/agents/executor.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",

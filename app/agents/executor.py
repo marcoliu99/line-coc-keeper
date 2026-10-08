@@ -240,7 +240,9 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             with turn_phases.phase("executor_llm"):
                 completion = await provider.run_conversation(
                     static_system, dynamic_system, tools, session.history(state.log), new_message,
-                    execute_turn_tool, MAX_TOOL_ITERATIONS,
+                    # Searching is bounded by its own per-turn cap, so the rounds it takes come on top of the
+                    # action rounds: a Keeper that searched four times can still register the enemy it found.
+                    execute_turn_tool, MAX_TOOL_ITERATIONS + config.SCENARIO_SEARCH_MAX_PER_TURN,
                     # Reuse the existing completion; never force an extra wrap-up.
                     enable_wrapup=False,
                     **provider_options,

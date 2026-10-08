@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -213,8 +214,9 @@ def enemy_source(state: GroupState, given: dict | None, index_entry: dict | None
 
 
 def scenario_names(state: GroupState, name: str) -> bool:
-    """Whether the loaded scenario text mentions ``name`` (the Keeper's spelling, trimmed and case-insensitive)."""
-    wanted = (name or "").strip().casefold()
+    """Whether the loaded scenario text mentions ``name``: the Keeper's spelling, trimmed and case-insensitive,
+    without the instance suffix the prompt asks for when several of one kind are active (「魚人（左）」, "Cultist 2")."""
+    wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
     return bool(wanted) and len(wanted) > 1 and wanted in (state.scenario_text or "").casefold()
 
 

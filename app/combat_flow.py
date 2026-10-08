@@ -44,8 +44,8 @@ _SKILLS = {'fighting-brawl': '格鬥（鬥毆）', 'fighting-axe': '格鬥（斧
 _WEAPON_ONLY_BASES = {'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear': 20, 'fighting-whip': 5,
                       'fighting-flail': 10, 'fighting-garrote': 15, 'firearms-bow': 15,
                       'firearms-submachine-gun': 15, 'firearms-machine-gun': 10}
-_BASE_SKILLS = {skill_id: BASE_SKILLS.get(label, _WEAPON_ONLY_BASES.get(skill_id, 0))
-                for skill_id, label in _SKILLS.items()}
+_BASE_SKILLS = {skill_id: BASE_SKILLS[label] if label in BASE_SKILLS else _WEAPON_ONLY_BASES[skill_id]
+                for skill_id, label in _SKILLS.items()}  # a weapon skill without a base is a programming error
 
 
 def _error(message: str) -> dict[str, Any]:
@@ -84,9 +84,10 @@ def _skill(character: Character, skill_id: str) -> tuple[str, int] | None:
     for candidate in (label, skill_id):
         if candidate in character.skills:
             return label, character.skills[candidate]
-    # The sheet may spell the skill another way ("手槍" for 射擊（手槍）): that value is the investigator's, not the base.
+    # The sheet may spell the skill another way ("手槍" for 射擊（手槍）): that value is the investigator's, not the
+    # base. The static alias table only: this runs inside the attack's state mutation, not a database lookup.
     for spelled, value in character.skills.items():
-        if skill_aliases.canonical_skill_name(spelled) == label:
+        if skill_aliases.SKILL_ALIASES.get(spelled.strip()) == label:
             return label, value
     if skill_id in _BASE_SKILLS:
         return label, _BASE_SKILLS[skill_id]
@@ -650,44 +651,58 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
             or state.combat.phase != 'READY' or action.get('needs_ruling') or _side_down(state)):
         return
     before = {'round': state.combat.round_number, 'actor': current.display_name or current.name,
-              'actor_id': current.combatant_id}
+              'actor_id': current.combatant_id, 'index': state.combat.current_index}
+
+    def enemy_outcome(result: dict[str, Any]) -> dict[str, Any] | None:
+        """What an advance says about the enemy turn it played, if it played one."""
+        played = result.get('enemy_turn') if isinstance(result.get('enemy_turn'), dict) else (
+            result if result.get('action_id') and result.get('action_id') != action['action_id'] else None)
+        return {key: played.get(key) for key in ('ok', 'error', 'phase', 'action_id')} if played else None
+
+    enemy_turns: list[dict[str, Any]] = []
     _auto_advancing.add(state.combat.combat_id)
     try:
         advanced = advance_combat(state, actor_id=current.combatant_id,
                                   event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}")
-        # An enemy turn the advance played may itself complete at once (its target was an NPC ally, say); the
-        # nested completion could not advance, so move those turns on here until a player decision or an
-        # unplayed turn is reached. Bounded by the order: every actor ends at most once per pass.
+        if (played := enemy_outcome(advanced)) is not None:
+            enemy_turns.append(played)
+        # An enemy turn the advance played may itself complete at once; the nested completion could not advance,
+        # so move those turns on here until a player decision or an unplayed turn is reached. Bounded by the
+        # order: every actor ends at most once per pass.
         for _ in range(len(state.combat.order)):
             now = combat.current_actor(state)
             if (now is None or now.is_pc or state.combat.interaction or state.combat.phase != 'READY'
                     or _side_down(state) or not combat.completed_actions_this_round(state, now.combatant_id)):
                 break
+            index_before = state.combat.current_index
             chained = advance_combat(state, actor_id=now.combatant_id,
                                      event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}:{now.combatant_id}")
-            if not chained.get('ok') or combat.current_actor(state) is now:
+            after = combat.current_actor(state)
+            if not chained.get('ok') or (after is not None and after.combatant_id == now.combatant_id
+                                         and state.combat.current_index == index_before):
                 break
-            advanced = chained if chained.get('action_id') else {**advanced, 'enemy_turn': chained.get('enemy_turn', advanced.get('enemy_turn'))}
+            if (played := enemy_outcome(chained)) is not None:
+                enemy_turns.append(played)
     finally:
         _auto_advancing.discard(state.combat.combat_id)
-    moved = (combat.current_actor(state) is not current or state.combat.round_number != before['round'])
+    # Compare ids and the index, not objects: a blocked advance rolls the state back to fresh objects.
+    now = combat.current_actor(state)
+    moved = (state.combat.round_number != before['round'] or state.combat.current_index != before['index']
+             or now is None or now.combatant_id != before['actor_id'])
     if not moved:
         # A pending check, a Luck decision or a blocked timing kept the turn where it was: say so, and let the
         # Keeper advance once that is settled.
         action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
                              'auto_advance_error': advanced.get('error') or 'the turn could not move yet'}
         return
-    now = combat.current_actor(state)
     summary = {
-        **before, 'round_now': state.combat.round_number,
+        **{key: before[key] for key in ('round', 'actor', 'actor_id')}, 'round_now': state.combat.round_number,
         'next_actor': (now.display_name or now.name) if now else '', 'next_actor_id': now.combatant_id if now else '',
         'next_side': now.side if now else '', 'phase': state.combat.phase,
     }
-    enemy_turn = advanced.get('enemy_turn')
-    if isinstance(enemy_turn, dict):
-        summary['enemy_turn'] = {key: enemy_turn.get(key) for key in ('ok', 'error', 'phase', 'action_id')}
-    elif advanced.get('action_id') and advanced.get('action_id') != action['action_id']:
-        summary['enemy_turn'] = {key: advanced.get(key) for key in ('ok', 'error', 'phase', 'action_id')}
+    if enemy_turns:
+        summary['enemy_turn'] = enemy_turns[-1]  # the one the next player decision belongs to
+        summary['enemy_turns'] = enemy_turns
     # The receipt reports the battle as it is after the turn moved, so a Keeper or narrator reading it does not
     # advance again; the completed action itself is unchanged.
     action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
