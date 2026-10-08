@@ -96,6 +96,9 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 result.get('combat_id') == state.combat.combat_id and action.get('completed')
                 and result.get('completed')
             )
+        if result.get('ok') and f'tool:{i}' in refs and name in {'initialize_combat', 'add_npc_to_combat'}:
+            # Waking or starting a fight is itself the turn's effect, even though no check was rolled.
+            combat_completed = combat_completed or bool(state.combat.active)
         if result.get('ok') and f'tool:{i}' in refs and name == 'confirm_combat_settlement':
             receipt = result.get('receipt', {})
             retained = state.closed_combat_receipts.get(receipt.get('combat_id', ''), {})

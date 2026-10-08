@@ -2503,6 +2503,19 @@
       "path": "docs/specs/bug/advance_combat_turn_refusals_say_what_to_do_design_spec.md",
       "zh_path": "docs/specs/bug/advance_combat_turn_refusals_say_what_to_do_design_spec_zh.md",
       "source_revision": "2261e8e8a780c32fceb0b421ffa820cddb8e7a5b"
+    },
+    {
+      "title": "Starting a fight counts as the turn's effect",
+      "zh": "開戰算作該回合的有效結果",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_resolution.py",
+        "tests/test_turn_consistency_handoff.py"
+      ],
+      "path": "bug/combat_start_counts_as_turn_effect_design_spec.md",
+      "zh_path": "bug/combat_start_counts_as_turn_effect_design_spec_zh.md",
+      "source_revision": "3410aa2f8c3660e1e10128febbf6250478641264"
     }
   ]
 }

@@ -155,6 +155,21 @@ def test_no_check_scenario_adjudication_needs_no_artificial_roll(state):
     assert result.disposition == "resolved_without_check" and not state.pending_checks
 
 
+def test_starting_a_fight_counts_as_the_turns_effect(state):
+    state.combat.active = True
+    events = [{"name": "roll_dice", "result": {"ok": True, "total": 7}},
+              {"name": "initialize_combat", "result": {"ok": True}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved", evidence_refs=["tool:2"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=events, has_scenario=True,
+        before_actor={}, before_gameplay=turn_resolution.gameplay_snapshot(state))
+    assert result.disposition == "resolved_without_check"
+    state.combat.active = False
+    result = turn_resolution.validate_resolution(decision(state, "resolved", evidence_refs=["tool:2"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=events, has_scenario=True,
+        before_actor={}, before_gameplay=turn_resolution.gameplay_snapshot(state))
+    assert result.disposition == "incomplete"
+
+
 def test_instruction_without_actual_check_is_stopped_but_negation_is_preserved():
     result = MechanicResult(True, "none", [], StateDelta())
     assert "不需要擲骰" in prompt_config.enforce_mechanic_check_consistency("完成這次鬥毆攻擊檢定後，才能確定結果。", result)
