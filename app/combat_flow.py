@@ -1255,6 +1255,10 @@ def resolve_ruling(
         if lookup.definition is None:
             return _ruling(state, action, lookup.reason)
         weapon = lookup.definition
+        if (reloading := _reloading_until(state, actor, weapon)) is not None:
+            # The same rate of fire as at declaration: a paused shot mapped to a slow weapon cannot skip its reload.
+            return _ruling(state, action, f'{weapon.name} is still being reloaded (rate of fire 1/{weapon.rounds_per_shot}): '
+                           f'the next shot is possible in round {reloading}. Cancel this action or map it to another weapon.')
         distance = distance_yards if distance_yards is not None else action.get('distance_yards')
         damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance)
         if damage.damage is None or weapon.attack_mode != action.get('action_kind'):

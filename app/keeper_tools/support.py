@@ -227,7 +227,6 @@ def _characteristics_at(lines: list[str], index: int) -> set[str]:
 
 
 _BLOCK_MAX_LINES = 80
-_DICE_TERM = re.compile(r"\d+d\d+", re.IGNORECASE)
 
 
 def _stat_blocks(text: str) -> list[tuple[str, str]]:
@@ -260,9 +259,9 @@ def _stat_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
-    """Whether every submitted attack carries a numeric skill value and a damage, both written in the block: the
-    provenance vouches for values copied from the scenario, so a value the block does not carry, or an attack that
-    leaves either out (the card would fill in a default), is the model's own and keeps none."""
+    """Whether every submitted attack carries a numeric skill value and a damage expression, both written in the
+    block as submitted: the provenance vouches for values copied from the scenario, so a value the block does not
+    carry, or an attack that leaves either out (the card would fill in a default), is the model's own and keeps none."""
     compact = block.replace(" ", "")
     for attack in attacks:
         if not isinstance(attack, Mapping):
@@ -273,12 +272,9 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
         if not re.search(rf"(?<!\d){int(value)}(?!\d)", block):
             return False
         damage = str(attack.get("damage") or "").casefold().replace(" ", "")
-        if not damage:
-            return False
-        terms = _DICE_TERM.findall(damage)
-        if terms and any(term not in compact for term in terms):
-            return False
-        if not terms and not re.search(rf"(?<!\d){re.escape(damage)}(?!\d)", block):
+        # The whole expression as submitted ("1d6+100" is not the block's "1d6"), not just its dice; a block that
+        # says more than the model copied ("1d3 + damage bonus(1d4)" for "1d3") still carries what was submitted.
+        if not damage or not re.search(r"(?<!\d)" + re.escape(damage) + r"(?![\d])", compact):
             return False
     return True
 

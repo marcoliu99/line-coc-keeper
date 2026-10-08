@@ -311,6 +311,7 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     invented = [{"id": "claw", "skill_value": 75, "damage": "2d8"}]
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented) == given
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "2d8"}]) == given
+    assert support.enemy_source(state, given, None, name="Corbitt", attacks=[{"skill_value": 50, "damage": "1d3+100"}]) == given
     # An attack that leaves the skill or the damage out would be filled with the card's defaults: not copied either.
     for incomplete in ([{}], [{"skill_value": 50}], [{"damage": "1d3"}], [{"skill_value": "50", "damage": "1d3"}]):
         assert support.enemy_source(state, given, None, name="Corbitt", attacks=incomplete) == given, incomplete
@@ -500,6 +501,14 @@ def test_a_crossbow_fired_last_round_is_still_being_reloaded_this_round():
                                          weapon_reference="Crossbow", action_kind="single_shot", distance_yards=10)
     assert not refused["ok"] and "round 3" in refused["error"] and "shot2" not in state.combat.actions
     assert state.combat.phase != "NEEDS_RULING", "a reload is not a ruling: the fight goes on"
+    # A paused shot with an unknown reference, then mapped to the crossbow by a ruling, cannot skip the reload either.
+    paused = combat_flow.declare_action(state, action_id="shot2b", actor_id="pc:pc1", target_id=enemy.combatant_id,
+                                        weapon_reference="the thing in my hands", action_kind="single_shot", distance_yards=10)
+    assert not paused["ok"] and paused["phase"] == "NEEDS_RULING"
+    mapped = combat_flow.resolve_ruling(state, action_id="shot2b", event_id="ruling:shot2b", reason="it is the crossbow",
+                                        decision="resume", weapon_reference="Crossbow")
+    assert not mapped["ok"] and "round 3" in mapped["error"] and state.combat.actions["shot2b"]["needs_ruling"]
+    combat_flow.resolve_ruling(state, action_id="shot2b", event_id="cancel:shot2b", reason="reloading", decision="cancel")
     state.combat.round_number = 3
     allowed = combat_flow.declare_action(state, action_id="shot3", actor_id="pc:pc1", target_id=enemy.combatant_id,
                                          weapon_reference="Crossbow", action_kind="single_shot", distance_yards=10)
