@@ -603,3 +603,13 @@ def test_no_defence_is_narrated_even_when_the_next_enemy_already_waits_on_the_sa
     receipt = outcome.resolved_event["combat_receipt"]
     assert receipt["auto_advanced"]["next_actor"] == "Thug" and receipt["auto_advanced"]["phase"] == "PLAYER_CHOICE"
     assert _load().pending_checks["p1"]["type"] == "choice"
+
+
+def test_a_stuck_enemy_turn_after_an_auto_advance_names_the_ruling_tool_the_narrator_has():
+    from app.keeper_tools import registry
+    assert "resolve_combat_ruling" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
+        "combat_id": "c", "completed": True,
+        "auto_advanced": {"next_actor": "Thing", "round_now": 2, "phase": "NEEDS_RULING",
+                          "enemy_turn": {"ok": False, "error": "NPC special/movement plan requires an explicit ruling"}}}})
+    assert "resolve_combat_ruling" in block and "取消" in block and "advance_combat_turn skip" in block

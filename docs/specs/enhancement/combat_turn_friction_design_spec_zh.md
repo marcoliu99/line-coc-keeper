@@ -29,7 +29,7 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 - Executor 的迭代額度（`executor.tool_iterations`）只有在供應商自己會限制會改狀態的呼叫時（`provider_registry.budgets_actions_separately`：Codex，透過 `counts_against_tool_budget`）才是 `MAX_TOOL_ITERATIONS + SCENARIO_SEARCH_MAX_PER_TURN`：搜尋有自己的上限，它用掉的回合疊加在行動回合之上。只靠迭代次數把關的供應商（Anthropic、OpenAI、Gemini）維持 `MAX_TOOL_ITERATIONS`，否則多出來的回合就是多出來的變更。
 - `combat_flow.advance_combat` 在下一位敵人的計畫或執行失敗時，回傳成功的轉換並附上 `enemy_turn`，而不是只回傳失敗。
 - `turn_resolution._mutation_evidence` 把下列引用過的工具算成回合效果：改變了回合數或目前行動者的 `advance_combat_turn`（玩家自己的回合結束了，或卡住的 NPC 回合被放棄讓戰鬥繼續）、已完成或正在等目標選擇／擲骰的 `run_enemy_combat_plan`、以及 `resolve_combat_ruling`，但都只在這次呼叫讓戰鬥和呼叫前不同時才算（`gameplay_before`／`gameplay_after`）：已完成的計畫再跑一次、或帶同一個事件 id 重送的裁定，回的是記錄下來的回執，不是本回合的效果。玩家一句話讓戰鬥動起來，不該因為被推進的不是他的戰鬥者就吃到退路訊息；敘事者拿到的事實與狀態會說明是誰的回合結束了。
-- `prompt_config` 依戰鬥回執在已結算檢定區塊加上【戰鬥下一步】：行動完成就推進（附要傳的參數）、另一位玩家的選擇或擲骰待處理就不要推進、暫停就先裁定。結算後敘事者的指示也這麼說。
+- `prompt_config` 依戰鬥回執在已結算檢定區塊加上【戰鬥下一步】：行動完成就推進（附要傳的參數）、另一位玩家的選擇或擲骰待處理就不要推進、暫停就先裁定。結算後敘事者的靜態指示依這一行處理：它說引擎已推進就不推，它要你推才推。自動推進後敵方回合卡住也在這裡處理：`resolve_combat_ruling`（為此開放給結算後敘事者）恢復或取消暫停中的敵方行動，`advance_combat_turn skip` 只用在沒有行動可結算的敵人。
 - 戰鬥提示的幸運等級改為一般成功／困難成功／極限成功。提示文字改為 `declare_combat_action` 會執行行動、`run_combat_action` 只用來恢復；`adjust_character` 把敵人傷害指向戰鬥流程；管理式戰鬥一定拒絕的五個工具在描述開頭先說明。
 - 戰鬥中的 `/coc combat next` 回覆戰鬥狀態與目前輪到誰，而不是單純拒絕。
 

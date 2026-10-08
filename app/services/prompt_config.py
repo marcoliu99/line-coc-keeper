@@ -350,10 +350,11 @@ def _combat_turn_step(receipt: dict) -> str:
         waiting = ("" if advanced.get("phase") not in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}
                    else "，正在等玩家的選擇或擲骰")
         enemy = advanced.get("enemy_turn") or {}
-        stuck = f"；下一位敵人的回合跑不動（{enemy.get('error')}），用 resolve_combat_ruling 或 advance_combat_turn skip 處理" \
-            if enemy and enemy.get("ok") is False else ""
+        stuck = (f"；下一位敵人的回合卡住（{enemy.get('error')}）：暫停中的敵方行動用 resolve_combat_ruling 恢復"
+                 "（給武器或距離）或取消；沒有行動可結算的敵人才用 advance_combat_turn skip 跳過"
+                 if enemy and enemy.get("ok") is False else "")
         return (f"\n【戰鬥下一步】這個行動結束後引擎已自動推進：現在輪到 {advanced.get('next_actor', '下一位')}"
-                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}。不要再呼叫 advance_combat_turn；"
+                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}。剛結束的行動不要再呼叫 advance_combat_turn；"
                 "敘事要包含剛結算的結果，以及（若有）敵人接著的攻擊。")
     if receipt.get("settlement_ready"):
         return ("\n【戰鬥下一步】這個行動結束後有一方已全數倒下，戰鬥可以結算：不要呼叫 advance_combat_turn（那會跳過倒下的人再開一輪）。"
