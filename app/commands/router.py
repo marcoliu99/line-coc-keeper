@@ -702,9 +702,10 @@ async def _handle_text_message_impl(
     # jump ahead of queued player messages); otherwise this intentionally
     # bypasses the gate and keeps the plain conversation-lock-only path —
     # see app/locks.py's get_keeper_priority_gate docstring.
-    # A full-row SQLite read and JSON parse (the scenario text included) is kept off the event loop: it would
-    # stall every other channel's turn for its duration.
-    scheduling_state = await asyncio.to_thread(load_state, conversation_id)
+    # Read synchronously on purpose: two players' messages that arrive together must queue for the conversation
+    # lock in arrival order, and a thread hop here would let the later one overtake. The loads under the lock
+    # below are off the loop, where ordering is already settled.
+    scheduling_state = load_state(conversation_id)
     # Retrieval is read-only and keys on the scenario, not on mutable state, so
     # it runs before this turn queues rather than inside the lock the queue is
     # waiting on. build_context re-checks that binding under the lock and

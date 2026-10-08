@@ -16,7 +16,7 @@
 
 - `turn_context.combat_projection(state)`：這一回合需要的戰鬥。完整保留：`order`、`current_index`、`round_number`、`phase`、`enemy_cards`、`effects`、`working_resources`、`interaction`、`settlement`、`range_bands`、`combat_id`、`revision`。精簡：`actions` 只留未完成、需要裁定、本回合與待履行事項，且不含傳遞回執；`plans` 只留本回合未解決者；`events` 只留最近八筆的 `event_id`／`kind`／`revision`／`reason` 並附 `event_count`。移除：`roll_receipts`、`baseline_resources`、`processed_timings`。附註指向 `get_combat_status` 查完整歷史。守密人要抄進工具的東西（戰鬥、互動、行動、計畫的 id）都還在。
 - 五個會被拒絕的工具，說明開頭先寫明會被拒絕以及該改用哪些工具；`adjust_character` 把敵人傷害指向戰鬥流程。工具仍登記、仍可派發。
-- `commands/router.py` 在一般訊息路徑用 `asyncio.to_thread` 讀取狀態（排程快照、鎖內兩次讀取、help 頁面）。
+- `commands/router.py` 在一般訊息路徑取得對話鎖之後用 `asyncio.to_thread` 讀取狀態（每回合一次而不是兩次），help 頁面亦同。鎖之前的排程快照刻意維持同步：兩位玩家幾乎同時送出的訊息必須按到達順序排隊，鎖前換執行緒會讓後到的超車（`test_slow_prefetch_cannot_reorder_player_turns`）。
 
 ## 未做
 

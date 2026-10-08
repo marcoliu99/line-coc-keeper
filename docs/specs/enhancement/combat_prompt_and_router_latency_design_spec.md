@@ -16,7 +16,7 @@ Category: `enhancement`. Status: **implemented**. Base: `main_v2` at `ac6c943` p
 
 - `turn_context.combat_projection(state)`: the battle for this turn. Kept whole: `order`, `current_index`, `round_number`, `phase`, `enemy_cards`, `effects`, `working_resources`, `interaction`, `settlement`, `range_bands`, `combat_id`, `revision`. Trimmed: `actions` to the unfinished, the ones needing a ruling, this round's and obligations, without their delivery receipts; `plans` to this round's unresolved; `events` to the last eight as `event_id`/`kind`/`revision`/`reason` plus `event_count`. Dropped: `roll_receipts`, `baseline_resources`, `processed_timings`. A note points at `get_combat_status` for the full history. Everything the Keeper copies into a tool (combat, interaction, action and plan ids) stays.
 - The descriptions of the five refused tools open with the refusal and the tools to use instead; `adjust_character` points enemy damage at the combat flow. The tools stay registered and dispatchable.
-- `commands/router.py` loads state through `asyncio.to_thread` on the ordinary-message path (the scheduling snapshot, the two loads under the lock, and the help page).
+- `commands/router.py` loads state through `asyncio.to_thread` on the ordinary-message path once the conversation lock is held (one load per turn instead of two) and for the help page. The pre-lock scheduling snapshot stays synchronous on purpose: two players' messages that arrive together must queue in arrival order, and a thread hop before the lock let the later one overtake (`test_slow_prefetch_cannot_reorder_player_turns`).
 
 ## Not done
 
