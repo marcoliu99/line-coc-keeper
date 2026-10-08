@@ -300,13 +300,16 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
                        scenario_text=STAT_BLOCK)
     given = {"attack_mode": "melee"}
-    assert support.enemy_source(state, given, None, name="Walter Corbitt")["sha256"] == "abc123"
-    assert support.enemy_source(state, given, None, name="walter corbitt")["url"] == "scenario:the-haunting"
-    assert support.enemy_source(state, given, None, name="Corbitt 2")["sha256"] == "abc123"  # instance suffix
-    assert support.enemy_source(state, given, None, name="Invented Thing") == given  # not in the scenario: a ruling
-    assert support.enemy_source(state, given, None, name="W") == given  # one character proves nothing
-    # The provenance vouches for the attack values the model copied: they must be written in the named block.
     copied = [{"id": "claw", "skill_value": 50, "damage": "1d3"}]
+    assert support.enemy_source(state, given, None, name="Walter Corbitt", attacks=copied)["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="walter corbitt", attacks=copied)["url"] == "scenario:the-haunting"
+    assert support.enemy_source(state, given, None, name="Corbitt 2", attacks=copied)["sha256"] == "abc123"  # instance suffix
+    assert support.enemy_source(state, given, None, name="Invented Thing", attacks=copied) == given  # not in the scenario
+    assert support.enemy_source(state, given, None, name="W", attacks=copied) == given  # one character proves nothing
+    # No attack submitted means the card's default unarmed attack would ride on the provenance: none is granted.
+    assert support.enemy_source(state, given, None, name="Walter Corbitt") == given
+    assert support.enemy_source(state, given, None, name="Walter Corbitt", attacks=[]) == given
+    # The provenance vouches for the attack values the model copied: they must be written in the named block.
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=copied)["sha256"] == "abc123"
     invented = [{"id": "claw", "skill_value": 75, "damage": "2d8"}]
     assert support.enemy_source(state, given, None, name="Corbitt", attacks=invented) == given
@@ -338,16 +341,18 @@ def test_a_name_the_prose_only_mentions_or_that_stands_near_anothers_block_gets_
     state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
                        scenario_text=prose + STAT_BLOCK)  # Knott and the pirate sit right above Corbitt's block
     given = {"attack_mode": "melee"}
-    assert support.enemy_source(state, given, None, name="Mr. Knott") == given
-    assert support.enemy_source(state, given, None, name="rat") == given  # inside "pirate", and not a block's title
-    assert support.enemy_source(state, given, None, name="Corbitt")["sha256"] == "abc123"  # the block's own title
-    assert support.enemy_source(state, given, None, name="Undead Fiend")["sha256"] == "abc123"  # as the title calls him
+    claw = [{"id": "claw", "skill_value": 50, "damage": "1d3"}]
+    assert support.enemy_source(state, given, None, name="Mr. Knott", attacks=claw) == given
+    assert support.enemy_source(state, given, None, name="rat", attacks=claw) == given  # inside "pirate", not a title
+    assert support.enemy_source(state, given, None, name="Corbitt", attacks=claw)["sha256"] == "abc123"  # the block's title
+    assert support.enemy_source(state, given, None, name="Undead Fiend", attacks=claw)["sha256"] == "abc123"  # as the title calls him
     # The same name with its own block, in Chinese or English, is the scenario's enemy.
+    bite = [{"id": "bite", "skill_value": 40, "damage": "1d3"}]
     state.scenario_text = prose + "\n### 鼠群\n\n力量 35  體質 55  體型 35  敏捷 70\n生命值：9\n格鬥 40%，傷害 1D3\n"
-    assert support.enemy_source(state, given, None, name="鼠群（左）")["sha256"] == "abc123"
-    state.scenario_text = prose + "\n### RAT PACK\n\nSTR 35  CON 55  SIZ 35  POW 50  DEX 70\nHP: 9\n"
-    assert support.enemy_source(state, given, None, name="Rat Pack 2")["sha256"] == "abc123"
-    assert support.enemy_source(state, given, None, name="rats") == given  # not a word of the title
+    assert support.enemy_source(state, given, None, name="鼠群（左）", attacks=bite)["sha256"] == "abc123"
+    state.scenario_text = prose + "\n### RAT PACK\n\nSTR 35  CON 55  SIZ 35  POW 50  DEX 70\nHP: 9\nFighting 40%, damage 1D3\n"
+    assert support.enemy_source(state, given, None, name="Rat Pack 2", attacks=bite)["sha256"] == "abc123"
+    assert support.enemy_source(state, given, None, name="rats", attacks=bite) == given  # not a word of the title
 
 
 def test_the_sheet_s_own_spelling_of_a_weapon_skill_beats_the_base_chance():
@@ -481,9 +486,10 @@ def test_a_heading_over_an_hp_line_alone_is_not_a_stat_block():
     state = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
                        scenario_text="### Rat\n\nHP 10\n\nIt bites.\n")
     given = {"attack_mode": "melee"}
-    assert support.enemy_source(state, given, None, name="Rat") == given
-    state.scenario_text = "### Rat\n\nSTR 35\nCON 55\nHP 10\n"  # one characteristic per line still is a block
-    assert support.enemy_source(state, given, None, name="Rat")["sha256"] == "abc123"
+    bite = [{"id": "bite", "skill_value": 30, "damage": "1d3"}]
+    assert support.enemy_source(state, given, None, name="Rat", attacks=bite) == given
+    state.scenario_text = "### Rat\n\nSTR 35\nCON 55\nHP 10\nBite 30%, damage 1d3\n"  # one characteristic per line still is a block
+    assert support.enemy_source(state, given, None, name="Rat", attacks=bite)["sha256"] == "abc123"
 
 
 def test_a_torch_hit_hands_the_keeper_the_burn_the_table_states():
@@ -580,3 +586,20 @@ def test_no_defence_that_settles_the_shot_is_narrated_from_its_receipt():
     assert "未擲骰" in block and "【戰鬥下一步】" in block
     after = _load()
     assert combat_resources.effective_character(after, after.characters["p1"]).hp == 8
+
+
+def test_no_defence_is_narrated_even_when_the_next_enemy_already_waits_on_the_same_investigator():
+    _battle("p1", enemies=(("Gunman", 90), ("Thug", 85)))
+    state = _load()
+    gunman = next(c for c in state.combat.order if c.name == "Gunman")
+    card = state.combat.enemy_cards[gunman.enemy_card_id]
+    card.source.update(attack_mode="single_shot", distance_yards=10, base_range_yards=20)
+    card.attacks[0].range_band = "near"
+    card.attacks[0].ammo_or_uses = 3
+    _save(state)
+    _enemy_turn([])
+    outcome, _ = _player("/coc check 不閃躲", [20, 20], damage=2)  # the shot lands; the Thug's claw then rolls 20
+    assert outcome.should_finalize, "the settled shot reaches narration although the Thug's attack now waits"
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["auto_advanced"]["next_actor"] == "Thug" and receipt["auto_advanced"]["phase"] == "PLAYER_CHOICE"
+    assert _load().pending_checks["p1"]["type"] == "choice"

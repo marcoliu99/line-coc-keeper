@@ -110,9 +110,11 @@ class ManagedCombatChecks:
             return outcome_for(user_id, pending, reply_text=outcome.get("error", "選擇遭拒"))
         chosen = f"已選擇「{option['label']}」。"
         rolled = state.pending_checks.get(user_id)
-        if option["kind"] == "no_defense" and outcome.get("completed") and rolled is None:
-            # No roll, but the shot was settled by the choice (damage applied, the turn possibly moved on): the
-            # Keeper narrates it from the receipt, as after any settled roll, instead of the thread ending here.
+        if option["kind"] == "no_defense" and outcome.get("completed") and (rolled is None or rolled.get("type") != "skill"):
+            # No roll, but the shot was settled by the choice (damage applied, the turn possibly moved on, even to
+            # the next enemy's attack and its own choice): the Keeper narrates it from the receipt, as after any
+            # settled roll, instead of the thread ending here. Only a skill check left for the player (the wound's
+            # CON roll) keeps the turn with them first.
             settled = _settled_without_roll(state, character, user_id, pending, option, outcome, before)
             resource_bridge.record_choice_control_receipt(state, pending, user_id, option, settled.roll_feedback_text)
             return settled

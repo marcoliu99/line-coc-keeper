@@ -309,7 +309,8 @@ def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[
     values the block does not carry prove nothing about what the model supplies, so the enemy keeps what the model
     gave and needs a ruling."""
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
-    if not wanted or len(wanted) < 2:
+    if not wanted or len(wanted) < 2 or not attacks:
+        # Nothing submitted means the card's default unarmed attack would ride on the provenance: no attack, none.
         return False
     # Word-bounded for letters and digits; CJK characters have no word boundary, so a Chinese name is contained.
     pattern = re.compile(r"(?<![a-z0-9])" + re.escape(wanted) + r"(?![a-z0-9])")
