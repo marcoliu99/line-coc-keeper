@@ -534,14 +534,15 @@ def test_a_crossbow_fired_last_round_is_still_being_reloaded_this_round():
     assert allowed["ok"], allowed
 
 
-def _declare_with_pack(items: list[str], weapon_reference: str, action_id: str) -> dict:
+def _declare_with_pack(items: list[str], weapon_reference: str, action_id: str, **extra) -> dict:
     _battle(first_enemy=False)
     state = _load()
     state.characters["p1"].carried_items.extend(items)
     _save(state)
     enemy = next(c for c in _load().combat.order if c.side == "enemy")
     return _tool("declare_combat_action", {"action_id": action_id, "actor_id": "調查員p1",
-                                           "target_id": enemy.combatant_id, "weapon_reference": weapon_reference})
+                                           "target_id": enemy.combatant_id, "weapon_reference": weapon_reference,
+                                           **extra})
 
 
 def test_a_carried_shuriken_does_not_prove_a_sword():
@@ -550,6 +551,9 @@ def test_a_carried_shuriken_does_not_prove_a_sword():
     # Read the way the declaration is, the pack's "一把生鏽的小刀" is Knife, Small and "刀" names every knife.
     assert _declare_with_pack(["一把生鏽的小刀"], "小刀", "knife")["ok"]
     assert _declare_with_pack(["刀"], "小刀", "knife2")["ok"]
+    # One spear is the thrusting and the thrown weapon: a carried 「長矛」 can be thrown as 「投矛」.
+    declared = _declare_with_pack(["長矛"], "投矛", "throw", action_kind="single_shot", distance_yards=5)
+    assert declared["ok"], declared
     # An entry the catalog knows is what it resolves to, even when another weapon's name is inside its text.
     sword = _declare_with_pack(["thrusting sword"], "Sword", "sword2")
     assert not sword["ok"] and sword["phase"] == "NEEDS_RULING"

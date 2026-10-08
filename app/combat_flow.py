@@ -248,6 +248,13 @@ def _base_range(state: GroupState, actor: combat.Combatant, weapon: combat_rules
     return combat_rules.base_range_for(weapon, character.str_ if character else None)
 
 
+_SAME_OBJECT = {'i.weapon.spear-thrown': 'i.weapon.spear'}  # two attack profiles of one physical weapon
+
+
+def _same_object(weapon_id: str) -> str:
+    return _SAME_OBJECT.get(weapon_id, weapon_id)
+
+
 def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
     """Whether a carried entry is ``weapon``: it resolves to it the way a declaration does (exact name or alias,
     else the longest contained name), lists it among its candidates when it names several of a kind ("刀" for
@@ -258,7 +265,9 @@ def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
         return False
     lookup = combat_rules.resolve_weapon(item)
     if lookup.definition is not None:
-        return lookup.definition.id == weapon.id  # "thrusting sword" is the rapier, so it is not the sword
+        # "thrusting sword" is the rapier, so it is not the sword; a spear is the same physical object whether it is
+        # held to thrust or thrown, so one entry serves both profiles.
+        return _same_object(lookup.definition.id) == _same_object(weapon.id)
     if lookup.candidates:
         return any(candidate.id == weapon.id for candidate in lookup.candidates)
     return weapon.name.strip().casefold() in text
