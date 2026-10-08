@@ -2603,6 +2603,23 @@
       "path": "docs/specs/enhancement/combat_prompt_and_router_latency_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_prompt_and_router_latency_design_spec_zh.md",
       "source_revision": "ac6c943a1d069cb2dbc2ea4afecacc39caf78834"
+    },
+    {
+      "title": "Laya shadow routing: log a fast router's guess beside the Executor",
+      "zh": "Laya 影子分流：在 Executor 旁記錄快速分流器的判斷",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/laya_shadow.py",
+        "app/agents/supervisor.py",
+        "app/config.py",
+        "scripts/experiments/laya_router_eval/eval.mjs",
+        "scripts/experiments/laya_router_eval/server.mjs",
+        "tests/test_laya_shadow.py"
+      ],
+      "path": "docs/specs/enhancement/laya_shadow_routing_design_spec.md",
+      "zh_path": "docs/specs/enhancement/laya_shadow_routing_design_spec_zh.md",
+      "source_revision": "3a6f0bdd898d118e83bf15659569feee3832c7c4"
     }
   ]
 }

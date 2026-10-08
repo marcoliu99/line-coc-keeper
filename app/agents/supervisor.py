@@ -19,6 +19,7 @@ from app.agents import (
     context_builder,
     executor,
     intent_router,
+    laya_shadow,
     narrator,
     obligation_gate,
     reply_pipeline,
@@ -250,6 +251,10 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
     turn_phases.note(route=turn.intent.lower())
 
     _logger.info(f"Intent classified as: {turn.intent}")
+    if turn.turn_kind == "player_action" and turn.intent != "OOC_ASSISTANT":
+        actor = turn.state.get_active_character(turn.user_id)
+        laya_shadow.start(turn.text, character=actor.name if actor else turn.display_name,
+                          in_combat=turn.state.combat.active)
 
     # KP Assistant uses its own provider/tool/Guard/commit path. Its OOC
     # replies enter kp_ooc_log; explicit or tool-created canon enters log.

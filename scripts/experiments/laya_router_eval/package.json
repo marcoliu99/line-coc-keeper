@@ -1,0 +1,8 @@
+{
+  "name": "laya-router-eval",
+  "private": true,
+  "type": "module",
+  "description": "Shadow-mode routing experiment: score Laya's guesses against what the Executor called.",
+  "engines": { "node": ">=20" },
+  "dependencies": { "@receptron/laya": "*" }
+}
