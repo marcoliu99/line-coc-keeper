@@ -262,29 +262,40 @@ def _stat_blocks(text: str) -> list[tuple[str, str]]:
     return blocks
 
 
+_ATTACK_LINE = re.compile(r"fighting|格鬥|攻擊|attack|damage|傷害|bite|claw|咬|爪|weapon|武器", re.IGNORECASE)
+_ATTACK_WINDOW_LINES = 3
+
+
 def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
-    """Whether every submitted attack carries a numeric skill value and a damage expression, both written in the
-    block as submitted: the provenance vouches for values copied from the scenario, so a value the block does not
-    carry, or an attack that leaves either out (the card would fill in a default), is the model's own and keeps none."""
+    """Whether every submitted attack is written in the block as an attack: a numeric skill value given as a
+    percentage, or on a line that speaks of fighting, attacks or damage (never a characteristic such as CON 55),
+    with the submitted damage expression on that line or the next two. The provenance vouches for values copied
+    from the scenario, so an attack the block does not state this way, or one that leaves the skill or the damage
+    out (the card would fill in a default), is the model's own and keeps none."""
     # "1D3 + damage bonus(1D4)" is two dice, the weapon's and the creature's damage bonus: the Keeper may submit
     # the weapon's die alone or both, so the bonus wording is folded into its value (given in place, or on the
     # block's own "Damage bonus: +1D4" line) and either spelling is in the block.
     compact = _DAMAGE_BONUS_WRAPPED.sub(r"\1", _DAMAGE_BONUS_TRAILING.sub(r"\1", block.replace(" ", "")))
     if (bonus := _DAMAGE_BONUS_LINE.search(compact)) is not None:
         compact = _DAMAGE_BONUS_BARE.sub(bonus.group(1).lstrip("+"), compact)
-    compact = compact.replace("+-", "-").replace("++", "+")
+    lines = compact.replace("+-", "-").replace("++", "+").splitlines()
     for attack in attacks:
         if not isinstance(attack, Mapping):
             return False
         value = attack.get("skill_value")
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
-        if not re.search(rf"(?<!\d){int(value)}(?!\d)", block):
-            return False
         damage = str(attack.get("damage") or "").casefold().replace(" ", "")
-        # The whole expression as submitted ("1d6+100" is not the block's "1d6"), not just its dice; a block that
-        # says more than the model copied ("1d3 + damage bonus(1d4)" for "1d3") still carries what was submitted.
-        if not damage or not re.search(r"(?<!\d)" + re.escape(damage) + r"(?![\d])", compact):
+        if not damage:
+            return False
+        skill = re.compile(rf"(?<!\d){int(value)}(?!\d)")
+        wanted = re.compile(r"(?<!\d)" + re.escape(damage) + r"(?!\d)")
+        for index, line in enumerate(lines):
+            states_skill = (re.search(rf"(?<!\d){int(value)}\s*[%％]", line) is not None
+                            or (_ATTACK_LINE.search(line) is not None and skill.search(line) is not None))
+            if states_skill and wanted.search("\n".join(lines[index:index + _ATTACK_WINDOW_LINES])):
+                break
+        else:
             return False
     return True
 

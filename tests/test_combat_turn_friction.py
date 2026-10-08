@@ -320,6 +320,11 @@ def test_an_enemy_whose_stat_block_the_scenario_carries_gets_its_provenance_with
     assert support.enemy_source(zh, given, None, name="鼠群", attacks=[{"skill_value": 40, "damage": "1d3-1"}])["sha256"] == "abc123"
     zh.scenario_text = "### Rat Pack\n\nSTR 35  CON 55\nFighting 40%, damage 1D3 + damage bonus(-1)\n"
     assert support.enemy_source(zh, given, None, name="Rat Pack", attacks=[{"skill_value": 40, "damage": "1D3 - 1"}])["sha256"] == "abc123"
+    # A number the block gives as a characteristic, not as an attack, proves no attack: CON 55 is not a 55% Laser.
+    laser = GroupState(group_id="prov", active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                       scenario_text="### Thing\n\nSTR 40  CON 55  SIZ 60\nHP 11\nBite 30%, damage 1d3\n")
+    assert support.enemy_source(laser, given, None, name="Thing", attacks=[{"skill_value": 55, "damage": "1d3"}]) == given
+    assert support.enemy_source(laser, given, None, name="Thing", attacks=[{"skill_value": 30, "damage": "1d3"}])["sha256"] == "abc123"
     # An attack that leaves the skill or the damage out would be filled with the card's defaults: not copied either.
     for incomplete in ([{}], [{"skill_value": 50}], [{"damage": "1d3"}], [{"skill_value": "50", "damage": "1d3"}]):
         assert support.enemy_source(state, given, None, name="Corbitt", attacks=incomplete) == given, incomplete
@@ -539,6 +544,10 @@ def test_a_carried_shuriken_does_not_prove_a_sword():
     # Read the way the declaration is, the pack's "一把生鏽的小刀" is Knife, Small and "刀" names every knife.
     assert _declare_with_pack(["一把生鏽的小刀"], "小刀", "knife")["ok"]
     assert _declare_with_pack(["刀"], "小刀", "knife2")["ok"]
+    # An entry the catalog knows is what it resolves to, even when another weapon's name is inside its text.
+    sword = _declare_with_pack(["thrusting sword"], "Sword", "sword2")
+    assert not sword["ok"] and sword["phase"] == "NEEDS_RULING"
+    assert _declare_with_pack(["thrusting sword"], "rapier", "rapier")["ok"]
 
 
 def test_a_skip_in_a_one_combatant_fight_needs_an_explicit_id_even_by_combatant_id():

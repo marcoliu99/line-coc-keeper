@@ -242,16 +242,17 @@ def _base_range(state: GroupState, actor: combat.Combatant, weapon: combat_rules
 def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
     """Whether a carried entry is ``weapon``: it resolves to it the way a declaration does (exact name or alias,
     else the longest contained name), lists it among its candidates when it names several of a kind ("刀" for
-    any knife), or carries the weapon's full name (a scenario weapon the catalog does not know)."""
+    any knife), or, only when the catalog knows nothing by that text, carries the weapon's full name (a scenario
+    weapon the catalog does not list)."""
     text = item.strip().casefold()
     if not text:
         return False
-    if weapon.name.strip().casefold() in text:
-        return True
     lookup = combat_rules.resolve_weapon(item)
     if lookup.definition is not None:
-        return lookup.definition.id == weapon.id
-    return any(candidate.id == weapon.id for candidate in lookup.candidates)
+        return lookup.definition.id == weapon.id  # "thrusting sword" is the rapier, so it is not the sword
+    if lookup.candidates:
+        return any(candidate.id == weapon.id for candidate in lookup.candidates)
+    return weapon.name.strip().casefold() in text
 
 
 def _weapon_actor_evidence(
