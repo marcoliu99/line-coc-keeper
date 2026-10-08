@@ -301,21 +301,35 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
 
 
 def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[str, Any]] = ()) -> bool:
-    """Whether the loaded scenario text carries a stat block titled with ``name`` that states the ``attacks`` given:
-    the Keeper's spelling, trimmed and case-insensitive, without the instance suffix the prompt asks for when several
-    of one kind are active (「魚人（左）」, "Cultist 2"), found as a whole word in a stat block's own heading, with
-    every submitted attack's skill value and damage dice written in that block. A name the prose only mentions, one
-    that merely stands near someone else's block, a short name inside another word ("rat" in "pirate"), or attack
-    values the block does not carry prove nothing about what the model supplies, so the enemy keeps what the model
-    gave and needs a ruling."""
+    """Whether the loaded scenario text carries a stat block for this enemy, found either way:
+
+    - by name: the Keeper's spelling, trimmed and case-insensitive, without the instance suffix the prompt asks for
+      when several of one kind are active (「魚人（左）」, "Cultist 2"), as a whole word in a stat block's own heading;
+    - by attack values: every submitted attack's skill value and damage dice written as an attack in one block, so a
+      Chinese name for an English heading (「鼠群」 for RAT PACK) still finds it.
+
+    Either way the attacks must be submitted, each with a skill value and damage: one left out would be filled with the
+    card's default, and none at all would let the default unarmed attack ride on the provenance. A name the prose only
+    mentions, a short name inside another word ("rat" in "pirate"), or values no block carries keep what the model gave
+    and need a ruling."""
+    if not attacks or not all(_well_formed(attack) for attack in attacks):
+        return False
+    blocks = _stat_blocks(state.scenario_text or "")
+    if any(_attacks_in_block(attacks, block) for _, block in blocks):
+        return True
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
-    if not wanted or len(wanted) < 2 or not attacks:
-        # Nothing submitted means the card's default unarmed attack would ride on the provenance: no attack, none.
+    if len(wanted) < 2:
         return False
     # Word-bounded for letters and digits; CJK characters have no word boundary, so a Chinese name is contained.
     pattern = re.compile(r"(?<![a-z0-9])" + re.escape(wanted) + r"(?![a-z0-9])")
-    return any(pattern.search(heading) and _attacks_in_block(attacks, block)
-               for heading, block in _stat_blocks(state.scenario_text or ""))
+    return any(pattern.search(heading) for heading, _ in blocks)
+
+
+def _well_formed(attack: Any) -> bool:
+    if not isinstance(attack, Mapping):
+        return False
+    value = attack.get("skill_value")
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and bool(str(attack.get("damage") or "").strip())
 
 
 def find_npc_index_entry(
