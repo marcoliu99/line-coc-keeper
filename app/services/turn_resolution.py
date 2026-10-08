@@ -98,8 +98,8 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             )
         if result.get('ok') and f'tool:{i}' in refs and name in {'initialize_combat', 'add_npc_to_combat'}:
             # Waking or starting a fight is itself the turn's effect, even though no check was rolled.
-            def combatants(snapshot: dict | None) -> set[str]:
-                return {c.get('combatant_id') for c in ((snapshot or {}).get('combat') or {}).get('order') or []}
+            def combatants(snapshot: dict | None) -> Counter[str]:
+                return Counter(c.get('combatant_id') for c in ((snapshot or {}).get('combat') or {}).get('order') or [])
             # A reused enemy changes nothing, so only a combatant this very call added counts.
             combat_completed = combat_completed or bool(
                 state.combat.active and combatants(event.get('gameplay_after')) - combatants(event.get('gameplay_before')))
