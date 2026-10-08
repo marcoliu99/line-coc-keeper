@@ -659,3 +659,21 @@ def test_a_specialisation_written_the_way_players_write_it_is_the_investigators_
     assert combat_flow._skill(sheet, "fighting-axe") == ("格鬥（斧）", 45)
     # A bare family name names no specialisation: the sword is still at its base chance.
     assert combat_flow._skill(sheet, "fighting-sword") == ("格鬥（劍）", 20)
+
+
+def test_an_enemy_without_a_listed_dodge_takes_the_blow_instead_of_fighting_back():
+    # The soak run's rat pack: registered with attacks only and no reviewed source. It used to need counter
+    # provenance and stalled every swing on a ruling; NPCs no longer Fight Back, so the swing just lands.
+    _battle(first_enemy=False, enemy_hp=1)
+    state = _load()
+    card = next(iter(state.combat.enemy_cards.values()))
+    card.skills, card.source = {}, {}
+    _save(state)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    outcome, script = _player("/coc check", [10])  # one roll: the attack; the enemy does not defend
+    assert outcome.should_finalize and script.rolls_taken == 1
+    swing = _load().combat.actions["swing"]
+    assert swing["completed"] and not swing.get("needs_ruling") and swing["defense_kind"] == "no_defense"
+    assert next(c for c in _load().combat.order if c.side == "enemy").defeated
