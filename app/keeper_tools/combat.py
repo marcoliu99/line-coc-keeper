@@ -278,16 +278,17 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
             tool_input = dict(call.input)
             if current is None:
                 return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
-            # Resolve the actor the way the engine does: the current actor's own fields first, so a same-named
-            # combatant further down the order is not picked over the one whose turn it is.
-            reference = str(tool_input.get('actor_id') or '')
-            named = (current if reference in {current.combatant_id, current.character_id, current.name, current.display_name}
-                     else combat.find_combatant(target_state, reference))
+            named = combat.resolve_actor_reference(target_state, str(tool_input.get('actor_id') or ''))
             if not str(tool_input.get('event_id') or '').strip():
-                # One advance per actor per round, so the id can be derived: a retry of the same advance replays it,
-                # and the Keeper no longer has to invent an id it was refused for omitting. An unknown reference falls
-                # back to the current actor so the refusal can name them.
-                tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{(named or current).combatant_id}'
+                # The id is derived from the battle, round, actor and how many actions the actor has completed this
+                # round (a skip adds none, so its retry derives the same id): a retry of the same advance replays it,
+                # a re-ordered round that brings the actor back after another action gets a new id, and the Keeper
+                # no longer has to invent an id it was refused for omitting. An unknown reference falls back to the
+                # current actor so the refusal can name them.
+                actor = named or current
+                acted = sum(1 for a in managed.actions.values() if a.get('actor_id') == actor.combatant_id
+                            and a.get('completed') and a.get('round') == managed.round_number and a.get('kind') != 'skip')
+                tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{actor.combatant_id}:{acted}'
             skipper = named if tool_input.get('skip') else None
             blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
             if tool_input.get('skip'):
@@ -311,9 +312,11 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                 skip=bool(tool_input.get('skip')),
             ))
             if result.get('ok') and tool_input.get('skip') and skipper is not None and skipper.side == 'enemy':
-                result = {**result, 'note': (
-                    f'{skipper.display_name} took no action this round because {blocker}. If the scenario gives it '
-                    'attacks, register them with add_npc_to_combat (same name, with attacks and source) so it can act.')}
+                # Beside the result, not in its receipt: what follows may already be the next enemy's attack.
+                result = {**result, 'skipped': {
+                    'name': skipper.display_name, 'reason': blocker,
+                    'hint': 'If the scenario gives this enemy attacks, register them with add_npc_to_combat '
+                            '(same name, with attacks and source) so it can act next round.'}}
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
 

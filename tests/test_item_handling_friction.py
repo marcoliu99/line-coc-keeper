@@ -110,10 +110,12 @@ def test_a_refused_removal_followed_by_the_right_name_still_completes_the_turn()
     refused = _event("remove_carried_item", {"ok": False, "refusal": "item_not_held", "investigator": "Ann",
                                              "carried_items": ["地下室鑰匙"], "changed": False},
                      {"Ann": ["地下室鑰匙"]}, gameplay)
+    refused["arguments"] = {"investigator": "Ann", "item": "鑰匙"}
     state.characters["u1"].carried_items = []
     removed = _event("remove_carried_item", {"ok": True, "investigator": "Ann", "character_id": state.characters["u1"].character_id,
                                              "carried_items": [], "removed": "地下室鑰匙", "changed": True},
                      {"Ann": ["地下室鑰匙"]}, gameplay)
+    removed["arguments"] = {"investigator": "Ann", "item": "地下室鑰匙"}
     resolution = _validate(state, [refused, removed], "resolved_without_check", ["tool:2"], gameplay)
     assert resolution.disposition == "resolved_without_check", resolution.reason
 
@@ -198,3 +200,30 @@ def test_a_refused_transfer_is_never_hidden_by_a_later_unrelated_transfer():
     refused["arguments"] = {"from": "Ann", "to": "Bob", "item": "X"}
     assert turn_resolution._changed_nothing(refused, [{"name": "transfer_item", "arguments": {"from": "Ann", "to": "Cal", "item": "Y"},
                                                        "result": {"ok": True, "changed": True}}]) is False
+
+
+def test_a_one_character_item_is_not_removed_by_a_word_that_contains_it():
+    state = _state(["信", "手電筒"])
+    result = _call(state, "remove_carried_item", "信號槍")
+    assert not result["ok"] and result["refusal"] == "item_not_held"
+    assert state.characters["u1"].carried_items == ["信", "手電筒"]
+    assert _call(state, "remove_carried_item", "信")["removed"] == "信"
+
+
+def test_the_bow_keeps_its_one_character_name():
+    resolution = combat_rules.resolve_weapon("弓")
+    assert resolution.status == "resolved" and resolution.definition.id == "i.weapon.bow"
+
+
+def test_a_refusal_is_only_hidden_by_a_retry_of_the_same_item():
+    state = _state(["手電筒"])
+    gameplay = turn_resolution.gameplay_snapshot(state)
+    refused = _event("remove_carried_item", {"ok": False, "refusal": "item_not_held"}, {"Ann": ["手電筒"]}, gameplay)
+    refused["arguments"] = {"investigator": "Ann", "item": "鑰匙"}
+    other = _event("remove_carried_item", {"ok": True, "investigator": "Ann", "carried_items": [], "removed": "手電筒", "changed": True},
+                   {"Ann": ["手電筒"]}, gameplay)
+    other["arguments"] = {"investigator": "Ann", "item": "手電筒"}
+    assert turn_resolution._changed_nothing(refused, [other]) is False
+    retry = {**other, "arguments": {"investigator": "Ann", "item": "地下室鑰匙"},
+             "result": {**other["result"], "removed": "地下室鑰匙"}}
+    assert turn_resolution._changed_nothing(refused, [retry]) is True

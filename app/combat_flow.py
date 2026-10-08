@@ -712,10 +712,7 @@ def advance_combat(
         return pending
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     # The Keeper often passes the character ID or name instead of the combatant ID; any of them names the same actor.
-    # Same-named combatants share a name, so check the current one's own fields before the global lookup.
-    named = current is not None and actor_id in {
-        current.combatant_id, current.character_id, current.name, current.display_name}
-    if not current or not event_id or not actor_id or not (named or combat.find_combatant(state, actor_id) is current):
+    if not current or not event_id or not actor_id or combat.resolve_actor_reference(state, actor_id) is not current:
         who = f' It is {current.display_name or current.name} ({current.combatant_id}): pass that as actor_id.' if current else ''
         return _error(f'Only the current actor may advance with a stable event ID.{who}')
     actor_id = current.combatant_id

@@ -21,10 +21,11 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 ## 修改
 
 - `ManagedCombatChecks._choose` 在同一筆交易裡直接擲剛登記的防守檢定。一次點擊完成選擇與擲骰；幸運決定若有提供仍是另一次點擊。選擇回執存下擲骰結果，重複點擊會重播。`_defense_choice` 在待處理選擇上記 `attacker_name` 與 `attacker_tier`；提示會說是誰攻擊、每個選項需要什麼。
-- `advance_combat_turn` 省略 `event_id` 時自動推導為 `<combat_id>:advance:round<N>:<行動者戰鬥者 ID>`（行動者可用任何指稱，PR #241）。同一次推進的重試會重播；守密人不會再因為漏掉 id 被拒。
-- `skip=true` 接受目前行動的 NPC 友軍，以及引擎無法執行其回合的目前敵人（`combat.enemy_turn_blocker`：沒有卡、卡不完整或沒有攻擊）；結果的 note 說明原因與符合規則的替代做法（用 `add_npc_to_combat` 登記劇本的攻擊）。有攻擊的敵人仍不能跳過；調查員的回合仍只有玩家自己能跳。
+- `advance_combat_turn` 省略 `event_id` 時自動推導為 `<combat_id>:advance:round<N>:<行動者戰鬥者 ID>:<該行動者本輪已完成的行動數，不含跳過>`。同一次推進的重試會重播（跳過不計入行動數，所以它的重試推導出同一個 id）；同一輪被 `set_initiative` 調回、又做了另一個行動的行動者會得到新 id。行動者指稱經 `combat.resolve_actor_reference` 解析（先比對目前行動者自己的欄位，再全域查找；PR #241 的規則，現在引擎與工具共用）。守密人不會再因為漏掉 id 被拒。同一行動者在被重排的同一輪跳過兩次仍會推導出同一個 id，第二次會重播第一次。
+- `skip=true` 接受目前行動的 NPC 友軍，以及引擎無法執行其回合的目前敵人（`combat.enemy_turn_blocker`：沒有卡，或攻擊與能力都沒登記的 `incomplete` 卡）；結果的 `skipped` 欄位（放在下一位行動者回傳的內容旁邊）說明原因與符合規則的替代做法（用 `add_npc_to_combat` 登記劇本的攻擊）。有攻擊的敵人仍不能跳過；調查員的回合仍只有玩家自己能跳。
+- `prompt_config._combat_next_step` 把待履行的 CON 檢定（`INJURY_CHECK`）當成其他待擲骰一樣處理：不要推進。
 - `combat_flow.advance_combat` 在下一位敵人的計畫或執行失敗時，回傳成功的轉換並附上 `enemy_turn`，而不是只回傳失敗。
-- `turn_resolution._mutation_evidence` 把引用過、且改變了回合數或目前行動者的 `advance_combat_turn`、已完成或正在等防守方的 `run_enemy_combat_plan`、以及 `resolve_combat_ruling` 算成回合效果。
+- `turn_resolution._mutation_evidence` 把下列引用過的工具算成回合效果：結束了行動玩家自己戰鬥者回合（回合數或目前行動者改變）的 `advance_combat_turn`、攻擊目標是該玩家且已完成或正在等他選擇／擲骰的 `run_enemy_combat_plan`、以及該玩家戰鬥者參與的行動的 `resolve_combat_ruling`。推進別人的回合不是這位玩家的行動；守密人該用 `deferred` 回答。
 - `prompt_config` 依戰鬥回執在已結算檢定區塊加上【戰鬥下一步】：行動完成就推進（附要傳的參數）、另一位玩家的選擇或擲骰待處理就不要推進、暫停就先裁定。結算後敘事者的指示也這麼說。
 - 戰鬥提示的幸運等級改為一般成功／困難成功／極限成功。提示文字改為 `declare_combat_action` 會執行行動、`run_combat_action` 只用來恢復；`adjust_character` 把敵人傷害指向戰鬥流程；管理式戰鬥一定拒絕的五個工具在描述開頭先說明。
 - 戰鬥中的 `/coc combat next` 回覆戰鬥狀態與目前輪到誰，而不是單純拒絕。

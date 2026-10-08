@@ -65,8 +65,9 @@ def match_carried_items(items: list[str], reference: str) -> list[str]:
     """The entries of ``items`` that ``reference`` names, as stored.
 
     The Keeper rarely reproduces an item's text exactly ("鑰匙" for "地下室鑰匙", "Knife" for "knife"), so the
-    match is exact first, then case-insensitive, then the unique entry that contains the reference or is contained
-    by it. Several distinct entries matching that way is an ambiguity the caller must report, not pick from.
+    match is exact first, then case-insensitive, then the entries that contain the reference or (when at least two
+    characters long) are contained by it. Several distinct entries matching that way is an ambiguity the caller
+    must report, not pick from.
     """
     wanted = reference.strip()
     if not wanted:
@@ -75,7 +76,10 @@ def match_carried_items(items: list[str], reference: str) -> list[str]:
     exact = [entry for entry in items if entry.strip().casefold() == key]
     if exact:
         return exact
-    return [entry for entry in items if key in entry.casefold() or entry.strip().casefold() in key]
+    # The reverse direction (the stored entry inside the reference) needs an entry of two characters or more: a
+    # one-character entry such as 信 is inside too many unrelated words (信號槍) to prove it is the thing named.
+    return [entry for entry in items
+            if key in entry.casefold() or (len(entry.strip()) > 1 and entry.strip().casefold() in key)]
 
 
 def add_carried_item(call: ToolCall) -> dict[str, Any]:

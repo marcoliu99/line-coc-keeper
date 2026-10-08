@@ -55,7 +55,7 @@ def test_advance_derives_its_event_id_and_a_retry_replays():
     assert _load().combat.current_index == 1
     again = _tool("advance_combat_turn", {"actor_id": enemy_id})
     assert again["ok"] and _load().combat.current_index == 1, "the derived id makes a retry a replay"
-    assert any(e["event_id"].endswith(f":advance:round1:{enemy_id}") for e in _load().combat.events)
+    assert any(e["event_id"].endswith(f":advance:round1:{enemy_id}:1") for e in _load().combat.events)
 
 
 def _hp_only_enemy(name: str = "Thing", dex: int = 95) -> None:
@@ -102,19 +102,27 @@ def test_an_advance_that_moved_the_turn_reports_the_stuck_enemy_beside_it():
     advanced = _tool("advance_combat_turn", {"actor_id": "調查員p1", "skip": True})
     assert advanced["ok"], advanced
     assert advanced["enemy_turn"]["ok"] is False and _load().combat.order[_load().combat.current_index].name == "Thing"
+    skipped = _tool("advance_combat_turn", {"actor_id": "Thing", "skip": True})
+    assert skipped["ok"] and skipped["skipped"]["name"] == "Thing" and "add_npc_to_combat" in skipped["skipped"]["hint"]
 
 
-def test_a_cited_advance_that_moved_the_turn_counts_as_the_turns_effect():
-    _battle()
+def test_a_cited_advance_counts_only_when_it_ended_the_players_own_turn():
+    _battle(first_enemy=False)  # the investigator is current
     state = _load()
     before = turn_resolution.gameplay_snapshot(state)
     after = turn_resolution.gameplay_snapshot(state)
-    after["combat"]["current_index"] = 1
+    after["combat"]["current_index"] = (before["combat"]["current_index"] + 1) % len(before["combat"]["order"])
     event = {"name": "advance_combat_turn", "arguments": {"actor_id": "x"}, "result": {"ok": True},
              "inventory_before": {}, "gameplay_before": before, "gameplay_after": after}
     assert turn_resolution._mutation_evidence(state, [event], ["tool:1"], "調查員p1") == (True, False)
     stuck = {**event, "gameplay_after": before}
     assert turn_resolution._mutation_evidence(state, [stuck], ["tool:1"], "調查員p1") == (False, False)
+    # Moving the enemy's turn along is not this player's action.
+    enemy_turn = turn_resolution.gameplay_snapshot(state)
+    enemy_turn["combat"]["current_index"] = next(
+        i for i, c in enumerate(enemy_turn["combat"]["order"]) if c["side"] == "enemy")
+    moved = {**event, "gameplay_before": enemy_turn, "gameplay_after": after}
+    assert turn_resolution._mutation_evidence(state, [moved], ["tool:1"], "調查員p1") == (False, False)
 
 
 def test_the_settled_check_block_tells_the_keeper_what_the_battle_needs_next():
@@ -148,7 +156,7 @@ def test_the_second_of_two_same_named_allies_is_skipped_by_name_when_it_is_curre
     second = _load().combat.order[guards[1]].combatant_id
     skipped = _tool("advance_combat_turn", {"actor_id": "Guard", "skip": True})
     assert skipped["ok"], skipped
-    assert any(e["event_id"].endswith(f":advance:round1:{second}") for e in _load().combat.events)
+    assert any(e["event_id"].endswith(f":advance:round1:{second}:0") for e in _load().combat.events)
     assert _load().combat.order[_load().combat.current_index].combatant_id != second
 
 

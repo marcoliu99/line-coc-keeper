@@ -822,12 +822,11 @@ async def _handle_ordinary_text_message_locked(
     async with held:
         # Reload under the lock. The snapshot above was taken before it, so
         # anything committed while this turn queued for it is missing from it.
-        state = await asyncio.to_thread(load_state, conversation_id)
         if not is_kp_assistant:
             resolved_location = await asyncio.to_thread(
                 resolve_map_action, conversation_id, user_id, text
             )
-            state = await asyncio.to_thread(load_state, conversation_id)
+        state = await asyncio.to_thread(load_state, conversation_id)
         # The hold and the turn share one id, so a lock.held_too_long names the turn that holds it.
         turn_id = handoff.turn_id if handoff is not None else observability.new_id("turn")
         with observability.context(turn_id=turn_id):

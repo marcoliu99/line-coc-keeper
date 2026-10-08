@@ -733,6 +733,17 @@ def character_for_combatant(state: GroupState, combatant: Combatant) -> Characte
     return matches[0] if len(matches) == 1 else None
 
 
+def resolve_actor_reference(state: GroupState, reference: str) -> Combatant | None:
+    """The combatant a Keeper's ``actor_id`` names: the current actor when any of its own fields match, else the
+    global lookup. Same-named combatants share a name, so the one whose turn it is wins."""
+    combat = state.combat
+    current = combat.order[combat.current_index] if combat.order and 0 <= combat.current_index < len(combat.order) else None
+    if current is not None and reference and reference in {
+            current.combatant_id, current.character_id, current.name, current.display_name}:
+        return current
+    return find_combatant(state, reference) if reference else None
+
+
 def enemy_turn_blocker(state: GroupState, combatant: Combatant) -> str:
     """Why the engine cannot play this enemy's turn, or an empty string when it can.
 

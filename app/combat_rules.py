@@ -218,7 +218,7 @@ def resolve_weapon(
     scenario_definitions: tuple[WeaponDefinition, ...] = (),
     instance: WeaponInstance | None = None,
 ) -> WeaponResolution:
-    """Exact ID/name/declared alias only; scenario > explicit pin > generic.
+    """Exact ID/name/alias, else the longest contained name; scenario > explicit pin > generic.
 
     A reference must identify the supplied instance or its pinned type; merely
     supplying an instance never authorizes substituting it for an unknown name.
