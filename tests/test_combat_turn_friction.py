@@ -2,7 +2,9 @@
 (docs/specs/enhancement/combat_turn_friction_design_spec.md). Built on the B-scenario helpers."""
 from __future__ import annotations
 
-from app import combat, combat_resources
+from unittest.mock import patch
+
+from app import combat, combat_resources, config
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
@@ -48,7 +50,8 @@ def test_a_near_miss_defence_offers_luck_in_chinese():
 def test_advance_derives_its_event_id_and_a_retry_replays():
     _battle()
     _enemy_turn([20])
-    _player("/coc check 閃避", [90])  # the claw hits; the enemy's action is complete
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):  # the Keeper ends this one by hand
+        _player("/coc check 閃避", [90])  # the claw hits; the enemy's action is complete
     enemy_id = "enemy:" + _load().combat.order[0].enemy_card_id
     advanced = _tool("advance_combat_turn", {"actor_id": "Cultist"})
     assert advanced["ok"], advanced
@@ -186,3 +189,84 @@ def test_an_owed_con_check_tells_the_keeper_not_to_advance():
     block = prompt_config.build_resolved_check_outcome_block(
         {"combat_receipt": {"combat_id": "c1", "action_id": "a", "phase": "INJURY_CHECK", "completed": False}})
     assert "不要推進回合" in block
+
+
+def test_a_settled_attack_ends_the_turn_and_plays_the_enemy_to_the_defence_choice():
+    _battle(first_enemy=False)  # the investigator is up
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    declared = _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                               "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    assert declared["ok"] and declared["phase"] == "PLAYER_ROLL"
+    # brawl 60 rolls 10 (Hard); the Cultist's dodge 20 rolls 90 (fail); its claw then rolls 20 on the next turn
+    outcome, _ = _player("/coc check", [10, 90, 20])
+    assert outcome.should_finalize
+    state = _load()
+    swing = state.combat.actions["swing"]
+    assert swing["completed"] and swing["receipt"]["auto_advanced"]["next_actor"] == "Cultist"
+    assert swing["receipt"]["auto_advanced"]["phase"] == "PLAYER_CHOICE" and state.combat.phase == "PLAYER_CHOICE"
+    assert state.pending_checks["p1"]["type"] == "choice", "the enemy's turn already reached the player's defence"
+    assert sum(1 for e in state.combat.events if e["event_id"].endswith(":advance:auto:swing")) == 1
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["auto_advanced"]["next_actor"] == "Cultist"
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
+    assert "引擎已自動推進" in block and "不要再呼叫 advance_combat_turn" in block
+    again = _tool("advance_combat_turn", {"actor_id": "調查員p1"})
+    assert not again["ok"], "the turn already moved; a second advance is refused, not applied"
+
+
+def test_a_settled_attack_does_not_advance_once_every_enemy_is_down():
+    _battle(first_enemy=False, enemy_hp=1)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    _player("/coc check", [10, 90])  # the hit lands; the enemy's dodge fails
+    state = _load()
+    assert next(c for c in state.combat.order if c.side == "enemy").defeated
+    assert "auto_advanced" not in state.combat.actions["swing"]["receipt"]
+    assert state.combat.order[state.combat.current_index].name == "調查員p1" and state.combat.phase == "READY"
+    assert "戰鬥可以結算" in combat.status_text(state)
+
+
+def test_a_settled_enemy_attack_ends_the_enemys_turn():
+    _battle()
+    _enemy_turn([20])
+    outcome, _ = _player("/coc check 閃避", [90])  # the claw hits
+    state = _load()
+    assert outcome.should_finalize and state.combat.order[state.combat.current_index].is_pc
+    assert outcome.resolved_event["combat_receipt"]["auto_advanced"]["next_actor"] == "調查員p1"
+
+
+def test_auto_advance_can_be_switched_off():
+    _battle()
+    _enemy_turn([20])
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        _player("/coc check 閃避", [90])
+    state = _load()
+    assert state.combat.order[state.combat.current_index].side == "enemy"
+    assert "auto_advanced" not in next(a for a in state.combat.actions.values() if a.get("npc_attack_id"))["receipt"]
+
+
+def test_a_spear_attack_uses_the_base_skill_when_the_sheet_has_none():
+    _battle(first_enemy=False)
+    state = _load()
+    state.characters["p1"].carried_items.append("一把長矛")
+    _save(state)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    declared = _tool("declare_combat_action", {"action_id": "thrust", "actor_id": "調查員p1",
+                                               "target_id": enemy.combatant_id, "weapon_reference": "長矛"})
+    assert declared["ok"] and declared["phase"] == "PLAYER_ROLL", declared
+    action = _load().combat.actions["thrust"]
+    assert (action["skill"], action["skill_value"], action["damage"]) == ("格鬥（矛）", 20, "1d8+1")
+
+
+def test_a_thrown_spear_takes_its_range_from_the_throwers_str():
+    _battle(first_enemy=False)
+    state = _load()
+    state.characters["p1"].carried_items.append("投矛")
+    state.characters["p1"].str_ = 60  # base range 12 yards
+    _save(state)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    near = _tool("declare_combat_action", {"action_id": "throw", "actor_id": "調查員p1", "target_id": enemy.combatant_id,
+                                           "weapon_reference": "投矛", "action_kind": "single_shot", "distance_yards": 10})
+    assert near["ok"] and near["phase"] == "PLAYER_ROLL", near
+    assert _load().combat.actions["throw"]["difficulty"] == "regular"

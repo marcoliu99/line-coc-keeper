@@ -17,6 +17,15 @@ from app.keeper_tools import registry
 from app.models import Character, Combatant, CombatState, GroupState
 from app.repositories import group_state
 
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
+
+
 GROUP = 'combat-integration'
 SOURCE = {'url': 'https://example.test/reviewed-scenario', 'revision': 'fixture-v1',
           'sha256': 'a' * 64, 'attack_mode': 'melee', 'extreme_rule': 'maximum'}

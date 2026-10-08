@@ -207,6 +207,7 @@ def _feedback(
             "combat_receipt": {
                 "combat_id": outcome.get("combat_id"), "action_id": outcome.get("action_id"),
                 "phase": outcome.get("phase"), "completed": outcome.get("completed"),
+                "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
             },
             "luck_spent": luck_spent,
         },

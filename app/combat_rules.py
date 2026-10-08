@@ -61,9 +61,12 @@ class WeaponDefinition:
     capacity: int | None = None
     malfunction: int | None = None
     ruling_reason: str = ''
+    base_range_formula: str = ''  # 'STR/5': a thrown weapon's base range comes from the thrower, in yards
 
     def __post_init__(self) -> None:
         _validate_damage(self.damage)
+        if self.base_range_formula not in ('', 'STR/5'):
+            raise ValueError('Unsupported base range formula')
         if not self.id or not self.name or not self.skill_id or not self.catalog_version:
             raise ValueError('Definition requires identity, skill and catalog version')
         if self.attack_mode not in ('melee', 'single_shot'):
@@ -258,6 +261,15 @@ def resolve_weapon(
 class RangeResolution:
     difficulty: CheckDifficulty | None = None
     reason: str = ''
+
+
+def base_range_for(weapon: WeaponDefinition, thrower_str: int | None) -> float | None:
+    """The weapon's base range in yards: the catalog's, or for a thrown weapon the thrower's STR/5."""
+    if weapon.base_range_yards is not None:
+        return weapon.base_range_yards
+    if weapon.base_range_formula == 'STR/5' and thrower_str is not None:
+        return max(1.0, thrower_str / 5)
+    return None
 
 
 def resolve_range_difficulty(distance_yards: float | None, base_range_yards: float | None) -> RangeResolution:

@@ -337,6 +337,19 @@ def _combat_next_step(result: dict) -> str:
     receipt = result.get("combat_receipt") or {}
     if not receipt.get("combat_id"):
         return ""
+    advanced = receipt.get("auto_advanced")
+    if isinstance(advanced, dict):
+        waiting = ("" if advanced.get("phase") not in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}
+                   else "，正在等玩家的選擇或擲骰")
+        enemy = advanced.get("enemy_turn") or {}
+        stuck = f"；下一位敵人的回合跑不動（{enemy.get('error')}），用 resolve_combat_ruling 或 advance_combat_turn skip 處理" \
+            if enemy and enemy.get("ok") is False else ""
+        return (f"\n【戰鬥下一步】這個行動結束後引擎已自動推進：現在輪到 {advanced.get('next_actor', '下一位')}"
+                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}。不要再呼叫 advance_combat_turn；"
+                "敘事要包含剛結算的結果，以及（若有）敵人接著的攻擊。")
+    if receipt.get("auto_advance_error"):
+        return (f"\n【戰鬥下一步】這個行動已結束，但引擎無法自動推進（{receipt['auto_advance_error']}）："
+                "先處理它說的事，再呼叫 advance_combat_turn。")
     if receipt.get("completed"):
         return ("\n【戰鬥下一步】這個行動已經結束，但回合仍停在原行動者：先呼叫 advance_combat_turn"
                 "（actor_id 填目前行動者的名字或 ID，event_id 可省略），讓下一位行動，再敘事。")

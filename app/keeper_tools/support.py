@@ -380,27 +380,6 @@ def skip_save_if_blocked(result: dict) -> ToolStateMutation[dict]:
     return ToolStateMutation(result, should_save="blocked_by" not in result)
 
 
-def filter_public_combat_damage_result(result: dict, speaker_role: str) -> dict:
-    if (
-        speaker_role == "kp_assistant"
-        or result.get("side") != "enemy"
-        or not spoiler_policy.is_privacy_isolation_enabled()
-    ):
-        return result
-    public_keys = {
-        "ok",
-        "name",
-        "target",
-        "target_id",
-        "side",
-        "damage_type",
-        "final_damage",
-        "major_wound_triggered",
-        "defeated",
-        "public_summary",
-        "effect_id",
-    }
-    return {key: result[key] for key in public_keys if key in result}
 
 
 def scenario_allowed_chapter_ids(state: GroupState) -> set[str] | None:

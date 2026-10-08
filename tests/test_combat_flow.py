@@ -4,9 +4,18 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat, combat_flow, combat_resources, dice
+from app import combat, combat_flow, combat_resources, config, dice
 from app.models import Character, Combatant, GroupState
 from tests import combat_calls as calls
+
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
+
 
 SOURCE = {'url': 'https://example.test/reviewed-scenario', 'revision': 'v1', 'sha256': 'abc', 'accessed': '2026-10-01'}
 

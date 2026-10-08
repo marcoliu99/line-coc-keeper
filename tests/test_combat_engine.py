@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat, combat_flow, combat_resources, db, dice, tool_dispatch
+from app import combat, combat_flow, combat_resources, config, db, dice, tool_dispatch
 from app.commands.handlers import checks as check_commands
 from app.models import Character, Combatant, CombatState, GroupState
 from app.repositories import group_state, state_transaction
@@ -24,6 +24,15 @@ from app.services import combat_engine
 from app.services.combat_engine import Mode
 from tests import combat_calls
 from tests.check_dice import ScriptedDice, module_dice
+
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
+
 
 SOURCE = {
     "url": "https://example.test/scenario", "revision": "reviewed-v1", "sha256": "abc",
@@ -460,13 +469,13 @@ def test_b8_an_explicit_hit_and_the_same_entry_sent_again_settle_once():
 
 def test_b8_the_raw_damage_tools_cannot_settle_anything_while_a_battle_runs():
     _battle()
-    for name, arguments in (
+    for name, arguments in (  # retired: a managed battle refused them and nothing else used them
         ("apply_combat_damage", {"target": "Cultist", "raw_damage": 5}),
         ("apply_final_combat_damage", {"target": "Cultist", "final_damage": 5}),
         ("damage_combatant", {"name": "Cultist", "delta": -5}),
     ):
         refused = _tool(name, arguments)
-        assert not refused["ok"] and "not authoritative" in refused["error"]
+        assert not refused["ok"] and "未知工具" in refused["error"]
     state = _load()
     assert next(p for p in state.combat.order if p.side == "enemy").hp == 20
 

@@ -333,20 +333,6 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                                         include_private=call.speaker_role == 'kp_assistant')
 
 
-def damage_combatant(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(
-            target_state, act.DamageCombatant(tool_input["name"], int(tool_input["delta"])),
-        ))
-
-    result = support.mutate_tool_state(call.state, mutate)
-    return support.filter_public_combat_damage_result(result, call.speaker_role)
-
 
 def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
 
@@ -358,81 +344,8 @@ def plan_enemy_turn(call: ToolCall) -> dict[str, Any]:
     return support.mutate_tool_state(call.state, mutate)
 
 
-def resolve_enemy_action(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(
-            target_state,
-            act.ResolveEnemy(plan_id=tool_input["plan_id"], outcome=tool_input.get("outcome")),
-        ))
-
-    return support.mutate_tool_state(call.state, mutate)
 
 
-def apply_combat_damage(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
-            target=tool_input["target"],
-            raw_damage=int(tool_input["raw_damage"]),
-            damage_type=tool_input.get("damage_type", "physical"),
-            tags=tool_input.get("tags") or [],
-            source_id=tool_input.get("source_id", ""),
-        )))
-
-    result = support.mutate_tool_state(call.state, mutate)
-    return support.filter_public_combat_damage_result(result, call.speaker_role)
-
-
-def apply_final_combat_damage(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return support.skip_save_if_blocked(combat_engine.handle(target_state, act.ApplyDamage(
-            target=tool_input["target"],
-            raw_damage=int(tool_input["final_damage"]),
-            damage_type=tool_input.get("damage_type", "physical"),
-            tags=tool_input.get("tags") or [],
-            source_id=tool_input.get("source_id", ""),
-            bypass_armor=True,
-            entry_point="apply_final_combat_damage",
-        )))
-
-    result = support.mutate_tool_state(call.state, mutate)
-    return support.filter_public_combat_damage_result(result, call.speaker_role)
-
-
-def add_combat_effect(call: ToolCall) -> dict[str, Any]:
-
-    tool_input = call.input
-
-    def mutate(target_state: GroupState) -> Any:
-        if target_state.combat.active:
-            return support.ToolStateMutation({'ok': False, 'error': 'Managed/source-bound combat requires its action or explicit effect runner; legacy raw outcome is not authoritative'}, should_save=False)
-        return combat_engine.handle(target_state, act.AddEffect(
-            target=tool_input["target"],
-            label=tool_input["label"],
-            timing=tool_input.get("timing", "turn_start"),
-            damage=tool_input.get("damage", ""),
-            damage_type=tool_input.get("damage_type", "physical"),
-            remaining_rounds=tool_input.get("remaining_rounds"),
-            tags=tool_input.get("tags") or [],
-            source_id=tool_input.get("source_id", ""),
-            public_description=tool_input.get("public_description", ""),
-        ))
-
-    return support.mutate_tool_state(call.state, mutate)
 
 
 def end_combat(call: ToolCall) -> dict[str, Any]:

@@ -25,10 +25,16 @@ from app.models import (
 )
 
 ActionKind = Literal['melee', 'single_shot']
-_SKILLS = {'fighting-brawl': '格鬥（鬥毆）', 'fighting-axe': '格鬥（斧）',
-           'fighting-sword': '格鬥（劍）', 'firearms-handgun': '射擊（手槍）',
+_SKILLS = {'fighting-brawl': '格鬥（鬥毆）', 'fighting-axe': '格鬥（斧）', 'fighting-sword': '格鬥（劍）',
+           'fighting-spear': '格鬥（矛）', 'fighting-whip': '格鬥（鞭）', 'fighting-flail': '格鬥（連枷）',
+           'fighting-garrote': '格鬥（絞殺）', 'firearms-handgun': '射擊（手槍）',
            'firearms-rifle-shotgun': '射擊（步槍/霰彈槍）', 'firearms-bow': '射擊（弓）',
-           'throw': '投擲'}
+           'firearms-submachine-gun': '射擊（衝鋒槍）', 'firearms-machine-gun': '射擊（機槍）', 'throw': '投擲'}
+# CoC 7e base values: an investigator may always try a weapon skill the sheet does not list, at its base chance.
+_BASE_SKILLS = {'fighting-brawl': 25, 'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear': 20,
+                'fighting-whip': 5, 'fighting-flail': 10, 'fighting-garrote': 15,
+                'firearms-handgun': 20, 'firearms-rifle-shotgun': 25, 'firearms-bow': 15,
+                'firearms-submachine-gun': 15, 'firearms-machine-gun': 10, 'throw': 20}
 
 
 def _error(message: str) -> dict[str, Any]:
@@ -67,6 +73,8 @@ def _skill(character: Character, skill_id: str) -> tuple[str, int] | None:
     for candidate in (label, skill_id):
         if candidate in character.skills:
             return label, character.skills[candidate]
+    if skill_id in _BASE_SKILLS:
+        return label, _BASE_SKILLS[skill_id]
     return None
 
 
@@ -209,6 +217,12 @@ def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRol
     return _result(state, action)
 
 
+def _base_range(state: GroupState, actor: combat.Combatant, weapon: combat_rules.WeaponDefinition) -> float | None:
+    """A thrown weapon's range is the thrower's STR/5 yards; anything else is the catalog's."""
+    character = _character(state, actor.combatant_id)
+    return combat_rules.base_range_for(weapon, character.str_ if character else None)
+
+
 def _weapon_actor_evidence(
     state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition,
     reference: str, instance: combat_rules.WeaponInstance | None = None,
@@ -224,8 +238,9 @@ def _weapon_actor_evidence(
             names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases) if n.strip()}
             # The sheet may list the weapon under another of its names ("小刀" for Knife, Small, "一把生鏽的小刀"
             # in the pack): a weapons entry or a carried item containing any of the catalog's names is that weapon.
+            # Anything with no ammunition to track (melee, or thrown) is owned that way; a firearm needs its entry.
             listed = [*effective.carried_items, *effective.weapons]
-            carried = (weapon.attack_mode == 'melee' and not weapon.ammo_per_attack
+            carried = (not weapon.ammo_per_attack
                        and any(n in item.casefold() for item in listed for n in names))
             if inventory_key not in effective.weapons and not metadata and not carried:
                 raise ValueError('Weapon requires an existing owned instance or inventory mapping')
@@ -306,7 +321,7 @@ def declare_action(
         return _ruling(state, action, damage.reason)
     difficulty = 'regular'
     if action_kind == 'single_shot':
-        range_result = combat_rules.resolve_range_difficulty(distance_yards, weapon.base_range_yards)
+        range_result = combat_rules.resolve_range_difficulty(distance_yards, _base_range(state, actor, weapon))
         if range_result.difficulty is None:
             return _ruling(state, action, range_result.reason)
         difficulty = range_result.difficulty
@@ -588,7 +603,63 @@ def _complete(state: GroupState, action: CombatAction, result: dict[str, Any]) -
     state.combat.phase = 'READY'
     combat_resources.record_event(state, action['action_id'] + ':complete', 'action', data=deepcopy(action))
     action['receipt'] = _result(state, action)
+    _auto_advance(state, action)
     return deepcopy(action['receipt'])
+
+
+_auto_advancing: set[str] = set()
+
+
+def _side_down(state: GroupState) -> bool:
+    enemies = [c for c in state.combat.order if c.side == 'enemy']
+    party = [c for c in state.combat.order if c.side in ('pc', 'ally')]
+    return bool(enemies and all(c.defeated for c in enemies)) or bool(
+        party and all(combat.is_skippable(state, c) for c in party))
+
+
+def _auto_advance(state: GroupState, action: CombatAction) -> None:
+    """End the actor's turn once their action is settled, the way a table does, and play the next enemy's turn
+    to the next player boundary.
+
+    Only for the current actor's own completed action with nothing left open, while both sides still stand (a
+    finished fight waits for settlement, not another round). The advance is one initiative event keyed on the
+    action, so a replayed completion does not advance twice; an advance that fails leaves the turn where it was
+    and says so in the receipt. Not while an advance is already running: the enemy turn it plays completes its
+    own actions.
+    """
+    from app import config
+    if not config.COMBAT_AUTO_ADVANCE or state.combat.combat_id in _auto_advancing:
+        return
+    current = combat.current_actor(state)
+    if (current is None or action.get('actor_id') != current.combatant_id or state.combat.interaction
+            or state.combat.phase != 'READY' or action.get('needs_ruling') or _side_down(state)):
+        return
+    before = {'round': state.combat.round_number, 'actor': current.display_name or current.name,
+              'actor_id': current.combatant_id}
+    _auto_advancing.add(state.combat.combat_id)
+    try:
+        advanced = advance_combat(state, actor_id=current.combatant_id,
+                                  event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}")
+    finally:
+        _auto_advancing.discard(state.combat.combat_id)
+    if not advanced.get('ok') and not advanced.get('phase'):
+        action['receipt'] = {**action['receipt'], 'auto_advance_error': advanced.get('error', '')}
+        return
+    now = combat.current_actor(state)
+    summary = {
+        **before, 'round_now': state.combat.round_number,
+        'next_actor': (now.display_name or now.name) if now else '', 'next_actor_id': now.combatant_id if now else '',
+        'next_side': now.side if now else '', 'phase': state.combat.phase,
+    }
+    enemy_turn = advanced.get('enemy_turn')
+    if isinstance(enemy_turn, dict):
+        summary['enemy_turn'] = {key: enemy_turn.get(key) for key in ('ok', 'error', 'phase', 'action_id')}
+    elif advanced.get('action_id') and advanced.get('action_id') != action['action_id']:
+        summary['enemy_turn'] = {key: advanced.get(key) for key in ('ok', 'error', 'phase', 'action_id')}
+    # The receipt reports the battle as it is after the turn moved, so a Keeper or narrator reading it does not
+    # advance again; the completed action itself is unchanged.
+    action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
+                         'interaction': deepcopy(state.combat.interaction), 'auto_advanced': summary}
 
 
 def request_injury_check(state: GroupState, character: Character, event_id: str) -> dict[str, Any]:
@@ -1120,7 +1191,7 @@ def resolve_ruling(
         if action.get('checks') and action.get('skill') != evidence['skill']:
             return _ruling(state, action, 'Changed skill invalidates retained player result; explicit cancellation required')
         if weapon.attack_mode == 'single_shot':
-            range_result = combat_rules.resolve_range_difficulty(distance, weapon.base_range_yards)
+            range_result = combat_rules.resolve_range_difficulty(distance, _base_range(state, actor, weapon))
             if range_result.difficulty is None:
                 return _ruling(state, action, range_result.reason)
             action['difficulty'] = range_result.difficulty

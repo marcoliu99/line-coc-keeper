@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat_resources, db, dice, tool_dispatch
+from app import combat_resources, config, db, dice, tool_dispatch
 from app.checks import rules as check_rules
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import checks as check_commands
@@ -17,6 +17,14 @@ from app.models import Character, Combatant, GroupState
 from app.repositories import group_state, state_transaction
 from app.services import canonical_facts, turn_delivery
 from tests import state_store
+
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
 
 
 def normalized(state):

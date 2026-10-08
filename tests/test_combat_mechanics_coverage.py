@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import dice
+from app import config, dice
 from app.models import Combatant
 from app.services import turn_delivery
 from tests.test_combat_state_machine_integration import (  # noqa: F401  (battle is a fixture)
@@ -21,6 +21,15 @@ from tests.test_combat_state_machine_integration import (  # noqa: F401  (battle
     battle,
     result,
 )
+
+
+@pytest.fixture(autouse=True)
+def explicit_advance():
+    """These scenarios drive initiative by hand; the engine's own advance after a settled action is covered in
+    tests/test_combat_turn_friction.py."""
+    with patch.object(config, "COMBAT_AUTO_ADVANCE", False):
+        yield
+
 
 RAW_TIER = re.compile(r"(?<![A-Za-z])(?:fumble|fail|regular|hard|extreme|critical)(?![A-Za-z])")
 

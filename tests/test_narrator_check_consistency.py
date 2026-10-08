@@ -207,7 +207,7 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
         offered_tools = args[2]
         offered_names = {tool["name"] for tool in offered_tools}
         self.assertTrue(offered_names <= tool_registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES)
-        self.assertTrue({"apply_combat_damage", "apply_final_combat_damage", "advance_combat_turn"} <= offered_names)
+        self.assertTrue({"apply_resolved_check_damage", "advance_combat_turn"} <= offered_names)
         self.assertNotIn("skill_check", offered_names)
         self.assertIn("擲出 69", args[1])
         self.assertIn("不得重擲", args[1])
@@ -222,7 +222,7 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
             async def run_conversation(self, _static, _dynamic, tools, _history, _message,
                                        execute_tool, _iterations, **_kwargs):
                 self.assert_names = {tool["name"] for tool in tools}
-                result = await execute_tool("apply_combat_damage", {"target": "Enemy", "raw_damage": 3})
+                result = await execute_tool("roll_dice", {"expression": "1d6"})
                 self.result = result
                 return "敵人受到傷害。"
 
@@ -248,8 +248,8 @@ class ResolvedCheckNarratorFollowupTests(unittest.IsolatedAsyncioTestCase):
                     "difficulty": "regular", "outcome": "failure 失敗",
                 },
             }))
-        self.assertIn("apply_combat_damage", provider.assert_names)
-        self.assertEqual(calls, [("apply_combat_damage", {"target": "Enemy", "raw_damage": 3})])
+        self.assertIn("roll_dice", provider.assert_names)
+        self.assertEqual(calls, [("roll_dice", {"expression": "1d6"})])
         self.assertEqual(provider.result["damage"], 3)
 
     def test_roll_instruction_without_pending_check_is_replaced(self):

@@ -320,7 +320,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
                 self.dynamic = dynamic
                 self.offered = {tool["name"] for tool in tools}
                 self.rejected = await execute_tool("skill_check", {"skill": "STR"})
-                self.damage = await execute_tool("apply_combat_damage", {"target": "魚人", "raw_damage": 3})
+                self.damage = await execute_tool("roll_dice", {"expression": "1d6"})
                 return "木門應聲而開，魚人受到傷害。"
 
         provider = Provider()
@@ -344,7 +344,7 @@ class UnifiedKeeperTurnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.calls, 1)
         self.assertIn("擲出 32", provider.dynamic)
         self.assertNotIn("skill_check", provider.offered)
-        self.assertIn("apply_combat_damage", provider.offered)
+        self.assertIn("roll_dice", provider.offered)
         self.assertEqual(provider.rejected["error"], "tool_not_allowed_for_turn")
         execute.assert_called_once()
         self.assertIn("魚人受到傷害", reply)

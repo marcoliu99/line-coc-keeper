@@ -88,15 +88,19 @@ def test_shotgun_missing_invalid_or_conflicting_distance_requires_ruling():
 
 def test_full_catalog_contains_no_example_prototype_and_gates_special_rules():
     catalog = weapon_catalog()
-    assert len(catalog) == 45
+    assert len(catalog) == 49
     assert len({d.id for d in catalog}) == len(catalog)
     assert not any('example' in d.id or 'prototype' in d.name.casefold() for d in catalog)
-    for reference in ['Death ray (prototype)', 'Experimental weapon', 'Bullwhip', 'Garrote',
-                      'Burning Torch', 'Spear', 'Spear, Thrown', 'Thompson', 'Crossbow']:
-        assert resolve_weapon(reference).status == 'needs_ruling'
+    for reference in ['Death ray (prototype)', 'Experimental weapon', 'Garrote', 'Vickers .303', 'Mark I Lewis Gun']:
+        assert resolve_weapon(reference).status == 'needs_ruling'  # a special manoeuvre, or full auto only
+    # The 7e weapons table settles these (docs/specs/enhancement/item_handling_friction_design_spec.md).
+    for reference, damage in [('Burning Torch', '1d6'), ('Spear', '1d8+1'), ('Spear, Thrown', '1d8'),
+                              ('Thompson', '1d10+2'), ('Uzi', '1d10'), ('Crossbow', '1d8+2'), ('Bullwhip', '1d3'),
+                              ('Nunchaku', '1d8'), ('Bren Gun', '2d6+4'), ('.45 Martini-Henry Rifle', '1d8+1d6+3')]:
+        resolved = resolve_weapon(reference)
+        assert resolved.status == 'resolved' and resolved.definition.damage == damage
     slow = next(d for d in catalog if d.name == '.45 Martini-Henry Rifle')
-    assert slow.damage == '1d8+1d6+3'
-    assert resolve_weapon(slow.id).status == 'needs_ruling'
+    assert slow.damage == '1d8+1d6+3' and slow.capacity == 1  # one round: reloading is the 1/3 cadence
 
 
 @pytest.mark.parametrize(('severity', 'damage'), [

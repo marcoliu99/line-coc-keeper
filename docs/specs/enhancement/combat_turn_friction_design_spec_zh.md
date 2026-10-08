@@ -24,6 +24,7 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 - `advance_combat_turn` 省略 `event_id` 時自動推導為 `<combat_id>:advance:round<N>:<行動者戰鬥者 ID>:<k>`：`k` 是下一個未用過的號碼，除非最後一個用過的是重試（行動者已不是目前行動者，表示那次推進已經發生，就重播它）。同一輪被 `set_initiative` 調回的行動者又是目前行動者，所以拿到下一個號碼、真的推進。回合換輪之後的重試會推導出下一輪的 id，被以「不是目前行動者」拒絕並指出是誰；不會推進兩次。行動者指稱經 `combat.resolve_actor_reference` 解析（先比對目前行動者自己的欄位，不計空白與大小寫，再全域查找；PR #241 的規則，現在引擎與工具共用）。`combat.completed_actions_this_round` 是引擎與工具共用的唯一「已行動」規則。守密人不會再因為漏掉 id 被拒。
 - `skip=true` 接受目前行動的 NPC 友軍，以及引擎無法執行其回合的目前敵人（`combat.enemy_turn_blocker`：沒有卡，或攻擊與能力都沒登記的 `incomplete` 卡）；結果的 `skipped` 欄位（放在下一位行動者回傳的內容旁邊）說明原因與符合規則的替代做法（用 `add_npc_to_combat` 登記劇本的攻擊）。有攻擊的敵人仍不能跳過；調查員的回合仍只有玩家自己能跳。
 - `prompt_config._combat_next_step` 把待履行的 CON 檢定（`INJURY_CHECK`）當成其他待擲骰一樣處理：不要推進。
+- **行動結算後由引擎自己結束該回合**（`COMBAT_AUTO_ADVANCE`，預設開）。攻擊在 `combat_flow._complete` 完成（命中或未命中已定、傷害已套用）且沒有未了事項時，引擎以一筆以行動為鍵的先攻事件（`<combat>:advance:auto:<action_id>`，重播的完成不會推進兩次）替目前行動者推進，並把下一位敵人的回合跑到下一個需要玩家決定的點，和守密人自己呼叫 `advance_combat_turn` 完全一樣。一方已倒下（戰鬥等待結算）、行動暫停、或推進正在進行中時不會自動推進。行動的回執改為回報推進後的戰況（`auto_advanced`：輪到誰、第幾輪、階段、卡住的敵方回合），已結算檢定區塊會說回合已經推進、不要再推進，提示文字改為守密人只推進沒有引擎行動的回合（`skip`）。旗標關閉時一切如舊。
 - `combat_flow.advance_combat` 在下一位敵人的計畫或執行失敗時，回傳成功的轉換並附上 `enemy_turn`，而不是只回傳失敗。
 - `turn_resolution._mutation_evidence` 把下列引用過的工具算成回合效果：改變了回合數或目前行動者的 `advance_combat_turn`（玩家自己的回合結束了，或卡住的 NPC 回合被放棄讓戰鬥繼續）、已完成或正在等目標選擇／擲骰的 `run_enemy_combat_plan`、以及 `resolve_combat_ruling`。玩家一句話讓戰鬥動起來，不該因為被推進的不是他的戰鬥者就吃到退路訊息；敘事者拿到的事實與狀態會說明是誰的回合結束了。
 - `prompt_config` 依戰鬥回執在已結算檢定區塊加上【戰鬥下一步】：行動完成就推進（附要傳的參數）、另一位玩家的選擇或擲骰待處理就不要推進、暫停就先裁定。結算後敘事者的指示也這麼說。
@@ -32,11 +33,10 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 
 ## 未做
 
-- 推進仍由守密人決定；引擎不會在行動完成後自行推進。
 - 調查員的反擊仍用鬥毆與 1D3，而不是手上的武器。
 - 對遠程攻擊選「不閃躲」會直接結算、沒有敘事回合。
 - `/coc combat damage`／`end` 的說明仍描述戰鬥中會被拒絕的指令。
 
 ## 測試
 
-`tests/test_combat_turn_friction.py`；`tests/test_combat_engine.py` 的 B 系列情境改為一次呼叫完成防守。
+`tests/test_combat_turn_friction.py`（自動推進的案例以旗標開啟執行）；手動驅動先攻的情境套件（`tests/test_combat_flow.py`、`test_combat_engine.py`、`test_combat_wiring.py`、`test_combat_state_machine_integration.py`、`test_combat_mechanics_coverage.py`）固定旗標關閉，B 系列情境一次呼叫完成防守。

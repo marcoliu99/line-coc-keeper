@@ -294,7 +294,7 @@ class ContextBuilderScenarioRagGatingTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(tool_dispatch, "PROVIDER_SHUTDOWN_GRACE_SECONDS", 0.001):
             started_at = time.perf_counter()
             await tool_dispatch.record_tool_recovery_marker_bounded(
-                GroupState(group_id="marker-test"), "apply_combat_damage", {"damage": 1}
+                GroupState(group_id="marker-test"), "adjust_character", {"delta": 1}
             )
             elapsed = time.perf_counter() - started_at
 

@@ -2573,7 +2573,9 @@
         "app/services/turn_resolution.py",
         "app/services/prompt_config.py",
         "app/discord_transport/controls.py",
-        "tests/test_combat_turn_friction.py"
+        "tests/test_combat_turn_friction.py",
+        "app/config.py",
+        ".env.example"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
@@ -2588,7 +2590,9 @@
         "app/services/turn_context.py",
         "app/commands/router.py",
         "app/keeper_tools/registry.py",
-        "tests/test_turn_latency_trims.py"
+        "tests/test_turn_latency_trims.py",
+        "app/keeper_tools/combat.py",
+        "app/services/turn_delivery.py"
       ],
       "path": "docs/specs/enhancement/combat_prompt_and_router_latency_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_prompt_and_router_latency_design_spec_zh.md",

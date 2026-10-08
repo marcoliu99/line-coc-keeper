@@ -154,7 +154,8 @@ def test_the_sheet_lists_melee_weapons_as_weapons_not_ammunition():
 @pytest.mark.parametrize("reference, weapon_id", [
     ("小刀", "i.weapon.knife-small"), ("匕首", "i.weapon.knife-small"), ("菜刀", "i.weapon.knife-medium"),
     ("開山刀", "i.weapon.knife-large"), ("球棒", "i.weapon.club-large"), ("指虎", "i.weapon.brass-knuckles"),
-    ("Dagger", "i.weapon.knife-small"),
+    ("Dagger", "i.weapon.knife-small"), ("斧頭", "i.weapon.axe"), ("手斧", "i.weapon.hatchet-sickle"),
+    ("長劍", "i.weapon.sword"), ("西洋劍", "i.weapon.rapier"), ("剃刀", "i.weapon.knife-small"),
 ])
 def test_common_chinese_weapon_names_resolve(reference, weapon_id):
     resolution = combat_rules.resolve_weapon(reference)
@@ -163,11 +164,13 @@ def test_common_chinese_weapon_names_resolve(reference, weapon_id):
 
 def test_a_gauge_less_double_barrel_needs_the_keeper_to_pick_the_gauge():
     resolution = combat_rules.resolve_weapon("雙管霰彈槍")
-    assert resolution.status == "needs_ruling" and len(resolution.candidates) == 3
+    assert resolution.status == "needs_ruling" and len(resolution.candidates) == 4  # 20, 16, 12 gauge and the sawed-off
 
 
 def test_every_alias_names_one_weapon_unless_deliberately_shared():
-    shared = {"handgun", "pistol", "手槍", "shotgun", "霰彈槍", "雙管霰彈槍", ".45"}
+    shared = {"handgun", "pistol", "手槍", "左輪", "左輪手槍", "revolver", ".45", "步槍", "rifle", "shotgun", "霰彈槍",
+              "散彈槍", "獵槍", "雙管霰彈槍", "雙管散彈槍", "double barrel shotgun", "衝鋒槍", "submachine gun", "smg",
+              "機槍", "machine gun"}
     seen: dict[str, str] = {}
     for definition in combat_rules.weapon_catalog():
         for alias in definition.aliases:
@@ -231,3 +234,34 @@ def test_a_refusal_is_only_hidden_by_a_retry_of_the_same_item():
     letter_refused = {**refused, "arguments": {"investigator": "Ann", "item": "信號槍"}}
     letter = {**other, "arguments": {"investigator": "Ann", "item": "信"}, "result": {**other["result"], "removed": "信"}}
     assert turn_resolution._changed_nothing(letter_refused, [letter]) is False
+
+
+def test_the_keeper_reference_weapons_resolve_with_their_table_values():
+    spear = combat_rules.resolve_weapon("長矛").definition
+    assert (spear.damage, spear.db_policy, spear.extreme_rule, spear.skill_id) == ("1d8+1", "none", "impale", "fighting-spear")
+    thrown = combat_rules.resolve_weapon("投矛").definition
+    assert (thrown.damage, thrown.db_policy, thrown.base_range_formula) == ("1d8", "half", "STR/5")
+    assert combat_rules.base_range_for(thrown, 65) == 13 and combat_rules.base_range_for(thrown, None) is None
+    torch = combat_rules.resolve_weapon("火把").definition
+    assert (torch.damage, torch.db_policy, torch.skill_id) == ("1d6", "none", "fighting-brawl")
+    crossbow = combat_rules.resolve_weapon("弩").definition
+    assert (crossbow.damage, crossbow.base_range_yards, crossbow.capacity, crossbow.malfunction) == ("1d8+2", 50, 1, 96)
+    thompson = combat_rules.resolve_weapon("湯普森").definition
+    assert (thompson.damage, thompson.base_range_yards, thompson.capacity, thompson.malfunction) == ("1d10+2", 20, 20, 96)
+    shuriken = combat_rules.resolve_weapon("手裏劍").definition
+    assert (shuriken.extreme_rule, shuriken.malfunction, shuriken.base_range_formula) == ("impale", 100, "STR/5")
+    uzi = combat_rules.resolve_weapon("烏茲").definition
+    assert (uzi.damage, uzi.base_range_yards, uzi.capacity, uzi.malfunction, uzi.skill_id) == (
+        "1d10", 20, 32, 98, "firearms-submachine-gun")
+
+
+@pytest.mark.parametrize("reference, count", [("散彈槍", 5), ("左輪", 2), ("步槍", 7), ("衝鋒槍", 3), ("機槍", 5)])
+def test_a_generic_chinese_gun_word_lists_the_models_for_the_keeper(reference, count):
+    resolution = combat_rules.resolve_weapon(reference)
+    assert resolution.status == "needs_ruling" and len(resolution.candidates) == count
+
+
+def test_a_sentence_naming_a_specific_gun_resolves_to_it():
+    assert combat_rules.resolve_weapon("我拔出點四五左輪").definition.id == "i.weapon.45-revolver"
+    assert combat_rules.resolve_weapon("鋸短散彈槍").definition.id == "i.weapon.12-gauge-shotgun-2b-sawed-off"
+    assert combat_rules.resolve_weapon("我丟出手裏劍").definition.id == "i.weapon.shuriken"  # 劍 alone would be the sword

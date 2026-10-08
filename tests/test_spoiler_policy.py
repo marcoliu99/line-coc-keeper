@@ -16,7 +16,6 @@ from app import (
 )
 from app.commands.handlers import character as character_handler
 from app.commands.handlers import system as system_handler
-from app.keeper_tools import support
 from app.models import Character, GroupState
 
 
@@ -163,20 +162,6 @@ class SpoilerProtectionSwitchTests(unittest.TestCase):
         self.assertNotIn("private motivation known to the Keeper", prompt)
         self.assertNotIn("infer the private information from the wording", prompt)
         self.assertIn("conditional asides in a public reply", prompt)
-
-    def test_combat_damage_filter_hides_enemy_fields_when_enabled(self):
-        result = {"ok": True, "side": "enemy", "hp": 3, "armor_absorbed": 2, "final_damage": 5}
-        with patch.object(spoiler_policy.config, "SPOILER_PROTECTION_ENABLED", True), \
-                patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", True):
-            filtered = support.filter_public_combat_damage_result(result, "player")
-        self.assertNotIn("hp", filtered)
-        self.assertNotIn("armor_absorbed", filtered)
-
-    def test_combat_damage_filter_passes_through_when_privacy_disabled(self):
-        result = {"ok": True, "side": "enemy", "hp": 3, "armor_absorbed": 2, "final_damage": 5}
-        with patch.object(spoiler_policy.config, "PRIVACY_ISOLATION_ENABLED", False):
-            filtered = support.filter_public_combat_damage_result(result, "player")
-        self.assertEqual(filtered, result)
 
 
 class PrivacyIsolationSwitchTests(unittest.TestCase):

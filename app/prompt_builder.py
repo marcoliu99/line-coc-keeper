@@ -410,8 +410,11 @@ def build_dynamic_prompt(
 
 Combat rule: follow the current actor and recorded initiative strictly. For investigator actions use
 declare_combat_action, which runs the action itself (run_combat_action only resumes an action that
-paused). After an action completes, advance_combat_turn with the actor's name or ID (event_id may be
-omitted). For an enemy turn call plan_enemy_turn then
+paused). When an action completes the engine ends that actor's turn itself and plays the next enemy's
+turn to the next player decision: do not call advance_combat_turn after a settled attack. Call
+advance_combat_turn (the actor's name or ID; event_id may be omitted) only for a turn with no engine
+action (skip=true), or when the status shows the turn still on an actor whose action is done. For an
+enemy turn that has not been played call plan_enemy_turn then
 run_enemy_combat_plan with its plan_id; the source-bound runner adjudicates attacks, damage, armor,
 and ammunition. Never supply a hit/damage outcome, roll extra weapon dice, debit ammunition twice,
 or choose a player's defense. Players use the owned choice/check/Luck controls; manual rolls remain

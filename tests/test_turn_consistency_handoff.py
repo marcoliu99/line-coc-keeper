@@ -534,7 +534,7 @@ def test_rejected_raw_enemy_damage_never_creates_a_committed_change(state, compe
     async def provider(*args, **kwargs):
         rejected = await args[5]('damage_combatant', {'name': 'Enemy', 'delta': -3})
         assert not rejected['ok']
-        assert 'source-bound' in rejected['error']
+        assert '未知工具' in rejected['error']  # retired: a battle's damage only comes from its own actions
         if compensate:
             assert not (await args[5]('damage_combatant', {'name': 'Enemy', 'delta': 3}))['ok']
         return decision(state, 'deferred', waiting_for=turn_context.character_id(state, 'b'))
