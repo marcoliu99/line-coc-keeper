@@ -276,15 +276,19 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
             managed = target_state.combat
             current = managed.order[managed.current_index] if managed.order else None
             tool_input = dict(call.input)
+            if current is None:
+                return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
+            # Resolve the actor the way the engine does: the current actor's own fields first, so a same-named
+            # combatant further down the order is not picked over the one whose turn it is.
+            reference = str(tool_input.get('actor_id') or '')
+            named = (current if reference in {current.combatant_id, current.character_id, current.name, current.display_name}
+                     else combat.find_combatant(target_state, reference))
             if not str(tool_input.get('event_id') or '').strip():
-                # One advance per actor per round, so the id can be derived from the actor the Keeper names: a retry
-                # of the same advance replays it, and the Keeper no longer has to invent an id it was refused for
-                # omitting. An unknown reference falls back to the current actor so the refusal can name them.
-                if current is None:
-                    return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
-                named = combat.find_combatant(target_state, tool_input.get('actor_id', '')) or current
-                tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{named.combatant_id}'
-            skipper = combat.find_combatant(target_state, tool_input.get('actor_id', '')) if tool_input.get('skip') else None
+                # One advance per actor per round, so the id can be derived: a retry of the same advance replays it,
+                # and the Keeper no longer has to invent an id it was refused for omitting. An unknown reference falls
+                # back to the current actor so the refusal can name them.
+                tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{(named or current).combatant_id}'
+            skipper = named if tool_input.get('skip') else None
             blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
             if tool_input.get('skip'):
                 owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None

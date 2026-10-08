@@ -341,7 +341,7 @@ def _combat_next_step(result: dict) -> str:
         return ("\n【戰鬥下一步】這個行動已經結束，但回合仍停在原行動者：先呼叫 advance_combat_turn"
                 "（actor_id 填目前行動者的名字或 ID，event_id 可省略），讓下一位行動，再敘事。")
     phase = receipt.get("phase")
-    if phase in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION"}:
+    if phase in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION", "INJURY_CHECK"}:
         return "\n【戰鬥下一步】這個行動還在等另一位玩家的選擇或擲骰：不要推進回合，敘事到這裡為止。"
     if phase == "NEEDS_RULING":
         return "\n【戰鬥下一步】這個行動暫停等待裁定：用 resolve_combat_ruling 解決或取消它，再推進。"

@@ -116,7 +116,7 @@ class ManagedCombatChecks:
             result = self.resolve_check(state, user_id, "/coc check", rolled)
             if result.reply_text:
                 result.reply_text = chosen + result.reply_text
-            receipt_text = chosen + (result.reply_text[len(chosen):] if result.reply_text else result.roll_feedback_text)
+            receipt_text = result.reply_text or chosen + result.roll_feedback_text
             resource_bridge.record_choice_control_receipt(state, pending, user_id, option, receipt_text)
             result.changed = True
             result.save_reason = result.save_reason or "combat_choice"

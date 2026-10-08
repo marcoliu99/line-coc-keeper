@@ -64,3 +64,16 @@ def test_descriptions_no_longer_send_the_keeper_to_tools_a_battle_refuses():
         assert registry.REGISTRY[name].schema["description"].startswith("【正式戰鬥中會被拒絕")
     state = GroupState(group_id="idle")
     combat_engine.handle(state, act.Status())  # importable and callable: the tools themselves stay dispatchable
+
+
+def test_the_projection_never_trims_the_live_state():
+    _battle()
+    _enemy_turn([20])
+    _player("/coc check 閃避", [90])
+    state = _load()
+    before = state.combat.to_dict()
+    assert any(a.get("control_delivery_receipts") or a.get("choice_receipts") or a.get("receipt")
+               for a in state.combat.actions.values()), "the battle has receipts to lose"
+    turn_context.combat_projection(state)
+    turn_context.authority_block(state)
+    assert state.combat.to_dict() == before

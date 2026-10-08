@@ -24,7 +24,8 @@ A review of the item path against real play found that most of what a player fee
 - `add_carried_item` and `remove_carried_item` carry `resolved_check_followup`; the follow-up narrator's instruction names them.
 - `Character.weapon_lines` prints 武器 for entries without ammunition and 彈藥 for the tracked ones, on both the sheet and the dynamic prompt line.
 - `combat_weapons.json`: Chinese (and a few English) aliases for the melee and common firearm entries, each unique to one definition except the deliberately shared ones (手槍, 霰彈槍, and now 雙管霰彈槍, which names the 12, 16 and 20 gauge double barrels and so still needs the Keeper to pick the gauge). The weapons stay the CoC 7e table entries; a weapon the table marks as needing a ruling still returns `needs_ruling`.
-- `combat_flow._weapon_actor_evidence` also scans the sheet's `weapons` keys for a melee weapon's names.
+- `combat_rules.resolve_weapon` resolves a reference that is not a catalog name by containment: the longest name or alias inside the reference, or that the reference is inside ("一把生鏽的小刀" is Knife, Small; "I have a large club" is Club, Large). Several definitions explained by names of the same length ("刀" is in every knife) stay `needs_ruling` with the candidates. Players write Traditional Chinese, which has no word boundaries, so containment rather than exact words is the match throughout; one-character aliases (矛, 弩) stay for the same reason.
+- `combat_flow._weapon_actor_evidence` also scans the sheet's `weapons` keys, by the same containment, for a melee weapon's names.
 
 `transfer_item` keeps its exact item match: [inventory transfer](../bug/inventory_transfer_design_spec.md) chose that deliberately for a hand-off between two investigators.
 

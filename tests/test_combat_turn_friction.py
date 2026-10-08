@@ -71,7 +71,7 @@ def test_an_enemy_registered_with_hp_alone_can_be_skipped_so_the_fight_moves_on(
     state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.name == "Thing")
     _save(state)
     thing = next(c for c in _load().combat.order if c.name == "Thing")
-    assert combat.enemy_turn_blocker(_load(), thing) == "this enemy was registered without attacks"
+    assert combat.enemy_turn_blocker(_load(), thing) == "this enemy was registered without attacks or abilities"
     plan = _tool("plan_enemy_turn", {"enemy": "Thing"})
     if plan.get("ok") and plan.get("plan_id"):
         assert not _tool("run_enemy_combat_plan", {"plan_id": plan["plan_id"]})["ok"]
@@ -134,3 +134,25 @@ def test_next_during_a_battle_says_whose_turn_it_is():
     _battle()
     outcome = combat_command._apply_combat_command(_load(), ["/coc", "combat", "next"])
     assert not outcome.ok and "=>" in outcome.text and "Cultist" in outcome.text
+
+
+def test_the_second_of_two_same_named_allies_is_skipped_by_name_when_it_is_current():
+    _battle()
+    state = _load()
+    for dex in (99, 98):
+        combat_engine.handle(state, act.AddCombatant(name="Guard", dex=dex, hp=8, is_ally=True))
+    guards = [i for i, c in enumerate(state.combat.order) if c.name == "Guard"]
+    assert len(guards) == 2
+    state.combat.current_index = guards[1]
+    _save(state)
+    second = _load().combat.order[guards[1]].combatant_id
+    skipped = _tool("advance_combat_turn", {"actor_id": "Guard", "skip": True})
+    assert skipped["ok"], skipped
+    assert any(e["event_id"].endswith(f":advance:round1:{second}") for e in _load().combat.events)
+    assert _load().combat.order[_load().combat.current_index].combatant_id != second
+
+
+def test_an_owed_con_check_tells_the_keeper_not_to_advance():
+    block = prompt_config.build_resolved_check_outcome_block(
+        {"combat_receipt": {"combat_id": "c1", "action_id": "a", "phase": "INJURY_CHECK", "completed": False}})
+    assert "不要推進回合" in block

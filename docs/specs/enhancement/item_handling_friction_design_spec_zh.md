@@ -24,7 +24,8 @@
 - `add_carried_item`／`remove_carried_item` 加上 `resolved_check_followup`；結算後敘事者的指示點名它們。
 - `Character.weapon_lines` 把沒有彈藥的項目印成「武器」、有追蹤彈藥的印成「彈藥」，角色卡與動態提示那行都是。
 - `combat_weapons.json`：近戰與常見槍械加上中文（及少量英文）別名，每個別名只對應一種武器，除了刻意共用的（手槍、霰彈槍，以及新增的雙管霰彈槍——它同時指 12、16、20 號雙管，所以仍要守密人指定口徑）。武器仍是 CoC 7e 武器表的項目；表上標明需要裁定的武器仍回 `needs_ruling`。
-- `combat_flow._weapon_actor_evidence` 也掃角色卡 `weapons` 的鍵來比對近戰武器的名稱。
+- `combat_rules.resolve_weapon` 對不是目錄名稱的指稱改用包含比對：取指稱裡最長的名稱或別名，或包含該指稱的名稱（「一把生鏽的小刀」是 Knife, Small；「I have a large club」是 Club, Large）。多個武器被同樣長度的名稱解釋到（「刀」在每種刀裡）時維持 `needs_ruling` 並列出候選。玩家寫繁體中文、沒有詞界，所以全面採用包含比對而不是整詞相符；單字別名（矛、弩）基於同樣理由保留。
+- `combat_flow._weapon_actor_evidence` 也用同樣的包含比對掃角色卡 `weapons` 的鍵來比對近戰武器的名稱。
 
 `transfer_item` 維持物品完全相符：[物品交接規格](../bug/inventory_transfer_design_spec_zh.md) 對兩位調查員之間的交接刻意這樣選。
 

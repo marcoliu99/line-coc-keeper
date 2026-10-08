@@ -37,7 +37,8 @@ def test_reviewed_representative_values(reference, damage, db, impaling):
 def test_aliases_are_exact_and_ambiguity_retains_candidates():
     assert weapon('  LARGE CLUB ').id == 'i.weapon.club-large'
     assert weapon('手斧').id == 'i.weapon.hatchet-sickle'
-    for reference in ['unknown weapon', 'I have a large club', 'revolver']:
+    assert weapon('I have a large club').id == 'i.weapon.club-large'  # the reference contains the catalog name
+    for reference in ['unknown weapon', 'revolver']:  # nothing, or several revolvers
         assert resolve_weapon(reference).status == 'needs_ruling'
     result = resolve_weapon('.45')
     assert result.status == 'needs_ruling'

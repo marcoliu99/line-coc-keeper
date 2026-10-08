@@ -736,16 +736,16 @@ def character_for_combatant(state: GroupState, combatant: Combatant) -> Characte
 def enemy_turn_blocker(state: GroupState, combatant: Combatant) -> str:
     """Why the engine cannot play this enemy's turn, or an empty string when it can.
 
-    An enemy registered with HP alone (``/coc combat addnpc``, or a card without attacks) has nothing to run, so
-    its turn can only be given up; otherwise the enemy flow plays it.
+    An enemy registered with HP alone (``/coc combat addnpc``, or a card given neither attacks nor abilities) is
+    ``incomplete``: the enemy flow refuses to run it, so its turn can only be given up.
     """
     if combatant.side != 'enemy':
         return ''
     card = card_for(state, combatant)
     if card is None:
         return 'this enemy has no combat card'
-    if card.incomplete or not card.attacks:
-        return 'this enemy was registered without attacks'
+    if card.incomplete:
+        return 'this enemy was registered without attacks or abilities'
     return ''
 
 

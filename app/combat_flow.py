@@ -222,8 +222,8 @@ def _weapon_actor_evidence(
         if weapon.id != 'i.weapon.brawl':
             # A melee weapon with nothing to track counts as owned when the investigator carries an item by that name.
             names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases) if n.strip()}
-            # The sheet may list the weapon under another of its names ("小刀" for Knife, Small): the names are
-            # the catalog's, so a weapons entry or a carried item holding any of them is the same weapon.
+            # The sheet may list the weapon under another of its names ("小刀" for Knife, Small, "一把生鏽的小刀"
+            # in the pack): a weapons entry or a carried item containing any of the catalog's names is that weapon.
             listed = [*effective.carried_items, *effective.weapons]
             carried = (weapon.attack_mode == 'melee' and not weapon.ammo_per_attack
                        and any(n in item.casefold() for item in listed for n in names))

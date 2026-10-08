@@ -45,7 +45,6 @@
       "id": "i.weapon.bow",
       "name": "Bow",
       "aliases": [
-        "弓",
         "弓箭",
         "長弓"
       ],
@@ -271,8 +270,8 @@
       "id": "i.weapon.crossbow",
       "name": "Crossbow",
       "aliases": [
-        "弩",
-        "十字弓"
+        "十字弓",
+        "弩"
       ],
       "skill_id": "firearms-bow",
       "attack_mode": "single_shot",

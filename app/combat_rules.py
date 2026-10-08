@@ -180,8 +180,36 @@ def weapon_catalog() -> tuple[WeaponDefinition, ...]:
 
 
 def _matching(reference: str, definitions: tuple[WeaponDefinition, ...]) -> tuple[WeaponDefinition, ...]:
+    """The definitions ``reference`` names: exactly, or else by the longest name or alias it contains or is part of.
+
+    The Keeper often passes the item as the sheet spells it ("一把生鏽的小刀") rather than the catalog's name, and
+    Chinese has no word boundaries, so containment is the match. Several definitions explained by names of the
+    same length ("刀" is in every knife) stay ambiguous for the Keeper to settle.
+    """
     key = reference.strip().casefold()
-    return tuple(d for d in definitions if key in {d.id.casefold(), d.name.casefold(), *(a.casefold() for a in d.aliases)})
+    if not key:
+        return ()
+    exact = tuple(d for d in definitions if key in {d.id.casefold(), d.name.casefold(), *(a.casefold() for a in d.aliases)})
+    if exact:
+        return exact
+    scored: dict[str, tuple[int, WeaponDefinition]] = {}
+    for definition in definitions:
+        for name in (definition.name, *definition.aliases):
+            candidate = name.strip().casefold()
+            if not candidate:
+                continue
+            if candidate in key:
+                score = len(candidate)
+            elif key in candidate:
+                score = len(key)
+            else:
+                continue
+            if score > scored.get(definition.id, (0, definition))[0]:
+                scored[definition.id] = (score, definition)
+    if not scored:
+        return ()
+    best = max(score for score, _ in scored.values())
+    return tuple(definition for score, definition in scored.values() if score == best)
 
 
 def resolve_weapon(

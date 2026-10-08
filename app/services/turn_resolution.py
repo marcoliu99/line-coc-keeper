@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
 
@@ -29,18 +30,21 @@ _DISPOSITIONS = {
 _INVENTORY_TOOLS = frozenset({'add_carried_item', 'remove_carried_item', 'transfer_item'})
 
 
-def _changed_nothing(event: dict[str, Any], later: list[dict[str, Any]] = ()) -> bool:  # type: ignore[assignment]
+def _changed_nothing(event: dict[str, Any], later: Sequence[dict[str, Any]] = ()) -> bool:
     """An inventory call that wrote nothing and that the turn may ignore.
 
-    A no-op the tool reported as ``changed: False`` (the pack already held the item) always is. A refused call is
-    only when a later call of the same tool on the same investigator succeeded: the Keeper retried with the right
-    name, and the refusal is not a half-done change to hide. An unretried refusal still voids a completion claim.
+    A no-op the tool reported as ``changed: False`` (the pack already held the item) always is. A refused add or
+    remove is only when a later call of the same tool on the same investigator succeeded: the Keeper retried with
+    the right name, and the refusal is not a half-done change to hide. An unretried refusal, and a refused
+    transfer (which names no investigator and replays through its own ledger), still void a completion claim.
     """
     result = event['result']
     if event['name'] not in _INVENTORY_TOOLS:
         return False
     if result.get('ok'):
         return result.get('changed') is False
+    if event['name'] == 'transfer_item':
+        return False
     who = (event.get('arguments') or {}).get('investigator')
     return any(e['name'] == event['name'] and e['result'].get('ok') and e['result'].get('changed') is not False
                and (e.get('arguments') or {}).get('investigator') == who for e in later)
@@ -172,11 +176,13 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
         add = next(e for e in inventory if e['name'] == 'add_carried_item')
         giver, receiver = remove['result'].get('investigator'), add['result'].get('investigator')
         item = remove.get('arguments', {}).get('item')
+        removed = remove['result'].get('removed', item)  # the stored entry a partial name resolved to
         if (remove['name'] == 'remove_carried_item' and add['name'] == 'add_carried_item'
                 and giver == actor_name and receiver != giver and isinstance(item, str)
-                and add.get('arguments', {}).get('item') == item):
+                and add.get('arguments', {}).get('item') in {item, removed}):
+            item = str(add.get('arguments', {}).get('item'))
             transfer = (
-                Counter(remove['inventory_before'][giver]) - Counter(remove['result']['carried_items']) == Counter([item])
+                Counter(remove['inventory_before'][giver]) - Counter(remove['result']['carried_items']) == Counter([removed])
                 and Counter(add['result']['carried_items']) - Counter(add['inventory_before'][receiver]) == Counter([item])
                 and Counter(remove['result']['carried_items']) - Counter(remove['inventory_before'][giver]) == Counter()
                 and Counter(add['inventory_before'][receiver]) - Counter(add['result']['carried_items']) == Counter()

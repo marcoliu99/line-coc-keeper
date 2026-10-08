@@ -172,3 +172,29 @@ def test_every_alias_names_one_weapon_unless_deliberately_shared():
             key = alias.casefold()
             assert key in shared or key not in seen, f"{alias} names both {seen.get(key)} and {definition.id}"
             seen[key] = definition.id
+
+
+@pytest.mark.parametrize("reference, weapon_id", [
+    ("一把生鏽的小刀", "i.weapon.knife-small"),  # the pack's own wording contains the catalog name
+    ("矛", "i.weapon.spear"),  # a one-character name is still a name
+    ("祖父留下的獵刀", "i.weapon.knife-medium"),
+])
+def test_a_reference_containing_a_weapon_name_resolves_to_it(reference, weapon_id):
+    resolution = combat_rules.resolve_weapon(reference)
+    assert resolution.candidates and resolution.candidates[0].id == weapon_id
+
+
+def test_a_bare_knife_is_every_knife_until_the_keeper_picks_one():
+    resolution = combat_rules.resolve_weapon("刀")
+    assert resolution.status == "needs_ruling"
+    assert {d.id for d in resolution.candidates} >= {"i.weapon.knife-small", "i.weapon.knife-medium", "i.weapon.knife-large"}
+
+
+def test_a_refused_transfer_is_never_hidden_by_a_later_unrelated_transfer():
+    state = _state(["X", "Y"])
+    state.characters["u1"].to_dict()
+    gameplay = turn_resolution.gameplay_snapshot(state)
+    refused = _event("transfer_item", {"ok": False, "refusal": "item_not_held"}, {"Ann": ["X", "Y"]}, gameplay)
+    refused["arguments"] = {"from": "Ann", "to": "Bob", "item": "X"}
+    assert turn_resolution._changed_nothing(refused, [{"name": "transfer_item", "arguments": {"from": "Ann", "to": "Cal", "item": "Y"},
+                                                       "result": {"ok": True, "changed": True}}]) is False
