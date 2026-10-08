@@ -49,10 +49,12 @@ def _changed_nothing(event: dict[str, Any], later: Sequence[dict[str, Any]] = ()
     who, item = arguments.get('investigator'), str(arguments.get('item') or '').strip().casefold()
 
     def same_item(retry: dict[str, Any]) -> bool:
-        # The retry names the same thing when either spelling contains the other, as the tool itself matches.
+        # The retry names the same thing when either spelling contains the other, as the tool itself matches: a
+        # one-character spelling only when it is the whole of the other, for the tool's own reason.
         for text in ((retry.get('arguments') or {}).get('item'), retry['result'].get('removed')):
             spelled = str(text or '').strip().casefold()
-            if spelled and item and (item in spelled or spelled in item):
+            if spelled and item and ((item in spelled and len(item) > 1) or (spelled in item and len(spelled) > 1)
+                                     or spelled == item):
                 return True
         return False
 
@@ -74,9 +76,6 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
     latest: dict[str, list[str]] = {}
     ended = False
     combat_completed = False
-    actor_ids = {c.character_id for c in state.active_characters() if c.name == actor_name}
-    own_combatants = {c.combatant_id for c in state.combat.order
-                      if c.is_pc and (c.character_id in actor_ids or c.name == actor_name)}
     # Either receipt of one logical transfer is evidence for it, so a re-emission may be the one the decision cites.
     cited_operations = {e['result'].get('operation_id') for i, e in enumerate(events, 1)
                         if e['name'] == 'transfer_item' and f'tool:{i}' in refs and e['result'].get('operation_id')}
@@ -151,27 +150,20 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 retained.get('status') == 'committed' and retained.get('settlement_id') == receipt.get('settlement_id')
             )
         if result.get('ok') and f'tool:{i}' in refs and name == 'advance_combat_turn':
-            # The player's own turn ended (a completed action or a skip, both move the round or current actor): what
-            # the Keeper was asked to do happened. Moving someone else's turn is not this player's action.
+            # The turn moved (round or current actor changed) because of this player's message: their own turn
+            # ended, or a stuck NPC turn was given up so the fight could go on. Either is what happened this turn;
+            # a replay that moved nothing is not.
             before_combat = (event.get('gameplay_before') or {}).get('combat') or {}
             after_combat = (event.get('gameplay_after') or {}).get('combat') or {}
-            order = before_combat.get('order') or []
-            index = before_combat.get('current_index', -1)
-            turn_of = order[index] if isinstance(index, int) and 0 <= index < len(order) else {}
-            combat_completed = combat_completed or (
-                turn_of.get('combatant_id') in own_combatants
-                and any(before_combat.get(key) != after_combat.get(key) for key in ('round_number', 'current_index')))
+            combat_completed = combat_completed or any(
+                before_combat.get(key) != after_combat.get(key) for key in ('round_number', 'current_index'))
         if result.get('ok') and f'tool:{i}' in refs and name == 'run_enemy_combat_plan':
-            # An enemy's attack on this player that completed, or now waits on their own choice or roll, is the effect.
-            action = state.combat.actions.get(result.get('action_id', ''), {})
+            # An enemy's attack that completed, or now waits on its target's choice or roll, is the effect.
             combat_completed = combat_completed or bool(
-                result.get('combat_id') == state.combat.combat_id and action.get('target_id') in own_combatants
+                result.get('combat_id') == state.combat.combat_id
                 and (result.get('completed') or result.get('phase') in {'PLAYER_CHOICE', 'PLAYER_ROLL'}))
         if result.get('ok') and f'tool:{i}' in refs and name == 'resolve_combat_ruling':
-            action = state.combat.actions.get(result.get('action_id', ''), {})
-            combat_completed = combat_completed or (
-                result.get('combat_id') == state.combat.combat_id
-                and {action.get('actor_id'), action.get('target_id')} & own_combatants != set())
+            combat_completed = combat_completed or result.get('combat_id') == state.combat.combat_id
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}

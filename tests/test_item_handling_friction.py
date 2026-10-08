@@ -227,3 +227,7 @@ def test_a_refusal_is_only_hidden_by_a_retry_of_the_same_item():
     retry = {**other, "arguments": {"investigator": "Ann", "item": "地下室鑰匙"},
              "result": {**other["result"], "removed": "地下室鑰匙"}}
     assert turn_resolution._changed_nothing(refused, [retry]) is True
+    # A one-character item removed later is not a retry of a refused longer word that contains it.
+    letter_refused = {**refused, "arguments": {"investigator": "Ann", "item": "信號槍"}}
+    letter = {**other, "arguments": {"investigator": "Ann", "item": "信"}, "result": {**other["result"], "removed": "信"}}
+    assert turn_resolution._changed_nothing(letter_refused, [letter]) is False

@@ -285,8 +285,7 @@ def declare_action(
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
     if actor is None or current is None or actor.combatant_id != current.combatant_id or actor.defeated:
         return _error('Only the current capable actor can declare an action')
-    if any(a.get('actor_id') == actor.combatant_id and a.get('completed') and a.get('round') == state.combat.round_number
-           for a in state.combat.actions.values()):
+    if combat.completed_actions_this_round(state, actor.combatant_id):
         return _error(f'{actor.display_name or actor.name} already completed this turn. Do not declare again: '
                       f'call advance_combat_turn with actor_id "{actor.combatant_id}" and a new event_id')
     if target is None or target.defeated or actor is target:
@@ -718,8 +717,7 @@ def advance_combat(
     actor_id = current.combatant_id
     if state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values()):
         return _error('Resolve the current action/interaction before advancing')
-    acted = any(a.get('actor_id') == actor_id and a.get('completed') and a.get('round') == state.combat.round_number
-                for a in state.combat.actions.values()) or current.defeated
+    acted = bool(combat.completed_actions_this_round(state, actor_id)) or current.defeated
     if skip and acted:
         return _error('Nothing to skip: this actor already acted or is down; advance without skip')
     if not acted:

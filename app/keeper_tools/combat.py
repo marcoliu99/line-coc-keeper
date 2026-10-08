@@ -269,26 +269,35 @@ def get_combat_status(call: ToolCall) -> dict[str, Any]:
     return response
 
 
+def _derived_advance_id(state: GroupState, actor: combat.Combatant) -> str:
+    """The event id for an advance the Keeper did not name.
+
+    ``<combat>:advance:round<N>:<actor>:<k>``, with ``k`` the smallest unused number unless the latest used one is a
+    retry: the actor is no longer current, so the advance it recorded already happened and is replayed. An actor
+    who is current again in the same round (``set_initiative`` moved them back) gets the next number and a real
+    advance. A retry after the round wrapped derives the next round's id and is refused as not current, which
+    names who is; it cannot advance twice.
+    """
+    managed = state.combat
+    base = f'{managed.combat_id}:advance:round{managed.round_number}:{actor.combatant_id}:'
+    used = sorted(int(e['event_id'][len(base):]) for e in managed.events
+                  if e['event_id'].startswith(base) and e['event_id'][len(base):].isdigit())
+    if used and combat.current_actor(state) is not actor:
+        return f'{base}{used[-1]}'
+    return f'{base}{(used[-1] + 1) if used else 0}'
+
+
 def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
-            managed = target_state.combat
-            current = managed.order[managed.current_index] if managed.order else None
+            current = combat.current_actor(target_state)
             tool_input = dict(call.input)
             if current is None:
                 return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
             named = combat.resolve_actor_reference(target_state, str(tool_input.get('actor_id') or ''))
             if not str(tool_input.get('event_id') or '').strip():
-                # The id is derived from the battle, round, actor and how many actions the actor has completed this
-                # round (a skip adds none, so its retry derives the same id): a retry of the same advance replays it,
-                # a re-ordered round that brings the actor back after another action gets a new id, and the Keeper
-                # no longer has to invent an id it was refused for omitting. An unknown reference falls back to the
-                # current actor so the refusal can name them.
-                actor = named or current
-                acted = sum(1 for a in managed.actions.values() if a.get('actor_id') == actor.combatant_id
-                            and a.get('completed') and a.get('round') == managed.round_number and a.get('kind') != 'skip')
-                tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{actor.combatant_id}:{acted}'
+                tool_input['event_id'] = _derived_advance_id(target_state, named or current)
             skipper = named if tool_input.get('skip') else None
             blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
             if tool_input.get('skip'):
