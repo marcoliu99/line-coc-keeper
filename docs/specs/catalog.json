@@ -2513,8 +2513,8 @@
         "app/services/turn_resolution.py",
         "tests/test_turn_consistency_handoff.py"
       ],
-      "path": "bug/combat_start_counts_as_turn_effect_design_spec.md",
-      "zh_path": "bug/combat_start_counts_as_turn_effect_design_spec_zh.md",
+      "path": "docs/specs/bug/combat_start_counts_as_turn_effect_design_spec.md",
+      "zh_path": "docs/specs/bug/combat_start_counts_as_turn_effect_design_spec_zh.md",
       "source_revision": "3410aa2f8c3660e1e10128febbf6250478641264"
     }
   ]

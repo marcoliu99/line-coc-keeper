@@ -157,13 +157,16 @@ def test_no_check_scenario_adjudication_needs_no_artificial_roll(state):
 
 def test_starting_a_fight_counts_as_the_turns_effect(state):
     state.combat.active = True
+    def order(*ids):
+        return {"combat": {"order": [{"combatant_id": i} for i in ids]}}
     events = [{"name": "roll_dice", "result": {"ok": True, "total": 7}},
-              {"name": "initialize_combat", "result": {"ok": True}}]
+              {"name": "initialize_combat", "result": {"ok": True},
+               "gameplay_before": order("pc"), "gameplay_after": order("pc", "enemy")}]
     result = turn_resolution.validate_resolution(decision(state, "resolved", evidence_refs=["tool:2"]),
         state=state, user_id="a", before_pending={}, before_luck={}, tool_events=events, has_scenario=True,
         before_actor={}, before_gameplay=turn_resolution.gameplay_snapshot(state))
     assert result.disposition == "resolved_without_check"
-    state.combat.active = False
+    events[1]["gameplay_after"] = order("pc")  # a reused enemy adds no combatant
     result = turn_resolution.validate_resolution(decision(state, "resolved", evidence_refs=["tool:2"]),
         state=state, user_id="a", before_pending={}, before_luck={}, tool_events=events, has_scenario=True,
         before_actor={}, before_gameplay=turn_resolution.gameplay_snapshot(state))
