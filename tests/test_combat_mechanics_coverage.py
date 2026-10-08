@@ -256,6 +256,9 @@ def test_settling_a_battle_every_investigator_lost_ends_the_scenario(battle):
     settled = battle.tool('confirm_combat_settlement', {'combat_id': before.combat.combat_id,
                                                         'settlement_id': preview['settlement_id'], 'reason': 'all down'})
     assert settled['ok'] and '劇本到此結束' in settled['scenario_ended']
+    retried = battle.tool('confirm_combat_settlement', {'combat_id': before.combat.combat_id,
+                                                        'settlement_id': preview['settlement_id'], 'reason': 'all down'})
+    assert retried['receipt'] == settled['receipt'] and retried['scenario_ended'] == settled['scenario_ended']
     after = battle.load()
     assert not after.active and after.characters_by_id['char:ada'].hp == 0
 

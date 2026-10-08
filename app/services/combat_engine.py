@@ -92,10 +92,13 @@ Handler = Callable[[GroupState, Any, Mode], Any]
 
 
 def _start(state: GroupState, action: act.Start, mode: Mode) -> None:
+    combat.refuse_fight_without_investigators(state)
     combat.begin_combat(state)
 
 
 def _add_combatant(state: GroupState, action: act.AddCombatant, mode: Mode) -> combat.AddedCombatant:
+    if not action.is_ally:
+        combat.refuse_fight_without_investigators(state)
     return combat.add_combatant(
         state, action.name, action.dex, action.hp, is_ally=action.is_ally, armor=action.armor,
         attacks=action.attacks, abilities=action.abilities, force_new_instance=action.force_new_instance,
@@ -310,8 +313,9 @@ def _confirm_settlement(state: GroupState, action: act.ConfirmSettlement, mode: 
         }
     result: dict[str, Any] = {"ok": True, "receipt": receipt, "provisional": False}
     present = [c for c in combat.active_characters(state) if not c.away]
-    if first_commit and present and all(c.hp <= 0 for c in present):
-        # House rule: once every investigator is down the scenario ends here; nobody is left to play it on.
+    if present and all(c.hp <= 0 for c in present) and (first_commit or not state.active):
+        # House rule: once every investigator is down the scenario ends here; nobody is left to play it on. A retry of
+        # the same settlement says so again.
         state.active = False
         result["scenario_ended"] = ("所有調查員都已倒下（HP 0），劇本到此結束。只描寫結局，不要再推進劇情或開新的戰鬥；"
                                     "告訴玩家可以用 /coc newgame 開新的一局。")

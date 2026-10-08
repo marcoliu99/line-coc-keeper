@@ -706,6 +706,13 @@ def test_a_fight_is_not_started_once_every_investigator_is_down():
     assert not refused["ok"] and "沒有人能參戰" in refused["error"] and not _load().combat.active
     alone = _tool("add_npc_to_combat", {"name": "Walter Corbitt", "dex": 35, "hp": 16})
     assert not alone["ok"] and not _load().combat.active
+    # The engine refuses it on every path, not only the Keeper's two tools: a bare start, or the table's own command.
+    import pytest
+    with pytest.raises(combat_resources.CombatAdmissionError):
+        combat_engine.handle(_load(), act.Start())
+    state = _load()
+    told = combat_command._apply_combat_command(state, ["/coc", "combat", "addnpc", "Walter Corbitt", "35", "16"])
+    assert "沒有人能參戰" in told.text and not state.combat.active
     state = _load()
     state.characters["p1"].hp = 5
     _save(state)

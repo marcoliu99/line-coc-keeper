@@ -56,7 +56,7 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 
 ## 調查員全員倒下時劇本結束
 
-2026-10-09 的《鬼屋》100 回合重跑（`3a6f0bd`）：和 Corbitt 的戰鬥順利打了四輪，直到唯一的調查員 Evelyn 降到 HP 0，戰鬥結算。十回合後一次偵查檢定的後續開了新戰鬥，`_seed_from_characters` 把 HP 0 的她排除，只剩 Corbitt 一人：玩家永遠輪不到，其餘 58 回合卡在裁定和 36 次被拒的跳過。房規：確認結算後若所有在場調查員都是 HP 0，劇本結束（`state.active = False`），結果帶 `scenario_ended`，要守密人描寫結局並提示 `/coc newgame`。`initialize_combat`／`add_npc_to_combat` 在沒有任何調查員能參戰（全員 HP 0 或不在場）時也拒絕開戰，加入 NPC 隊友除外。
+2026-10-09 的《鬼屋》100 回合重跑（`3a6f0bd`）：和 Corbitt 的戰鬥順利打了四輪，直到唯一的調查員 Evelyn 降到 HP 0，戰鬥結算。十回合後一次偵查檢定的後續開了新戰鬥，`_seed_from_characters` 把 HP 0 的她排除，只剩 Corbitt 一人：玩家永遠輪不到，其餘 58 回合卡在裁定和 36 次被拒的跳過。房規：確認結算後若所有在場調查員都是 HP 0，劇本結束（`state.active = False`），結果帶 `scenario_ended`，要守密人描寫結局並提示 `/coc newgame`。沒有任何調查員能參戰（全員 HP 0 或不在場）時拒絕開戰：引擎的 `Start` 與 `AddCombatant`（加入 NPC 隊友除外）都經過 `combat.refuse_fight_without_investigators`，所以守密人工具、`start_combat` 與 `/coc combat start|addnpc` 都回同樣的拒絕；同一次結算的確認重試也會再帶 `scenario_ended`。
 
 ## 未做
 

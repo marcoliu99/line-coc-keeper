@@ -24,17 +24,14 @@ def _reviewed_skills(payload):
     return dict(payload)
 
 
-_NO_ONE_CAN_FIGHT = ("所有調查員都已倒下（HP 0）或不在場，沒有人能參戰：不要開戰，"
-                     "改以敘事處理劇本寫的後果（例如敵人怎麼對待倒地的調查員）。")
-
-
 def _no_one_can_fight(state: GroupState, *, ally: bool) -> dict[str, Any] | None:
-    """Refuse a new fight with no investigator able to act: it has no player turn and can never settle."""
-    if state.combat.active or ally:
+    """The engine refuses the fight too; this answers before any entry is tried, in one plain error."""
+    if ally:
         return None
-    characters = combat.active_characters(state)
-    if characters and not any(c.hp > 0 and not c.away for c in characters):
-        return {"ok": False, "error": _NO_ONE_CAN_FIGHT}
+    try:
+        combat.refuse_fight_without_investigators(state)
+    except combat_resources.CombatAdmissionError as error:
+        return {"ok": False, "error": str(error)}
     return None
 
 

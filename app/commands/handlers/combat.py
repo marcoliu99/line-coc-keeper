@@ -1,4 +1,4 @@
-from app import combat
+from app import combat, combat_resources
 from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.commands.types import Reply
 from app.models import GroupState
@@ -17,6 +17,12 @@ def _apply_combat_command(state: GroupState, parts: list[str]) -> Outcome:
         # A player asking to move on usually wants to know what the fight is waiting for: say so, with the status.
         status = combat_engine.handle(state, act.Status())
         return refuse(f'{status}\n戰鬥中由守密人推進回合；標 => 的是目前輪到的人，待處理的選擇或檢定要先完成。')
+
+    if action in ("start", "addnpc") and not state.combat.active:
+        try:
+            combat.refuse_fight_without_investigators(state)
+        except combat_resources.CombatAdmissionError as error:
+            return refuse(str(error))
 
     if action == "start":
         combat_engine.handle(state, act.Start())
