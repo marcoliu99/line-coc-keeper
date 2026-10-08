@@ -772,6 +772,8 @@ _SPECS: tuple[ToolSpec, ...] = (
             },
         handler=combat_handlers.initialize_combat,
         invalidates_combat_status=True,
+        # A roll can set off the fight the scenario writes (the Haunting's knife rises once it is found).
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={

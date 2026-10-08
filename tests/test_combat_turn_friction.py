@@ -677,3 +677,14 @@ def test_an_enemy_without_a_listed_dodge_takes_the_blow_instead_of_fighting_back
     swing = _load().combat.actions["swing"]
     assert swing["completed"] and not swing.get("needs_ruling") and swing["defense_kind"] == "no_defense"
     assert next(c for c in _load().combat.order if c.side == "enemy").defeated
+
+
+def test_a_roll_that_sets_off_the_scenarios_fight_can_start_it_in_the_follow_up():
+    # The Haunting live run: finding the knife made it rise and strike, but the follow-up narrator had no tool to
+    # start the fight, said so to the player, and the next turn's defence had nothing to defend against.
+    from app.agents import tool_gateway
+    from app.keeper_tools import registry
+    assert "initialize_combat" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+    assert "initialize_combat" in {t["name"] for t in tool_gateway.tools_for_speaker_role("player")}
+    instruction = prompt_config.build_tool_enabled_narrator_static_prompt("", "resolved_check_followup")
+    assert "initialize_combat" in instruction and "不要自己擲攻擊" in instruction
