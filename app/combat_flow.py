@@ -284,7 +284,8 @@ def declare_action(
         return _error('Only the current capable actor can declare an action')
     if any(a.get('actor_id') == actor.combatant_id and a.get('completed') and a.get('round') == state.combat.round_number
            for a in state.combat.actions.values()):
-        return _error('Current actor already completed this turn; advance initiative')
+        return _error(f'{actor.display_name or actor.name} already completed this turn. Do not declare again: '
+                      f'call advance_combat_turn with actor_id "{actor.combatant_id}" and a new event_id')
     if target is None or target.defeated or actor is target:
         return _error('Invalid attack target')
     action = {'action_id': action_id, 'actor_id': actor.combatant_id, 'target_id': target.combatant_id,
@@ -702,8 +703,12 @@ def advance_combat(
     if pending := _settlement_pending(state):
         return pending
     current = state.combat.order[state.combat.current_index] if state.combat.order else None
-    if not current or current.combatant_id != actor_id or not event_id:
-        return _error('Only the current actor may advance with a stable event ID')
+    # The Keeper often passes the character ID or name instead of the combatant ID; any of them names the same actor.
+    actor = combat.find_combatant(state, actor_id) if actor_id else None
+    if not current or actor is not current or not event_id:
+        who = f' It is {current.display_name or current.name} ({current.combatant_id}): pass that as actor_id.' if current else ''
+        return _error(f'Only the current actor may advance with a stable event ID.{who}')
+    actor_id = current.combatant_id
     if state.combat.interaction or any(not a.get('completed') for a in state.combat.actions.values()):
         return _error('Resolve the current action/interaction before advancing')
     acted = any(a.get('actor_id') == actor_id and a.get('completed') and a.get('round') == state.combat.round_number
