@@ -222,8 +222,11 @@ def _weapon_actor_evidence(
         if weapon.id != 'i.weapon.brawl':
             # A melee weapon with nothing to track counts as owned when the investigator carries an item by that name.
             names = {n.strip().casefold() for n in (weapon.name, reference, *weapon.aliases) if n.strip()}
+            # The sheet may list the weapon under another of its names ("小刀" for Knife, Small): the names are
+            # the catalog's, so a weapons entry or a carried item holding any of them is the same weapon.
+            listed = [*effective.carried_items, *effective.weapons]
             carried = (weapon.attack_mode == 'melee' and not weapon.ammo_per_attack
-                       and any(n in item.casefold() for item in effective.carried_items for n in names))
+                       and any(n in item.casefold() for item in listed for n in names))
             if inventory_key not in effective.weapons and not metadata and not carried:
                 raise ValueError('Weapon requires an existing owned instance or inventory mapping')
             if metadata and metadata.get('definition_id') not in (None, weapon.id):
@@ -339,7 +342,12 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
     if not ranged and action['checks'].get('attack', {}).get('tier') == 'critical':
         # No success level beats a Critical attack, so Fight Back could only lose.
         options = [o for o in options if o['kind'] != 'counter']
+    attacker = combat.find_combatant(state, action['actor_id'])
     candidate: dict[str, Any] = {'type': 'choice', 'options': options,
+                 # What the defender is told: who attacks and how well they rolled, so the buttons can say what each
+                 # choice needs. The tier is already public once the attack lands or misses.
+                 'attacker_name': attacker.display_name if attacker else '',
+                 'attacker_tier': action['checks'].get('attack', {}).get('tier'),
                  'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
     registered = check_lifecycle.register(state, character.owner_id, candidate)
     if registered.pending is None:
@@ -737,8 +745,11 @@ def advance_combat(
             plan = combat.plan_enemy_turn(state, next_actor.display_name, ops=MANAGED_OPS)
             if plan.get('ok'):
                 enemy = run_enemy_plan(state, plan['plan_id'])
-                # A skip that ended the turn succeeded; an enemy that then needs a ruling is a pending item beside it.
-                result = {**transition, 'enemy_turn': enemy} if skip and not enemy.get('ok') else enemy
+                # The turn did end; an enemy that then needs a ruling or cannot act is a pending item beside that,
+                # not a failure of the advance the Keeper asked for.
+                result = enemy if enemy.get('ok') else {**transition, 'enemy_turn': enemy}
+            else:
+                result = {**transition, 'enemy_turn': plan}
     combat_resources.record_event(state, event_id, 'initiative',
                                   data={'transition': transition, 'final_response': deepcopy(result)})
     return result

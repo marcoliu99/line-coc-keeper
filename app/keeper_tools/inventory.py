@@ -61,6 +61,23 @@ def adjust_ammo(call: ToolCall) -> dict[str, Any]:
     return {"ok": True, "investigator": refreshed_char.name, "weapon": weapon, "ammo": refreshed_entry["ammo"], "ammo_max": refreshed_entry["ammo_max"], "provisional": resource_bridge.participating(state, refreshed_char)}
 
 
+def match_carried_items(items: list[str], reference: str) -> list[str]:
+    """The entries of ``items`` that ``reference`` names, as stored.
+
+    The Keeper rarely reproduces an item's text exactly ("鑰匙" for "地下室鑰匙", "Knife" for "knife"), so the
+    match is exact first, then case-insensitive, then the unique entry that contains the reference or is contained
+    by it. Several distinct entries matching that way is an ambiguity the caller must report, not pick from.
+    """
+    wanted = reference.strip()
+    if not wanted:
+        return []
+    key = wanted.casefold()
+    exact = [entry for entry in items if entry.strip().casefold() == key]
+    if exact:
+        return exact
+    return [entry for entry in items if key in entry.casefold() or entry.strip().casefold() in key]
+
+
 def add_carried_item(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
@@ -73,13 +90,21 @@ def add_carried_item(call: ToolCall) -> dict[str, Any]:
         return {"ok": False, "error": "item 不能是空字串"}
     def _mutate_add_item(target_state: GroupState) -> Any:
         target_char = support.require_character(target_state, tool_input.get("investigator", ""))
-        changed = item not in target_char.carried_items
+        # The same text again is the same item: the pack already proves possession, so nothing is written and the
+        # turn validator treats the call as a no-op rather than a failed mutation.
+        changed = not any(_same_item(entry, item) for entry in target_char.carried_items)
         if changed:
             target_char.carried_items.append(item)
             _note_inventory_edit(target_state, target_char, item)
-        return support.ToolStateMutation((target_char.name, target_char.carried_items, _character_key(target_char)), should_save=changed)
-    investigator, carried_items, character_id = support.mutate_tool_state(state, _mutate_add_item)
-    return {"ok": True, "investigator": investigator, "character_id": character_id, "carried_items": carried_items}
+        return support.ToolStateMutation(
+            (target_char.name, target_char.carried_items, _character_key(target_char), changed), should_save=changed)
+    investigator, carried_items, character_id, changed = support.mutate_tool_state(state, _mutate_add_item)
+    result = {"ok": True, "investigator": investigator, "character_id": character_id,
+              "carried_items": carried_items, "changed": changed}
+    if not changed:
+        result["already_carried"] = True
+        result["note"] = f"「{investigator}」已經帶著「{item}」，背包沒有改變"
+    return result
 
 
 def remove_carried_item(call: ToolCall) -> dict[str, Any]:
@@ -89,26 +114,39 @@ def remove_carried_item(call: ToolCall) -> dict[str, Any]:
     char = support.find_character(state, tool_input.get("investigator", ""))
     if not char:
         return {"ok": False, "error": f"找不到角色「{tool_input.get('investigator')}」"}
-    # .strip() to match add_carried_item's own normalization above — otherwise
-    # an item with incidental whitespace ("鑰匙 " vs "鑰匙") would silently fail
-    # to remove (the no-op-skip logic below would report "unchanged" since the
-    # stripped, stored string never string-equals the unstripped one being removed).
     item = tool_input.get("item", "").strip()
+    if not item:
+        return {"ok": False, "error": "item 不能是空字串"}
+    carried = list(char.carried_items)
+    matches = match_carried_items(carried, item)
+    if not matches:
+        held = "、".join(carried) or "（背包是空的）"
+        return {"ok": False, "refusal": "item_not_held", "investigator": char.name,
+                "carried_items": carried, "changed": False,
+                "error": f"「{char.name}」的背包裡沒有「{item}」。目前持有：{held}。"
+                         "請改用背包裡的寫法再呼叫一次，或不要移除。"}
+    if len({entry.strip().casefold() for entry in matches}) > 1:
+        return {"ok": False, "refusal": "ambiguous_item", "investigator": char.name,
+                "carried_items": carried, "candidates": matches, "changed": False,
+                "error": f"「{item}」對應到多個物品：{'、'.join(matches)}。請用其中一個完整寫法再呼叫一次。"}
+    stored = matches[0]
     def _mutate_remove_item(target_state: GroupState) -> Any:
         target_char = support.require_character(target_state, tool_input.get("investigator", ""))
-        changed = item in target_char.carried_items
+        changed = stored in target_char.carried_items
         if changed:
-            target_char.carried_items.remove(item)
-            _note_inventory_edit(target_state, target_char, item)
+            target_char.carried_items.remove(stored)
+            _note_inventory_edit(target_state, target_char, stored)
             target_state.consumed_or_removed_items.append({
-                "item": item,
+                "item": stored,
                 "character_id": target_char.owner_id,
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "source_event_id": tool_input.get("source_event_id") or uuid4().hex,
             })
-        return support.ToolStateMutation((target_char.name, target_char.carried_items, _character_key(target_char)), should_save=changed)
-    investigator, carried_items, character_id = support.mutate_tool_state(state, _mutate_remove_item)
-    return {"ok": True, "investigator": investigator, "character_id": character_id, "carried_items": carried_items}
+        return support.ToolStateMutation(
+            (target_char.name, target_char.carried_items, _character_key(target_char), changed), should_save=changed)
+    investigator, carried_items, character_id, changed = support.mutate_tool_state(state, _mutate_remove_item)
+    return {"ok": True, "investigator": investigator, "character_id": character_id,
+            "carried_items": carried_items, "removed": stored, "changed": changed}
 
 
 class _TransferRefused(Exception):

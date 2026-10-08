@@ -679,7 +679,9 @@ def test_advance_says_what_it_needs_when_the_event_id_is_missing_or_the_actor_is
     assert tool(store, 'initialize_combat', {'enemies': [reviewed_enemy_entry()]})['ok']
     enemy = next(p for p in store['state'].combat.order if p.side == 'enemy')
     missing = tool(store, 'advance_combat_turn', {'actor_id': enemy.combatant_id})
-    assert not missing['ok'] and 'stable event_id' in missing['error'] and store['state'].combat.combat_id in missing['error']
+    # No event_id is no longer a refusal: it is derived from the battle, round and actor. The enemy is not the
+    # current actor yet, so the refusal names who is.
+    assert not missing['ok'] and 'stable event_id' not in missing['error'] and 'current actor' in missing['error']
     # The enemy is not the current actor yet: no pointer to the enemy flow.
     early = tool(store, 'advance_combat_turn', {'actor_id': enemy.combatant_id, 'skip': True, 'event_id': 'skip:early'})
     assert not early['ok'] and 'plan_enemy_turn' not in early['error']

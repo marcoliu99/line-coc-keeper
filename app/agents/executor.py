@@ -176,7 +176,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                     scenario_retrieval.DELIVERED_FRAGMENTS.reset(fragments_token)
                     scenario_retrieval.MODEL.reset(model_token)
                     scenario_retrieval.BUDGET.reset(budget_token)
-                if result.get("ok") and name in {"add_carried_item", "remove_carried_item"}:
+                if (result.get("ok") and name in {"add_carried_item", "remove_carried_item"}
+                        and result.get("changed") is not False):  # an item already carried is not a change
                     owner = result.get("investigator")
                     before_items = inventory_before.get(owner, []) if isinstance(owner, str) else []
                     after_items = result.get("carried_items", [])

@@ -487,6 +487,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                 },
             },
         handler=inventory_handlers.add_carried_item,
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={
@@ -496,12 +497,13 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "type": "object",
                     "properties": {
                         "investigator": {"type": "string"},
-                        "item": {"type": "string", "description": "要移除的物品描述，需跟 add_carried_item 當初加入時的文字相符或明顯對應"},
+                        "item": {"type": "string", "description": "要移除的物品；可用背包裡的寫法或其中一部分（例如「鑰匙」對應「地下室鑰匙」），找不到或有歧義時工具會列出背包內容"},
                     },
                     "required": ["investigator", "item"],
                 },
             },
         handler=inventory_handlers.remove_carried_item,
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={

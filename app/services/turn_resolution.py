@@ -26,6 +26,26 @@ _DISPOSITIONS = {
 
 
 
+_INVENTORY_TOOLS = frozenset({'add_carried_item', 'remove_carried_item', 'transfer_item'})
+
+
+def _changed_nothing(event: dict[str, Any], later: list[dict[str, Any]] = ()) -> bool:  # type: ignore[assignment]
+    """An inventory call that wrote nothing and that the turn may ignore.
+
+    A no-op the tool reported as ``changed: False`` (the pack already held the item) always is. A refused call is
+    only when a later call of the same tool on the same investigator succeeded: the Keeper retried with the right
+    name, and the refusal is not a half-done change to hide. An unretried refusal still voids a completion claim.
+    """
+    result = event['result']
+    if event['name'] not in _INVENTORY_TOOLS:
+        return False
+    if result.get('ok'):
+        return result.get('changed') is False
+    who = (event.get('arguments') or {}).get('investigator')
+    return any(e['name'] == event['name'] and e['result'].get('ok') and e['result'].get('changed') is not False
+               and (e.get('arguments') or {}).get('investigator') == who for e in later)
+
+
 def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: list[str], actor_name: str) -> tuple[bool, bool]:
     """Return (verified mutation, independent exact-item transfer).
 
@@ -45,6 +65,10 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                         if e['name'] == 'transfer_item' and f'tool:{i}' in refs and e['result'].get('operation_id')}
     for i, event in enumerate(events, 1):
         name, result = event['name'], event['result']
+        if _changed_nothing(event, events[i:]):
+            # A retried refusal or an item the pack already held wrote nothing: it is neither evidence nor a
+            # failure, and the calls that did change the pack prove the final state below.
+            continue
         replay_of_seen = bool(result.get('replayed')) and result.get('operation_id') in committed_operations
         if (name in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
                 and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen
@@ -115,6 +139,19 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             now = ((event.get('gameplay_after') or {}).get('combat') or {}).get('actions') or {}
             combat_completed = combat_completed or any(
                 a.get('kind') == 'skip' for action_id, a in now.items() if action_id not in known)
+        if result.get('ok') and f'tool:{i}' in refs and name == 'advance_combat_turn':
+            # The turn moved (round or current actor changed): what the Keeper was asked to do happened.
+            before_combat = (event.get('gameplay_before') or {}).get('combat') or {}
+            after_combat = (event.get('gameplay_after') or {}).get('combat') or {}
+            combat_completed = combat_completed or any(
+                before_combat.get(key) != after_combat.get(key) for key in ('round_number', 'current_index'))
+        if result.get('ok') and f'tool:{i}' in refs and name == 'run_enemy_combat_plan':
+            # An enemy's attack that completed, or now waits on the defender's own choice or roll, is the effect.
+            combat_completed = combat_completed or bool(
+                result.get('combat_id') == state.combat.combat_id
+                and (result.get('completed') or result.get('phase') in {'PLAYER_CHOICE', 'PLAYER_ROLL'}))
+        if result.get('ok') and f'tool:{i}' in refs and name == 'resolve_combat_ruling':
+            combat_completed = combat_completed or result.get('combat_id') == state.combat.combat_id
         if name == 'end_combat':
             ended = bool(event.get('combat_active_before') and not state.combat.active)
     chars = {c.name: c for c in state.active_characters()}
@@ -231,7 +268,8 @@ def validate_resolution(
     elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
         if disposition in {"resolved", "resolved_without_check"}:
-            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'} for e in tool_events) and not mutation:
+            if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
+                   and not _changed_nothing(e, tool_events[i:]) for i, e in enumerate(tool_events, 1)) and not mutation:
                 return incomplete("物品或戰鬥變更缺少完整且可核對的工具證據", "inventory_or_combat_not_verified")
             # A newly created/replaced check for any participant is still work.
             changed_wait = any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())
@@ -254,8 +292,11 @@ def validate_resolution(
         )
         if disposition == "resolved_without_check" and not (mutation or scenario_evidence):
             return incomplete("免檢定完成缺少劇本或可核對的工具變更依據", "missing_scenario_or_mutation_evidence")
+        # A tool that wrote nothing (refused, or an inventory no-op) leaves "no mechanics" true; the state check below
+        # still catches anything that did change.
+        effects = [e for i, e in enumerate(tool_events, 1) if not _changed_nothing(e, tool_events[i:])]
         if disposition == "no_mechanics" and tool_events and (
-            any(e["name"] not in INFORMATION_QUERY_TOOLS or not e["result"].get("ok") for e in tool_events)
+            any(e["name"] not in INFORMATION_QUERY_TOOLS or not e["result"].get("ok") for e in effects)
             or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, "no_mechanics")
         ):
             return incomplete("已有工具操作，不能當作沒有機制", "no_mechanics_has_effects")

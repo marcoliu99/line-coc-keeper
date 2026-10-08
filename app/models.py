@@ -325,11 +325,7 @@ class Character:
             tags.append("暫離")
         if tags:
             lines.append("狀態：" + "、".join(tags))
-        if self.weapons:
-            lines.append("彈藥：" + "、".join(
-                f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
-                for name, w in self.weapons.items()
-            ))
+        lines.extend(self.weapon_lines("武器：", "彈藥："))
         if self.carried_items:
             lines.append("攜帶物品：" + "、".join(self.carried_items))
         if self.key_connection:
@@ -367,6 +363,20 @@ class Character:
             lines.append("主要技能：" + "、".join(f"{k} {v}%" for k, v in top_skills))
         return "\n".join(lines)
 
+    def weapon_lines(self, weapon_label: str, ammo_label: str) -> list[str]:
+        """Registered weapons for a sheet: those without ammunition to track, then the ammo-tracked firearms.
+
+        A melee weapon used to be printed under the ammunition label with no count, which read as a firearm.
+        """
+        plain = [name for name, w in self.weapons.items() if "ammo_max" not in w]
+        tracked = [f"{name} {w['ammo']}/{w['ammo_max']}" for name, w in self.weapons.items() if "ammo_max" in w]
+        lines = []
+        if plain:
+            lines.append(weapon_label + "、".join(plain))
+        if tracked:
+            lines.append(ammo_label + "、".join(tracked))
+        return lines
+
     def dynamic_state_text(self) -> str:
         """Just the numbers/lists that actually change during play (HP/MP/
         SAN/Luck, ammo, carried items, status) — one line, keyed by name AND
@@ -377,11 +387,7 @@ class Character:
             f"HP {self.hp}/{self.hp_max}", f"MP {self.mp}/{self.mp_max}",
             f"SAN {self.san}/{self.san_max}", f"LUCK {self.luck}",
         ]
-        if self.weapons:
-            parts.append("彈藥 " + "、".join(
-                f"{name} {w['ammo']}/{w['ammo_max']}" if "ammo_max" in w else name
-                for name, w in self.weapons.items()
-            ))
+        parts.extend(self.weapon_lines("武器 ", "彈藥 "))
         if self.carried_items:
             parts.append("攜帶物品 " + "、".join(self.carried_items))
         tags = list(self.status_tags)

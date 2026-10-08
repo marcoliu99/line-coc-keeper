@@ -255,7 +255,9 @@ async def send_check_button(
     if check.get("type") == "choice":
         hint = defense_choice_hint(check)
         hint_line = f"{hint}\n" if hint else ""
-        prompt = f"{hint_line}請選擇要採取的防守／行動方式，並由你觸發擲骰："
+        attacker = check.get("attacker_name")
+        attack_line = f"{attacker} 攻擊你！" if attacker else ""
+        prompt = f"{attack_line}{hint_line}請選擇防守方式，按下按鈕就會直接擲骰："
     else:
         prompt = "請按鈕完成你的檢定（或輸入 /coc check）："
     await delivery.send_direct_message(channel, f"{marker}👉 {name}，{prompt}", view=view)

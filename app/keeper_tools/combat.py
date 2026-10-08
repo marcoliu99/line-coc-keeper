@@ -273,29 +273,38 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
 
     def mutate(target_state: GroupState) -> Any:
         if resource_bridge.managed(target_state):
-            if not str(call.input.get('event_id') or '').strip():
-                return support.ToolStateMutation({'ok': False, 'error': (
-                    'advance_combat_turn needs a stable event_id, for example '
-                    f'"{target_state.combat.combat_id}:advance:round{target_state.combat.round_number}:<actor>"; '
-                    'reuse the same id only to retry the same call')}, should_save=False)
-            if call.input.get('skip'):
-                # Only the investigator whose turn it is can give it up: not an enemy's, not another player's.
-                skipper = combat.find_combatant(target_state, call.input.get('actor_id', ''))
+            managed = target_state.combat
+            current = managed.order[managed.current_index] if managed.order else None
+            tool_input = dict(call.input)
+            if not str(tool_input.get('event_id') or '').strip():
+                # One advance per actor per round, so the id can be derived from the actor the Keeper names: a retry
+                # of the same advance replays it, and the Keeper no longer has to invent an id it was refused for
+                # omitting. An unknown reference falls back to the current actor so the refusal can name them.
+                if current is None:
+                    return support.ToolStateMutation({'ok': False, 'error': '目前沒有進行中的戰鬥'}, should_save=False)
+                named = combat.find_combatant(target_state, tool_input.get('actor_id', '')) or current
+                tool_input['event_id'] = f'{managed.combat_id}:advance:round{managed.round_number}:{named.combatant_id}'
+            if tool_input.get('skip'):
+                skipper = combat.find_combatant(target_state, tool_input.get('actor_id', ''))
                 owner = combat.character_for_combatant(target_state, skipper) if skipper and skipper.is_pc else None
-                current = target_state.combat.order[target_state.combat.current_index] if target_state.combat.order else None
-                if skipper is not None and skipper.side == 'enemy' and skipper is current:
+                blocker = combat.enemy_turn_blocker(target_state, skipper) if skipper is not None else ''
+                if skipper is not None and skipper.side == 'enemy' and skipper is current and not blocker:
                     return support.ToolStateMutation({'ok': False, 'error': (
                         'Only the acting investigator can skip their own turn. This is an enemy turn: '
                         'run plan_enemy_turn then run_enemy_combat_plan, and advance without skip afterwards')},
                         should_save=False)
-                if owner is None or not call.actor_id or owner.owner_id != call.actor_id:
+                # The engine plays neither an NPC ally's turn nor an enemy it cannot run, and nobody owns those turns:
+                # the Keeper gives them up so the fight moves on. An investigator's turn is still the player's own.
+                unowned_npc = skipper is not None and skipper is current and (skipper.side != 'enemy' or blocker) \
+                    and not skipper.is_pc
+                if not unowned_npc and (owner is None or not call.actor_id or owner.owner_id != call.actor_id):
                     return support.ToolStateMutation(
                         {'ok': False, 'error': 'Only the acting investigator can skip their own turn'}, should_save=False)
             before = deepcopy(target_state.to_dict())
             result = combat_engine.handle(target_state, act.Advance(
-                actor_id=call.input.get('actor_id', ''),
-                event_id=resource_bridge.mutation_id(call.name, call.input),
-                skip=bool(call.input.get('skip')),
+                actor_id=tool_input.get('actor_id', ''),
+                event_id=resource_bridge.mutation_id(call.name, tool_input),
+                skip=bool(tool_input.get('skip')),
             ))
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))

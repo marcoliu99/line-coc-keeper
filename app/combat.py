@@ -733,6 +733,22 @@ def character_for_combatant(state: GroupState, combatant: Combatant) -> Characte
     return matches[0] if len(matches) == 1 else None
 
 
+def enemy_turn_blocker(state: GroupState, combatant: Combatant) -> str:
+    """Why the engine cannot play this enemy's turn, or an empty string when it can.
+
+    An enemy registered with HP alone (``/coc combat addnpc``, or a card without attacks) has nothing to run, so
+    its turn can only be given up; otherwise the enemy flow plays it.
+    """
+    if combatant.side != 'enemy':
+        return ''
+    card = card_for(state, combatant)
+    if card is None:
+        return 'this enemy has no combat card'
+    if card.incomplete or not card.attacks:
+        return 'this enemy was registered without attacks'
+    return ''
+
+
 def is_skippable(state: GroupState, combatant: Combatant) -> bool:
     if combatant.defeated:
         return True

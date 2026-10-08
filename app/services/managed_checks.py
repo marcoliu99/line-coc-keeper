@@ -14,7 +14,7 @@ transaction acts on.
 """
 from __future__ import annotations
 
-from app import combat_resources, dice
+from app import combat_resources, dice, presentation
 from app.checks import events, narration
 from app.checks import luck as luck_policy
 from app.checks.models import CheckOutcome, outcome_for
@@ -71,12 +71,13 @@ class ManagedCombatChecks:
                 return _paused(user_id, pending, f"骰值 {result.roll} 已保留；{outcome.get('error', '戰鬥暫停')}",
                                "combat_check_paused")
             resource_bridge.record_control_receipt(state, decision, user_id, character, result, pending_luck=True)
-            options_text = "、".join(f"{o.tier}（{o.cost} 點）" for o in options)
+            options_text = "、".join(f"{presentation.tier_label(o.tier)}（{o.cost} 點）" for o in options)
             reply = outcome_for(
                 user_id, pending,
                 reply_text=(
                     f"🎲 {character.name} 的 {pending['skill']} 擲出 {result.roll} → "
-                    f"{narration.tier_zh_for_result(result)}。目前 Luck {character.luck}；可選 {options_text} 或 skip。"
+                    f"{narration.tier_zh_for_result(result)}。目前 Luck {character.luck}；"
+                    f"可用 Luck 買到 {options_text}，或維持目前結果。"
                 ),
                 check_id=pending["check_id"], timeline_id=pending.get("timeline_id", ""),
                 decision_id=decision["decision_id"], changed=True,
@@ -107,9 +108,20 @@ class ManagedCombatChecks:
         ))
         if not outcome.get("ok"):
             return outcome_for(user_id, pending, reply_text=outcome.get("error", "選擇遭拒"))
-        reply_text = f"已選擇「{option['label']}」。" + (
-            "請用 /coc check 或檢定按鈕擲骰。" if user_id in state.pending_checks
-            else "已依系統紀錄處理；請依目前戰鬥狀態繼續。")
+        chosen = f"已選擇「{option['label']}」。"
+        rolled = state.pending_checks.get(user_id)
+        if rolled is not None and rolled.get("type") == "skill":
+            # The button says "choose and roll": the choice registered the defence check, so roll it now rather
+            # than asking for a second click. Luck, if offered, is still the player's own decision afterwards.
+            result = self.resolve_check(state, user_id, "/coc check", rolled)
+            if result.reply_text:
+                result.reply_text = chosen + result.reply_text
+            receipt_text = chosen + (result.reply_text[len(chosen):] if result.reply_text else result.roll_feedback_text)
+            resource_bridge.record_choice_control_receipt(state, pending, user_id, option, receipt_text)
+            result.changed = True
+            result.save_reason = result.save_reason or "combat_choice"
+            return result
+        reply_text = chosen + "已依系統紀錄處理；請依目前戰鬥狀態繼續。"
         resource_bridge.record_choice_control_receipt(state, pending, user_id, option, reply_text)
         result = outcome_for(user_id, pending, reply_text=reply_text, changed=True)
         result.save_reason = "combat_choice"

@@ -208,6 +208,8 @@ def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_ki
             "再向玩家敘事。不可重建、重擲或改判原檢定，也不可重扣已提交的數值。"
             "若原檢定已預先附上劇本引文與後果授權，傷害須用 apply_resolved_check_damage 真正提交；"
             "獨立的後續檢定須用 create_triggered_check 建立新 pending，不能替玩家擲骰。"
+            "檢定結果讓調查員取得或失去物品時，用 add_carried_item／remove_carried_item 登記，不要只在敘事裡提到。"
+            "戰鬥中若【已結算檢定】區塊指出目前行動已完成，先依它給的參數呼叫 advance_combat_turn 推進，再敘事。"
             "未授權的後果保持未發生，可使用 /coc correct 處理爭議。\n"
         )
     elif turn_kind == "opening_fallback":
@@ -326,8 +328,24 @@ def build_resolved_check_outcome_block(result: dict) -> str:
         "因戰鬥先攻把這次檢定說成尚未結算，或從骰值自行推導傷害、破壞、敵人現身或戰鬥。"
         "原檢定不可重建；若有來源授權，可用專用工具提交非戰鬥傷害或建立獨立的後續檢定。"
         "若劇本與已結算結果要求戰鬥傷害或回合推進，可使用提供的後續工具。"
-        + consequence_note
+        + consequence_note + _combat_next_step(result)
     )
+
+
+def _combat_next_step(result: dict) -> str:
+    """What the Keeper must do with the battle after this roll, when the engine already knows."""
+    receipt = result.get("combat_receipt") or {}
+    if not receipt.get("combat_id"):
+        return ""
+    if receipt.get("completed"):
+        return ("\n【戰鬥下一步】這個行動已經結束，但回合仍停在原行動者：先呼叫 advance_combat_turn"
+                "（actor_id 填目前行動者的名字或 ID，event_id 可省略），讓下一位行動，再敘事。")
+    phase = receipt.get("phase")
+    if phase in {"PLAYER_CHOICE", "PLAYER_ROLL", "LUCK_DECISION"}:
+        return "\n【戰鬥下一步】這個行動還在等另一位玩家的選擇或擲骰：不要推進回合，敘事到這裡為止。"
+    if phase == "NEEDS_RULING":
+        return "\n【戰鬥下一步】這個行動暫停等待裁定：用 resolve_combat_ruling 解決或取消它，再推進。"
+    return ""
 
 
 def enforce_resolved_check_consistency(

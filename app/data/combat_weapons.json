@@ -45,7 +45,9 @@
       "id": "i.weapon.bow",
       "name": "Bow",
       "aliases": [
-        "弓"
+        "弓",
+        "弓箭",
+        "長弓"
       ],
       "skill_id": "firearms-bow",
       "attack_mode": "single_shot",
@@ -74,7 +76,10 @@
     {
       "id": "i.weapon.brass-knuckles",
       "name": "Brass Knuckles",
-      "aliases": [],
+      "aliases": [
+        "指虎",
+        "手指虎"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d3+1",
@@ -102,7 +107,10 @@
     {
       "id": "i.weapon.bullwhip",
       "name": "Bullwhip",
-      "aliases": [],
+      "aliases": [
+        "長鞭",
+        "鞭子"
+      ],
       "skill_id": "fighting-whip",
       "attack_mode": "single_shot",
       "damage": "1d3",
@@ -130,7 +138,10 @@
     {
       "id": "i.weapon.burning-torch",
       "name": "Burning Torch",
-      "aliases": [],
+      "aliases": [
+        "火把",
+        "火炬"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d6",
@@ -158,7 +169,10 @@
     {
       "id": "i.weapon.blackjack",
       "name": "Blackjack",
-      "aliases": [],
+      "aliases": [
+        "沙包棍",
+        "皮棍"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d8",
@@ -189,7 +203,10 @@
       "aliases": [
         "large club",
         "baseball bat",
-        "大型棍棒"
+        "大型棍棒",
+        "球棒",
+        "棒球棒",
+        "大棍"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -221,7 +238,10 @@
       "aliases": [
         "small club",
         "nightstick",
-        "警棍"
+        "警棍",
+        "小棍",
+        "短棍",
+        "甩棍"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -250,7 +270,10 @@
     {
       "id": "i.weapon.crossbow",
       "name": "Crossbow",
-      "aliases": [],
+      "aliases": [
+        "弩",
+        "十字弓"
+      ],
       "skill_id": "firearms-bow",
       "attack_mode": "single_shot",
       "damage": "1d8+2",
@@ -278,7 +301,9 @@
     {
       "id": "i.weapon.garrote",
       "name": "Garrote",
-      "aliases": [],
+      "aliases": [
+        "絞索"
+      ],
       "skill_id": "fighting-garrote",
       "attack_mode": "melee",
       "damage": "1d6",
@@ -309,7 +334,10 @@
       "aliases": [
         "hatchet",
         "sickle",
-        "手斧"
+        "手斧",
+        "斧頭",
+        "鐮刀",
+        "柴刀"
       ],
       "skill_id": "fighting-axe",
       "attack_mode": "melee",
@@ -338,7 +366,14 @@
     {
       "id": "i.weapon.knife-large",
       "name": "Knife, Large",
-      "aliases": [],
+      "aliases": [
+        "大刀",
+        "砍刀",
+        "開山刀",
+        "大型刀",
+        "large knife",
+        "machete"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d8",
@@ -366,7 +401,14 @@
     {
       "id": "i.weapon.knife-medium",
       "name": "Knife, Medium",
-      "aliases": [],
+      "aliases": [
+        "中型刀",
+        "獵刀",
+        "菜刀",
+        "刺刀",
+        "medium knife",
+        "hunting knife"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d4+2",
@@ -394,7 +436,16 @@
     {
       "id": "i.weapon.knife-small",
       "name": "Knife, Small",
-      "aliases": [],
+      "aliases": [
+        "小刀",
+        "短刀",
+        "匕首",
+        "摺疊刀",
+        "小型刀",
+        "small knife",
+        "pocket knife",
+        "dagger"
+      ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
       "damage": "1d4",
@@ -422,7 +473,9 @@
     {
       "id": "i.weapon.nunchaku",
       "name": "Nunchaku",
-      "aliases": [],
+      "aliases": [
+        "雙節棍"
+      ],
       "skill_id": "fighting-flail",
       "attack_mode": "melee",
       "damage": "1d8",
@@ -450,7 +503,10 @@
     {
       "id": "i.weapon.rock-thrown",
       "name": "Rock, Thrown",
-      "aliases": [],
+      "aliases": [
+        "石頭",
+        "投石"
+      ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
       "damage": "1d4",
@@ -478,7 +534,10 @@
     {
       "id": "i.weapon.shuriken",
       "name": "Shuriken",
-      "aliases": [],
+      "aliases": [
+        "手裏劍",
+        "飛鏢"
+      ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
       "damage": "1d3",
@@ -506,7 +565,10 @@
     {
       "id": "i.weapon.spear",
       "name": "Spear",
-      "aliases": [],
+      "aliases": [
+        "長矛",
+        "矛"
+      ],
       "skill_id": "fighting-spear",
       "attack_mode": "melee",
       "damage": "1d8+1",
@@ -534,7 +596,10 @@
     {
       "id": "i.weapon.spear-thrown",
       "name": "Spear, Thrown",
-      "aliases": [],
+      "aliases": [
+        "投矛",
+        "標槍"
+      ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
       "damage": "1d8",
@@ -565,7 +630,9 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        ".22 自動手槍",
+        "點二二自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -597,7 +664,9 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        "德林加手槍",
+        "derringer"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -629,7 +698,9 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        ".32 左輪",
+        "點三二左輪"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -661,7 +732,9 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        ".32 自動手槍",
+        "點三二自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -693,7 +766,9 @@
       "aliases": [
         "handgun",
         "pistol",
-        "手槍"
+        "手槍",
+        "魯格手槍",
+        "luger"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -727,7 +802,9 @@
         "handgun",
         "pistol",
         "手槍",
-        ".45"
+        ".45",
+        ".45 左輪",
+        "點四五左輪"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -761,7 +838,11 @@
         "handgun",
         "pistol",
         "手槍",
-        ".45"
+        ".45",
+        ".45 自動手槍",
+        "點四五自動手槍",
+        "colt 1911",
+        "m1911"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -790,7 +871,10 @@
     {
       "id": "i.weapon.22-bolt-action-rifle",
       "name": ".22 Bolt-Action Rifle",
-      "aliases": [],
+      "aliases": [
+        ".22 步槍",
+        "點二二步槍"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "1d6+1",
@@ -818,7 +902,10 @@
     {
       "id": "i.weapon.30-lever-action-carbine",
       "name": ".30 Lever-Action Carbine",
-      "aliases": [],
+      "aliases": [
+        ".30 卡賓槍",
+        "槓桿式卡賓槍"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6",
@@ -902,7 +989,11 @@
     {
       "id": "i.weapon.303-lee-enfield",
       "name": ".303 Lee-Enfield",
-      "aliases": [],
+      "aliases": [
+        "李恩菲爾德步槍",
+        "lee-enfield",
+        "lee enfield"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -930,7 +1021,10 @@
     {
       "id": "i.weapon.30-06-bolt-action-rifle",
       "name": ".30-06 Bolt-Action Rifle",
-      "aliases": [],
+      "aliases": [
+        ".30-06 步槍",
+        "栓式步槍"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "2d6+4",
@@ -958,7 +1052,9 @@
     {
       "id": "i.weapon.elephant-gun-2b",
       "name": "Elephant Gun (2B)",
-      "aliases": [],
+      "aliases": [
+        "象槍"
+      ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
       "damage": "3d6+4",
@@ -1083,7 +1179,9 @@
       "aliases": [
         "12 gauge double barrel shotgun",
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "12 號雙管霰彈槍",
+        "雙管霰彈槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1130,7 +1228,8 @@
       "name": "12-gauge Shotgun (semi-auto)",
       "aliases": [
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "半自動霰彈槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1177,7 +1276,10 @@
       "name": "12-gauge Shotgun (2B sawed off)",
       "aliases": [
         "shotgun",
-        "霰彈槍"
+        "霰彈槍",
+        "鋸短霰彈槍",
+        "短管霰彈槍",
+        "sawed-off shotgun"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1245,7 +1347,10 @@
     {
       "id": "i.weapon.thompson",
       "name": "Thompson",
-      "aliases": [],
+      "aliases": [
+        "湯普森衝鋒槍",
+        "湯姆森衝鋒槍"
+      ],
       "skill_id": "firearms-submachine-gun",
       "attack_mode": "single_shot",
       "damage": "1d10+2",
