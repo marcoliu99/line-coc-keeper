@@ -19,7 +19,7 @@ from app.checks import events, narration
 from app.checks import luck as luck_policy
 from app.checks.models import CheckOutcome, outcome_for
 from app.keeper_tools import resource_bridge
-from app.models import CombatCheckIdentity, GroupState
+from app.models import CombatAction, CombatCheckIdentity, GroupState
 from app.services import combat_actions as act
 from app.services import combat_engine
 
@@ -76,7 +76,7 @@ class ManagedCombatChecks:
                 user_id, pending,
                 reply_text=(
                     f"🎲 {character.name} 的 {pending['skill']} 擲出 {result.roll} → "
-                    f"{narration.tier_zh_for_result(result)}。目前 Luck {character.luck}；"
+                    f"{narration.tier_zh_for_result(result)}。{_defence_needs(state, pending)}目前 Luck {character.luck}；"
                     f"可用 Luck 買到 {options_text}，或維持目前結果。"
                 ),
                 check_id=pending["check_id"], timeline_id=pending.get("timeline_id", ""),
@@ -203,7 +203,8 @@ def _settled_without_roll(
     """A choice that settled the attack with no roll of the player's (no defence against a shot)."""
     header = f"{character.name} 選擇「{option['label']}」"
     status = "戰鬥已結算" if outcome.get("settled") else "戰鬥機械結果暫定；尚未結算"
-    feedback = f"{header}，攻擊已由系統結算。\n【{status}】"
+    blow = _blow(state, pending, outcome)
+    feedback = f"{header}，攻擊已由系統結算。" + ("\n⚔️ " + blow if blow else "") + f"\n【{status}】"
     return outcome_for(
         user_id, pending,
         roll_line=feedback, keeper_message=f"（{header}；{status}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
@@ -221,7 +222,7 @@ def _settled_without_roll(
             ),
             "no_roll": True, "provisional": not outcome.get("settled"),
             "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
-            "combat_receipt": _combat_receipt(outcome),
+            "combat_receipt": {**_combat_receipt(outcome), "blow": blow},
             "luck_spent": 0,
         },
     )
@@ -257,7 +258,8 @@ def _feedback(
     feedback, header = narration.build_split_check_feedback(
         character.name, label, str(result.skill_value), result.roll, tier,
     )
-    feedback += "\n" + suffix
+    blow = _blow(state, pending, outcome)
+    feedback += ("\n⚔️ " + blow if blow else "") + "\n" + suffix
     settled = outcome_for(
         user_id, pending,
         roll_line=feedback, keeper_message=f"（{header}；{suffix}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
@@ -275,8 +277,75 @@ def _feedback(
                 tracked_roll_fields=(), check_context=pending, success=result.success,
             ),
             "provisional": provisional, "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
-            "combat_receipt": _combat_receipt(outcome),
+            "combat_receipt": {**_combat_receipt(outcome), "blow": blow},
             "luck_spent": luck_spent,
         },
     )
     return settled
+
+
+def _attack_action(state: GroupState, pending: dict) -> CombatAction | None:
+    """The battle action a player's attack roll or defence (choice or roll) belongs to; None for any other check."""
+    context = pending.get("combat_context") or {}
+    try:
+        role = CombatCheckIdentity.from_serialized(str(context.get("check_role", ""))).role
+    except (TypeError, ValueError):
+        return None
+    if role not in {"attack", "defense", "defense_choice"}:
+        return None
+    return state.combat.actions.get(str(context.get("action_id", "")))
+
+
+def _actor_name(state: GroupState, action: CombatAction) -> str:
+    return next((c.display_name for c in state.combat.order if c.combatant_id == action.get("actor_id")), "對方")
+
+
+def _defence_needs(state: GroupState, pending: dict) -> str:
+    """What a melee defence roll must reach against the blow already rolled, so spending Luck is an informed choice.
+
+    A skill success alone does not keep a blow off: the defence has to match (Dodge) or beat (Fight Back) the
+    attacker's tier.
+    """
+    action = _attack_action(state, pending)
+    if not action or action.get("defense_kind") not in {"dodge", "counter"}:
+        return ""
+    tier = ((action.get("checks") or {}).get("attack") or {}).get("tier")
+    if tier not in dice.TIER_RANK:
+        return ""
+    counter = action["defense_kind"] == "counter"
+    head = f"{_actor_name(state, action)}的攻擊是「{presentation.tier_label(tier)}」"
+    if not counter and dice.TIER_RANK[tier] <= dice.TIER_RANK["fail"]:
+        return head + "，這一擊打不中你。"
+    needed = dice.defence_tier_needed(tier, counter)
+    if needed is None:
+        return head + "，反擊贏不了這一擊。"
+    return head + f"，要「{presentation.tier_label(needed)}」以上{'反擊才打得中' if counter else '才躲得開'}。"
+
+
+def _blow(state: GroupState, pending: dict, outcome: dict) -> str:
+    """Whether the blow this roll settled landed, and what it did, in the table's words.
+
+    A Dodge that rolls a success can still be hit (the attacker rolled a higher tier), so the defender's tier alone
+    misleads both the player and the narrator.
+    """
+    action = _attack_action(state, pending)
+    result = outcome.get("result")
+    if not action or not isinstance(result, dict) or "hit" not in result:
+        return ""
+    if result.get("malfunction"):
+        return "武器故障，這一擊沒有打出去。"
+    checks = action.get("checks") or {}
+    attack, defence = (checks.get("attack") or {}).get("tier"), (checks.get("defense") or {}).get("tier")
+    kind = action.get("defense_kind")
+    head = ""
+    if kind in {"dodge", "counter"} and attack in dice.TIER_RANK and defence in dice.TIER_RANK:
+        attacker, defender = _actor_name(state, action), next(
+            (c.display_name for c in state.combat.order if c.combatant_id == action.get("target_id")), "防守方")
+        head = (f"{attacker}的攻擊「{presentation.tier_label(attack)}」對上"
+                f"{defender}的{'反擊' if kind == 'counter' else '閃避'}「{presentation.tier_label(defence)}」：")
+    if not result["hit"]:
+        return head + "這一擊沒有命中。"
+    damage = result.get("damage") or {}
+    blocked = "（部分被護甲擋下）" if damage.get("armor_label") else ""
+    landed = "反擊得手" if result.get("opposed") == "defender_wins" and kind == "counter" else "命中"
+    return head + f"{landed}，{damage.get('target', '目標')} 受到 {damage.get('final_damage', 0)} 點傷害{blocked}。"

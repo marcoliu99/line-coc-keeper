@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app import combat, combat_resources, combat_rules, config
+from app import combat, combat_resources, combat_rules, config, dice
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
@@ -888,3 +888,51 @@ def test_the_keeper_gets_an_enemys_whole_stat_block_by_name_or_indexed_alias():
     assert not missing["ok"] and missing["stat_block_headings"] == ["Walter Corbitt, Undead Fiend"]
     assert not codex_provider.counts_against_tool_budget("get_enemy_stat_block")
     assert "get_enemy_stat_block" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+
+
+def test_a_dodge_that_succeeds_below_the_attacks_tier_is_told_as_the_hit_it_is():
+    """A Dodge that rolls a success can still be hit; the player and the narrator are told it landed, not dodged."""
+    _battle()
+    _enemy_turn([20])  # claw 50: Hard
+    outcome, _ = _player("/coc check 閃避", [35])  # Dodge 40: a plain success, below the claw's Hard
+    state = _load()
+    assert combat_resources.effective_character(state, state.characters["p1"]).hp == 8
+    line = "Cultist的攻擊「困難成功」對上調查員p1的閃避「一般成功」：命中，調查員p1 受到 2 點傷害。"
+    assert line in outcome.roll_feedback_text
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["blow"] == line
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
+    assert "【這一擊的結果】" + line in block and "不代表躲開" in block
+
+
+def test_a_dodge_that_keeps_the_blow_off_says_so():
+    _battle()
+    _enemy_turn([20])
+    outcome, _ = _player("/coc check 閃避", [20])  # Hard as well: the tie goes to the Dodge
+    assert "Cultist的攻擊「困難成功」對上調查員p1的閃避「困難成功」：這一擊沒有命中。" in outcome.roll_feedback_text
+
+
+def test_the_luck_offer_on_a_defence_says_what_tier_keeps_the_blow_off():
+    _battle()
+    state = _load()
+    combat_resources.adjust_resource(state, state.characters["p1"], "luck", 50, event_id="test:luck", reason="test")
+    _save(state)
+    _enemy_turn([20])  # claw 50: Hard
+    outcome, _ = _player("/coc check 閃避", [35])  # a plain success: Luck could buy Hard
+    assert "Cultist的攻擊是「困難成功」，要「困難成功」以上才躲得開。目前 Luck" in outcome.reply_text
+
+
+def test_the_players_own_hit_names_what_it_did():
+    _battle(first_enemy=False)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    outcome, _ = _player("/coc check", [10, 90, 20])  # brawl Hard; the Cultist's dodge fails
+    assert "閃避「失敗」：命中，Cultist 受到" in outcome.roll_feedback_text
+
+
+def test_the_tier_a_defence_needs_follows_the_opposed_roll_rules():
+    assert dice.defence_tier_needed("hard", is_counter=False) == "hard"  # a tied Dodge goes to the defender
+    assert dice.defence_tier_needed("hard", is_counter=True) == "extreme"  # a tied Fight Back goes to the attacker
+    assert dice.defence_tier_needed("fail", is_counter=True) == "regular"
+    assert dice.defence_tier_needed("critical", is_counter=True) is None
