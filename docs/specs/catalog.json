@@ -2347,7 +2347,7 @@
       ],
       "path": "docs/specs/bug/enemy_attack_provenance_from_scenario_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_attack_provenance_from_scenario_design_spec_zh.md",
-      "source_revision": "910b133530fa67053dfa6a2f615c3eefa1e3f7bc"
+      "source_revision": "d6a03bbd5f0b663d78dbd3082f97fa2196421621"
     },
     {
       "title": "The Keeper describes a place fully instead of one or two sentences",
@@ -2597,7 +2597,7 @@
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
-      "source_revision": "1d636850c9d9a4e311e039d102a8e95e9d89885a"
+      "source_revision": "d6a03bbd5f0b663d78dbd3082f97fa2196421621"
     },
     {
       "title": "Combat turn latency: the prompt carries this round, and state loads leave the event loop",

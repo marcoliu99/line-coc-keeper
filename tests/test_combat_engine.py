@@ -187,12 +187,15 @@ def test_b2_a_shot_spends_one_round_and_a_retry_spends_none():
     assert combat_resources.effective_character(after, after.characters["p1"]).weapons[".45 Automatic"]["ammo"] == 6
 
 
-def test_b2_an_empty_magazine_asks_for_a_ruling_before_any_roll():
+def test_b2_an_empty_magazine_is_refused_before_any_roll_without_pausing_the_fight():
+    """An empty gun is the player's to deal with (reload, or do something else); the fight does not wait on a ruling."""
     _battle(weapons={".45 Automatic": {"ammo": 0, "ammo_max": 7}}, first_enemy=False)
     declared, script, _ = _shoot([])
-    assert not declared["ok"] and declared["phase"] == "NEEDS_RULING"
+    assert not declared["ok"] and "沒有子彈了" in declared["error"] and "裝填" in declared["error"]
     assert script.rolls_taken == 0
     state = _load()
+    assert state.combat.phase == "READY" and not [a for a in state.combat.actions if not a.startswith("system:")], \
+        "nothing declared, nothing to rule on"
     assert combat_resources.effective_character(state, state.characters["p1"]).weapons[".45 Automatic"]["ammo"] == 0
 
 

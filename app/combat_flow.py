@@ -22,6 +22,7 @@ from app import (
 )
 from app.models import (
     BASE_SKILLS,
+    AttackRule,
     Character,
     CombatAction,
     Combatant,
@@ -273,6 +274,10 @@ def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
     return weapon.name.strip().casefold() in text
 
 
+class OutOfAmmo(ValueError):
+    """The declared gun is the investigator's but has fewer rounds loaded than a shot needs."""
+
+
 def _weapon_actor_evidence(
     state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition,
     reference: str, instance: combat_rules.WeaponInstance | None = None,
@@ -302,7 +307,11 @@ def _weapon_actor_evidence(
             raise ValueError('Weapon skill has no authoritative investigator value')
         result: CombatAction = {'skill': skill[0], 'skill_value': skill[1], 'db': effective.damage_bonus}
         if weapon.ammo_per_attack:
-            if effective.weapons.get(inventory_key, {}).get('ammo', 0) < weapon.ammo_per_attack:
+            loaded = effective.weapons.get(inventory_key, {}).get('ammo')
+            if isinstance(loaded, int) and loaded < weapon.ammo_per_attack:
+                raise OutOfAmmo(f'{inventory_key}沒有子彈了（剩 {loaded} 發）：這一槍開不出去。'
+                                '要先裝填（身上有子彈的話），或這一輪改做別的事。')
+            if not isinstance(loaded, int):
                 raise ValueError('Owned ammunition mapping missing or insufficient')
             result['ammo_key'] = inventory_key
         return result
@@ -384,6 +393,11 @@ def declare_action(
         difficulty = range_result.difficulty
     try:
         action.update(_weapon_actor_evidence(state, actor, weapon, weapon_reference, weapon_instance))
+    except OutOfAmmo as exc:
+        # An empty gun is the player's to deal with, not a ruling that pauses the fight: nothing is declared and
+        # the actor may reload or do something else this round.
+        del state.combat.actions[action_id]
+        return _error(str(exc))
     except ValueError as exc:
         return _ruling(state, action, str(exc))
     try:
@@ -855,6 +869,12 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     mode = attack_metadata.get('attack_mode')
     if mode not in ('melee', 'single_shot'):
         mode = 'melee'
+    declared_here = (source.get('attacks', {}).get(attack.id) or {}).get('attack_mode') == 'single_shot'
+    if mode == 'single_shot' and not declared_here and not _shoots(attack):
+        # A card marked single_shot as a whole still only shoots with a gun or a bow. A claw, a bite or a flung or
+        # floating blade (Corbitt's knife, POW against Dodge) is dodged like any blow; as a shot it waited every round
+        # for ammunition and a range nobody could give, and the Keeper cancelled it (49 rounds, 2026-10-09).
+        mode = 'melee'
     if mode == 'single_shot' and (attack.ammo_or_uses is None or attack.ammo_or_uses < 1
                                   or attack_metadata.get('distance_yards') is None or attack_metadata.get('base_range_yards') is None):
         action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
@@ -880,6 +900,15 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
               'source': deepcopy(source), 'npc_attack_id': attack.id, 'plan_id': plan_id}
     state.combat.actions[identity] = action
     return run_action(state, identity)
+
+
+_SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|左輪|弓|弩|\b(?:firearms?|handgun|pistol|revolver|rifle|'
+                       r'shotgun|smg|submachine|machine gun|bow|crossbow)\b', re.IGNORECASE)
+
+
+def _shoots(attack: AttackRule) -> bool:
+    """Whether an enemy attack is a shot: it counts ammunition, or its skill or label names a gun or a bow."""
+    return attack.ammo_or_uses is not None or bool(_SHOOTING.search(f'{attack.skill_name} {attack.label}'))
 
 
 def _give_up_unplayable_enemy_turns(

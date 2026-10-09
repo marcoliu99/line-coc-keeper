@@ -1031,3 +1031,17 @@ def test_a_dodged_blow_that_owes_a_con_roll_is_not_narrated_again_after_it():
     assert _load().pending_checks["p1"]["skill"] == "CON"
     con, _ = _player("/coc check", [10])
     assert not con.resolved_event["combat_receipt"]["blow"]
+
+
+def test_an_empty_gun_is_told_to_the_player_instead_of_a_tool_failure():
+    from app.domain.models import MechanicResult, StateDelta, TurnResolution
+
+    refused = {"ok": False, "error": "左輪沒有子彈了（剩 0 發）：這一槍開不出去。要先裝填（身上有子彈的話），或這一輪改做別的事。"}
+    outcome = turn_delivery.observe_tool("declare_combat_action", refused, 1, {})
+    assert outcome.audience == "public" and not outcome.success
+    result = MechanicResult(success=False, action_type="tool_calls", narrative_facts=[], state_delta=StateDelta(),
+                            turn_resolution=TurnResolution(disposition="incomplete", validation_code="model_incomplete"),
+                            observed_outcomes=[outcome], tool_calls=(("declare_combat_action", False),),
+                            fallback_reason="tool_failure")
+    text = prompt_config.enforce_mechanic_check_consistency("", result)
+    assert text == refused["error"] and "工具" not in text

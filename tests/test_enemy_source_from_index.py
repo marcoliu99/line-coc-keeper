@@ -56,17 +56,33 @@ def test_an_attack_with_no_declared_mode_is_melee_whatever_its_range_band():
     assert run["phase"] == "PLAYER_CHOICE", run
 
 
-def test_a_card_level_single_shot_is_not_turned_into_melee():
-    _scenario_battle(["鼠群"])
+def _card_level_single_shot(name: str, attacks: list[dict]):
+    _scenario_battle([name])
     given = {"url": "u", "revision": "r", "sha256": "s", "attack_mode": "single_shot", "extreme_rule": "maximum"}
-    result = _tool("add_npc_to_combat", {"name": "鼠群", "dex": 99, "hp": 9, "source": given,
-                                         "attacks": [BITE, {**BITE, "id": "spit"}]})
+    result = _tool("add_npc_to_combat", {"name": name, "dex": 99, "hp": 9, "source": given, "attacks": attacks})
     assert result["ok"], result
     state = _load()
     state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.side == "enemy")
     _save(state)
     run, _ = _enemy_turn([20])
+    return run
+
+
+def test_a_card_level_single_shot_still_shoots_with_a_gun():
+    run = _card_level_single_shot("槍手", [{"id": "pistol", "label": "手槍", "skill_name": "射擊（手槍）",
+                                            "skill_value": 40, "damage": "1d8"}])
     assert run["phase"] == "NEEDS_RULING" and "ammunition" in run["error"], run
+
+
+def test_a_card_level_single_shot_does_not_make_a_bite_or_a_floating_knife_a_shot():
+    """Corbitt's knife registered under a card marked single_shot waited every round for ammunition and a range, and
+    the Keeper cancelled his turn for 49 rounds (2026-10-09): a blow without a gun or a bow is dodged like one."""
+    run = _card_level_single_shot("鼠群", [BITE, {**BITE, "id": "spit"}])
+    assert run["phase"] == "PLAYER_CHOICE", run
+    knife = _card_level_single_shot("Walter Corbitt", [{"id": "knife", "label": "浮空匕首", "skill_name": "POW",
+                                                        "skill_value": 90, "damage": "1D4+2", "tags": ["impale"]}])
+    assert knife["phase"] == "PLAYER_CHOICE", knife
+    assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dodge", "counter"]
 
 
 def test_an_enemy_the_index_does_not_name_still_pauses_for_a_ruling():

@@ -81,6 +81,9 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             # Nothing public: the narration tells the fight, and a fixed 「戰鬥機制操作已記錄」 line read as engine noise
             # after every combat turn (the Haunting runs, 2026-10-09). Enemy sheets stay out of a generic dump too.
             text = ""
+    elif name == "declare_combat_action" and "沒有子彈了" in str(result.get("error", "")):
+        # The one refusal the player can act on (reload, or do something else): said as it is, not as a tool failure.
+        text = str(result["error"])
     if result.get('provisional') and text:
         text += PROVISIONAL_MARK
     record = result.get("record") if name in {"record_clue", "record_established_fact"} else None
