@@ -71,10 +71,10 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     requested_hp = int(tool_input["hp"])
     if refusal := _no_one_can_fight(state, ally=bool(tool_input.get("is_ally", False))):
         return refusal
-    if missing := _attackless_scenario_enemy(state, npc_name, tool_input):
-        return {"ok": False, "error": missing}
 
     def mutate(target_state: GroupState) -> Any:
+        if missing := _attackless_scenario_enemy(target_state, npc_name, tool_input):
+            return support.ToolStateMutation({"ok": False, "error": missing}, should_save=False)
         hp = requested_hp
         index_note = ""
         # The indexed HP is authoritative for a matching scenario NPC.
@@ -124,6 +124,8 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
         return support.ToolStateMutation(index_note, should_save=True)
 
     index_note = support.mutate_tool_state(state, mutate)
+    if isinstance(index_note, dict):  # refused on the latest state
+        return index_note
     response = {"ok": True, "status": combat_engine.handle(state, act.Status())}
     if index_note:
         response["note"] = index_note
