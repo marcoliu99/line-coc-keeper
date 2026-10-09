@@ -31,6 +31,9 @@ const category = (tools) => {
 };
 // A line the bot refused, because something else was pending or the fight was paused, called nothing for a reason
 // that has nothing to do with the line itself: it is no evidence that the line needs no mechanics.
+// app/agents/intent_router.py already sends these to the Narrator alone; the live shadow skips them, so must this.
+const FAST_PATH = new Set(["好", "ok", "嗯", "知道", "了解", "收到", "沒問題", "是的", "對"]);
+const alreadyFast = (text) => FAST_PATH.has(text.toLowerCase()) || /^\(.*\)$|^（.*）$/.test(text);
 const BLOCKED = /請先完成它|請先等待|輪到你時再宣告|守密人正在處理其他調查員|戰鬥暫停中|工具失敗了|裁決沒有通過核對|劇本裡沒有足夠的內容/;
 
 function parseArgs(argv) {
@@ -80,8 +83,8 @@ function fromRuntime() {
       } else if (e.event === "llm.tool.completed") {
         if (!tools.has(e.turn_id)) tools.set(e.turn_id, []);
         tools.get(e.turn_id).push(e.tool_name);
-      } else if (e.event === "turn.fallback" || e.event === "turn.short_circuit") {
-        refused.add(e.turn_id);
+      } else if ((e.event === "turn.fallback" && e.recovery_result !== "recovered") || e.event === "turn.short_circuit") {
+        refused.add(e.turn_id); // a fallback its retry recovered from is an ordinary turn
       } else if (e.event === "laya.shadow") {
         if (e.status === "success") guesses.push(e); else errors += 1;
       }
@@ -114,7 +117,7 @@ async function fromOfflineLogs() {
     if (!tools.size) console.warn(`! ${args.tools[index]}: no request_id-tagged tool calls; every turn would read as narrate`);
     for (const turn of readJsonl(turnsPath)) {
       const text = String(turn.input ?? "").trim();
-      if (!text || turn.error || !turn.request_id) continue;
+      if (!text || turn.error || !turn.request_id || alreadyFast(text)) continue;
       const called = tools.get(turn.request_id) ?? [];
       const before = turn.state_before ?? {};
       rows.push({
