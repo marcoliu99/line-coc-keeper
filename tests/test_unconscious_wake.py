@@ -103,3 +103,15 @@ def test_first_aid_from_a_companion_wakes_them_through_the_tag_the_keeper_remove
     woken = _load().characters["p1"]
     assert "昏迷" not in woken.status_tags and woken.injury == {"major_wound": True, "unconscious": False}
     assert unconscious_wake.decide(_load(), "p1") is None, "no longer waiting"
+
+
+def test_a_movement_line_does_not_carry_an_investigator_waiting_for_first_aid():
+    from unittest.mock import patch
+
+    from app.commands import router
+
+    _party("p1", "p2")
+    with patch.object(router, "resolve_map_action", return_value={"room": "upstairs"}) as move:
+        assert router._resolve_player_location(GROUP, "p1", "我爬上樓梯。") is None
+        move.assert_not_called()
+        assert router._resolve_player_location(GROUP, "p2", "我爬上樓梯。") == {"room": "upstairs"}

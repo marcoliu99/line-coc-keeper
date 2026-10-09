@@ -40,6 +40,7 @@ from app.services import (
     correction_summary,
     mutation_admission,
     natural_corrections,
+    unconscious_wake,
 )
 from app.services.character_service import set_away_state
 from app.services.map_service import resolve_map_action
@@ -750,6 +751,14 @@ async def _handle_text_message_impl(
                 pass
 
 
+def _resolve_player_location(conversation_id: str, user_id: str, text: str) -> dict | None:
+    """Move the player's investigator on the map for this line, unless they lie unconscious waiting for First Aid:
+    the turn will only tell them so, and a movement phrase must not carry them anywhere meanwhile."""
+    if unconscious_wake.decide(load_state(conversation_id), user_id) == "wait":
+        return None
+    return resolve_map_action(conversation_id, user_id, text)
+
+
 async def _handle_ordinary_text_message_locked(
     conversation_id: str,
     user_id: str,
@@ -824,9 +833,7 @@ async def _handle_ordinary_text_message_locked(
         # Reload under the lock. The snapshot above was taken before it, so
         # anything committed while this turn queued for it is missing from it.
         if not is_kp_assistant:
-            resolved_location = await asyncio.to_thread(
-                resolve_map_action, conversation_id, user_id, text
-            )
+            resolved_location = await asyncio.to_thread(_resolve_player_location, conversation_id, user_id, text)
         state = await asyncio.to_thread(load_state, conversation_id)
         # The hold and the turn share one id, so a lock.held_too_long names the turn that holds it.
         turn_id = handoff.turn_id if handoff is not None else observability.new_id("turn")
