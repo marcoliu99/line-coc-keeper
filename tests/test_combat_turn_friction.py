@@ -117,9 +117,13 @@ def test_registering_the_skipped_enemy_again_with_attacks_lets_it_act():
     _battle("p1", enemies=(("Cultist", 90),), first_enemy=False)
     _hp_only_enemy("Thing", dex=75)
     thing = next(c for c in _load().combat.order if c.name == "Thing")
-    added = _tool("add_npc_to_combat", {"name": "Thing", "dex": 75, "hp": 5,
-                                        "attacks": [{"name": "Claw", "skill_value": 40, "damage": "1D4"}]})
+    with patch.object(dice.random, "randint", return_value=4):
+        added = _tool("add_npc_to_combat", {"name": "Thing", "dex": 75, "hp": 5,
+                                            "attacks": [{"name": "Claw", "skill_value": 40, "damage": "1D4"}],
+                                            "armor": [{"label": "ward", "value": "2D6", "depletes": True}]})
     assert "已補上" in str(added), added
+    ward = combat.card_for(_load(), thing).armor
+    assert [(a.value, a.rolled_from, a.depletes) for a in ward] == [(8, "2D6", True)], "the armor comes with the attacks"
     state = _load()
     assert [c.name for c in state.combat.order].count("Thing") == 1, "the same enemy, not a second one"
     card = combat.card_for(state, next(c for c in state.combat.order if c.name == "Thing"))

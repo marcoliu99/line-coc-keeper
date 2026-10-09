@@ -50,7 +50,7 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 
 以 `50fa21e` 跑的 200 輪《鬼屋》（2026-10-09）裡，守密人讀到 Corbitt 數值表的「Corbitt has cast Flesh Ward already. Roll 2D6 for his armor. Reduce his armor by one point for each point of damage he suffers」，四次嘗試開戰時，每次都公開呼叫 `roll_dice` 擲 2D6。前三次那一輪都失敗，什麼也沒登記，玩家先後看到「骰子已結算：2d6，總值 5」、9、6、10。第四次登記成功，但護甲根本沒帶上：Evelyn 第一拳就打掉他 3 點 HP。三項修改：
 
-- 護甲規則的 `value` 可以填骰子（「2D6」）。`combat._coerce_armor` 在登記敵人時擲這一次，總值存在戰鬥卡上，骰子式記在 `rolled_from`。結果不公開；登記成功前，重試的回合不會擲任何骰。既不是數字也不是骰子的值會被拒絕。`initialize_combat` 與 `add_npc_to_combat` 的護甲說明都寫明直接把骰子填在這裡，不要先用 `roll_dice` 擲。
+- 護甲規則的 `value` 可以填骰子（「2D6」）。`combat._coerce_armor` 在登記敵人時擲這一次，總值存在戰鬥卡上，骰子式記在 `rolled_from`。結果不公開；登記成功前，重試的回合不會擲任何骰。既不是數字也不是骰子的值會被拒絕。`initialize_combat` 與 `add_npc_to_combat` 的護甲說明都寫明直接把骰子填在這裡，不要先用 `roll_dice` 擲。先前登記時沒有攻擊的戰鬥卡，被第二次登記補完時，若原本沒有護甲，也會一併帶上護甲（在那時擲）。
 - `ArmorRule.depletes` 標記會磨損的護甲。`combat.wear_armor` 把這一擊被護甲擋下的點數從護甲值扣掉；`apply_managed_damage` 每個傷害事件只呼叫一次，重播同一事件不會再扣。劇本的「for each point of damage he suffers」照規則書中 Flesh Ward 的運作，解讀為護盾每擋下一點就少一點。一般護甲不會磨損。
 - `roll_dice` 新增 `secret: true`，給守密人自己的暗骰用：結果只留在內部，不會附加到回覆裡；交給敘事的事實也只說擲了暗骰，不含數字。
 

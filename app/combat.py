@@ -493,13 +493,18 @@ def _complete_card(
     attacks: list[dict[str, Any]] | None,
     abilities: list[dict[str, Any]] | None,
     source: dict[str, Any] | None,
+    armor: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Give an enemy registered without attacks or abilities the ones a second registration of it brings, so the
-    turn it has been giving up is played from the next round. Its HP and state stay; a complete card is not changed."""
+    turn it has been giving up is played from the next round, and its armor if it had none (rolled now, once). Its
+    HP and state stay; a complete card is not changed."""
     card = card_for(state, combatant)
     if card is None or not card.incomplete or not (attacks or abilities):
         return False
-    card.attacks = _coerce_attacks(attacks)
+    coerced_attacks, coerced_armor = _coerce_attacks(attacks), _coerce_armor(armor) if armor and not card.armor else None
+    card.attacks = coerced_attacks
+    if coerced_armor is not None:
+        card.armor = coerced_armor
     card.abilities = _coerce_abilities(abilities)
     card.source = {**card.source, **(source or {})}
     card.incomplete = False
@@ -540,7 +545,7 @@ def add_combatant(
         existing = find_live_enemy_by_any_alias(state, name)
         if existing is not None:
             return AddedCombatant(existing, reused=True, completed_card=_complete_card(
-                state, existing, attacks=attacks, abilities=abilities, source=source))
+                state, existing, attacks=attacks, abilities=abilities, source=source, armor=armor))
     namesake = None if is_ally else _defeated_enemy_by_any_alias(state, name)
     _checkpoint_before_combat(state)
     before = {id(c) for c in state.combat.order}
