@@ -2,7 +2,7 @@
 
 目的：確認 [Laya](https://github.com/receptron/laya) 能不能在 Executor 之前就判斷出「這句玩家行動不需要任何機制」，讓那些回合直接交給 Narrator，省下 Executor 約 20 秒。
 
-**影子模式只記錄，不改變遊戲**：每個玩家回合，bot 照原本流程跑 Executor 和 Narrator；同時把玩家那句話送給本機的 Laya 小服務，把它的判斷寫進 runtime log（事件 `laya.shadow`）。之後用 `eval.mjs` 拿同一回合 Executor 實際呼叫的工具當正確答案，算準確率。Laya 掛掉或太慢只會少一筆資料，不影響回合。
+**影子模式只記錄，不改變遊戲**（只針對會進 Executor 的回合；「好」或括號場外話本來就不經 Executor，不記）：每個玩家回合，bot 照原本流程跑 Executor 和 Narrator；同時把玩家那句話送給本機的 Laya 小服務，把它的判斷寫進 runtime log（事件 `laya.shadow`）。之後用 `eval.mjs` 拿同一回合 Executor 實際呼叫的工具當正確答案，算準確率。Laya 掛掉或太慢只會少一筆資料，不影響回合。
 
 ## 執行步驟（Codex CLI 照做即可）
 
@@ -21,6 +21,7 @@
 3. 在 bot 的 `.env` 打開結構化 log 和影子模式，其他設定（模型、推理強度）都不要動：
    ```
    LOG_ENABLED=true
+   LOG_TEXT_ENABLED=true
    LOG_FORMAT=json
    LOG_FILE=data/evaluations/<run-id>-runtime.jsonl
    LAYA_SHADOW_URL=http://127.0.0.1:8765/route
@@ -37,7 +38,7 @@
      --runtime data/evaluations/<run-id>-runtime.jsonl --limit 200 \
      --out data/evaluations/<run-id>-laya
    ```
-   輸出 `report.md`（給人看）和 `results.jsonl`（每回合的判斷與實際工具）。
+   輸出 `report.md`（給人看）和 `results.jsonl`（每回合的判斷與實際工具）。玩家原句走文字 log 頻道（`LOG_TEXT_ENABLED`），不寫進結構化事件；沒開文字 log 時報告裡的句子會是空白，但數字照算。
 6. 把 `report.md`、`results.jsonl` 和 runtime log 交回來分析。
 
 ## 報告怎麼看

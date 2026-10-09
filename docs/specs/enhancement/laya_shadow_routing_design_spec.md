@@ -8,7 +8,7 @@ A 100-turn Haunting replay (2026-10-09) spent a median 23.6 s per turn, 19.8 s o
 
 [Laya](https://github.com/receptron/laya) answers typed questions (choice, score, yes/no) about a state in one encoder pass, about 140 ms warm on CPU. Before any line is routed on it, its accuracy is measured on real play:
 
-- `app/agents/laya_shadow.py`: when `LAYA_SHADOW_URL` is set, each player line (`player_action`, not the KP assistant) is posted to a local Laya sidecar as `{玩家行動, 角色, 戰鬥中}` beside the Executor, and the answer (route, probabilities, the yes/no "needs mechanics", latency, the line itself) is logged as a `laya.shadow` event under the turn's id. The turn never waits for it and never reads it; a down or slow sidecar logs `status: error`. Off by default.
+- `app/agents/laya_shadow.py`: when `LAYA_SHADOW_URL` is set, each player line the Executor would take (`GAMEPLAY_ACTION`; a bare confirmation or parenthesised OOC line already skips it) is posted to a local Laya sidecar as `{玩家行動, 角色, 戰鬥中}` beside the Executor, and the answer (route, probabilities, the yes/no "needs mechanics", latency) is logged as a `laya.shadow` event under the turn's id. The line itself is free-form player text, so it goes to the text-log channel (`LOG_TEXT_ENABLED`) rather than into the structured event; the eval joins the two by turn id. The turn never waits for it and never reads it; a down or slow sidecar logs `status: error`. Off by default.
 - `scripts/experiments/laya_router_eval/`: `server.mjs` (the sidecar), `questions.mjs` (the questions, shared), `eval.mjs` (scores the guesses against the tools the Executor called in the same turn: a turn that called anything besides look-ups needed the Executor; refused turns are not scored) and a README runbook.
 
 ## Not done
@@ -17,4 +17,4 @@ Routing on the guess. That needs a threshold whose "fast path but the Executor d
 
 ## Tests
 
-`tests/test_laya_shadow.py`: off by default, the guess is logged with its line, a down sidecar is a logged miss.
+`tests/test_laya_shadow.py`: off by default, the guess is logged and its line goes to the text log only, a down sidecar is a logged miss.

@@ -71,10 +71,13 @@ function fromRuntime() {
   const rows = [];
   let errors = 0;
   for (const path of args.runtime) {
-    const tools = new Map(); const refused = new Set(); const guesses = [];
+    const tools = new Map(); const refused = new Set(); const guesses = []; const texts = new Map();
     for (const e of readJsonl(path)) {
       if (!e.turn_id) continue;
-      if (e.event === "llm.tool.completed") {
+      const message = String(e.message ?? "");
+      if (message.startsWith("laya.shadow text: ")) {
+        texts.set(e.turn_id, message.slice("laya.shadow text: ".length)); // the text-log channel (LOG_TEXT_ENABLED)
+      } else if (e.event === "llm.tool.completed") {
         if (!tools.has(e.turn_id)) tools.set(e.turn_id, []);
         tools.get(e.turn_id).push(e.tool_name);
       } else if (e.event === "turn.fallback" || e.event === "turn.short_circuit") {
@@ -86,7 +89,7 @@ function fromRuntime() {
     for (const g of guesses) {
       const called = tools.get(g.turn_id) ?? [];
       rows.push({
-        source: path, turn_id: g.turn_id, text: g.text ?? "", in_combat: Boolean(g.in_combat), tools: called,
+        source: path, turn_id: g.turn_id, text: texts.get(g.turn_id) ?? "", in_combat: Boolean(g.in_combat), tools: called,
         truth: category(called), blocked: category(called) === "narrate" && refused.has(g.turn_id),
         predicted: g.route, probabilities: g.probabilities ?? {}, needs: g.needs, ms: g.model_ms ?? g.duration_ms,
         round_trip_ms: g.duration_ms,

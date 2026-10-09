@@ -1,19 +1,21 @@
 """Shadow routing: ask a local Laya sidecar how it would route a player's line, and log the answer.
 
 Nothing here changes a turn. The guess runs beside the Executor and lands in the runtime log as a `laya.shadow`
-event carrying the turn's id, so scripts/experiments/laya_router_eval can score it against the tools the Executor
+event carrying the turn's id (the line itself goes to the text log), so scripts/experiments/laya_router_eval can score it against the tools the Executor
 called in the same turn. Off unless LAYA_SHADOW_URL is set.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import urllib.request
 from typing import Any
 
 from app import config, observability
 
+_logger = logging.getLogger(__name__)
 _PENDING: set[asyncio.Task[None]] = set()  # fire-and-forget tasks are kept alive until they finish
 _TEXT_LIMIT = 300
 
@@ -50,5 +52,8 @@ async def _ask(text: str, *, character: str, in_combat: bool) -> None:
     observability.event(
         "laya.shadow", status="success", duration_ms=(time.perf_counter() - started) * 1000,
         model_ms=answer.get("ms"), route=answer.get("route"), probabilities=answer.get("probabilities"),
-        needs=answer.get("needs"), in_combat=in_combat, text=text,
+        needs=answer.get("needs"), in_combat=in_combat,
     )
+    # The line itself is free-form player text: it goes to the text-log channel (LOG_TEXT_ENABLED), not into the
+    # structured event, and the eval joins the two by the turn's id.
+    _logger.info("laya.shadow text: %s", text)

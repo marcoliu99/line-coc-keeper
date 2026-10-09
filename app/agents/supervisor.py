@@ -251,7 +251,7 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
     turn_phases.note(route=turn.intent.lower())
 
     _logger.info(f"Intent classified as: {turn.intent}")
-    if turn.turn_kind == "player_action" and turn.intent != "OOC_ASSISTANT":
+    if turn.turn_kind == "player_action" and turn.intent == "GAMEPLAY_ACTION":  # the lines the Executor would take
         actor = turn.state.get_active_character(turn.user_id)
         laya_shadow.start(turn.text, character=actor.name if actor else turn.display_name,
                           in_combat=turn.state.combat.active)

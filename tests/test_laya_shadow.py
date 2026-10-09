@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import ClassVar
@@ -48,7 +49,8 @@ def test_off_by_default_and_for_an_empty_line():
     assert _events("http://127.0.0.1:9/route", text="   ") == []
 
 
-def test_the_guess_is_logged_with_the_line_it_was_about():
+def test_the_guess_is_logged_and_the_line_goes_to_the_text_log(caplog):
+    caplog.set_level(logging.INFO, logger="app.agents.laya_shadow")
     server = HTTPServer(("127.0.0.1", 0), _Sidecar)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
@@ -58,7 +60,9 @@ def test_the_guess_is_logged_with_the_line_it_was_about():
     assert _Sidecar.seen[-1]["state"] == {"玩家行動": "我問管家今晚誰在家。", "角色": "Evelyn", "戰鬥中": False}
     (event,) = logged
     assert event["event"] == "laya.shadow" and event["status"] == "success"
-    assert event["route"] == "narrate" and event["needs"] == 0.02 and event["text"] == "我問管家今晚誰在家。"
+    assert event["route"] == "narrate" and event["needs"] == 0.02
+    assert "text" not in event, "free-form player text stays out of structured events"
+    assert "laya.shadow text: 我問管家今晚誰在家。" in caplog.text
 
 
 def test_a_sidecar_that_is_down_is_a_logged_miss_not_an_error():
