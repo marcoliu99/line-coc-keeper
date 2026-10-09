@@ -151,7 +151,11 @@ def test_every_narrator_prompt_keeps_system_words_out_of_the_story():
 def test_a_status_change_reads_as_the_investigators_condition():
     from app.services import turn_delivery
 
-    woke = turn_delivery.observe_tool("remove_status_tag", {"ok": True, "investigator": "Evelyn", "status_tags": []}, 1)
-    assert woke.public_text == "Evelyn 目前：無異狀。"
-    hurt = turn_delivery.observe_tool("add_status_tag", {"ok": True, "investigator": "Evelyn", "status_tags": ["昏迷"]}, 2)
-    assert hurt.public_text == "Evelyn 目前：昏迷。" and "狀態" not in hurt.public_text
+    # Waking removes 昏迷 and 倒地 in two calls: each says its own change, and neither claims she is unhurt.
+    up = [turn_delivery.observe_tool("remove_status_tag",
+                                     {"ok": True, "investigator": "Evelyn", "tag": tag, "status_tags": rest}, n)
+          for n, (tag, rest) in enumerate((("昏迷", ["倒地"]), ("倒地", [])), 1)]
+    assert [o.public_text for o in up] == ["Evelyn 不再昏迷。", "Evelyn 不再倒地。"]
+    hurt = turn_delivery.observe_tool("add_status_tag",
+                                      {"ok": True, "investigator": "Evelyn", "tag": "昏迷", "status_tags": ["昏迷"]}, 3)
+    assert hurt.public_text == "Evelyn：昏迷。" and "狀態" not in hurt.public_text
