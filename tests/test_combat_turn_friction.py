@@ -130,6 +130,13 @@ def test_registering_the_skipped_enemy_again_with_attacks_lets_it_act():
     assert [a.skill_value for a in combat.card_for(_load(), thing).attacks] == [40]
 
 
+def test_the_follow_up_after_a_settled_roll_is_told_which_enemy_gave_up_its_turn():
+    step = prompt_config._combat_turn_step({"auto_advanced": {
+        "next_actor": "調查員p1", "round_now": 2, "phase": "READY",
+        "skipped_enemy_turns": [{"name": "柯比特操縱的匕首", "reason": "x", "hint": "y"}]}})
+    assert "柯比特操縱的匕首" in step and "不要敘事它出手" in step and "initialize_combat" in step
+
+
 def test_a_fight_that_opens_on_an_enemy_the_engine_cannot_play_starts_with_the_next_turn():
     from app.models import GroupState
     from tests.test_combat_engine import _investigator
