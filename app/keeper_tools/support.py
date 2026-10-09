@@ -234,7 +234,12 @@ _DAMAGE_BONUS_BARE = re.compile(r"(?:damagebonus|傷害加值|\bdb\b)(?![（(]|[
 
 
 def _stat_blocks(text: str) -> list[tuple[str, str]]:
-    """Every stat block in the scenario text as (heading, block text), both casefolded.
+    """Every stat block in the scenario text as (heading, block text), both casefolded (see ``_stat_blocks_as_written``)."""
+    return [(heading.casefold(), block.casefold()) for heading, block in _stat_blocks_as_written(text)]
+
+
+def _stat_blocks_as_written(text: str) -> list[tuple[str, str]]:
+    """Every stat block in the scenario text as (heading, block text), as the scenario writes them.
 
     A block starts at the nearest short, non-stat line above its characteristics (at least two of STR/CON/SIZ/DEX/
     POW/INT/EDU/APP with numbers, on that line or the next few, as 7e lays a block out: 「### Walter Corbitt, Undead
@@ -253,13 +258,29 @@ def _stat_blocks(text: str) -> list[tuple[str, str]]:
             if not candidate or _CHARACTERISTIC.search(candidate):
                 continue
             if len(candidate) <= _HEADING_MAX_CHARS:
-                starts.append((above, candidate.casefold()))
+                starts.append((above, candidate))
             break
     blocks: list[tuple[str, str]] = []
     for position, (start, heading) in enumerate(starts):
         end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
-        blocks.append((heading, "\n".join(lines[start:min(end, start + _BLOCK_MAX_LINES)]).casefold()))
+        blocks.append((heading, "\n".join(lines[start:min(end, start + _BLOCK_MAX_LINES)])))
     return blocks
+
+
+def stat_block_for(state: GroupState, name: str) -> tuple[str, str] | None:
+    """The stat block the loaded scenario gives this enemy, as (heading, block text) the way the scenario writes them,
+    found by its heading or, through the scenario's NPC index, by an alias of it (柯比特 for Walter Corbitt)."""
+    indexed = combat.find_npc_index_entry_exact(state, name) or {}
+    names = [str(n) for n in (name, indexed.get("name"), *(indexed.get("aliases") or [])) if n]
+    for heading, block in _stat_blocks_as_written(state.scenario_text or ""):
+        if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names):
+            return heading, block
+    return None
+
+
+def stat_block_headings(state: GroupState) -> list[str]:
+    """Every stat block heading in the loaded scenario, as written."""
+    return [heading for heading, _ in _stat_blocks_as_written(state.scenario_text or "")]
 
 
 _ATTACK_LINE = re.compile(r"fighting|格鬥|攻擊|attack|damage|傷害|bite|claw|咬|爪|weapon|武器", re.IGNORECASE)

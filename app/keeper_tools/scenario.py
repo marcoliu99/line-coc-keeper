@@ -286,3 +286,21 @@ def search_memory(call: ToolCall) -> dict[str, Any]:
             metrics=memory_metrics,
         )
     return {"ok": True, "results": memory_rag.format_results(results)}
+
+
+def get_enemy_stat_block(call: ToolCall) -> dict[str, Any]:
+    """The scenario's stat block for an enemy, whole, so the Keeper registers it from the block instead of searching
+    the scenario until the search cap ends the turn (the Haunting soaks, 2026-10-09: three lines lost each time)."""
+    name = str(call.input.get("name") or "").strip()
+    found = support.stat_block_for(call.state, name) if name else None
+    if found is None:
+        return {
+            "ok": False, "error": f"劇本沒有「{name}」的數值表。",
+            "stat_block_headings": support.stat_block_headings(call.state)[:30],
+            "hint": "名字要對上數值表標題（或 /coc index 列的別名）；只在內文描述的敵人用 search_scenario 查。",
+        }
+    heading, block = found
+    return {
+        "ok": True, "heading": heading, "stat_block": block,
+        "hint": "登記時照這張表寫的攻擊填 attacks（技能值、傷害）；劇本另外寫明的攻擊方式（例如操縱物品出手）以內文為準。",
+    }
