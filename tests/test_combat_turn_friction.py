@@ -794,3 +794,25 @@ def test_corbitt_is_registered_with_his_floating_knife_and_attacks_with_it():
     assert state.pending_checks["p1"]["attacker_name"] == "Walter Corbitt"
     knife_attack = next(a for a in state.combat.actions.values() if a.get("npc_attack_id"))
     assert knife_attack["weapon"]["extreme_rule"] == "impale", "an Extreme hit impales: 6 + 1D4+2"
+
+
+def test_an_enemy_attack_with_malformed_tags_still_attacks():
+    _battle("p1", enemies=(("Cultist", 90),), first_enemy=False)
+    state = _load()
+    card = combat.card_for(state, next(c for c in state.combat.order if c.side == "enemy"))
+    for tags in (None, "impale", 7):
+        card.attacks[0].tags = tags  # type: ignore[assignment]  # what an unvalidated tool call can store
+        _save(state)
+        state = _load()
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.side == "enemy")
+        _save(state)
+        plan = _tool("plan_enemy_turn", {"enemy": "Cultist"})
+        ran = _tool("run_enemy_combat_plan", {"plan_id": plan["plan_id"]})
+        assert ran["ok"], (tags, ran)
+        state = _load()
+        assert state.pending_checks.get("p1"), tags
+        state.pending_checks.clear()
+        state.combat.actions.clear()
+        state.combat.interaction = None
+        state.combat.phase = "READY"
+        card = combat.card_for(state, next(c for c in state.combat.order if c.side == "enemy"))

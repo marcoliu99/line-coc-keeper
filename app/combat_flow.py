@@ -849,7 +849,8 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
         return _error('NPC attack damage expression is invalid')
     attack_metadata = {'extreme_rule': source.get('extreme_rule'), 'attack_mode': source.get('attack_mode'),
                        **source.get('attacks', {}).get(attack.id, source if len(card.attacks) == 1 else {})}
-    if 'impale' in attack.tags:  # the scenario says this attack impales on an Extreme success (Corbitt's knife)
+    tags = attack.tags if isinstance(attack.tags, list) else [attack.tags]  # a model may send null or one string
+    if 'impale' in tags:  # the scenario says this attack impales on an Extreme success (Corbitt's knife)
         attack_metadata['extreme_rule'] = 'impale'
     mode = attack_metadata.get('attack_mode')
     if mode not in ('melee', 'single_shot'):
