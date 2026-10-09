@@ -14,10 +14,15 @@ export const QUESTIONS = {
   needs: { type: "noul", instructions: "這句話需要擲骰、戰鬥、物品變動或其他遊戲狀態的改變。" },
 };
 
-export async function loadLaya(options = {}) {
+// The players write Traditional Chinese: the multilingual checkpoint unless a local export is given. Pass a fixed
+// `revision` (a commit of the model repo) so two runs score the same weights; it is recorded with every answer.
+export const MODEL = { subfolder: "multilingual", revision: "main" };
+
+export async function loadLaya({ modelDir, revision } = {}) {
   const { Laya } = await import("@receptron/laya");
-  // The players write Traditional Chinese: the multilingual checkpoint unless a local export is given.
-  return Laya.load({ subfolder: "multilingual", ...options });
+  if (revision) MODEL.revision = revision;
+  if (modelDir) MODEL.revision = `local:${modelDir}`;
+  return Laya.load(modelDir ? { modelDir } : { subfolder: MODEL.subfolder, revision: MODEL.revision });
 }
 
 export async function route(laya, state) {
@@ -26,5 +31,6 @@ export async function route(laya, state) {
   return {
     route: out.answers.route.choice, probabilities: out.answers.route.probabilities,
     needs: out.answers.needs.noul, ms: performance.now() - started, input_tokens: out.usage?.input_tokens,
+    revision: MODEL.revision,
   };
 }

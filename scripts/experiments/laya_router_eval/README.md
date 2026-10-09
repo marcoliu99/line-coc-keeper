@@ -11,13 +11,13 @@
 1. 安裝：
    ```sh
    cd scripts/experiments/laya_router_eval
-   npm install
+   npm ci
    ```
 2. 另開一個終端機啟動 Laya 小服務，等它印出 `laya ready ...`：
    ```sh
    node scripts/experiments/laya_router_eval/server.mjs --port 8765
    ```
-   已有本機的 ONNX 匯出就加 `--model-dir 路徑`。
+   要讓不同次的實驗可以比較，第一次下載後到 Hugging Face 模型頁記下目前的 commit，之後都加 `--revision <commit>` 固定模型版本（套件版本已由 `package-lock.json` 固定為 0.1.2）。報告會列出這次用的模型版本。已有本機的 ONNX 匯出就改加 `--model-dir 路徑`。
 3. 在 bot 的 `.env` 打開結構化 log 和影子模式，其他設定（模型、推理強度）都不要動：
    ```
    LOG_ENABLED=true

@@ -48,7 +48,7 @@ function parseArgs(argv) {
   const offline = out.turns.length && out.turns.length === out.tools.length;
   if (!out.runtime.length && !offline) {
     console.error("usage: node eval.mjs --runtime RUNTIME.jsonl [...] [--limit 200] [--out DIR]\n" +
-      "   or: node eval.mjs --turns T.jsonl --tools TOOLS.jsonl [...pairs] [--limit 200] [--model-dir DIR] [--dry-run]\n" +
+      "   or: node eval.mjs --turns T.jsonl --tools TOOLS.jsonl [...pairs] [--limit 200] [--revision R | --model-dir DIR] [--dry-run]\n" +
       "   options: [--executor-seconds 20] [--include-blocked]");
     process.exit(2);
   }
@@ -95,7 +95,7 @@ function fromRuntime() {
         source: path, turn_id: g.turn_id, text: texts.get(g.turn_id) ?? "", in_combat: Boolean(g.in_combat), tools: called,
         truth: category(called), blocked: category(called) === "narrate" && refused.has(g.turn_id),
         predicted: g.route, probabilities: g.probabilities ?? {}, needs: g.needs, ms: g.model_ms ?? g.duration_ms,
-        round_trip_ms: g.duration_ms,
+        round_trip_ms: g.duration_ms, revision: g.model_revision,
       });
     }
   }
@@ -132,7 +132,7 @@ async function fromOfflineLogs() {
   if (args["dry-run"]) return null;
   const { loadLaya, route } = await import("./questions.mjs");
   const started = performance.now();
-  const laya = await loadLaya(args["model-dir"] ? { modelDir: args["model-dir"] } : {});
+  const laya = await loadLaya({ modelDir: args["model-dir"], revision: args.revision });
   const loadMs = performance.now() - started;
   const results = [];
   for (const [index, row] of dataset.entries()) {
@@ -166,6 +166,7 @@ function report({ results, loadMs, errors }, mode) {
       (trip.length ? `；連同 HTTP 中位數 ${fixed(percentile(trip, 0.5))} ms` : "") +
       (loadMs ? `；載入模型 ${(loadMs / 1000).toFixed(1)} 秒` : "") +
       (errors ? `；失敗 ${errors} 次（未計分）` : ""),
+    `- 模型版本：${[...new Set(results.map((r) => r.revision ?? "未記錄"))].join("、")}（不同版本的結果不能直接比較）`,
     "", "## 走捷徑的門檻", "",
     "「走捷徑」= 判成 narrate 且信心達門檻，跳過 Executor。**誤放**＝走了捷徑但 Executor 實際有呼叫會改狀態的工具（會漏擲骰／漏登記）。",
     "", "| 規則 | 門檻 | 走捷徑 | 佔全部 | 誤放 | 誤放佔需要 Executor 的回合 | 估計每回合省下 |",

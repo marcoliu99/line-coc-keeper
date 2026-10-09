@@ -17,14 +17,14 @@ from app import config, observability
 
 _logger = logging.getLogger(__name__)
 _PENDING: set[asyncio.Task[None]] = set()  # fire-and-forget tasks are kept alive until they finish
-_TEXT_LIMIT = 300
 
 
 def start(text: str, *, character: str, in_combat: bool) -> asyncio.Task[None] | None:
     """Begin the guess for one player line; the turn does not wait for it."""
     if not config.LAYA_SHADOW_URL or not text.strip():
         return None
-    task = asyncio.create_task(_ask(text.strip()[:_TEXT_LIMIT], character=character, in_combat=in_combat))
+    # The whole line, as the Executor sees it: Laya truncates to its own token limit, the same way offline.
+    task = asyncio.create_task(_ask(text.strip(), character=character, in_combat=in_combat))
     _PENDING.add(task)
     task.add_done_callback(_PENDING.discard)
     return task
@@ -52,7 +52,7 @@ async def _ask(text: str, *, character: str, in_combat: bool) -> None:
     observability.event(
         "laya.shadow", status="success", duration_ms=(time.perf_counter() - started) * 1000,
         model_ms=answer.get("ms"), route=answer.get("route"), probabilities=answer.get("probabilities"),
-        needs=answer.get("needs"), in_combat=in_combat,
+        needs=answer.get("needs"), in_combat=in_combat, model_revision=answer.get("revision"),
     )
     # The line itself is free-form player text: it goes to the text-log channel (LOG_TEXT_ENABLED), not into the
     # structured event, and the eval joins the two by the turn's id.
