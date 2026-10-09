@@ -66,6 +66,6 @@ Node.js 子專案應有獨立 `package.json` 與 lockfile，固定 Laya 版本�
 ## 尚待決定
 
 - Laya 0.1.2 與其 Transformers/ONNX 執行後端在 Node.js 20、Apple CPU 的實際 API、下載 revision 取得方式與資源用量，需在實作時核實；README 的約 1.7 GB 下載與 2 GB 記憶體是估值，不作硬性驗收數字。
-- 200 回合真實遊戲會呼叫已設定的對話模型，可能花費相當時間/額度；執行前需由操作者指定或確認可重現的場景與起點。既有 `the-haunting-ddc24ec6` 地下室實跑可作為候選，但此 spec 不把它寫死。
+- 200 回合真實遊戲會呼叫已設定的對話模型，可能花費相當時間/額度。本次依既有指示使用 `the-haunting-ddc24ec6`，從地下室開始；執行時固定記錄場景雜湊、模型與 seed。
 - `LOG_TEXT_ENABLED=true` 會把玩家原句寫入 log。實驗操作者應確認 log 檔的保存與分享範圍；評估器只讀取指定檔案，不自行上傳內容。
 - 若 runtime 現有文字 log 無法可靠地以 `turn_id` 對齊 input，需先確認可用事件型態，再決定是否增加最小化、遮蔽識別資訊的使用者文字紀錄。
