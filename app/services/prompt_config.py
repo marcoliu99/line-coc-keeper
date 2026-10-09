@@ -425,7 +425,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
             confirmed = turn_delivery.distinct_lines(
                 [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text])
-            if (not status.get("pending") and not status.get("pending_luck")
+            if (not status.get("pending") and not status.get("pending_luck") and not status.get("state_changed")
                     and any(not o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)):
                 # A refusal that says why and what to do (an empty gun) is the whole answer, not a tool failure.
                 return "\n".join(confirmed)

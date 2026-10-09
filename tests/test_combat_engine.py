@@ -675,3 +675,8 @@ def test_b2_a_ruling_that_maps_the_shot_onto_an_empty_gun_refuses_it_instead_of_
     ))
     assert not resumed["ok"] and "沒有子彈了" in resumed["error"], resumed
     assert state.combat.phase == "READY" and "shot-unmapped" not in state.combat.actions
+    again = combat_engine.handle(state, act.Rule(
+        combat_id=state.combat.combat_id, action_id="shot-unmapped", event_id="ruling:map", reason="it is the .45",
+        decision="resume", weapon_reference=".45 Automatic", distance_yards=5,
+    ))
+    assert again == resumed, "a resent ruling replays its refusal"

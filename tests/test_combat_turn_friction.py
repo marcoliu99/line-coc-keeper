@@ -1049,6 +1049,13 @@ def test_an_empty_gun_is_told_to_the_player_instead_of_a_tool_failure():
                             fallback_reason="tool_failure")
     text = prompt_config.enforce_mechanic_check_consistency("", result)
     assert text == refused["error"] and "工具" not in text
+    paused = turn_delivery.observe_tool("resolve_combat_ruling", {**refused, "phase": "NEEDS_RULING"}, 1, {})
+    assert paused.audience == "internal", "a shot still waiting on a ruling is not told as refused"
+    changed = MechanicResult(success=False, action_type="tool_calls", narrative_facts=[], state_delta=StateDelta(),
+                             turn_resolution=result.turn_resolution, observed_outcomes=[outcome],
+                             tool_calls=result.tool_calls, fallback_reason="tool_failure",
+                             check_status={"state_changed": True})
+    assert "已記錄的變更會保留" in prompt_config.enforce_mechanic_check_consistency("", changed)
 
 
 def test_each_hit_the_armor_stops_is_logged_for_the_keeper_not_shown(caplog):

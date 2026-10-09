@@ -1385,7 +1385,9 @@ def resolve_ruling(
             # so the actor may reload or do something else instead of the fight waiting on another ruling.
             del state.combat.actions[action_id]
             state.combat.phase = 'READY'
-            return _error(str(exc))
+            refused = _error(str(exc))
+            combat_resources.record_event(state, event_id, 'ruling', data=deepcopy(refused), reason=reason)
+            return refused
         except ValueError as exc:
             return _ruling(state, action, str(exc))
         if action.get('checks') and action.get('skill') != evidence['skill']:
