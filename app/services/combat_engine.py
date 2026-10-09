@@ -395,22 +395,18 @@ _CAN_DOWN_THE_PARTY = (act.CheckResult, act.Choose, act.Advance, act.Run, act.Ru
 PARTY_DOWN_REASON = "所有調查員都已倒下，戰鬥自動結算"
 
 
-def _down_at_zero(state: GroupState, combatant: combat.Combatant) -> bool:
-    """At 0 HP in this fight, or not in it (away or retired). Unconscious with HP left is not down: the Keeper rules
-    what the enemy does with that investigator."""
-    character = combat.character_for_combatant(state, combatant)
-    if character is None or not character.active or character.away:
-        return True
-    return combat_resources.effective_character(state, character).hp <= 0
-
-
 def _ready_to_settle_party_down(state: GroupState) -> bool:
-    """Every investigator in the fight at 0 HP (or away) and nothing left open: nobody is left to play it on."""
+    """Every investigator present in the fight at 0 HP and nothing left open: nobody is left to play it on, and the
+    settlement ends the scenario. An investigator away or retired is not counted; one unconscious with HP left is not
+    down (the Keeper rules what the enemy does with them)."""
     battle = state.combat
-    investigators = [c for c in battle.order if c.is_pc]
-    return bool(battle.active and investigators and not battle.interaction and battle.phase == "READY"
-                and all(a.get("completed") for a in battle.actions.values())
-                and all(_down_at_zero(state, c) for c in investigators))
+    if not battle.active or battle.interaction or battle.phase != "READY" or any(
+            not a.get("completed") for a in battle.actions.values()):
+        return False
+    present = [character for c in battle.order if c.is_pc
+               if (character := combat.character_for_combatant(state, c)) is not None
+               and character.active and not character.away]
+    return bool(present) and all(combat_resources.effective_character(state, c).hp <= 0 for c in present)
 
 
 def _settle_party_down(state: GroupState) -> dict[str, Any] | None:

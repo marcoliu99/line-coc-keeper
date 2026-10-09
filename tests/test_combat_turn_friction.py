@@ -855,3 +855,15 @@ def test_a_party_the_keeper_already_downed_is_not_settled_by_a_rejected_step():
     assert _load().combat.active
     rejected = _tool("advance_combat_turn", {"actor_id": "nobody"})
     assert not rejected["ok"] and _load().combat.active and _load().active
+
+
+def test_only_a_party_down_at_zero_is_ready_to_settle_by_itself():
+    # Settling must end the scenario: an investigator away is not counted, and with nobody present nothing settles.
+    _battle(first_enemy=False)
+    state = _load()
+    assert not combat_engine._ready_to_settle_party_down(state)
+    state.characters["p1"].away = True
+    assert not combat_engine._ready_to_settle_party_down(state), "everyone away is not everyone down"
+    state.characters["p1"].away = False
+    combat_resources.adjust_resource(state, state.characters["p1"], "hp", -10, event_id="test:zero", reason="test")
+    assert combat_engine._ready_to_settle_party_down(state)
