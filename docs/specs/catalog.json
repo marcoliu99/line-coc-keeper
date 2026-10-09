@@ -2587,7 +2587,8 @@
         "app/services/unconscious_wake.py",
         "tests/test_unconscious_wake.py",
         "app/services/combat_engine.py",
-        "app/keeper_tools/scenario.py"
+        "app/keeper_tools/scenario.py",
+        "app/dice.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",

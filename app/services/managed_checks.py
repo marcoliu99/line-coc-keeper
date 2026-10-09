@@ -132,7 +132,8 @@ class ManagedCombatChecks:
         if rolled is not None and rolled.get("type") == "skill":
             # Not the defence this choice created (a CON check for the wound a no-defence shot just dealt): that
             # roll is the player's own next click, never folded into the choice they made.
-            reply_text = chosen + f"攻擊已結算；接下來是你的{rolled.get('skill', '')}檢定，請按鈕擲骰。"
+            blow = _blow(state, pending, outcome)
+            reply_text = chosen + (f"⚔️ {blow}" if blow else "攻擊已結算；") + f"接下來是你的{rolled.get('skill', '')}檢定，請按鈕擲骰。"
         else:
             reply_text = chosen + "已依系統紀錄處理；請依目前戰鬥狀態繼續。"
         resource_bridge.record_choice_control_receipt(state, pending, user_id, option, reply_text)
@@ -259,7 +260,8 @@ def _feedback(
         character.name, label, str(result.skill_value), result.roll, tier,
     )
     blow = _blow(state, pending, outcome)
-    feedback += ("\n⚔️ " + blow if blow else "") + "\n" + suffix
+    shown = blow if blow and not _is_injury_roll(pending) else ""  # the blow was shown with the roll that took it
+    feedback += ("\n⚔️ " + shown if shown else "") + "\n" + suffix
     settled = outcome_for(
         user_id, pending,
         roll_line=feedback, keeper_message=f"（{header}；{suffix}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
@@ -285,15 +287,22 @@ def _feedback(
 
 
 def _attack_action(state: GroupState, pending: dict) -> CombatAction | None:
-    """The battle action a player's attack roll or defence (choice or roll) belongs to; None for any other check."""
+    """The attack a player's attack roll, defence (choice or roll) or the wound's CON roll after it belongs to; None
+    for any other check."""
     context = pending.get("combat_context") or {}
     try:
         role = CombatCheckIdentity.from_serialized(str(context.get("check_role", ""))).role
     except (TypeError, ValueError):
         return None
-    if role not in {"attack", "defense", "defense_choice"}:
-        return None
-    return state.combat.actions.get(str(context.get("action_id", "")))
+    action = state.combat.actions.get(str(context.get("action_id", "")))
+    if role == "injury" and action:
+        # The CON roll a heavy blow owes: the blow is its parent attack's.
+        return state.combat.actions.get(str(action.get("parent_action_id", "")))
+    return action if role in {"attack", "defense", "defense_choice"} else None
+
+
+def _is_injury_roll(pending: dict) -> bool:
+    return str((pending.get("combat_context") or {}).get("check_role", "")).startswith("injury")
 
 
 def _actor_name(state: GroupState, action: CombatAction) -> str:
@@ -306,7 +315,7 @@ def _defence_needs(state: GroupState, pending: dict) -> str:
     A skill success alone does not keep a blow off: the defence has to match (Dodge) or beat (Fight Back) the
     attacker's tier.
     """
-    action = _attack_action(state, pending)
+    action = None if _is_injury_roll(pending) else _attack_action(state, pending)
     if not action or action.get("defense_kind") not in {"dodge", "counter"}:
         return ""
     tier = ((action.get("checks") or {}).get("attack") or {}).get("tier")
@@ -346,6 +355,8 @@ def _blow(state: GroupState, pending: dict, outcome: dict) -> str:
     if not result["hit"]:
         return head + "這一擊沒有命中。"
     damage = result.get("damage") or {}
-    blocked = "（部分被護甲擋下）" if damage.get("armor_label") else ""
     landed = "反擊得手" if result.get("opposed") == "defender_wins" and kind == "counter" else "命中"
+    if damage.get("armor_label") and not damage.get("final_damage"):
+        return head + f"{landed}，但傷害全被 {damage.get('target', '目標')} 的護甲擋下。"
+    blocked = "（部分被護甲擋下）" if damage.get("armor_label") else ""
     return head + f"{landed}，{damage.get('target', '目標')} 受到 {damage.get('final_damage', 0)} 點傷害{blocked}。"

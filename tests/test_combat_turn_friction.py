@@ -487,8 +487,11 @@ def test_no_defence_against_a_shot_leaves_the_wounds_con_check_to_the_players_ow
     state = _load()
     assert state.combat.phase == "INJURY_CHECK" and state.pending_checks["p1"]["skill"] == "CON"
     assert "CON" in outcome.reply_text and not outcome.should_finalize
+    assert "命中，調查員p1 受到 6 點傷害" in outcome.reply_text, "the player learns what the shot did before the CON roll"
     survived, _ = _player("/coc check", [10])
     assert survived.should_finalize and "p1" not in _load().pending_checks
+    assert "命中，調查員p1 受到 6 點傷害" in survived.resolved_event["combat_receipt"]["blow"], "and so does the narrator"
+    assert "⚔️" not in survived.roll_feedback_text, "the player is not told the same blow twice"
 
 
 def test_the_defence_the_choice_registered_is_still_rolled_in_the_same_click():
@@ -936,3 +939,13 @@ def test_the_tier_a_defence_needs_follows_the_opposed_roll_rules():
     assert dice.defence_tier_needed("hard", is_counter=True) == "extreme"  # a tied Fight Back goes to the attacker
     assert dice.defence_tier_needed("fail", is_counter=True) == "regular"
     assert dice.defence_tier_needed("critical", is_counter=True) is None
+
+
+def test_a_hit_the_armor_stops_entirely_is_not_called_partial():
+    _battle(first_enemy=False, armor=[{"id": "hide", "label": "hide", "value": 5}])
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    outcome, _ = _player("/coc check", [30, 90, 20])  # brawl Hard; the Cultist's dodge fails; 1D3 can't pass 5
+    assert "命中，但傷害全被 Cultist 的護甲擋下。" in outcome.roll_feedback_text
+    assert "部分" not in outcome.roll_feedback_text
