@@ -777,6 +777,10 @@ def test_corbitt_is_registered_with_his_floating_knife_and_attacks_with_it():
     refused = _tool("initialize_combat", {"enemies": [bare]})
     assert not refused["ok"] and "attacks" in refused["enemies"][0]["error"] and not _load().combat.active
     assert not _tool("add_npc_to_combat", bare)["ok"]
+    state = _load()  # the scenario index lists his Chinese name as an alias of the block's English heading
+    state.scenario_npc_index = [{"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 16}]
+    _save(state)
+    assert not _tool("add_npc_to_combat", {**bare, "name": "柯比特"})["ok"]
     knife = {"label": "浮空匕首", "skill_name": "POW", "skill_value": 90, "damage": "1D4+2", "tags": ["impale"]}
     # A second Corbitt in the same batch is a new instance, not a re-registration: it needs attacks too.
     batch = _tool("initialize_combat", {"enemies": [{**bare, "attacks": [knife]}, bare]})
