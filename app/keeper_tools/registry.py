@@ -110,6 +110,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "properties": {
                         "expression": {"type": "string", "description": "骰子表示式，如 1d100、2d6+3"},
                         "purpose": {"type": "string", "description": "這次擲骰的用途說明（例如：小刀傷害）"},
+                        "secret": {"type": "boolean", "description": "守密人的暗骰（玩家不該知道的數字，例如 NPC 的隱藏數值）設 true，結果不會顯示給玩家"},
                     },
                     "required": ["expression"],
                 },
@@ -684,6 +685,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                                 "敵人護甲規則，每筆含 id/label/value/applies_to/bypass_tags/public_hint 等"
                                 "（不是 name——欄位名稱是 label，不要跟 attacks/abilities 的 name 搞混）；"
                                 "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
+                                "value 填固定數字；劇本要你擲骰決定護甲（例如 Corbitt 的 Flesh Ward「Roll 2D6 for his armor」）就直接填骰子字串 \"2D6\"，登記時系統只擲這一次並保密——不要先用 roll_dice 擲。護甲吸收多少傷害就少多少（Flesh Ward 這類）加 depletes: true。"
                             ),
                             "items": {"type": "object"},
                         },
@@ -746,6 +748,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                                             "敵人護甲規則，每筆含 id/label/value/applies_to/bypass_tags/public_hint 等"
                                             "（不是 name——欄位名稱是 label，不要跟 attacks/abilities 的 name 搞混）；"
                                             "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
+                                "value 填固定數字；劇本要你擲骰決定護甲（例如 Corbitt 的 Flesh Ward「Roll 2D6 for his armor」）就直接填骰子字串 \"2D6\"，登記時系統只擲這一次並保密——不要先用 roll_dice 擲。護甲吸收多少傷害就少多少（Flesh Ward 這類）加 depletes: true。"
                                         ),
                                         "items": {"type": "object"},
                                     },
