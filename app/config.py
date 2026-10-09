@@ -94,6 +94,11 @@ CODEX_MAX_CONCURRENCY = _env_int("CODEX_MAX_CONCURRENCY", 2, minimum=1)
 CODEX_MAX_OUTPUT_BYTES = _env_int("CODEX_MAX_OUTPUT_BYTES", 1048576, minimum=1024)
 CODEX_MAX_INPUT_BYTES = _env_int("CODEX_MAX_INPUT_BYTES", 2097152, minimum=1024)
 MAX_TOOLS_PER_TURN = _env_int("MAX_TOOLS_PER_TURN", 4, minimum=1)
+# Shadow routing experiment (scripts/experiments/laya_router_eval): when set, each player line is also sent to a
+# local Laya sidecar and its routing guess is logged as a `laya.shadow` event beside what the Executor actually did.
+# The guess never changes the turn. Empty (the default) turns it off.
+LAYA_SHADOW_URL = os.environ.get("LAYA_SHADOW_URL", "").strip()
+LAYA_SHADOW_TIMEOUT = _env_float("LAYA_SHADOW_TIMEOUT", 3, minimum=0.1)
 if LLM_PROVIDER == "codex" and CODEX_TRANSPORT not in {"exec", "app-server"}:
     raise ValueError("CODEX_TRANSPORT must be exec or app-server")
 if ANALYSIS_PROVIDER not in {"openai", "anthropic", "gemini"}:
