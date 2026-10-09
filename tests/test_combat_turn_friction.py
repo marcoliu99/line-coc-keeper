@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app import combat, combat_resources, combat_rules, config, dice
+from app import combat, combat_flow, combat_resources, combat_rules, config, dice
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
@@ -949,3 +949,14 @@ def test_a_hit_the_armor_stops_entirely_is_not_called_partial():
     outcome, _ = _player("/coc check", [30, 90, 20])  # brawl Hard; the Cultist's dodge fails; 1D3 can't pass 5
     assert "命中，但傷害全被 Cultist 的護甲擋下。" in outcome.roll_feedback_text
     assert "部分" not in outcome.roll_feedback_text
+
+
+def test_a_hit_that_does_no_damage_before_armor_is_not_credited_to_the_armor():
+    _battle(first_enemy=False, armor=[{"id": "hide", "label": "hide", "value": 5}])
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    nothing = dice.WeaponDamageResult("1d3", "-1", dice.RollResult("1d3", [1], 0, 1), None, -1, 0)  # 1 - 1: no damage
+    with patch.object(combat_flow.dice, "roll_weapon_damage", return_value=nothing):
+        outcome, _ = _player("/coc check", [30, 90, 20])
+    assert "命中，Cultist 受到 0 點傷害。" in outcome.roll_feedback_text and "護甲" not in outcome.roll_feedback_text

@@ -356,7 +356,8 @@ def _blow(state: GroupState, pending: dict, outcome: dict) -> str:
         return head + "這一擊沒有命中。"
     damage = result.get("damage") or {}
     landed = "反擊得手" if result.get("opposed") == "defender_wins" and kind == "counter" else "命中"
-    if damage.get("armor_label") and not damage.get("final_damage"):
+    absorbed = bool(damage.get("armor_label")) and (damage.get("armor_reduction") or 0) > 0
+    if absorbed and not damage.get("final_damage"):
         return head + f"{landed}，但傷害全被 {damage.get('target', '目標')} 的護甲擋下。"
-    blocked = "（部分被護甲擋下）" if damage.get("armor_label") else ""
+    blocked = "（部分被護甲擋下）" if absorbed else ""
     return head + f"{landed}，{damage.get('target', '目標')} 受到 {damage.get('final_damage', 0)} 點傷害{blocked}。"
