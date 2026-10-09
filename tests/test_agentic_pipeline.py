@@ -484,7 +484,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("P1", reply)
-        self.assertIn("已建立", reply)
+        self.assertIn("擲", reply)
         self.assertIn("/coc check", reply)
 
     async def test_supervisor_passes_luck_created_during_the_turn_to_the_narrator(self):
@@ -585,7 +585,7 @@ class SupervisorMechanicResultPayloadTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("Target", reply)
-        self.assertIn("已建立", reply)
+        self.assertIn("擲", reply)
 
     async def test_speaker_luck_takes_priority_over_other_players_new_check(self):
         from app.agents import reply_pipeline, supervisor

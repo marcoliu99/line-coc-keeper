@@ -204,7 +204,7 @@ async def test_a_pending_continuation_blocks_with_an_explicit_reason_and_no_retr
     state.pending_checks["u1"] = {"check_id": "c1", "skill": "偵查", "investigator": "P1"}
     reply, run_executor, searched, _ = await _turn(state, [_result("blocked")])
     assert run_executor.await_count == 1 and searched.call_count == 0
-    assert "已建立" in reply and "/coc check" in reply  # the wait itself is named, deterministically
+    assert "擲 P1 的偵查" in reply and "/coc check" in reply  # the wait itself is named, deterministically
     assert fallbacks(events)[0]["fallback_reason"] == "unresolved_pending_state"
     assert fallbacks(events)[0]["pending_own"] == ["check"]
 

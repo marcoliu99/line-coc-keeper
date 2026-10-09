@@ -436,7 +436,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             if pending:
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
-                return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+                return f"{warning}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{skill}。"
             if (state is not None and not status.get("scenario_evidence_blocked")
                     and (in_battle := turn_fallback.combat_guidance(state, result.fallback_reason))):
                 return f"{warning}{in_battle}"
@@ -457,13 +457,13 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             investigator = pending.get("investigator", "調查員")
             skill = pending.get("skill")
             detail = f"「{skill}」" if skill else "這次"
-            return f"{investigator} 的{detail}檢定已建立並等待處理。請使用 /coc check 擲骰或選擇。"
+            return f"{investigator} 還要擲{detail}檢定：請按檢定按鈕或輸入 /coc check 擲骰或選擇。"
         has_check_instruction = "/coc check" in text or "檢定按鈕" in text
         if not has_check_instruction:
             investigator = pending.get("investigator", "調查員")
             skill = pending.get("skill")
             detail = f"{skill} 檢定" if skill else "檢定／選擇"
-            return f"{text.rstrip()}\n\n{investigator} 的{detail}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            return f"{text.rstrip()}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{detail}。"
         return text
 
     pending_luck = status.get("pending_luck")

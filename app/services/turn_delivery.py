@@ -58,8 +58,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"
                     f"HP {result.get('hp_before')} → {result.get('hp_after')}。")
         elif name == "create_triggered_check" and result.get("pending"):
-            text = (f"{result.get('investigator', '調查員')} 的{result.get('skill', '後續')}檢定已建立，"
-                    "等待玩家擲骰。")
+            text = f"{result.get('investigator', '調查員')} 還要擲{result.get('skill', '後續')}檢定。"
         elif name == "adjust_ammo":
             text = f"{result.get('investigator')} 的 {result.get('weapon')} 彈藥已更新為 {result.get('ammo')}。"
         elif name == "adjust_character":

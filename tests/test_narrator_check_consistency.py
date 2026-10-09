@@ -128,7 +128,7 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
         corrected = enforce_mechanic_check_consistency("STR 檢定尚未建立，請守密人重新建立。", result)
 
         self.assertIn("Marco", corrected)
-        self.assertIn("已建立", corrected)
+        self.assertIn("擲", corrected)
         self.assertIn("/coc check", corrected)
 
     def test_pending_check_without_next_step_gets_roll_instruction(self):
@@ -136,7 +136,7 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
 
         corrected = enforce_mechanic_check_consistency("木板仍擋在面前，檢定結果未知。", result)
 
-        self.assertIn("已建立", corrected)
+        self.assertIn("擲", corrected)
         self.assertIn("/coc check", corrected)
 
     def test_pending_luck_gets_luck_choice_not_second_check(self):
