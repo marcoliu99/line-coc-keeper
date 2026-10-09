@@ -96,6 +96,8 @@ The 200-turn Haunting run from the opening on `d6a03bb` (2026-10-09, the investi
 
 The investigator's six rounds were spent by turn 40. Each later shot raised "Owned ammunition mapping missing or insufficient" inside the declaration, which put the fight into `NEEDS_RULING`, and the player read 「處理這個行動的工具失敗了」 41 times. A gun whose entry is tracked but holds fewer rounds than a shot needs now raises `OutOfAmmo`. The declaration is refused before any roll, nothing is recorded, the phase stays as it was, and the error says it in the table's words: 「…沒有子彈了（剩 0 發）：這一槍開不出去。要先裝填（身上有子彈的話），或這一輪改做別的事。」 `observe_tool` makes that refusal public, and the incomplete-turn reply is that line alone instead of the tool-failure text. A gun with no ammunition entry at all still asks for a ruling.
 
+A run's armor could not be checked afterwards: the registration said only that Corbitt was added, and damage receipts live in the saved state, not the log. A registration now reports 「有護甲（暗擲，數值不公開）」 (or 「有護甲（數值不公開）」 for a fixed value) and never the number (`combat.armor_note`, in `initialize_combat`'s per-enemy result and `add_npc_to_combat`'s note). Each hit that armor stops writes one log line, `combat.armor target=… armor=… blocked=… left=… raw=… final=…`, which no player text carries. A melee attack moved off a card-level `single_shot` keeps both defences, Dodge and Fight Back, as for any blow.
+
 ## Not done
 
 - Fight Back still uses Brawl and 1D3 for an investigator rather than the held weapon.

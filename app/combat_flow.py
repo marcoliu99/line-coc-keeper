@@ -5,6 +5,7 @@ Authoritative check callbacks are server-only; tools never accept die results.
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from copy import deepcopy
@@ -48,6 +49,8 @@ _WEAPON_ONLY_BASES = {'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear'
                       'firearms-submachine-gun': 15, 'firearms-machine-gun': 10}
 _BASE_SKILLS = {skill_id: BASE_SKILLS[label] if label in BASE_SKILLS else _WEAPON_ONLY_BASES[skill_id]
                 for skill_id, label in _SKILLS.items()}  # a weapon skill without a base is a programming error
+
+logger = logging.getLogger(__name__)
 
 
 def _error(message: str) -> dict[str, Any]:
@@ -1677,7 +1680,7 @@ def apply_managed_damage(
     target = combat.find_combatant(state, target_id)
     if target is None:
         return {'ok': False, 'error': 'Unknown combat participant'}
-    _, armor_label, final = combat.planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
+    armor, armor_label, final = combat.planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
     pc = combat.character_for_combatant(state, target) if target.is_pc else None
     effective = combat_resources.effective_character(state, pc) if pc else None
     before = effective.hp if effective else target.hp
@@ -1710,6 +1713,11 @@ def apply_managed_damage(
     target.hp = after
     target.defeated = after == 0 or bool(injury.get('unconscious'))
     armor_left = None if bypass_armor else combat.wear_armor(state, target, damage_type, tags or [], raw_damage - final)
+    if raw_damage - final > 0:
+        # Kept out of every public text; the log is where a run's armor can be checked afterwards.
+        logger.info('combat.armor target=%s armor=%s blocked=%d left=%d raw=%d final=%d event=%s',
+                    target.display_name, armor_label, raw_damage - final, armor if armor_left is None else armor_left,
+                    raw_damage, final, event_id)
     card = combat.card_for(state, target)
     if card:
         card.hp = after
