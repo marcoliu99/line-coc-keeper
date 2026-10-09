@@ -582,6 +582,13 @@ def test_lost_player_reply_replays_saved_roll_without_rng_or_resource_cost(battl
 
 @pytest.mark.parametrize('pending_before_new_battle', [False, True])
 def test_zero_hp_prior_dying_target_keeps_owned_wait_through_new_battle_and_rollback(battle, pending_before_new_battle):
+    # A standing companion: with every investigator down the scenario would end at the settlement instead.
+    party = battle.load()
+    companion = Character('Bea', 'companion', character_id='char:bea', dex=30, hp=10, hp_max=10, luck=50, san=50)
+    party.characters['companion'] = companion
+    party.characters_by_id['char:bea'] = companion
+    party.active_character_id_by_user['companion'] = 'char:bea'
+    group_state.save_state(party)
     battle.start()
     for identity, damage in [('minor:4', 4), ('major:6', 6)]:
         assert battle.tool('adjust_character', {'investigator': 'Ada', 'field': 'hp', 'delta': -damage,

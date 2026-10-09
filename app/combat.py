@@ -91,6 +91,16 @@ def _seed_from_characters(state: GroupState) -> list[Combatant]:
     return sorted(combatants, key=lambda combatant: -combatant.dex)
 
 
+NO_ONE_CAN_FIGHT = ("所有調查員都已倒下（HP 0）或不在場，沒有人能參戰：不要開戰，"
+                    "改以敘事處理劇本寫的後果（例如敵人怎麼對待倒地的調查員）。")
+
+
+def refuse_fight_without_investigators(state: GroupState) -> None:
+    """A new fight with no investigator able to act has no player turn and can never settle: refuse it."""
+    if not state.combat.active and active_characters(state) and not _seed_from_characters(state):
+        raise combat_resources.CombatAdmissionError(NO_ONE_CAN_FIGHT)
+
+
 def _ensure_started(state: GroupState) -> None:
     _ensure_character_identity(state)
     if not state.combat.active:

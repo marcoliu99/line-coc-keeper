@@ -24,6 +24,17 @@ def _reviewed_skills(payload):
     return dict(payload)
 
 
+def _no_one_can_fight(state: GroupState, *, ally: bool) -> dict[str, Any] | None:
+    """The engine refuses the fight too; this answers before any entry is tried, in one plain error."""
+    if ally:
+        return None
+    try:
+        combat.refuse_fight_without_investigators(state)
+    except combat_resources.CombatAdmissionError as error:
+        return {"ok": False, "error": str(error)}
+    return None
+
+
 def start_combat(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
@@ -41,6 +52,8 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     tool_input = call.input
     npc_name = tool_input["name"]
     requested_hp = int(tool_input["hp"])
+    if refusal := _no_one_can_fight(state, ally=bool(tool_input.get("is_ally", False))):
+        return refusal
 
     def mutate(target_state: GroupState) -> Any:
         hp = requested_hp
@@ -117,6 +130,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
     state = call.state
     enemies = call.input.get("enemies") or []
     opening: dict[str, Any] = {}
+    if refusal := _no_one_can_fight(state, ally=any(isinstance(e, dict) and e.get("is_ally") for e in enemies)):
+        return refusal
 
     def mutate(target_state: GroupState) -> Any:
         results: list[dict[str, Any]] = []
