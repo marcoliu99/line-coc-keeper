@@ -834,6 +834,7 @@ def test_the_blow_that_downs_the_last_investigator_settles_the_fight_and_ends_th
     assert not state.active and state.characters["p1"].hp == 0
     receipt = outcome.resolved_event["combat_receipt"]
     assert "劇本到此結束" in receipt["scenario_ended"]
+    assert "尚未結算" not in outcome.roll_line and "戰鬥已結算" in outcome.roll_line
     step = prompt_config._combat_turn_step(receipt)
     assert "/coc newgame" in step and "不要再推進劇情" in step
 
@@ -843,3 +844,14 @@ def test_a_fight_with_an_investigator_still_standing_is_not_settled_for_the_keep
     _enemy_turn([20])
     _player("/coc check 閃避", [90], damage=10)
     assert _load().combat.active, "p2 still stands: the fight goes on"
+
+
+def test_a_party_the_keeper_already_downed_is_not_settled_by_a_rejected_step():
+    # The Keeper's own HP changes leave the fight open for review; a later call the engine rejects settles nothing.
+    _battle(first_enemy=False)
+    for step, delta in enumerate((-4, -4, -2)):  # each blow under the major-wound threshold
+        assert _tool("adjust_character", {"investigator": "調查員p1", "field": "hp", "delta": delta,
+                                          "event_id": f"blow:{step}", "reason": "x"})["ok"]
+    assert _load().combat.active
+    rejected = _tool("advance_combat_turn", {"actor_id": "nobody"})
+    assert not rejected["ok"] and _load().combat.active and _load().active

@@ -404,20 +404,22 @@ def _down_at_zero(state: GroupState, combatant: combat.Combatant) -> bool:
     return combat_resources.effective_character(state, character).hp <= 0
 
 
-def _settle_if_party_down(state: GroupState) -> dict[str, Any] | None:
-    """Settle the fight at once when every investigator in it is down and nothing is left open.
+def _ready_to_settle_party_down(state: GroupState) -> bool:
+    """Every investigator in the fight at 0 HP (or away) and nothing left open: nobody is left to play it on."""
+    battle = state.combat
+    investigators = [c for c in battle.order if c.is_pc]
+    return bool(battle.active and investigators and not battle.interaction and battle.phase == "READY"
+                and all(a.get("completed") for a in battle.actions.values())
+                and all(_down_at_zero(state, c) for c in investigators))
+
+
+def _settle_party_down(state: GroupState) -> dict[str, Any] | None:
+    """Settle the fight a step of its own has just left with every investigator down and nothing open.
 
     Nobody is left to play, and the scenario ends at settlement (house rule), so the Keeper is not asked to preview
     and confirm it on later lines: the Haunting soak (2026-10-09) spent five player lines there after Evelyn fell.
-    Anything still open (a defence, a CON roll, a ruling) settles first; a settlement the engine refuses is left to
-    the Keeper as before.
+    A settlement the engine refuses is left to the Keeper as before.
     """
-    battle = state.combat
-    investigators = [c for c in battle.order if c.is_pc]
-    if (not battle.active or not investigators or battle.interaction or battle.phase != "READY"
-            or any(not a.get("completed") for a in battle.actions.values())
-            or not all(_down_at_zero(state, c) for c in investigators)):
-        return None
     try:
         preview = ENGINE.handle(state, act.PreviewSettlement())["preview"]
         return ENGINE.handle(state, act.ConfirmSettlement(
@@ -435,9 +437,12 @@ class CombatEngine:
         if handler is None:
             raise TypeError(f"unknown combat action {type(action).__name__}")
         mode = mode_of(state)
+        # Only the step that makes it so settles: not a rejected call, nor one made after the Keeper's own HP change
+        # already left the party down (that stays the Keeper's to review).
+        watch = isinstance(action, _CAN_DOWN_THE_PARTY) and not _ready_to_settle_party_down(state)
         result = handler(state, action, mode)
-        if isinstance(action, _CAN_DOWN_THE_PARTY) and isinstance(result, dict) and (
-                settled := _settle_if_party_down(state)) is not None:
+        if (watch and isinstance(result, dict) and result.get("ok", True) is not False
+                and _ready_to_settle_party_down(state) and (settled := _settle_party_down(state)) is not None):
             result = {**result, "settled": True, "settlement_ready": False,
                       **({"scenario_ended": settled["scenario_ended"]} if settled.get("scenario_ended") else {})}
         return cast(R, result)
