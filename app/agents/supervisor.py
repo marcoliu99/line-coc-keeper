@@ -62,7 +62,8 @@ async def prefetch_retrieval(
 
     Returns None whenever the turn would not retrieve anyway — an OOC route
     answers without the gameplay context, and a speaker holding a Luck
-    decision is usually answered from state. A None simply means the search
+    decision or a knocked-out investigator is answered from state, or searches
+    for a different query under the lock. A None simply means the search
     happens inside the lock as before.
     """
     intent = intent_router.classify_intent(AgentMessage({"text": text, "speaker_role": speaker_role}))
@@ -70,6 +71,8 @@ async def prefetch_retrieval(
         return None
     if user_id in state.pending_luck_decisions:
         return None
+    if unconscious_wake.decide(state, user_id) is not None:
+        return None  # a wait is answered from state; a wake searches for the time skip under the lock
     try:
         return await context_builder.prefetch_retrieval(
             state=state, user_id=user_id, display_name="", text=text,

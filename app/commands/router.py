@@ -181,7 +181,7 @@ async def _run_sudo_act_locked(
     canonical_text = f"[KP Assistant 代操作 {character.name}] {action_text}"
     async with locks.narrating_turn(conversation_id):
         resolved_location = await asyncio.to_thread(
-            resolve_map_action, conversation_id, subject_user_id, action_text
+            _resolve_player_location, conversation_id, subject_user_id, action_text
         )
         state = load_state(conversation_id)
         with observability.context(

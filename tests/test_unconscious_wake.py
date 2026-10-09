@@ -127,3 +127,14 @@ def test_a_settled_first_aid_roll_can_wake_the_patient_in_its_follow_up():
     assert "remove_status_tag" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
     instruction = prompt_config.build_tool_enabled_narrator_static_prompt("", "resolved_check_followup")
     assert "remove_status_tag" in instruction and "昏迷" in instruction
+
+
+def test_a_knocked_out_investigators_line_is_not_searched_ahead_of_the_lock():
+    from unittest.mock import patch
+
+    from app.agents import context_builder
+
+    state = _party("p1", "p2")
+    with patch.object(context_builder, "prefetch_retrieval") as prefetch:
+        assert asyncio.run(supervisor.prefetch_retrieval(state, "p1", "我掙扎著爬起來。", "player", GROUP)) is None
+        prefetch.assert_not_called()
