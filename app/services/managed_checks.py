@@ -296,8 +296,10 @@ def _attack_action(state: GroupState, pending: dict) -> CombatAction | None:
         return None
     action = state.combat.actions.get(str(context.get("action_id", "")))
     if role == "injury" and action:
-        # The CON roll a heavy blow owes: the blow is its parent attack's.
-        return state.combat.actions.get(str(action.get("parent_action_id", "")))
+        # The CON roll a heavy blow owes carries the blow only after a no-defence choice: a defence roll has already
+        # been narrated with it, and narrating it again after the CON roll would tell the player the hit twice.
+        parent = state.combat.actions.get(str(action.get("parent_action_id", "")))
+        return parent if parent and parent.get("defense_kind") == "no_defense" else None
     return action if role in {"attack", "defense", "defense_choice"} else None
 
 

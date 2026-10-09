@@ -960,3 +960,14 @@ def test_a_hit_that_does_no_damage_before_armor_is_not_credited_to_the_armor():
     with patch.object(combat_flow.dice, "roll_weapon_damage", return_value=nothing):
         outcome, _ = _player("/coc check", [30, 90, 20])
     assert "命中，Cultist 受到 0 點傷害。" in outcome.roll_feedback_text and "護甲" not in outcome.roll_feedback_text
+
+
+def test_a_dodged_blow_that_owes_a_con_roll_is_not_narrated_again_after_it():
+    """The defence roll is narrated with the blow; the CON roll after it does not hand the narrator the same hit."""
+    _battle(claw_damage="1d6")
+    _enemy_turn([20])  # claw 50: Hard
+    dodged, _ = _player("/coc check 閃避", [35], damage=6)  # a plain success: hit for 6 of 10 HP, a major wound
+    assert "命中，調查員p1 受到 6 點傷害" in dodged.resolved_event["combat_receipt"]["blow"]
+    assert _load().pending_checks["p1"]["skill"] == "CON"
+    con, _ = _player("/coc check", [10])
+    assert not con.resolved_event["combat_receipt"]["blow"]
