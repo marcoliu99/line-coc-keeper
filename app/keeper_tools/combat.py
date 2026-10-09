@@ -119,7 +119,16 @@ def _open_with_enemy_turn(state: GroupState) -> dict[str, Any] | None:
     current = battle.order[min(battle.current_index, len(battle.order) - 1)]
     if current.side != "enemy" or current.defeated:
         return None
-    plan = combat_engine.handle(state, act.PlanEnemy(current.display_name))
+    if blocker := combat.enemy_turn_blocker(state, current):
+        # An enemy the engine cannot play gives up its opening turn, like any turn that reaches it.
+        given_up = combat_engine.handle(state, act.Advance(
+            actor_id=current.combatant_id, event_id=f"{battle.combat_id}:opening:skip", skip=True))
+        if given_up.get("ok"):
+            given_up = {**given_up, "skipped_enemy_turns": [
+                {"name": current.display_name or current.name, "reason": blocker,
+                 "hint": combat.UNPLAYABLE_ENEMY_HINT}, *given_up.get("skipped_enemy_turns", [])]}
+        return given_up
+    plan =combat_engine.handle(state, act.PlanEnemy(current.display_name))
     if not plan.get("ok"):
         return plan
     return combat_engine.handle(state, act.RunEnemyPlan(plan["plan_id"]))
@@ -363,8 +372,7 @@ def advance_combat_turn(call: ToolCall) -> dict[str, Any]:
                 # Beside the result, not in its receipt: what follows may already be the next enemy's attack.
                 result = {**result, 'skipped': {
                     'name': skipper.display_name, 'reason': blocker,
-                    'hint': 'If the scenario gives this enemy attacks, register them with add_npc_to_combat '
-                            '(same name, with attacks and source) so it can act next round.'}}
+                    'hint': combat.UNPLAYABLE_ENEMY_HINT}}
             return support.ToolStateMutation(result, should_save=target_state.to_dict() != before)
         return support.skip_save_if_blocked(combat_engine.handle(target_state, act.Advance()))
 

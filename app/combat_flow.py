@@ -714,12 +714,14 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
         return {key: played.get(key) for key in ('ok', 'error', 'phase', 'action_id')} if played else None
 
     enemy_turns: list[dict[str, Any]] = []
+    given_up: list[dict[str, Any]] = []
     _auto_advancing.add(state.combat.combat_id)
     try:
         advanced = advance_combat(state, actor_id=current.combatant_id,
                                   event_id=f"{state.combat.combat_id}:advance:auto:{action['action_id']}")
         if (played := enemy_outcome(advanced)) is not None:
             enemy_turns.append(played)
+        given_up.extend(advanced.get('skipped_enemy_turns') or ())
         # An enemy turn the advance played may itself complete at once; the nested completion could not advance,
         # so move those turns on here until a player decision or an unplayed turn is reached. Bounded by the
         # order: every actor ends at most once per pass.
@@ -737,6 +739,7 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
                 break
             if (played := enemy_outcome(chained)) is not None:
                 enemy_turns.append(played)
+            given_up.extend(chained.get('skipped_enemy_turns') or ())
     finally:
         _auto_advancing.discard(state.combat.combat_id)
     # Compare ids and the index, not objects: a blocked advance rolls the state back to fresh objects.
@@ -757,6 +760,8 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
     if enemy_turns:
         summary['enemy_turn'] = enemy_turns[-1]  # the one the next player decision belongs to
         summary['enemy_turns'] = enemy_turns
+    if given_up:
+        summary['skipped_enemy_turns'] = given_up
     # The receipt reports the battle as it is after the turn moved, so a Keeper or narrator reading it does not
     # advance again; the completed action itself is unchanged.
     action['receipt'] = {**action['receipt'], 'phase': state.combat.phase,
@@ -874,6 +879,37 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     return run_action(state, identity)
 
 
+def _give_up_unplayable_enemy_turns(
+    state: GroupState, event_id: str, result: dict[str, Any],
+) -> dict[str, Any]:
+    """An enemy the engine cannot play (no combat card, or one registered without attacks or abilities) gives up its
+    turn as soon as the turn reaches it, so the fight never waits on a turn nobody can take; what was given up, and
+    why, goes back to the Keeper with the way to make that enemy act. Stops at a playable actor, a pending timing or
+    a finished fight; bounded by the order. Returns the advance result for the turn it stopped on."""
+    skipped: list[dict[str, Any]] = []
+    for _ in range(len(state.combat.order)):
+        current = combat.current_actor(state)
+        if (current is None or current.side != 'enemy' or current.defeated or state.combat.interaction
+                or _side_down(state) or combat.completed_actions_this_round(state, current.combatant_id)):
+            break
+        blocker = combat.enemy_turn_blocker(state, current)
+        if not blocker:
+            break
+        key = f'skip:{event_id}:round{state.combat.round_number}:{current.combatant_id}'
+        state.combat.actions[key] = {'action_id': key, 'kind': 'skip', 'actor_id': current.combatant_id,
+                                     'completed': True, 'round': state.combat.round_number}
+        advanced = combat.advance_turn(state, ops=MANAGED_OPS)
+        if not advanced.get('ok'):
+            state.combat.actions.pop(key, None)
+            break
+        skipped.append({'name': current.display_name or current.name, 'reason': blocker,
+                        'hint': combat.UNPLAYABLE_ENEMY_HINT})
+        result = advanced
+        if advanced.get('pending'):
+            break
+    return {**result, 'skipped_enemy_turns': skipped} if skipped else result
+
+
 def advance_combat(
     state: GroupState, *, actor_id: str, event_id: str, transition_budget: int = 16, skip: bool = False,
 ) -> dict[str, Any]:
@@ -908,6 +944,8 @@ def advance_combat(
     if not result.get('ok'):
         state.combat.actions.pop(f'skip:{event_id}', None)  # the turn did not end, so it was not given up either
         return result
+    if not result.get('pending'):
+        result = _give_up_unplayable_enemy_turns(state, event_id, result)
     transition = deepcopy(result)
     if not result.get('pending'):
         next_actor = state.combat.order[state.combat.current_index]
@@ -920,6 +958,8 @@ def advance_combat(
                 result = enemy if enemy.get('ok') else {**transition, 'enemy_turn': enemy}
             else:
                 result = {**transition, 'enemy_turn': plan}
+        if transition.get('skipped_enemy_turns'):
+            result = {**result, 'skipped_enemy_turns': transition['skipped_enemy_turns']}
     combat_resources.record_event(state, event_id, 'initiative',
                                   data={'transition': transition, 'final_response': deepcopy(result)})
     return result

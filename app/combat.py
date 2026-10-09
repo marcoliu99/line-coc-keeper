@@ -773,6 +773,10 @@ def completed_actions_this_round(state: GroupState, combatant_id: str, *, includ
             and (include_skips or a.get('kind') != 'skip')]
 
 
+UNPLAYABLE_ENEMY_HINT = ('If the scenario gives this enemy attacks, register them with add_npc_to_combat '
+                         '(same name, with attacks and source) so it can act next round.')
+
+
 def enemy_turn_blocker(state: GroupState, combatant: Combatant) -> str:
     """Why the engine cannot play this enemy's turn, or an empty string when it can.
 
