@@ -39,7 +39,9 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
     text = ""
     args = arguments or {}
     if result.get("ok"):
-        if name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} and "total" in result:
+        if name == "roll_dice" and args.get("secret"):
+            text = ""  # the Keeper's own roll: the player does not see the number
+        elif name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} and "total" in result:
             text = f"骰子已結算：{result.get('expression', '傷害骰')}，總值 {result.get('total')}。"
         elif name in {"add_carried_item", "remove_carried_item"} and (result.get("item") or args.get("item")):
             # The entry as the pack spells it (the receipt's ``item``: "Knife" for a "knife" already held, the stored

@@ -127,7 +127,24 @@ def _default_attack() -> AttackRule:
 
 
 def _coerce_armor(raw: list[dict[str, Any]] | None) -> list[ArmorRule]:
-    return [ArmorRule.from_dict(a) for a in (raw or [])]
+    """Armor rules for a new card. A value written as dice ("2D6", Corbitt's Flesh Ward) is rolled once, here, when
+    the enemy is registered: the Keeper does not roll it in public first, and a turn retried does not roll it again."""
+    rules = []
+    for entry in raw or []:
+        data = dict(entry)
+        value = data.get("value", 0)
+        if isinstance(value, str) and not value.strip().isdigit():
+            try:
+                rolled = dice.roll_expression(value.strip())
+            except ValueError:
+                raise ValueError(
+                    f"護甲「{data.get('label') or data.get('id') or ''}」的 value 只能填數字或骰子表示式（例如 2D6），收到 {value!r}。"
+                ) from None
+            data["value"], data["rolled_from"] = max(0, rolled.total), value.strip()
+        else:
+            data["value"] = int(value)
+        rules.append(ArmorRule.from_dict(data))
+    return rules
 
 
 def _coerce_attacks(raw: list[dict[str, Any]] | None) -> list[AttackRule]:
@@ -692,21 +709,33 @@ def _resolve_major_wound_check(
     }
 
 
-def _armor_reduction(card: EnemyCombatCard | None, damage_type: str, tags: list[str]) -> tuple[int, str]:
+def _best_armor(card: EnemyCombatCard | None, damage_type: str, tags: list[str]) -> ArmorRule | None:
     if not card:
-        return 0, ""
-    best = 0
-    label = ""
+        return None
+    best: ArmorRule | None = None
     tag_set = set(tags or [])
     for armor in card.armor:
         if armor.applies_to not in ("all", damage_type):
             continue
         if set(armor.bypass_tags) & tag_set:
             continue
-        if armor.value > best:
-            best = armor.value
-            label = armor.label
-    return best, label
+        if armor.value > (best.value if best else 0):
+            best = armor
+    return best
+
+
+def _armor_reduction(card: EnemyCombatCard | None, damage_type: str, tags: list[str]) -> tuple[int, str]:
+    best = _best_armor(card, damage_type, tags)
+    return (best.value, best.label) if best else (0, "")
+
+
+def wear_armor(state: GroupState, combatant: Combatant, damage_type: str, tags: list[str], absorbed: int) -> int | None:
+    """Take what a hit's armor absorbed off armor that wears away (Flesh Ward); the points it has left, else None."""
+    armor = _best_armor(card_for(state, combatant), damage_type, tags)
+    if armor is None or not armor.depletes or absorbed <= 0:
+        return None
+    armor.value = max(0, armor.value - absorbed)
+    return armor.value
 
 
 def apply_combat_damage(

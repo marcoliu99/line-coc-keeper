@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app import combat, combat_resources, combat_rules, config
+from app import combat, combat_flow, combat_resources, combat_rules, config, dice
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
 from app.services import combat_actions as act
-from app.services import combat_engine, prompt_config, turn_resolution
+from app.services import combat_engine, prompt_config, turn_delivery, turn_resolution
 from tests.test_combat_engine import (  # noqa: F401
     GROUP,
     _battle,
@@ -888,3 +888,54 @@ def test_the_keeper_gets_an_enemys_whole_stat_block_by_name_or_indexed_alias():
     assert not missing["ok"] and missing["stat_block_headings"] == ["Walter Corbitt, Undead Fiend"]
     assert not codex_provider.counts_against_tool_budget("get_enemy_stat_block")
     assert "get_enemy_stat_block" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+
+
+def _warded_enemy(value, *, depletes: bool = True) -> tuple:
+    with patch.object(dice.random, "randint", return_value=4):
+        state = _battle(armor=[{"id": "ward", "label": "Flesh Ward", "value": value, "depletes": depletes}])
+    enemy = next(c for c in state.combat.order if c.side == "enemy")
+    return state, enemy
+
+
+def test_armor_written_as_dice_is_rolled_once_when_the_enemy_is_registered():
+    """Corbitt's "Roll 2D6 for his armor": the engine rolls it at registration, out of the player's sight."""
+    state, enemy = _warded_enemy("2D6")
+    armor = state.combat.enemy_cards[enemy.enemy_card_id].armor[0]
+    assert (armor.value, armor.rolled_from) == (8, "2D6")
+    assert _load().combat.enemy_cards[enemy.enemy_card_id].armor[0].value == 8, "kept on the card, not rolled again"
+
+
+def test_armor_that_wears_away_loses_what_it_absorbs():
+    state, enemy = _warded_enemy("2D6")  # 8 points
+    first = combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:1")
+    assert first["final_damage"] == 0 and state.combat.enemy_cards[enemy.enemy_card_id].armor[0].value == 3
+    second = combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:2")
+    assert second["final_damage"] == 2 and state.combat.enemy_cards[enemy.enemy_card_id].armor[0].value == 0
+    third = combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:3")
+    assert third["final_damage"] == 5 and not third["armor_label"]
+    replay = combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:1")
+    assert replay == first and state.combat.enemy_cards[enemy.enemy_card_id].armor[0].value == 0, "a replay wears nothing"
+
+
+def test_ordinary_armor_does_not_wear():
+    state, enemy = _warded_enemy(3, depletes=False)
+    combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:1")
+    assert state.combat.enemy_cards[enemy.enemy_card_id].armor[0].value == 3
+
+
+def test_armor_that_is_neither_a_number_nor_dice_is_refused():
+    state = _battle()
+    try:
+        combat.create_enemy_card(state, "Thing", armor=[{"label": "hide", "value": "thick"}])
+    except ValueError as error:
+        assert "2D6" in str(error)
+    else:
+        raise AssertionError("a value that is not dice must be refused")
+
+
+def test_the_keepers_secret_roll_is_not_shown_to_the_player():
+    rolled = {"ok": True, "expression": "2d6", "total": 7}
+    hidden = turn_delivery.observe_tool("roll_dice", rolled, 1, {"expression": "2d6", "secret": True})
+    shown = turn_delivery.observe_tool("roll_dice", rolled, 1, {"expression": "2d6"})
+    assert (hidden.public_text, hidden.audience) == ("", "internal")
+    assert "總值 7" in shown.public_text and shown.audience == "public"

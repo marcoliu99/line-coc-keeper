@@ -581,6 +581,10 @@ class ArmorRule:
     applies_to: str = "all"
     bypass_tags: list[str] = field(default_factory=list)
     public_hint: str = ""
+    # Armor that wears away: each point it absorbs comes off its value (Flesh Ward).
+    depletes: bool = False
+    # The dice the value was rolled from at registration ("2D6"), kept for the Keeper; never rolled again.
+    rolled_from: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

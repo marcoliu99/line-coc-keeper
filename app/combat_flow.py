@@ -1680,6 +1680,7 @@ def apply_managed_damage(
             ensure_dying_obligation(state, pc, event_id)
     target.hp = after
     target.defeated = after == 0 or bool(injury.get('unconscious'))
+    armor_left = None if bypass_armor else combat.wear_armor(state, target, damage_type, tags or [], raw_damage - final)
     card = combat.card_for(state, target)
     if card:
         card.hp = after
@@ -1690,7 +1691,8 @@ def apply_managed_damage(
         'target_id': target.combatant_id, 'side': target.side, 'raw_damage': raw_damage,
         'final_damage': final, 'armor_reduction': raw_damage - final, 'armor_label': armor_label,
         'damage_type': damage_type, 'weakness_bonus': 0,
-        'private_notes': f'raw={raw_damage}, armor={armor_label}, source={source_id}',
+        'private_notes': f'raw={raw_damage}, armor={armor_label}, source={source_id}'
+                         + (f', armor_left={armor_left}' if armor_left is not None else ''),
         'hp_before': before, 'hp_after': after, 'hp': after, 'hp_max': target.hp_max,
         'injury': injury, 'major_wound_triggered': requires_con, 'defeated': target.defeated,
         'public_summary': f'{target.display_name} 受到 {final} 點傷害（戰鬥暫定）' + ('（部分傷害被擋下）' if armor_label else ''),
