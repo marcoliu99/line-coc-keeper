@@ -37,6 +37,7 @@ from app.models import GroupState
 from app.providers import turn_budget
 from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
+from app.repositories import state_transaction
 from app.services import (
     mutation_admission,
     prompt_config,
@@ -44,6 +45,7 @@ from app.services import (
     turn_fallback,
     turn_handoff,
     turn_phases,
+    unconscious_wake,
 )
 
 _logger = logging.getLogger(__name__)
@@ -214,6 +216,22 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
         _logger.info("Supervisor answered %s from state: Luck decision outstanding", turn.display_name)
         return prompt_config.pending_luck_reply(
             held_luck, actor.name if actor else ""), [], []
+    # An investigator knocked out outside combat: wait for a standing companion, or wake after a time skip when
+    # nobody is left to help, rather than refusing every line forever.
+    knocked_out = (unconscious_wake.decide(turn.state, turn.user_id)
+                   if turn.turn_kind == "player_action" and turn.speaker_role == "player" else None)
+    if knocked_out is not None:
+        actor = turn.state.get_active_character(turn.user_id)
+        assert actor is not None
+        observability.event("turn.short_circuit" if knocked_out == "wait" else "turn.time_skip_wake",
+                            reason="knocked_out", model_requests_avoided=knocked_out == "wait")
+        if knocked_out == "wait":
+            turn_phases.note(route="gameplay_action", short_circuit="knocked_out")
+            return unconscious_wake.wait_reply(actor.name), [], []
+        await asyncio.to_thread(unconscious_wake.wake, turn.conversation_id, actor.character_id,
+                                timeline_id=turn.turn_timeline_id)
+        turn.state = await asyncio.to_thread(state_transaction.refresh_snapshot, turn.state)
+        turn.text = unconscious_wake.wake_note(actor.name) + turn.text
     # 1. Build Context. The continuation of a roll reuses the evidence its action turn gathered when nothing it
     # depended on has moved, instead of searching the same scene again.
     prefetched_retrieval = turn.prefetched_retrieval
