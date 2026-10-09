@@ -752,9 +752,10 @@ async def _handle_text_message_impl(
 
 
 def _resolve_player_location(conversation_id: str, user_id: str, text: str) -> dict | None:
-    """Move the player's investigator on the map for this line, unless they lie unconscious waiting for First Aid:
-    the turn will only tell them so, and a movement phrase must not carry them anywhere meanwhile."""
-    if unconscious_wake.decide(load_state(conversation_id), user_id) == "wait":
+    """Move the player's investigator on the map for this line, unless they lie unconscious: a line that waits for
+    First Aid must not carry them anywhere, and a line that wakes them is settled by the Keeper's time-skip narration
+    first, so the move waits for their next line."""
+    if unconscious_wake.decide(load_state(conversation_id), user_id) is not None:
         return None
     return resolve_map_action(conversation_id, user_id, text)
 

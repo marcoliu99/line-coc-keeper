@@ -108,7 +108,7 @@ def test_first_aid_from_a_companion_wakes_them_through_the_tag_the_keeper_remove
     assert unconscious_wake.decide(_load(), "p1") is None, "no longer waiting"
 
 
-def test_a_movement_line_does_not_carry_an_investigator_waiting_for_first_aid():
+def test_a_movement_line_does_not_carry_a_knocked_out_investigator():
     from unittest.mock import patch
 
     from app.commands import router
@@ -118,6 +118,10 @@ def test_a_movement_line_does_not_carry_an_investigator_waiting_for_first_aid():
         assert router._resolve_player_location(GROUP, "p1", "我爬上樓梯。") is None
         move.assert_not_called()
         assert router._resolve_player_location(GROUP, "p2", "我爬上樓梯。") == {"room": "upstairs"}
+    _party("p1")
+    with patch.object(router, "resolve_map_action", return_value={"room": "upstairs"}) as move:
+        assert router._resolve_player_location(GROUP, "p1", "我爬上樓梯。") is None, "the waking line moves next time"
+        move.assert_not_called()
 
 
 def test_a_settled_first_aid_roll_can_wake_the_patient_in_its_follow_up():
