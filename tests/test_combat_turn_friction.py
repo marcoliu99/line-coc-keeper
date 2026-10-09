@@ -821,3 +821,25 @@ def test_an_enemy_attack_with_malformed_tags_still_attacks():
         state.combat.interaction = None
         state.combat.phase = "READY"
         card = combat.card_for(state, next(c for c in state.combat.order if c.side == "enemy"))
+
+
+def test_the_blow_that_downs_the_last_investigator_settles_the_fight_and_ends_the_scenario():
+    # The Haunting soak (2026-10-09): Evelyn fell at 0 HP and the Keeper took five more player lines to preview and
+    # confirm the settlement; until then every line got "not fully handled".
+    _battle(claw_damage="1d3")
+    _enemy_turn([20])  # claw 50: Hard
+    outcome, _ = _player("/coc check 閃避", [90], damage=10)  # the dodge fails; 10 damage takes all 10 HP
+    state = _load()
+    assert not state.combat.active, "settled at once, no preview or confirm left for the Keeper"
+    assert not state.active and state.characters["p1"].hp == 0
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert "劇本到此結束" in receipt["scenario_ended"]
+    step = prompt_config._combat_turn_step(receipt)
+    assert "/coc newgame" in step and "不要再推進劇情" in step
+
+
+def test_a_fight_with_an_investigator_still_standing_is_not_settled_for_the_keeper():
+    _battle("p1", "p2")
+    _enemy_turn([20])
+    _player("/coc check 閃避", [90], damage=10)
+    assert _load().combat.active, "p2 still stands: the fight goes on"

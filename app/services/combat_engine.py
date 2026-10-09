@@ -388,6 +388,45 @@ _HANDLERS: dict[type, Handler] = {
 }
 
 
+# The fight's own steps that can leave the last investigator down: an attack, a defence, a turn moving, an effect.
+# A Keeper's direct HP adjustment or damage is not among them: it may still be reviewed or corrected before settling.
+_CAN_DOWN_THE_PARTY = (act.CheckResult, act.Choose, act.Advance, act.Run, act.RunEnemyPlan, act.ResolveEnemy,
+                       act.Declare, act.Rule, act.RunEffect)
+PARTY_DOWN_REASON = "所有調查員都已倒下，戰鬥自動結算"
+
+
+def _down_at_zero(state: GroupState, combatant: combat.Combatant) -> bool:
+    """At 0 HP in this fight, or not in it (away or retired). Unconscious with HP left is not down: the Keeper rules
+    what the enemy does with that investigator."""
+    character = combat.character_for_combatant(state, combatant)
+    if character is None or not character.active or character.away:
+        return True
+    return combat_resources.effective_character(state, character).hp <= 0
+
+
+def _settle_if_party_down(state: GroupState) -> dict[str, Any] | None:
+    """Settle the fight at once when every investigator in it is down and nothing is left open.
+
+    Nobody is left to play, and the scenario ends at settlement (house rule), so the Keeper is not asked to preview
+    and confirm it on later lines: the Haunting soak (2026-10-09) spent five player lines there after Evelyn fell.
+    Anything still open (a defence, a CON roll, a ruling) settles first; a settlement the engine refuses is left to
+    the Keeper as before.
+    """
+    battle = state.combat
+    investigators = [c for c in battle.order if c.is_pc]
+    if (not battle.active or not investigators or battle.interaction or battle.phase != "READY"
+            or any(not a.get("completed") for a in battle.actions.values())
+            or not all(_down_at_zero(state, c) for c in investigators)):
+        return None
+    try:
+        preview = ENGINE.handle(state, act.PreviewSettlement())["preview"]
+        return ENGINE.handle(state, act.ConfirmSettlement(
+            combat_id=preview["combat_id"], settlement_id=preview["settlement_id"], reason=PARTY_DOWN_REASON))
+    except (combat_resources.CombatAdmissionError, ValueError) as exc:
+        _logger.info("party-down settlement left to the Keeper: %s", exc)
+        return None
+
+
 class CombatEngine:
     """Stateless; every call works on the state it is given, inside the caller's transaction."""
 
@@ -396,7 +435,12 @@ class CombatEngine:
         if handler is None:
             raise TypeError(f"unknown combat action {type(action).__name__}")
         mode = mode_of(state)
-        return cast(R, handler(state, action, mode))
+        result = handler(state, action, mode)
+        if isinstance(action, _CAN_DOWN_THE_PARTY) and isinstance(result, dict) and (
+                settled := _settle_if_party_down(state)) is not None:
+            result = {**result, "settled": True, "settlement_ready": False,
+                      **({"scenario_ended": settled["scenario_ended"]} if settled.get("scenario_ended") else {})}
+        return cast(R, result)
 
 
 ENGINE = CombatEngine()

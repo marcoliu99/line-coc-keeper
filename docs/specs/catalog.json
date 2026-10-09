@@ -2583,11 +2583,12 @@
         "app/agents/executor.py",
         "app/providers/registry.py",
         "app/services/unconscious_wake.py",
-        "tests/test_unconscious_wake.py"
+        "tests/test_unconscious_wake.py",
+        "app/services/combat_engine.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
-      "source_revision": "9d5c1b54aafe158e65a6be40a723f3884e882e48"
+      "source_revision": "c73c9e82dc84c594a8d09ebec901af7f702e5929"
     },
     {
       "title": "Combat turn latency: the prompt carries this round, and state loads leave the event loop",

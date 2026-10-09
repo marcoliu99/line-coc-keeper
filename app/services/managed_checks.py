@@ -233,6 +233,7 @@ def _combat_receipt(outcome: dict) -> dict:
         "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
         "follow_up": (outcome.get("result") or {}).get("follow_up") if isinstance(outcome.get("result"), dict) else None,
         "settlement_ready": outcome.get("settlement_ready"),
+        "scenario_ended": outcome.get("scenario_ended"),
     }
 
 
