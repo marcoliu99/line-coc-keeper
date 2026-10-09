@@ -2592,7 +2592,8 @@
         "app/services/turn_delivery.py",
         "app/agents/tool_gateway.py",
         "app/keeper_tools/dice.py",
-        "app/keeper_tools/registry.py"
+        "app/keeper_tools/registry.py",
+        "app/dice.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
