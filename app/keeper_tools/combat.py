@@ -46,6 +46,23 @@ def start_combat(call: ToolCall) -> dict[str, Any]:
     return {"ok": True, "status": combat_engine.handle(state, act.Status())}
 
 
+def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, Any]) -> str:
+    """Why an enemy the scenario gives a stat block cannot be registered without attacks, or "".
+
+    Such an enemy could only give up every turn it gets. Its attacks come from the block, or from how the scenario
+    says it attacks: an object it moves (Corbitt's floating knife) attacks with the value the scenario says to roll.
+    Registering again one already fighting changes nothing, so that is let through.
+    """
+    if entry.get("is_ally") or entry.get("attacks") or entry.get("abilities") or not support.stat_block_named(state, name):
+        return ""
+    if combat.find_live_enemy_by_any_alias(state, name) is not None:
+        return ""
+    return (f"「{name}」在劇本裡有數值表，登記時要附上 attacks，否則輪到它時只能讓出回合。照數值表寫的攻擊填；"
+            "劇本另外寫明它怎麼攻擊時（例如操縱物品出手、以 POW 對抗調查員閃避），攻擊的 label 寫那個物品，"
+            "skill_value 填劇本指定要擲的數值，damage 照劇本寫的傷害；劇本寫極難成功會穿刺時，source 加 "
+            "extreme_rule: impale。")
+
+
 def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
@@ -54,6 +71,8 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
     requested_hp = int(tool_input["hp"])
     if refusal := _no_one_can_fight(state, ally=bool(tool_input.get("is_ally", False))):
         return refusal
+    if missing := _attackless_scenario_enemy(state, npc_name, tool_input):
+        return {"ok": False, "error": missing}
 
     def mutate(target_state: GroupState) -> Any:
         hp = requested_hp
@@ -160,6 +179,8 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                 requested_name = entry["name"].strip()
                 if not requested_name:
                     raise ValueError("enemy name is empty")
+                if missing := _attackless_scenario_enemy(target_state, requested_name, entry):
+                    raise ValueError(missing)
                 hp = int(entry["hp"])
                 dex = int(entry["dex"])
                 for field, rule_type in (

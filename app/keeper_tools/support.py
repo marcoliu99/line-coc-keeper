@@ -317,6 +317,15 @@ def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[
     blocks = _stat_blocks(state.scenario_text or "")
     if any(_attacks_in_block(attacks, block) for _, block in blocks):
         return True
+    return _named_by_a_heading(blocks, name)
+
+
+def stat_block_named(state: GroupState, name: str) -> bool:
+    """Whether a stat block's own heading in the loaded scenario names this enemy, attacks aside."""
+    return _named_by_a_heading(_stat_blocks(state.scenario_text or ""), name)
+
+
+def _named_by_a_heading(blocks: list[tuple[str, str]], name: str) -> bool:
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
     if len(wanted) < 2:
         return False

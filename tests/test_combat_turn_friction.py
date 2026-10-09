@@ -759,3 +759,35 @@ def test_a_fight_is_not_started_once_every_investigator_is_down():
     state.characters["p1"].hp = 5
     _save(state)
     assert _tool("initialize_combat", {"enemies": [corbitt]})["ok"]
+
+
+def test_corbitt_is_registered_with_his_floating_knife_and_attacks_with_it():
+    # The Haunting soaks (2026-10-09): Corbitt registered without attacks gave up every turn. His block lists none
+    # for the knife; the scenario has it roll his POW 90 against Dodge for 1D4+2, impaling on an Extreme success.
+    from app.models import GroupState
+    from tests.test_combat_engine import _investigator
+
+    character = _investigator("p1", "調查員p1", 50)
+    _save(GroupState(GROUP, active=True, characters={"p1": character},
+                     characters_by_id={character.character_id: character},
+                     active_character_id_by_user={"p1": character.character_id},
+                     active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                     scenario_text=STAT_BLOCK))
+    bare = {"name": "Walter Corbitt", "dex": 35, "hp": 16}
+    refused = _tool("initialize_combat", {"enemies": [bare]})
+    assert not refused["ok"] and "attacks" in refused["enemies"][0]["error"] and not _load().combat.active
+    assert not _tool("add_npc_to_combat", bare)["ok"]
+    knife = {"label": "浮空匕首", "skill_name": "POW", "skill_value": 90, "damage": "1D4+2"}
+    started = _tool("initialize_combat", {"enemies": [{**bare, "attacks": [knife],
+                                                       "source": {"extreme_rule": "impale"}}]})
+    assert started["ok"], started
+    state = _load()
+    corbitt = next(c for c in state.combat.order if c.side == "enemy")
+    card = combat.card_for(state, corbitt)
+    assert card is not None and not card.incomplete and card.source["sha256"] == "abc123"
+    assert card.source["extreme_rule"] == "impale" and combat.enemy_turn_blocker(state, corbitt) == ""
+    assert state.combat.order[state.combat.current_index].is_pc, "DEX 50 acts before Corbitt's 35"
+    # Her turn ends; Corbitt's knife attacks, and she is asked to defend against a 90.
+    assert _tool("advance_combat_turn", {"actor_id": "調查員p1", "skip": True})["ok"]
+    pending = _load().pending_checks["p1"]
+    assert pending["attacker_name"] == "Walter Corbitt"
