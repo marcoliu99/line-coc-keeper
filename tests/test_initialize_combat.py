@@ -72,9 +72,10 @@ class InitializeCombatTests(unittest.TestCase):
 
     def test_initial_turn_uses_highest_dex_after_full_batch(self):
         state = GroupState(group_id="initialize-combat-" + self._testMethodName)
+        claw = [{"name": "Claw", "skill_value": 40, "damage": "1D6"}]  # playable: an enemy without attacks gives up its turn
         combat_handlers.initialize_combat(_call(state, [
-            {"name": "Slow", "dex": 20, "hp": 8},
-            {"name": "Fast", "dex": 90, "hp": 8},
+            {"name": "Slow", "dex": 20, "hp": 8, "attacks": claw},
+            {"name": "Fast", "dex": 90, "hp": 8, "attacks": claw},
         ]))
         self.assertEqual(state.combat.order[state.combat.current_index].name, "Fast")
 

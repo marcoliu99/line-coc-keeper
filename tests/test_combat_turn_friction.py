@@ -96,7 +96,9 @@ def test_a_complete_enemy_turn_still_cannot_be_skipped_but_an_ally_turn_can():
     assert _load().combat.order[_load().combat.current_index].name != "Guard"
 
 
-def test_an_advance_that_moved_the_turn_reports_the_stuck_enemy_beside_it():
+def test_an_enemy_the_engine_cannot_play_gives_up_its_turn_when_the_turn_reaches_it():
+    # The Haunting soak (2026-10-09): Corbitt, then his floating knife, registered without attacks; every one of the
+    # next 60-odd lines retried run_enemy_combat_plan on that turn and the fight never moved again.
     _battle("p1", enemies=(("Cultist", 90),), first_enemy=False)
     _hp_only_enemy("Thing", dex=75)  # acts right after the investigator
     state = _load()
@@ -104,9 +106,49 @@ def test_an_advance_that_moved_the_turn_reports_the_stuck_enemy_beside_it():
     _save(state)
     advanced = _tool("advance_combat_turn", {"actor_id": "調查員p1", "skip": True})
     assert advanced["ok"], advanced
-    assert advanced["enemy_turn"]["ok"] is False and _load().combat.order[_load().combat.current_index].name == "Thing"
-    skipped = _tool("advance_combat_turn", {"actor_id": "Thing", "skip": True})
-    assert skipped["ok"] and skipped["skipped"]["name"] == "Thing" and "add_npc_to_combat" in skipped["skipped"]["hint"]
+    given_up = advanced["skipped_enemy_turns"]
+    assert [g["name"] for g in given_up] == ["Thing"] and "add_npc_to_combat" in given_up[0]["hint"]
+    assert _load().combat.order[_load().combat.current_index].name != "Thing"
+    assert "p1" in _load().pending_checks, "the Cultist after it played its turn: the investigator is to defend"
+
+
+def test_registering_the_skipped_enemy_again_with_attacks_lets_it_act():
+    _battle("p1", enemies=(("Cultist", 90),), first_enemy=False)
+    _hp_only_enemy("Thing", dex=75)
+    thing = next(c for c in _load().combat.order if c.name == "Thing")
+    added = _tool("add_npc_to_combat", {"name": "Thing", "dex": 75, "hp": 5,
+                                        "attacks": [{"name": "Claw", "skill_value": 40, "damage": "1D4"}]})
+    assert "已補上" in str(added), added
+    state = _load()
+    assert [c.name for c in state.combat.order].count("Thing") == 1, "the same enemy, not a second one"
+    card = combat.card_for(state, next(c for c in state.combat.order if c.name == "Thing"))
+    assert card is not None and not card.incomplete and [(a.skill_value, a.damage) for a in card.attacks] == [(40, "1D4")]
+    assert combat.enemy_turn_blocker(state, thing) == ""
+    again = _tool("add_npc_to_combat", {"name": "Thing", "dex": 75, "hp": 5,
+                                        "attacks": [{"name": "Bite", "skill_value": 90, "damage": "1D8"}]})
+    assert "已補上" not in str(again), "a complete card is not rewritten by a later registration"
+    assert [a.skill_value for a in combat.card_for(_load(), thing).attacks] == [40]
+
+
+def test_the_follow_up_after_a_settled_roll_is_told_which_enemy_gave_up_its_turn():
+    step = prompt_config._combat_turn_step({"auto_advanced": {
+        "next_actor": "調查員p1", "round_now": 2, "phase": "READY",
+        "skipped_enemy_turns": [{"name": "柯比特操縱的匕首", "reason": "x", "hint": "y"}]}})
+    assert "柯比特操縱的匕首" in step and "不要敘事它出手" in step and "initialize_combat" in step
+
+
+def test_a_fight_that_opens_on_an_enemy_the_engine_cannot_play_starts_with_the_next_turn():
+    from app.models import GroupState
+    from tests.test_combat_engine import _investigator
+
+    character = _investigator("p1", "調查員p1", 50)
+    _save(GroupState(GROUP, active=True, characters={"p1": character},
+                     characters_by_id={character.character_id: character},
+                     active_character_id_by_user={"p1": character.character_id}))
+    started = _tool("initialize_combat", {"enemies": [{"name": "柯比特操縱的匕首", "hp": 1, "dex": 99}]})
+    assert started["ok"], started
+    assert started["opening_enemy_turn"]["skipped_enemy_turns"][0]["name"] == "柯比特操縱的匕首"
+    assert _load().combat.order[_load().combat.current_index].is_pc, "the investigator acts instead of a stall"
 
 
 def test_a_cited_advance_that_moved_the_turn_counts_whoever_it_moved():
