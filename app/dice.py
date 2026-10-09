@@ -271,6 +271,17 @@ def resolve_opposed(defender_tier: str, attacker_tier: str, is_counter: bool) ->
     return "attacker_wins"
 
 
+def defence_tier_needed(attacker_tier: str, is_counter: bool) -> str | None:
+    """The lowest success tier at which a Dodge keeps this blow off, or a Fight Back lands, per resolve_opposed.
+
+    None when no tier does (a Fight Back against a Critical attack).
+    """
+    for tier in ("regular", "hard", "extreme", "critical"):
+        if resolve_opposed(tier, attacker_tier, is_counter) in ("defender_wins", "tie_defender_wins"):
+            return tier
+    return None
+
+
 @dataclass
 class SkillCheckResult:
     skill_value: int

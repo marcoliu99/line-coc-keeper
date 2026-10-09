@@ -354,8 +354,10 @@ def _combat_next_step(result: dict) -> str:
     receipt = result.get("combat_receipt") or {}
     if not receipt.get("combat_id"):
         return ""
+    blow = (f"\n【這一擊的結果】{receipt['blow']}照這個寫：閃避或反擊擲出成功，不代表躲開；命中就寫中招受傷，"
+            "沒命中才寫躲開或落空。" if receipt.get("blow") else "")
     follow_up = f"\n【武器後續】這次命中依武器表還有後續，引擎沒有擲：{receipt['follow_up']}" if receipt.get("follow_up") else ""
-    return follow_up + _combat_turn_step(receipt)
+    return blow + follow_up + _combat_turn_step(receipt)
 
 
 def _combat_turn_step(receipt: dict) -> str:

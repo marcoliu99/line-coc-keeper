@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app import combat, combat_resources, combat_rules, config
+from app import combat, combat_flow, combat_resources, combat_rules, config, dice
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
@@ -487,8 +487,11 @@ def test_no_defence_against_a_shot_leaves_the_wounds_con_check_to_the_players_ow
     state = _load()
     assert state.combat.phase == "INJURY_CHECK" and state.pending_checks["p1"]["skill"] == "CON"
     assert "CON" in outcome.reply_text and not outcome.should_finalize
+    assert "命中，調查員p1 受到 6 點傷害" in outcome.reply_text, "the player learns what the shot did before the CON roll"
     survived, _ = _player("/coc check", [10])
     assert survived.should_finalize and "p1" not in _load().pending_checks
+    assert "命中，調查員p1 受到 6 點傷害" in survived.resolved_event["combat_receipt"]["blow"], "and so does the narrator"
+    assert "⚔️" not in survived.roll_feedback_text, "the player is not told the same blow twice"
 
 
 def test_the_defence_the_choice_registered_is_still_rolled_in_the_same_click():
@@ -888,3 +891,83 @@ def test_the_keeper_gets_an_enemys_whole_stat_block_by_name_or_indexed_alias():
     assert not missing["ok"] and missing["stat_block_headings"] == ["Walter Corbitt, Undead Fiend"]
     assert not codex_provider.counts_against_tool_budget("get_enemy_stat_block")
     assert "get_enemy_stat_block" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+
+
+def test_a_dodge_that_succeeds_below_the_attacks_tier_is_told_as_the_hit_it_is():
+    """A Dodge that rolls a success can still be hit; the player and the narrator are told it landed, not dodged."""
+    _battle()
+    _enemy_turn([20])  # claw 50: Hard
+    outcome, _ = _player("/coc check 閃避", [35])  # Dodge 40: a plain success, below the claw's Hard
+    state = _load()
+    assert combat_resources.effective_character(state, state.characters["p1"]).hp == 8
+    line = "Cultist的攻擊「困難成功」對上調查員p1的閃避「一般成功」：命中，調查員p1 受到 2 點傷害。"
+    assert line in outcome.roll_feedback_text
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["blow"] == line
+    block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
+    assert "【這一擊的結果】" + line in block and "不代表躲開" in block
+
+
+def test_a_dodge_that_keeps_the_blow_off_says_so():
+    _battle()
+    _enemy_turn([20])
+    outcome, _ = _player("/coc check 閃避", [20])  # Hard as well: the tie goes to the Dodge
+    assert "Cultist的攻擊「困難成功」對上調查員p1的閃避「困難成功」：這一擊沒有命中。" in outcome.roll_feedback_text
+
+
+def test_the_luck_offer_on_a_defence_says_what_tier_keeps_the_blow_off():
+    _battle()
+    state = _load()
+    combat_resources.adjust_resource(state, state.characters["p1"], "luck", 50, event_id="test:luck", reason="test")
+    _save(state)
+    _enemy_turn([20])  # claw 50: Hard
+    outcome, _ = _player("/coc check 閃避", [35])  # a plain success: Luck could buy Hard
+    assert "Cultist的攻擊是「困難成功」，要「困難成功」以上才躲得開。目前 Luck" in outcome.reply_text
+
+
+def test_the_players_own_hit_names_what_it_did():
+    _battle(first_enemy=False)
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    outcome, _ = _player("/coc check", [10, 90, 20])  # brawl Hard; the Cultist's dodge fails
+    assert "閃避「失敗」：命中，Cultist 受到" in outcome.roll_feedback_text
+
+
+def test_the_tier_a_defence_needs_follows_the_opposed_roll_rules():
+    assert dice.defence_tier_needed("hard", is_counter=False) == "hard"  # a tied Dodge goes to the defender
+    assert dice.defence_tier_needed("hard", is_counter=True) == "extreme"  # a tied Fight Back goes to the attacker
+    assert dice.defence_tier_needed("fail", is_counter=True) == "regular"
+    assert dice.defence_tier_needed("critical", is_counter=True) is None
+
+
+def test_a_hit_the_armor_stops_entirely_is_not_called_partial():
+    _battle(first_enemy=False, armor=[{"id": "hide", "label": "hide", "value": 5}])
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    outcome, _ = _player("/coc check", [30, 90, 20])  # brawl Hard; the Cultist's dodge fails; 1D3 can't pass 5
+    assert "命中，但傷害全被 Cultist 的護甲擋下。" in outcome.roll_feedback_text
+    assert "部分" not in outcome.roll_feedback_text
+
+
+def test_a_hit_that_does_no_damage_before_armor_is_not_credited_to_the_armor():
+    _battle(first_enemy=False, armor=[{"id": "hide", "label": "hide", "value": 5}])
+    enemy = next(c for c in _load().combat.order if c.side == "enemy")
+    _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
+                                    "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
+    nothing = dice.WeaponDamageResult("1d3", "-1", dice.RollResult("1d3", [1], 0, 1), None, -1, 0)  # 1 - 1: no damage
+    with patch.object(combat_flow.dice, "roll_weapon_damage", return_value=nothing):
+        outcome, _ = _player("/coc check", [30, 90, 20])
+    assert "命中，Cultist 受到 0 點傷害。" in outcome.roll_feedback_text and "護甲" not in outcome.roll_feedback_text
+
+
+def test_a_dodged_blow_that_owes_a_con_roll_is_not_narrated_again_after_it():
+    """The defence roll is narrated with the blow; the CON roll after it does not hand the narrator the same hit."""
+    _battle(claw_damage="1d6")
+    _enemy_turn([20])  # claw 50: Hard
+    dodged, _ = _player("/coc check 閃避", [35], damage=6)  # a plain success: hit for 6 of 10 HP, a major wound
+    assert "命中，調查員p1 受到 6 點傷害" in dodged.resolved_event["combat_receipt"]["blow"]
+    assert _load().pending_checks["p1"]["skill"] == "CON"
+    con, _ = _player("/coc check", [10])
+    assert not con.resolved_event["combat_receipt"]["blow"]
