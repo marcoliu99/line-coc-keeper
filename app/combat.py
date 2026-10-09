@@ -455,6 +455,7 @@ class AddedCombatant:
     combatant: Combatant  # the one added, or the live enemy reused instead
     reused: bool  # True: that enemy was already in the fight; nothing was added
     defeated_namesake: Combatant | None = None  # a defeated enemy the name also refers to
+    completed_card: bool = False  # reused, and the attacks or abilities it was missing were filled in
 
 
 def defeated_namesake_notice(added: AddedCombatant) -> str:
@@ -466,6 +467,26 @@ def defeated_namesake_notice(added: AddedCombatant) -> str:
         f"「{namesake.display_name}」先前已在這場戰鬥中被打倒；"
         f"已加入一隻新的「{new.display_name}」（HP {new.hp}）。"
     )
+
+
+def _complete_card(
+    state: GroupState,
+    combatant: Combatant,
+    *,
+    attacks: list[dict[str, Any]] | None,
+    abilities: list[dict[str, Any]] | None,
+    source: dict[str, Any] | None,
+) -> bool:
+    """Give an enemy registered without attacks or abilities the ones a second registration of it brings, so the
+    turn it has been giving up is played from the next round. Its HP and state stay; a complete card is not changed."""
+    card = card_for(state, combatant)
+    if card is None or not card.incomplete or not (attacks or abilities):
+        return False
+    card.attacks = _coerce_attacks(attacks)
+    card.abilities = _coerce_abilities(abilities)
+    card.source = {**card.source, **(source or {})}
+    card.incomplete = False
+    return True
 
 
 def add_combatant(
@@ -501,7 +522,8 @@ def add_combatant(
     if not is_ally and not force_new_instance:
         existing = find_live_enemy_by_any_alias(state, name)
         if existing is not None:
-            return AddedCombatant(existing, reused=True)
+            return AddedCombatant(existing, reused=True, completed_card=_complete_card(
+                state, existing, attacks=attacks, abilities=abilities, source=source))
     namesake = None if is_ally else _defeated_enemy_by_any_alias(state, name)
     _checkpoint_before_combat(state)
     before = {id(c) for c in state.combat.order}

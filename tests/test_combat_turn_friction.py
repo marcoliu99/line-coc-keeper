@@ -112,6 +112,24 @@ def test_an_enemy_the_engine_cannot_play_gives_up_its_turn_when_the_turn_reaches
     assert "p1" in _load().pending_checks, "the Cultist after it played its turn: the investigator is to defend"
 
 
+def test_registering_the_skipped_enemy_again_with_attacks_lets_it_act():
+    _battle("p1", enemies=(("Cultist", 90),), first_enemy=False)
+    _hp_only_enemy("Thing", dex=75)
+    thing = next(c for c in _load().combat.order if c.name == "Thing")
+    added = _tool("add_npc_to_combat", {"name": "Thing", "dex": 75, "hp": 5,
+                                        "attacks": [{"name": "Claw", "skill_value": 40, "damage": "1D4"}]})
+    assert "已補上" in str(added), added
+    state = _load()
+    assert [c.name for c in state.combat.order].count("Thing") == 1, "the same enemy, not a second one"
+    card = combat.card_for(state, next(c for c in state.combat.order if c.name == "Thing"))
+    assert card is not None and not card.incomplete and [(a.skill_value, a.damage) for a in card.attacks] == [(40, "1D4")]
+    assert combat.enemy_turn_blocker(state, thing) == ""
+    again = _tool("add_npc_to_combat", {"name": "Thing", "dex": 75, "hp": 5,
+                                        "attacks": [{"name": "Bite", "skill_value": 90, "damage": "1D8"}]})
+    assert "已補上" not in str(again), "a complete card is not rewritten by a later registration"
+    assert [a.skill_value for a in combat.card_for(_load(), thing).attacks] == [40]
+
+
 def test_a_fight_that_opens_on_an_enemy_the_engine_cannot_play_starts_with_the_next_turn():
     from app.models import GroupState
     from tests.test_combat_engine import _investigator

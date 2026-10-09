@@ -82,6 +82,12 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
                 attacks=tool_input.get("attacks") or ()),
             skills=_reviewed_skills(tool_input.get("skills")),
         ))
+        if added.reused and added.completed_card:
+            return support.ToolStateMutation(
+                f"（「{added.combatant.name}」已經在戰鬥中，沒有重複建立；原本缺的攻擊／能力已補上，"
+                "血量與狀態沿用原本那份，下一次輪到它時引擎就會讓它出手。）",
+                should_save=True,
+            )
         if added.reused:
             return support.ToolStateMutation(
                 f"（系統偵測到「{added.combatant.name}」已經在戰鬥中且尚未倒下，沒有重複建立第二份——"
@@ -190,9 +196,10 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                 results.append({"name": name, "ok": False, "error": str(exc)})
                 continue
             seen_batch_ids.add(added.combatant.combatant_id)
-            added_any = added_any or not added.reused
+            added_any = added_any or not added.reused or added.completed_card
             result: dict[str, Any] = {
                 "name": added.combatant.display_name, "ok": True, "reused": added.reused,
+                **({"completed_card": True} if added.completed_card else {}),
             }
             if index_note:
                 result["note"] = index_note
