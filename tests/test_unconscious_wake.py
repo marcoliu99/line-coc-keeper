@@ -91,3 +91,15 @@ def test_the_lone_investigators_line_wakes_them_and_tells_the_keeper_about_the_t
         asyncio.run(supervisor._prepare(turn))
     assert seen["text"] == unconscious_wake.wake_note("調查員p1") + "我掙扎著爬起來。"
     assert not _load().characters["p1"].injury["unconscious"] and not turn.state.characters["p1"].injury["unconscious"]
+
+
+def test_first_aid_from_a_companion_wakes_them_through_the_tag_the_keeper_removes():
+    from app.keeper_tools import registry
+
+    state = _party("p1", "p2")
+    call = registry.ToolCall(state, {"investigator": "調查員p1", "tag": "昏迷", "reason": "First Aid succeeded"},
+                             [], [], "player", "remove_status_tag", actor_id="p2")
+    assert registry.REGISTRY["remove_status_tag"].handler(call)["ok"]
+    woken = _load().characters["p1"]
+    assert "昏迷" not in woken.status_tags and woken.injury == {"major_wound": True, "unconscious": False}
+    assert unconscious_wake.decide(_load(), "p1") is None, "no longer waiting"
