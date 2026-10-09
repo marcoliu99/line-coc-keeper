@@ -115,3 +115,12 @@ def test_a_movement_line_does_not_carry_an_investigator_waiting_for_first_aid():
         assert router._resolve_player_location(GROUP, "p1", "我爬上樓梯。") is None
         move.assert_not_called()
         assert router._resolve_player_location(GROUP, "p2", "我爬上樓梯。") == {"room": "upstairs"}
+
+
+def test_a_settled_first_aid_roll_can_wake_the_patient_in_its_follow_up():
+    from app.keeper_tools import registry
+    from app.services import prompt_config
+
+    assert "remove_status_tag" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+    instruction = prompt_config.build_tool_enabled_narrator_static_prompt("", "resolved_check_followup")
+    assert "remove_status_tag" in instruction and "昏迷" in instruction
