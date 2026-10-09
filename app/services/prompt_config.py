@@ -170,6 +170,15 @@ def build_resolved_check_history_block(
 
 # ── Narrator Agent：只負責把已經確定的機制結果寫成敘事，完全沒有工具 ────────────
 
+# The Haunting runs (2026-10-09) told players "現有紀錄沒有驗證他已起身" and "沒有可核實的戰鬥收據": the guard
+# rules below, written in the engine's words, leaked into the story. Every narrator prompt carries this.
+PLAYER_VOICE_RULES = """給玩家看的文字一律是故事裡的聲音（繁體中文）：
+- 不要出現系統、規則或後台用語，例如「紀錄」「收據」「權威」「狀態」「已提交」「驗證」「核實」「依據」「工具」「程式」「機制」「流程」「建立檢定」，也不要解釋為什麼某件事不能寫或還不能確認。
+- 還沒發生或無法確認的事就不要寫成已發生；改用故事把懸念交代清楚，再把行動交回玩家，例如「Corbitt 的爪子已逼到你面前——你要閃避，還是反擊？」
+- 玩家想做的事被更急的事擋住時（例如攻擊正撲向他），用一兩句故事交代眼前的危機與該擲的檢定，不要長篇說明為何行動還沒處理。
+"""
+
+
 NARRATOR_INSTRUCTION = """你是一個 TRPG 守密人（Narrator Agent）。
 你的任務是「將已經發生的客觀事實，轉化為沉浸、懸疑且冷酷的敘事文學」。
 你沒有權力決定判定成功或失敗、也不能扣除玩家的血量或理智，這些機制已經在前一個階段由系統完成，
@@ -189,6 +198,7 @@ Result）」來描述場景，不要重新判定或改變這些既定事實。
 - 【目前角色數值】是已存檔的權威值；【近期已結算檢定】是先前回合的機制紀錄，與本回合結果分開。不得因
   本回合沒有機制操作，就否認歷史檢定或它明確記錄的數值變化；回答角色數值時採用目前角色數值。
 
+""" + PLAYER_VOICE_RULES + """
 以下是完整的守密人規則（人設、敘事風格、防雷、NPC 演出規範，以及每位角色的資料）：
 """
 
@@ -224,7 +234,7 @@ def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_ki
         )
     else:
         raise ValueError(f"unsupported narrative turn kind: {turn_kind}")
-    return instruction + keeper_static_prompt
+    return instruction + PLAYER_VOICE_RULES + keeper_static_prompt
 
 
 OPENING_FALLBACK_BLOCK = (
@@ -271,7 +281,8 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
             f"調查員：{pending.get('investigator', '未知')}",
             f"技能／選項：{pending.get('skill') or pending.get('options') or '見工具結果'}",
             f"原始行動：{pending.get('action_context', '未記錄；不可自行補造')}",
-            "這是權威狀態。回覆必須明確告知檢定／選擇已建立並等待玩家處理；禁止說尚未建立、沒有待處理檢定，或要求守密人重新建立。",
+            ("這筆檢定確實在等玩家擲。回覆要用故事口吻讓玩家知道接下來該擲這個檢定（例如「想看清牆縫裡的東西，得先過一次偵查」）；"
+             "禁止說沒有待處理檢定、要求重新建立，或寫成「檢定已建立」這類系統說法。"),
         ])
     pending_luck = status.get("pending_luck")
     if pending_luck:
@@ -425,7 +436,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             if pending:
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
-                return f"{warning}\n\n{investigator} 的{skill}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+                return f"{warning}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{skill}。"
             if (state is not None and not status.get("scenario_evidence_blocked")
                     and (in_battle := turn_fallback.combat_guidance(state, result.fallback_reason))):
                 return f"{warning}{in_battle}"
@@ -446,13 +457,13 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             investigator = pending.get("investigator", "調查員")
             skill = pending.get("skill")
             detail = f"「{skill}」" if skill else "這次"
-            return f"{investigator} 的{detail}檢定已建立並等待處理。請使用 /coc check 擲骰或選擇。"
+            return f"{investigator} 還要擲{detail}檢定：請按檢定按鈕或輸入 /coc check 擲骰或選擇。"
         has_check_instruction = "/coc check" in text or "檢定按鈕" in text
         if not has_check_instruction:
             investigator = pending.get("investigator", "調查員")
             skill = pending.get("skill")
             detail = f"{skill} 檢定" if skill else "檢定／選擇"
-            return f"{text.rstrip()}\n\n{investigator} 的{detail}已建立，請按檢定按鈕或輸入 /coc check 完成。"
+            return f"{text.rstrip()}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{detail}。"
         return text
 
     pending_luck = status.get("pending_luck")

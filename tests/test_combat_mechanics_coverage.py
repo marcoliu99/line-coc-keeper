@@ -241,7 +241,7 @@ def test_settling_commits_the_working_resources_once_and_closes_the_battle(battl
     assert battle.tool('confirm_combat_settlement', arguments)['receipt'] == settled['receipt']
     assert battle.load().to_dict() == after.to_dict()
     public = turn_delivery.observe_tool('confirm_combat_settlement', settled, 1)
-    assert public.audience == 'public' and public.success
+    assert public.audience == 'internal' and public.success and not public.public_text  # the narration tells it
 
 
 def test_settling_a_battle_every_investigator_lost_ends_the_scenario(battle):

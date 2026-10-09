@@ -857,12 +857,14 @@
         "app/agents/tool_gateway.py",
         "tests/test_narrative_boundary_prompts.py",
         "tests/test_narrative_correction_lifecycle.py",
-        "tests/test_narrative_correction_command.py"
+        "tests/test_narrative_correction_command.py",
+        "app/services/prompt_config.py",
+        "tests/test_narrator_check_consistency.py"
       ],
       "path": "docs/specs/enhancement/narrative_boundaries_design_spec.md",
       "zh_path": "docs/specs/enhancement/narrative_boundaries_design_spec_zh.md",
       "previous_path": "docs/narrative_boundaries_design_spec.md",
-      "source_revision": "afe8aced2614e6d1ba845727e42277436838cf0f"
+      "source_revision": "0ae449a694e90961d5017a64690c21f0ed36fe7b"
     },
     {
       "title": "Evidence-preserving PDF extraction and targeted repair",

@@ -137,3 +137,25 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         context = prompt_builder.correction_context_message(state)
         self.assertIn("地下室不存在", context)
         self.assertLessEqual(len(context), 6100)
+
+
+def test_every_narrator_prompt_keeps_system_words_out_of_the_story():
+    # The Haunting runs (2026-10-09) told players "現有紀錄沒有驗證他已起身" and "沒有可核實的戰鬥收據".
+    for prompt in (prompt_config.build_narrator_static_prompt(""),
+                   prompt_config.build_tool_enabled_narrator_static_prompt("", "resolved_check_followup"),
+                   prompt_config.build_tool_enabled_narrator_static_prompt("", "opening_fallback")):
+        assert prompt_config.PLAYER_VOICE_RULES in prompt
+    assert "「收據」" in prompt_config.PLAYER_VOICE_RULES and "「紀錄」" in prompt_config.PLAYER_VOICE_RULES
+
+
+def test_a_status_change_reads_as_the_investigators_condition():
+    from app.services import turn_delivery
+
+    # Waking removes 昏迷 and 倒地 in two calls: each says its own change, and neither claims she is unhurt.
+    up = [turn_delivery.observe_tool("remove_status_tag",
+                                     {"ok": True, "investigator": "Evelyn", "tag": tag, "status_tags": rest}, n)
+          for n, (tag, rest) in enumerate((("昏迷", ["倒地"]), ("倒地", [])), 1)]
+    assert [o.public_text for o in up] == ["Evelyn 不再昏迷。", "Evelyn 不再倒地。"]
+    hurt = turn_delivery.observe_tool("add_status_tag",
+                                      {"ok": True, "investigator": "Evelyn", "tag": "昏迷", "status_tags": ["昏迷"]}, 3)
+    assert hurt.public_text == "Evelyn：昏迷。" and "狀態" not in hurt.public_text

@@ -58,8 +58,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"
                     f"HP {result.get('hp_before')} → {result.get('hp_after')}。")
         elif name == "create_triggered_check" and result.get("pending"):
-            text = (f"{result.get('investigator', '調查員')} 的{result.get('skill', '後續')}檢定已建立，"
-                    "等待玩家擲骰。")
+            text = f"{result.get('investigator', '調查員')} 還要擲{result.get('skill', '後續')}檢定。"
         elif name == "adjust_ammo":
             text = f"{result.get('investigator')} 的 {result.get('weapon')} 彈藥已更新為 {result.get('ammo')}。"
         elif name == "adjust_character":
@@ -70,13 +69,16 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                 text = str(record.get("text", ""))
         elif name == "set_skill":
             text = f"{result.get('investigator')} 的 {result.get('skill')} 已設為 {result.get('value')}。"
-        elif name in {"add_status_tag", "remove_status_tag"}:
-            text = f"{result.get('investigator')} 的狀態標記已更新：{'、'.join(result.get('status_tags', [])) or '無'}。"
+        elif name in {"add_status_tag", "remove_status_tag"} and result.get("tag"):
+            # This one change, not the investigator's whole condition: waking keeps the wound and the lost HP.
+            text = (f"{result.get('investigator')}：{result['tag']}。" if name == "add_status_tag"
+                    else f"{result.get('investigator')} 不再{result['tag']}。")
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
         elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "add_npc_to_combat", "declare_combat_action", "run_combat_action", "run_enemy_combat_plan", "submit_combat_choice", "preview_combat_settlement", "confirm_combat_settlement", "rollback_combat", "correct_combat_event", "reconcile_combat_baseline", "change_combat_initiative", "declare_combat_effect", "run_combat_effect", "stop_combat_effect", "resolve_combat_ruling", "reconcile_combat_correction", "process_postcombat_obligations", "stabilize_investigator", "request_stabilization_check"}:
-            # Do not expose enemy sheets/ability names through a generic dump.
-            text = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
+            # Nothing public: the narration tells the fight, and a fixed 「戰鬥機制操作已記錄」 line read as engine noise
+            # after every combat turn (the Haunting runs, 2026-10-09). Enemy sheets stay out of a generic dump too.
+            text = ""
     if result.get('provisional') and text:
         text += PROVISIONAL_MARK
     record = result.get("record") if name in {"record_clue", "record_established_fact"} else None

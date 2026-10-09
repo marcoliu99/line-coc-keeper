@@ -168,5 +168,6 @@ class InitializeCombatTests(unittest.TestCase):
             "status": "Secret HP 20",
             "enemies": [{"name": "Corbitt", "ok": True}],
         }, 1)
-        self.assertEqual(result.audience, "public")
-        self.assertNotIn("Secret HP", result.public_text)
+        # The narration tells the fight; no generic combat line, let alone the enemy's card, goes to the players.
+        self.assertEqual(result.audience, "internal")
+        self.assertEqual(result.public_text, "")

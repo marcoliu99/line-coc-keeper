@@ -76,7 +76,8 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
         }))
 
         self.assertIn("待處理檢定狀態：已建立", block)
-        self.assertIn("禁止說尚未建立", block)
+        self.assertIn("禁止說沒有待處理檢定", block)
+        self.assertNotIn("檢定／選擇已建立並等待", block)  # the story voice, not the engine's words
 
     def test_fact_block_forbids_roll_instruction_when_no_check_was_created(self):
         block = build_mechanic_facts_block(mechanic_result({"tool_called": False, "pending": None}))
@@ -127,7 +128,7 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
         corrected = enforce_mechanic_check_consistency("STR 檢定尚未建立，請守密人重新建立。", result)
 
         self.assertIn("Marco", corrected)
-        self.assertIn("已建立", corrected)
+        self.assertIn("擲", corrected)
         self.assertIn("/coc check", corrected)
 
     def test_pending_check_without_next_step_gets_roll_instruction(self):
@@ -135,7 +136,7 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
 
         corrected = enforce_mechanic_check_consistency("木板仍擋在面前，檢定結果未知。", result)
 
-        self.assertIn("已建立", corrected)
+        self.assertIn("擲", corrected)
         self.assertIn("/coc check", corrected)
 
     def test_pending_luck_gets_luck_choice_not_second_check(self):

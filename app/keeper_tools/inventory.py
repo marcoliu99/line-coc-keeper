@@ -313,7 +313,8 @@ def add_status_tag(call: ToolCall) -> dict[str, Any]:
             target_char.status_tags.append(tag)
         return support.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = support.mutate_tool_state(state, _mutate_add_tag)
-    return {"ok": True, "investigator": investigator, "status_tags": tags, "provisional": resource_bridge.participating(state, char)}
+    return {"ok": True, "investigator": investigator, "tag": tag, "status_tags": tags,
+            "provisional": resource_bridge.participating(state, char)}
 
 
 def remove_status_tag(call: ToolCall) -> dict[str, Any]:
@@ -352,4 +353,5 @@ def remove_status_tag(call: ToolCall) -> dict[str, Any]:
                 target_char.injury = {**injury, "unconscious": False}
         return support.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = support.mutate_tool_state(state, _mutate_remove_tag)
-    return {"ok": True, "investigator": investigator, "status_tags": tags, "provisional": resource_bridge.participating(state, char)}
+    return {"ok": True, "investigator": investigator, "tag": tag, "status_tags": tags,
+            "provisional": resource_bridge.participating(state, char)}
