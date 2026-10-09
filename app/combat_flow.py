@@ -1378,6 +1378,14 @@ def resolve_ruling(
             return _ruling(state, action, damage.reason or 'Unsupported changed attack mode')
         try:
             evidence = _weapon_actor_evidence(state, actor, weapon, reference, weapon_instance)
+        except OutOfAmmo as exc:
+            if action.get('checks'):
+                return _ruling(state, action, str(exc))
+            # Mapped onto a gun with no rounds left before anything was rolled: refused the way a declaration is,
+            # so the actor may reload or do something else instead of the fight waiting on another ruling.
+            del state.combat.actions[action_id]
+            state.combat.phase = 'READY'
+            return _error(str(exc))
         except ValueError as exc:
             return _ruling(state, action, str(exc))
         if action.get('checks') and action.get('skill') != evidence['skill']:
