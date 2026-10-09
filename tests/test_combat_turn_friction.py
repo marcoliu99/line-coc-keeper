@@ -759,3 +759,65 @@ def test_a_fight_is_not_started_once_every_investigator_is_down():
     state.characters["p1"].hp = 5
     _save(state)
     assert _tool("initialize_combat", {"enemies": [corbitt]})["ok"]
+
+
+def test_corbitt_is_registered_with_his_floating_knife_and_attacks_with_it():
+    # The Haunting soaks (2026-10-09): Corbitt registered without attacks gave up every turn. His block lists none
+    # for the knife; the scenario has it roll his POW 90 against Dodge for 1D4+2, impaling on an Extreme success.
+    from app.models import GroupState
+    from tests.test_combat_engine import _investigator
+
+    character = _investigator("p1", "調查員p1", 50)
+    _save(GroupState(GROUP, active=True, characters={"p1": character},
+                     characters_by_id={character.character_id: character},
+                     active_character_id_by_user={"p1": character.character_id},
+                     active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                     scenario_text=STAT_BLOCK))
+    bare = {"name": "Walter Corbitt", "dex": 35, "hp": 16}
+    refused = _tool("initialize_combat", {"enemies": [bare]})
+    assert not refused["ok"] and "attacks" in refused["enemies"][0]["error"] and not _load().combat.active
+    assert not _tool("add_npc_to_combat", bare)["ok"]
+    assert not _tool("add_npc_to_combat", {**bare, "attacks": [{}], "abilities": [{}]})["ok"], "empty objects"
+    state = _load()  # the scenario index lists his Chinese name as an alias of the block's English heading
+    state.scenario_npc_index = [{"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 16}]
+    _save(state)
+    assert not _tool("add_npc_to_combat", {**bare, "name": "柯比特"})["ok"]
+    knife = {"label": "浮空匕首", "skill_name": "POW", "skill_value": 90, "damage": "1D4+2", "tags": ["impale"]}
+    # A second Corbitt in the same batch is a new instance, not a re-registration: it needs attacks too.
+    batch = _tool("initialize_combat", {"enemies": [{**bare, "attacks": [knife]}, bare]})
+    assert [e["ok"] for e in batch["enemies"]] == [True, False] and "attacks" in batch["enemies"][1]["error"]
+    state = _load()
+    assert [c.side for c in state.combat.order].count("enemy") == 1
+    corbitt = next(c for c in state.combat.order if c.side == "enemy")
+    card = combat.card_for(state, corbitt)
+    assert card is not None and not card.incomplete and card.source["sha256"] == "abc123"
+    assert card.attacks[0].tags == ["impale"] and combat.enemy_turn_blocker(state, corbitt) == ""
+    assert state.combat.order[state.combat.current_index].is_pc, "DEX 50 acts before Corbitt's 35"
+    # Her turn ends; Corbitt's knife attacks, and she is asked to defend against a 90.
+    assert _tool("advance_combat_turn", {"actor_id": "調查員p1", "skip": True})["ok"]
+    state = _load()
+    assert state.pending_checks["p1"]["attacker_name"] == "Walter Corbitt"
+    knife_attack = next(a for a in state.combat.actions.values() if a.get("npc_attack_id"))
+    assert knife_attack["weapon"]["extreme_rule"] == "impale", "an Extreme hit impales: 6 + 1D4+2"
+
+
+def test_an_enemy_attack_with_malformed_tags_still_attacks():
+    _battle("p1", enemies=(("Cultist", 90),), first_enemy=False)
+    state = _load()
+    card = combat.card_for(state, next(c for c in state.combat.order if c.side == "enemy"))
+    for tags in (None, "impale", 7):
+        card.attacks[0].tags = tags  # type: ignore[assignment]  # what an unvalidated tool call can store
+        _save(state)
+        state = _load()
+        state.combat.current_index = next(i for i, c in enumerate(state.combat.order) if c.side == "enemy")
+        _save(state)
+        plan = _tool("plan_enemy_turn", {"enemy": "Cultist"})
+        ran = _tool("run_enemy_combat_plan", {"plan_id": plan["plan_id"]})
+        assert ran["ok"], (tags, ran)
+        state = _load()
+        assert state.pending_checks.get("p1"), tags
+        state.pending_checks.clear()
+        state.combat.actions.clear()
+        state.combat.interaction = None
+        state.combat.phase = "READY"
+        card = combat.card_for(state, next(c for c in state.combat.order if c.side == "enemy"))

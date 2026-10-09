@@ -312,11 +312,20 @@ def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[
     card's default, and none at all would let the default unarmed attack ride on the provenance. A name the prose only
     mentions, a short name inside another word ("rat" in "pirate"), or values no block carries keep what the model gave
     and need a ruling."""
-    if not attacks or not all(_well_formed(attack) for attack in attacks):
+    if not attacks or not all(well_formed_attack(attack) for attack in attacks):
         return False
     blocks = _stat_blocks(state.scenario_text or "")
     if any(_attacks_in_block(attacks, block) for _, block in blocks):
         return True
+    return _named_by_a_heading(blocks, name)
+
+
+def stat_block_named(state: GroupState, name: str) -> bool:
+    """Whether a stat block's own heading in the loaded scenario names this enemy, attacks aside."""
+    return _named_by_a_heading(_stat_blocks(state.scenario_text or ""), name)
+
+
+def _named_by_a_heading(blocks: list[tuple[str, str]], name: str) -> bool:
     wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
     if len(wanted) < 2:
         return False
@@ -325,7 +334,8 @@ def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[
     return any(pattern.search(heading) for heading, _ in blocks)
 
 
-def _well_formed(attack: Any) -> bool:
+def well_formed_attack(attack: Any) -> bool:
+    """An attack given its own skill value and damage, not left to the card's defaults."""
     if not isinstance(attack, Mapping):
         return False
     value = attack.get("skill_value")
