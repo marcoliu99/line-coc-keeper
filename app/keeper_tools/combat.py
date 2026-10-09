@@ -53,7 +53,11 @@ def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, An
     says it attacks: an object it moves (Corbitt's floating knife) attacks with the value the scenario says to roll.
     Registering again one already fighting changes nothing, so that is let through.
     """
-    if entry.get("is_ally") or entry.get("attacks") or entry.get("abilities"):
+    attacks, abilities = entry.get("attacks"), entry.get("abilities")
+    # An empty object would become the card's default 25%/1D3 attack, or an unnamed special: neither counts.
+    usable = (isinstance(attacks, list) and any(support.well_formed_attack(a) for a in attacks)) or (
+        isinstance(abilities, list) and any(isinstance(a, dict) and a.get("name") for a in abilities))
+    if entry.get("is_ally") or usable:
         return ""
     # A localized alias the scenario index lists (柯比特) names the same enemy as the block's English heading.
     indexed = combat.find_npc_index_entry_exact(state, name) or {}
