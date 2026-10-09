@@ -867,3 +867,24 @@ def test_only_a_party_down_at_zero_is_ready_to_settle_by_itself():
     state.characters["p1"].away = False
     combat_resources.adjust_resource(state, state.characters["p1"], "hp", -10, event_id="test:zero", reason="test")
     assert combat_engine._ready_to_settle_party_down(state)
+
+
+def test_the_keeper_gets_an_enemys_whole_stat_block_by_name_or_indexed_alias():
+    # The Haunting soaks (2026-10-09): the Keeper searched the scenario for Corbitt's attack until the per-turn search
+    # cap ended the turn, three player lines in a row, before it registered him.
+    from app.keeper_tools import registry
+    from app.models import GroupState
+    from app.providers import codex_provider
+
+    state = GroupState(GROUP, active=True, active_scenario_source_hash="abc123", scenario_library_id="the-haunting",
+                       scenario_text=STAT_BLOCK,
+                       scenario_npc_index=[{"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 16}])
+    _save(state)
+    for name in ("Walter Corbitt", "柯比特", "corbitt"):
+        found = _tool("get_enemy_stat_block", {"name": name})
+        assert found["ok"] and found["heading"] == "Walter Corbitt, Undead Fiend", (name, found)
+        assert "Fighting 50%" in found["stat_block"] and "STR 90" in found["stat_block"], "as the scenario writes it"
+    missing = _tool("get_enemy_stat_block", {"name": "鼠群"})
+    assert not missing["ok"] and missing["stat_block_headings"] == ["Walter Corbitt, Undead Fiend"]
+    assert not codex_provider.counts_against_tool_budget("get_enemy_stat_block")
+    assert "get_enemy_stat_block" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES

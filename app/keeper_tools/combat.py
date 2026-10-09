@@ -66,7 +66,8 @@ def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, An
         return ""
     if not new_instance and combat.find_live_enemy_by_any_alias(state, name) is not None:
         return ""
-    return (f"「{name}」在劇本裡有數值表，登記時要附上 attacks，否則輪到它時只能讓出回合。照數值表寫的攻擊填；"
+    return (f"「{name}」在劇本裡有數值表，登記時要附上 attacks，否則輪到它時只能讓出回合。"
+            "先用 get_enemy_stat_block 取得那張數值表，照表寫的攻擊填；"
             "劇本另外寫明它怎麼攻擊時（例如操縱物品出手、以 POW 對抗調查員閃避），攻擊的 label 寫那個物品，"
             "skill_value 填劇本指定要擲的數值，damage 照劇本寫的傷害；劇本寫極難成功會穿刺時，那筆攻擊加 "
             'tags: ["impale"]。')

@@ -1026,6 +1026,23 @@ _SPECS += (
 )
 
 _SPECS += (
+    ToolSpec(
+        schema={
+            "name": "get_enemy_stat_block",
+            "description": (
+                "取得劇本裡某個敵人的整張數值表（屬性、HP、攻擊、技能），依數值表標題或 /coc index 的別名查。"
+                "要用 initialize_combat／add_npc_to_combat 登記劇本敵人前先呼叫一次，照表填 attacks；"
+                "不要為了找數值一直 search_scenario。查不到時會列出劇本有的數值表標題。"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"name": {"type": "string", "description": "敵人名字，例如 Walter Corbitt 或 柯比特"}},
+                "required": ["name"],
+            },
+        },
+        handler=scenario_handlers.get_enemy_stat_block,
+        read_only=True, bounded_query=True, information_query=True, kp_assistant=True, resolved_check_followup=True,
+    ),
     ToolSpec(schema={'name': 'get_weapon_definition', 'description': '離線查詢已核對武器ID/精確名稱/明確別名，返回骰式、DB、距離表及來源；含糊描述返回候選，不推定持有或彈藥。', 'input_schema': {'type': 'object','properties': {'reference': {'type': 'string'}},'required': ['reference']}}, handler=managed_handlers.get_weapon_definition, read_only=True, bounded_query=True, information_query=True, kp_assistant=True),
 )
 
