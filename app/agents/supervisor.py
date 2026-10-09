@@ -184,6 +184,7 @@ class _Turn:
     intent: str = ""
     mechanic_result: MechanicResult | None = None
     pending_reply: str = ""
+    said: str = ""  # the player's own line, when ``text`` carries a system note in front of it for the models
     autoroll_followups: list[dict[str, Any]] = field(default_factory=list)
     pending_before: tuple[dict, dict] | None = None  # pending checks and Luck decisions as the Executor found them
     obligation_evidence: list[str] = field(default_factory=list)
@@ -231,7 +232,11 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
         await asyncio.to_thread(unconscious_wake.wake, turn.conversation_id, actor.character_id,
                                 timeline_id=turn.turn_timeline_id)
         turn.state = await asyncio.to_thread(state_transaction.refresh_snapshot, turn.state)
+        # The note goes to the models, not into the log as the player's words; the search behind it is redone
+        # for the time skip rather than reused from the prefetch for the line alone.
+        turn.said = turn.text
         turn.text = unconscious_wake.wake_note(actor.name) + turn.text
+        turn.prefetched_retrieval = None
     # 1. Build Context. The continuation of a roll reuses the evidence its action turn gathered when nothing it
     # depended on has moved, instead of searching the same scene again.
     prefetched_retrieval = turn.prefetched_retrieval
@@ -447,7 +452,7 @@ def _commit(turn: _Turn, draft: reply_pipeline.ReplyDraft) -> TurnReply:
         committed = turn_commit.commit_turn_result(
             state,
             [
-                {"role": "user", "content": f"{turn.speaker_role} {turn.display_name}: {turn.text}"},
+                {"role": "user", "content": f"{turn.speaker_role} {turn.display_name}: {turn.said or turn.text}"},
                 {"role": "assistant", "content": draft.text},
             ],
             timeline_id=turn.turn_timeline_id,

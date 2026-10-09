@@ -84,12 +84,15 @@ def test_the_lone_investigators_line_wakes_them_and_tells_the_keeper_about_the_t
     turn = supervisor._Turn(
         state=_party("p1"), user_id="p1", display_name="調查員p1", text="我掙扎著爬起來。", resolved_location=None,
         speaker_role="player", conversation_id=GROUP, turn_kind="player_action", resolved_check_context=None,
-        prefetched_retrieval=None, handoff=None, expected_opening_source_hash=None, expected_opening_context=None,
-        expected_opening_participants=None, turn_timeline_id="timeline-wake", turn_id="turn-wake",
+        prefetched_retrieval=object(), handoff=None, expected_opening_source_hash=None,  # type: ignore[arg-type]
+        expected_opening_context=None, expected_opening_participants=None, turn_timeline_id="timeline-wake",
+        turn_id="turn-wake",
     )
     with patch.object(context_builder, "build_context", stop), pytest.raises(RuntimeError, match="context reached"):
         asyncio.run(supervisor._prepare(turn))
     assert seen["text"] == unconscious_wake.wake_note("調查員p1") + "我掙扎著爬起來。"
+    assert turn.said == "我掙扎著爬起來。", "the log keeps the player's own words"
+    assert seen["prefetched"] is None, "the time skip gets its own search"
     assert not _load().characters["p1"].injury["unconscious"] and not turn.state.characters["p1"].injury["unconscious"]
 
 
