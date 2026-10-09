@@ -74,8 +74,9 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
         elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "add_npc_to_combat", "declare_combat_action", "run_combat_action", "run_enemy_combat_plan", "submit_combat_choice", "preview_combat_settlement", "confirm_combat_settlement", "rollback_combat", "correct_combat_event", "reconcile_combat_baseline", "change_combat_initiative", "declare_combat_effect", "run_combat_effect", "stop_combat_effect", "resolve_combat_ruling", "reconcile_combat_correction", "process_postcombat_obligations", "stabilize_investigator", "request_stabilization_check"}:
-            # Do not expose enemy sheets/ability names through a generic dump.
-            text = "戰鬥機制操作已記錄；後續以目前戰鬥狀態為準。"
+            # Nothing public: the narration tells the fight, and a fixed 「戰鬥機制操作已記錄」 line read as engine noise
+            # after every combat turn (the Haunting runs, 2026-10-09). Enemy sheets stay out of a generic dump too.
+            text = ""
     if result.get('provisional') and text:
         text += PROVISIONAL_MARK
     record = result.get("record") if name in {"record_clue", "record_established_fact"} else None
