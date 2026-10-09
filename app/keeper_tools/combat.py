@@ -46,7 +46,7 @@ def start_combat(call: ToolCall) -> dict[str, Any]:
     return {"ok": True, "status": combat_engine.handle(state, act.Status())}
 
 
-def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, Any]) -> str:
+def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, Any], *, new_instance: bool = False) -> str:
     """Why an enemy the scenario gives a stat block cannot be registered without attacks, or "".
 
     Such an enemy could only give up every turn it gets. Its attacks come from the block, or from how the scenario
@@ -55,12 +55,12 @@ def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, An
     """
     if entry.get("is_ally") or entry.get("attacks") or entry.get("abilities") or not support.stat_block_named(state, name):
         return ""
-    if combat.find_live_enemy_by_any_alias(state, name) is not None:
+    if not new_instance and combat.find_live_enemy_by_any_alias(state, name) is not None:
         return ""
     return (f"「{name}」在劇本裡有數值表，登記時要附上 attacks，否則輪到它時只能讓出回合。照數值表寫的攻擊填；"
             "劇本另外寫明它怎麼攻擊時（例如操縱物品出手、以 POW 對抗調查員閃避），攻擊的 label 寫那個物品，"
-            "skill_value 填劇本指定要擲的數值，damage 照劇本寫的傷害；劇本寫極難成功會穿刺時，source 加 "
-            "extreme_rule: impale。")
+            "skill_value 填劇本指定要擲的數值，damage 照劇本寫的傷害；劇本寫極難成功會穿刺時，那筆攻擊加 "
+            'tags: ["impale"]。')
 
 
 def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
@@ -153,7 +153,7 @@ def _open_with_enemy_turn(state: GroupState) -> dict[str, Any] | None:
                 {"name": current.display_name or current.name, "reason": blocker,
                  "hint": combat.UNPLAYABLE_ENEMY_HINT}, *given_up.get("skipped_enemy_turns", [])]}
         return given_up
-    plan =combat_engine.handle(state, act.PlanEnemy(current.display_name))
+    plan = combat_engine.handle(state, act.PlanEnemy(current.display_name))
     if not plan.get("ok"):
         return plan
     return combat_engine.handle(state, act.RunEnemyPlan(plan["plan_id"]))
@@ -179,8 +179,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                 requested_name = entry["name"].strip()
                 if not requested_name:
                     raise ValueError("enemy name is empty")
-                if missing := _attackless_scenario_enemy(target_state, requested_name, entry):
-                    raise ValueError(missing)
+
                 hp = int(entry["hp"])
                 dex = int(entry["dex"])
                 for field, rule_type in (
@@ -200,6 +199,10 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
                         index_note = f"HP {hp} 已依 /coc index 修正為 {canonical_hp}"
                         hp = canonical_hp
                 matching = combat.find_live_enemy_by_any_alias(target_state, requested_name)
+                # A namesake added earlier in this batch makes this entry a second instance, not a re-registration.
+                if missing := _attackless_scenario_enemy(target_state, requested_name, entry, new_instance=(
+                        matching is not None and matching.combatant_id in seen_batch_ids)):
+                    raise ValueError(missing)
                 added = combat_engine.handle(target_state, act.AddCombatant(
                     name=requested_name, dex=dex, hp=hp,
                     is_ally=bool(entry.get("is_ally", False)),

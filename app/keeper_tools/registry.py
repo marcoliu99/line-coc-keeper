@@ -697,7 +697,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                                 "COC7e 規則不允許的『反擊』選項。不受距離限制的攻擊（法術、詛咒、心靈攻擊等）"
                                 "填 any。"
                                 "劇本數值表上的敵人一定要附上攻擊。被操縱的物品出手（例如 Corbitt 的浮空匕首：以 POW 對抗閃避）時，"
-                                "登記操縱它的存在，label 寫那個物品，skill_value 填劇本指定要擲的數值，damage 照劇本。"
+                                "登記操縱它的存在，label 寫那個物品，skill_value 填劇本指定要擲的數值，damage 照劇本；劇本寫極難成功會穿刺時加 tags: [\"impale\"]。"
                             ),
                             "items": {"type": "object"},
                         },
@@ -759,7 +759,7 @@ _SPECS: tuple[ToolSpec, ...] = (
                                             "COC7e 規則不允許的『反擊』選項。不受距離限制的攻擊（法術、詛咒、心靈攻擊等）"
                                             "填 any。"
                                             "劇本數值表上的敵人一定要附上攻擊。被操縱的物品出手（例如 Corbitt 的浮空匕首：以 POW 對抗閃避）時，"
-                                            "登記操縱它的存在，label 寫那個物品，skill_value 填劇本指定要擲的數值，damage 照劇本。"
+                                            "登記操縱它的存在，label 寫那個物品，skill_value 填劇本指定要擲的數值，damage 照劇本；劇本寫極難成功會穿刺時加 tags: [\"impale\"]。"
                                         ),
                                         "items": {"type": "object"},
                                     },

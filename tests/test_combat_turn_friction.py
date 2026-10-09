@@ -777,17 +777,20 @@ def test_corbitt_is_registered_with_his_floating_knife_and_attacks_with_it():
     refused = _tool("initialize_combat", {"enemies": [bare]})
     assert not refused["ok"] and "attacks" in refused["enemies"][0]["error"] and not _load().combat.active
     assert not _tool("add_npc_to_combat", bare)["ok"]
-    knife = {"label": "浮空匕首", "skill_name": "POW", "skill_value": 90, "damage": "1D4+2"}
-    started = _tool("initialize_combat", {"enemies": [{**bare, "attacks": [knife],
-                                                       "source": {"extreme_rule": "impale"}}]})
-    assert started["ok"], started
+    knife = {"label": "浮空匕首", "skill_name": "POW", "skill_value": 90, "damage": "1D4+2", "tags": ["impale"]}
+    # A second Corbitt in the same batch is a new instance, not a re-registration: it needs attacks too.
+    batch = _tool("initialize_combat", {"enemies": [{**bare, "attacks": [knife]}, bare]})
+    assert [e["ok"] for e in batch["enemies"]] == [True, False] and "attacks" in batch["enemies"][1]["error"]
     state = _load()
+    assert [c.side for c in state.combat.order].count("enemy") == 1
     corbitt = next(c for c in state.combat.order if c.side == "enemy")
     card = combat.card_for(state, corbitt)
     assert card is not None and not card.incomplete and card.source["sha256"] == "abc123"
-    assert card.source["extreme_rule"] == "impale" and combat.enemy_turn_blocker(state, corbitt) == ""
+    assert card.attacks[0].tags == ["impale"] and combat.enemy_turn_blocker(state, corbitt) == ""
     assert state.combat.order[state.combat.current_index].is_pc, "DEX 50 acts before Corbitt's 35"
     # Her turn ends; Corbitt's knife attacks, and she is asked to defend against a 90.
     assert _tool("advance_combat_turn", {"actor_id": "調查員p1", "skip": True})["ok"]
-    pending = _load().pending_checks["p1"]
-    assert pending["attacker_name"] == "Walter Corbitt"
+    state = _load()
+    assert state.pending_checks["p1"]["attacker_name"] == "Walter Corbitt"
+    knife_attack = next(a for a in state.combat.actions.values() if a.get("npc_attack_id"))
+    assert knife_attack["weapon"]["extreme_rule"] == "impale", "an Extreme hit impales: 6 + 1D4+2"
