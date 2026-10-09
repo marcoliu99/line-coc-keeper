@@ -354,6 +354,8 @@ _INTERNAL_ID_KEYS = frozenset({"check_id", "decision_id", "timeline_id", "event_
 def _describe_tool_call(tool_name: str, result: dict[str, Any]) -> str:
     if not result.get("ok", True):
         return f"{tool_name} 失敗：{result.get('error', '未知錯誤')}"
+    if result.get("secret"):
+        return f"{tool_name} 成功：守密人暗骰，結果不公開，敘事不得提及數字。"
     # Keep this a plain, factual line (not prose) — the Narrator agent turns
     # facts into narrative text; this just needs to state what happened.
     # The tool result is for the Executor. Narrative facts are a separate

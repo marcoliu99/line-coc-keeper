@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from app import combat, combat_flow, combat_resources, combat_rules, config, dice
+from app.agents import tool_gateway
 from app.commands.handlers import combat as combat_command
 from app.discord_transport import controls
 from app.keeper_tools import resource_bridge
@@ -939,3 +940,7 @@ def test_the_keepers_secret_roll_is_not_shown_to_the_player():
     shown = turn_delivery.observe_tool("roll_dice", rolled, 1, {"expression": "2d6"})
     assert (hidden.public_text, hidden.audience) == ("", "internal")
     assert "總值 7" in shown.public_text and shown.audience == "public"
+    secret = {**rolled, "secret": True}  # what roll_dice returns for a secret roll
+    assert turn_delivery.observe_tool("roll_dice", secret, 1, {}).audience == "internal"
+    fact = tool_gateway._describe_tool_call("roll_dice", secret)
+    assert "7" not in fact and "不公開" in fact, "the narrator is not handed the number either"

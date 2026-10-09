@@ -15,6 +15,8 @@ def roll_dice(call: ToolCall) -> dict[str, Any]:
     return {
         "ok": True, "expression": roll_result.expression, "rolls": roll_result.rolls,
         "modifier": roll_result.modifier, "total": roll_result.total,
+        # A Keeper's own roll: the result reaches the Executor only, never the player or the narration.
+        **({"secret": True} if call.input.get("secret") else {}),
     }
 
 
