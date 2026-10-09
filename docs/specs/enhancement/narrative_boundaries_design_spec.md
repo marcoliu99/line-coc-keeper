@@ -4,7 +4,7 @@
 
 ## Status and scope
 
-Category: `enhancement`. Status: **implemented**. Audited against `main_v2` at `afe8ace` (2026-09-27).
+Category: `enhancement`. Status: **implemented**. Audited against `main_v2` at `0ae449a` (2026-10-09).
 
 This edition describes the current contract. Proposed work is explicitly identified; historical source text is linked below.
 
@@ -25,6 +25,8 @@ This edition describes the current contract. Proposed work is explicitly identif
 7. If authoritative decisions exceed projection capacity, require explicit consolidation rather than silently forgetting canon. Rollback/scenario changes isolate correction timelines.
 
 8. No fixed per-turn LLM reviewer is added. Prompt compliance and semantic completeness are not guaranteed by deterministic state/receipt validation alone.
+
+9. Player-facing narration speaks in the story's voice. Every narrator prompt (`prompt_config.PLAYER_VOICE_RULES`, in `NARRATOR_INSTRUCTION` and both tool-enabled narrator instructions) forbids system words such as 紀錄, 收據, 權威, 狀態, 驗證, 核實 and explanations of why something cannot be written yet: what has not happened is left out, and suspense hands the action back to the player (「Corbitt 的爪子已逼到你面前——你要閃避，還是反擊？」). The pending-check fact block asks for the next roll in that voice instead of 「檢定已建立」. The Haunting runs on 2026-10-09 had told players 「現有紀錄沒有驗證他已起身」 and 「沒有可核實的戰鬥收據」, the guard rules' own wording leaking into the story. The fixed fallback lines the engine appends are not narration and are not covered here.
 
 ## Flow and interfaces
 

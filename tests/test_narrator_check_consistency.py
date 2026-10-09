@@ -76,7 +76,8 @@ class NarratorCheckConsistencyTests(unittest.TestCase):
         }))
 
         self.assertIn("待處理檢定狀態：已建立", block)
-        self.assertIn("禁止說尚未建立", block)
+        self.assertIn("禁止說沒有待處理檢定", block)
+        self.assertNotIn("檢定／選擇已建立並等待", block)  # the story voice, not the engine's words
 
     def test_fact_block_forbids_roll_instruction_when_no_check_was_created(self):
         block = build_mechanic_facts_block(mechanic_result({"tool_called": False, "pending": None}))

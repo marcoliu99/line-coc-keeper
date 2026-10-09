@@ -137,3 +137,12 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         context = prompt_builder.correction_context_message(state)
         self.assertIn("地下室不存在", context)
         self.assertLessEqual(len(context), 6100)
+
+
+def test_every_narrator_prompt_keeps_system_words_out_of_the_story():
+    # The Haunting runs (2026-10-09) told players "現有紀錄沒有驗證他已起身" and "沒有可核實的戰鬥收據".
+    for prompt in (prompt_config.build_narrator_static_prompt(""),
+                   prompt_config.build_tool_enabled_narrator_static_prompt("", "resolved_check_followup"),
+                   prompt_config.build_tool_enabled_narrator_static_prompt("", "opening_fallback")):
+        assert prompt_config.PLAYER_VOICE_RULES in prompt
+    assert "「收據」" in prompt_config.PLAYER_VOICE_RULES and "「紀錄」" in prompt_config.PLAYER_VOICE_RULES
