@@ -140,3 +140,6 @@ def test_a_shot_is_told_by_the_weapon_s_name_however_it_is_spelled():
     blows = ["POW", "浮空匕首", "Elbow", "長槍", "Claw", "Bite", ""]
     assert all(combat_flow._shoots(AttackRule(skill_name=name, label="")) for name in shots)
     assert not any(combat_flow._shoots(AttackRule(skill_name=name, label="")) for name in blows)
+    for label in ("Rifle Butt", "Pistol Whip", "槍托砸擊"):  # a gun swung as a club is rolled on Fighting
+        assert not combat_flow._shoots(AttackRule(skill_name="格鬥（鬥毆）", label=label)), label
+    assert combat_flow._shoots(AttackRule(skill_name="", label="Hunting Rifle"))

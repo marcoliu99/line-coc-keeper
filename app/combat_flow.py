@@ -385,6 +385,16 @@ def declare_action(
         del state.combat.actions[action_id]
         return _error(f'{weapon.name} is still being reloaded (rate of fire 1/{weapon.rounds_per_shot}): the next '
                       f'shot is possible in round {reloading}. Declare another action this round.')
+    try:
+        action.update(_weapon_actor_evidence(state, actor, weapon, weapon_reference, weapon_instance))
+    except OutOfAmmo as exc:
+        # An empty gun is the player's to deal with, not a ruling that pauses the fight: nothing is declared and
+        # the actor may reload or do something else this round. Checked before the range, so a shot declared
+        # without a distance is not first paused for one it can never fire.
+        del state.combat.actions[action_id]
+        return _error(str(exc))
+    except ValueError as exc:
+        return _ruling(state, action, str(exc))
     damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance_yards)
     if damage.damage is None:
         return _ruling(state, action, damage.reason)
@@ -394,15 +404,6 @@ def declare_action(
         if range_result.difficulty is None:
             return _ruling(state, action, range_result.reason)
         difficulty = range_result.difficulty
-    try:
-        action.update(_weapon_actor_evidence(state, actor, weapon, weapon_reference, weapon_instance))
-    except OutOfAmmo as exc:
-        # An empty gun is the player's to deal with, not a ruling that pauses the fight: nothing is declared and
-        # the actor may reload or do something else this round.
-        del state.combat.actions[action_id]
-        return _error(str(exc))
-    except ValueError as exc:
-        return _ruling(state, action, str(exc))
     try:
         dice.max_expression_value(damage.damage)
         dice.max_expression_value(action.get('db', '0'))
@@ -909,9 +910,17 @@ _SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|
                        r'rifle|carbine|musket|shotgun|smg|submachine|machine gun|(?:long|short|cross)?bow)\b', re.IGNORECASE)
 
 
+_FIGHTING = re.compile(r'格鬥|鬥毆|\b(?:fighting|brawl)\b', re.IGNORECASE)
+
+
 def _shoots(attack: AttackRule) -> bool:
-    """Whether an enemy attack is a shot: it counts ammunition, or its skill or label names a gun or a bow."""
-    return attack.ammo_or_uses is not None or bool(_SHOOTING.search(f'{attack.skill_name} {attack.label}'))
+    """Whether an enemy attack is a shot: it counts ammunition, or names a gun or a bow and is not rolled on a
+    Fighting skill (a rifle butt or a pistol whip is a blow)."""
+    if attack.ammo_or_uses is not None:
+        return True
+    if _FIGHTING.search(attack.skill_name or ''):
+        return False
+    return bool(_SHOOTING.search(f'{attack.skill_name} {attack.label}'))
 
 
 def _give_up_unplayable_enemy_turns(

@@ -196,6 +196,18 @@ def test_b2_an_empty_magazine_is_refused_before_any_roll_without_pausing_the_fig
     state = _load()
     assert state.combat.phase == "READY" and not [a for a in state.combat.actions if not a.startswith("system:")], \
         "nothing declared, nothing to rule on"
+
+
+def test_b2_an_empty_gun_declared_without_a_distance_is_refused_not_paused_for_the_distance():
+    _battle(weapons={".45 Automatic": {"ammo": 0, "ammo_max": 7}}, first_enemy=False)
+    state = _load()
+    enemy = next(p for p in state.combat.order if p.side == "enemy")
+    declared = combat_engine.handle(state, act.Declare(
+        action_id="shot-no-range", actor_id="調查員p1", target_id=enemy.combatant_id,
+        weapon_reference=".45 Automatic", action_kind="single_shot", distance_yards=None,
+    ))
+    assert not declared["ok"] and "沒有子彈了" in declared["error"], declared
+    assert state.combat.phase == "READY" and "shot-no-range" not in state.combat.actions
     assert combat_resources.effective_character(state, state.characters["p1"]).weapons[".45 Automatic"]["ammo"] == 0
 
 
