@@ -130,3 +130,13 @@ def test_a_looser_name_still_finds_the_indexed_enemy_but_an_unrelated_one_does_n
     assert other["ok"], other
     card = next(c for c in _load().combat.order if c.display_name == "深潛者")
     assert not _load().combat.enemy_cards[card.enemy_card_id].source
+
+
+def test_a_shot_is_told_by_the_weapon_s_name_however_it_is_spelled():
+    from app import combat_flow
+    from app.models import AttackRule
+
+    shots = ["射擊（手槍）", "Firearms (Handgun)", "Longbow", "Shortbow", "Crossbow", "Musket", "Hunting rifle", "火槍"]
+    blows = ["POW", "浮空匕首", "Elbow", "長槍", "Claw", "Bite", ""]
+    assert all(combat_flow._shoots(AttackRule(skill_name=name, label="")) for name in shots)
+    assert not any(combat_flow._shoots(AttackRule(skill_name=name, label="")) for name in blows)

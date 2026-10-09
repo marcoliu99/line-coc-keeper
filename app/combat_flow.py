@@ -905,8 +905,8 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     return run_action(state, identity)
 
 
-_SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|左輪|弓|弩|\b(?:firearms?|handgun|pistol|revolver|rifle|'
-                       r'shotgun|smg|submachine|machine gun|bow|crossbow)\b', re.IGNORECASE)
+_SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|火槍|槍械|左輪|弓|弩|\b(?:firearms?|guns?|handgun|pistol|revolver|'
+                       r'rifle|carbine|musket|shotgun|smg|submachine|machine gun|(?:long|short|cross)?bow)\b', re.IGNORECASE)
 
 
 def _shoots(attack: AttackRule) -> bool:
