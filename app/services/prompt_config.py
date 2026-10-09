@@ -348,6 +348,9 @@ def _combat_next_step(result: dict) -> str:
 
 
 def _combat_turn_step(receipt: dict) -> str:
+    if receipt.get("scenario_ended"):
+        return ("\n【戰鬥下一步】所有調查員都已倒下，戰鬥已自動結算，劇本到此結束。只描寫這一擊的結果與結局，"
+                "告訴玩家可以用 /coc newgame 開新的一局；不要再推進劇情、建立檢定或呼叫任何戰鬥工具。")
     if receipt.get("settlement_ready"):
         return ("\n【戰鬥下一步】這個行動結束後有一方已全數倒下，戰鬥可以結算：不要呼叫 advance_combat_turn（那會跳過倒下的人再開一輪）。"
                 "只敘事這一擊的結果與戰鬥結束的情景；結算由下一次守密人回合依戰鬥狀態取得預覽並確認，這裡不要結算。")

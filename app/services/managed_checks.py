@@ -202,10 +202,11 @@ def _settled_without_roll(
 ) -> CheckOutcome:
     """A choice that settled the attack with no roll of the player's (no defence against a shot)."""
     header = f"{character.name} 選擇「{option['label']}」"
-    feedback = f"{header}，攻擊已由系統結算。\n【戰鬥機械結果暫定；尚未結算】"
+    status = "戰鬥已結算" if outcome.get("settled") else "戰鬥機械結果暫定；尚未結算"
+    feedback = f"{header}，攻擊已由系統結算。\n【{status}】"
     return outcome_for(
         user_id, pending,
-        roll_line=feedback, keeper_message=f"（{header}；戰鬥機械結果暫定；尚未結算。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
+        roll_line=feedback, keeper_message=f"（{header}；{status}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
         roll_feedback_text=feedback, keeper_header=header, should_finalize=True,
         check_id=pending["check_id"], decision_id=pending.get("decision_id", ""),
         timeline_id=pending.get("timeline_id", ""), action_context=pending.get("action_context", ""),
@@ -218,7 +219,7 @@ def _settled_without_roll(
                 skill=option["label"], skill_value=0, roll=0, difficulty="regular",
                 outcome=f"{option['label']}，攻擊已結算", before=before, tracked_roll_fields=(), check_context=pending,
             ),
-            "no_roll": True, "provisional": True,
+            "no_roll": True, "provisional": not outcome.get("settled"),
             "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
             "combat_receipt": _combat_receipt(outcome),
             "luck_spent": 0,
@@ -233,6 +234,7 @@ def _combat_receipt(outcome: dict) -> dict:
         "auto_advanced": outcome.get("auto_advanced"), "auto_advance_error": outcome.get("auto_advance_error"),
         "follow_up": (outcome.get("result") or {}).get("follow_up") if isinstance(outcome.get("result"), dict) else None,
         "settlement_ready": outcome.get("settlement_ready"),
+        "scenario_ended": outcome.get("scenario_ended"),
     }
 
 
@@ -249,8 +251,9 @@ def _feedback(
 ) -> CheckOutcome:
     label = pending.get("skill_name") or pending.get("skill", "")
     tier = narration.tier_zh_for_result(result)
-    provisional = bool(pending.get("combat_context"))
-    suffix = "【戰鬥機械結果暫定；尚未結算】" if provisional else "【戰鬥後待履行事項已處理】"
+    provisional = bool(pending.get("combat_context")) and not outcome.get("settled")
+    suffix = ("【戰鬥已結算】" if outcome.get("settled") else
+              "【戰鬥機械結果暫定；尚未結算】" if provisional else "【戰鬥後待履行事項已處理】")
     feedback, header = narration.build_split_check_feedback(
         character.name, label, str(result.skill_value), result.roll, tier,
     )
