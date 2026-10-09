@@ -146,3 +146,12 @@ def test_every_narrator_prompt_keeps_system_words_out_of_the_story():
                    prompt_config.build_tool_enabled_narrator_static_prompt("", "opening_fallback")):
         assert prompt_config.PLAYER_VOICE_RULES in prompt
     assert "「收據」" in prompt_config.PLAYER_VOICE_RULES and "「紀錄」" in prompt_config.PLAYER_VOICE_RULES
+
+
+def test_a_status_change_reads_as_the_investigators_condition():
+    from app.services import turn_delivery
+
+    woke = turn_delivery.observe_tool("remove_status_tag", {"ok": True, "investigator": "Evelyn", "status_tags": []}, 1)
+    assert woke.public_text == "Evelyn 目前：無異狀。"
+    hurt = turn_delivery.observe_tool("add_status_tag", {"ok": True, "investigator": "Evelyn", "status_tags": ["昏迷"]}, 2)
+    assert hurt.public_text == "Evelyn 目前：昏迷。" and "狀態" not in hurt.public_text

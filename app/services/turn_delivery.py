@@ -70,7 +70,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
         elif name == "set_skill":
             text = f"{result.get('investigator')} 的 {result.get('skill')} 已設為 {result.get('value')}。"
         elif name in {"add_status_tag", "remove_status_tag"}:
-            text = f"{result.get('investigator')} 的狀態標記已更新：{'、'.join(result.get('status_tags', [])) or '無'}。"
+            text = f"{result.get('investigator')} 目前：{'、'.join(result.get('status_tags', [])) or '無異狀'}。"
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
         elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "add_npc_to_combat", "declare_combat_action", "run_combat_action", "run_enemy_combat_plan", "submit_combat_choice", "preview_combat_settlement", "confirm_combat_settlement", "rollback_combat", "correct_combat_event", "reconcile_combat_baseline", "change_combat_initiative", "declare_combat_effect", "run_combat_effect", "stop_combat_effect", "resolve_combat_ruling", "reconcile_combat_correction", "process_postcombat_obligations", "stabilize_investigator", "request_stabilization_check"}:
