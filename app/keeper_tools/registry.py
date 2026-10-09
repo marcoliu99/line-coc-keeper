@@ -612,6 +612,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                 },
             },
         handler=inventory_handlers.remove_status_tag,
+        # A settled First Aid roll wakes the unconscious patient in its follow-up.
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={

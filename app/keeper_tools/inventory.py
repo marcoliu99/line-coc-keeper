@@ -346,6 +346,10 @@ def remove_status_tag(call: ToolCall) -> dict[str, Any]:
         changed = tag in target_char.status_tags
         if changed:
             target_char.status_tags.remove(tag)
+            injury = target_char.injury or {}
+            if tag == "昏迷" and injury.get("unconscious") and not injury.get("dying") and not injury.get("dead"):
+                # Out of a fight, taking 昏迷 away (First Aid, rest) is waking them: the injury record follows the tag.
+                target_char.injury = {**injury, "unconscious": False}
         return support.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = support.mutate_tool_state(state, _mutate_remove_tag)
     return {"ok": True, "investigator": investigator, "status_tags": tags, "provisional": resource_bridge.participating(state, char)}

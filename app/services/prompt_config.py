@@ -209,6 +209,7 @@ def build_tool_enabled_narrator_static_prompt(keeper_static_prompt: str, turn_ki
             "若原檢定已預先附上劇本引文與後果授權，傷害須用 apply_resolved_check_damage 真正提交；"
             "獨立的後續檢定須用 create_triggered_check 建立新 pending，不能替玩家擲骰。"
             "檢定結果讓調查員取得或失去物品時，用 add_carried_item／remove_carried_item 登記，不要只在敘事裡提到。"
+            "急救成功讓昏迷的調查員醒來時，用 remove_status_tag 拿掉「昏迷」（「倒地」也一併拿掉），不要只在敘事裡說醒了。"
             "檢定結果觸發劇本寫明的攻擊（例如找到的匕首浮起刺來）而戰鬥還沒開始時，用 initialize_combat 登記劇本數值表上的敵人"
             "（被操縱的物品登記操縱它的存在），攻擊由戰鬥流程接手，這裡不要自己擲攻擊或寫出傷害結果；依敏捷順序輪到敵人時它才出手，比它敏捷高的調查員先行動，敘事寫到攻擊逼近為止，並告訴玩家現在輪到誰。"
             "戰鬥中依【已結算檢定】區塊裡的【戰鬥下一步】處理回合：它說引擎已自動推進就不要再呼叫 advance_combat_turn；"

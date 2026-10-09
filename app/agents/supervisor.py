@@ -37,6 +37,7 @@ from app.models import GroupState
 from app.providers import turn_budget
 from app.providers.codex_provider import with_codex_turn
 from app.providers.turn_budget import with_turn_deadline
+from app.repositories import state_transaction
 from app.services import (
     mutation_admission,
     prompt_config,
@@ -44,6 +45,7 @@ from app.services import (
     turn_fallback,
     turn_handoff,
     turn_phases,
+    unconscious_wake,
 )
 
 _logger = logging.getLogger(__name__)
@@ -60,7 +62,8 @@ async def prefetch_retrieval(
 
     Returns None whenever the turn would not retrieve anyway — an OOC route
     answers without the gameplay context, and a speaker holding a Luck
-    decision is usually answered from state. A None simply means the search
+    decision or a knocked-out investigator is answered from state, or searches
+    for a different query under the lock. A None simply means the search
     happens inside the lock as before.
     """
     intent = intent_router.classify_intent(AgentMessage({"text": text, "speaker_role": speaker_role}))
@@ -68,6 +71,8 @@ async def prefetch_retrieval(
         return None
     if user_id in state.pending_luck_decisions:
         return None
+    if unconscious_wake.decide(state, user_id) is not None:
+        return None  # a wait is answered from state; a wake searches for the time skip under the lock
     try:
         return await context_builder.prefetch_retrieval(
             state=state, user_id=user_id, display_name="", text=text,
@@ -182,6 +187,7 @@ class _Turn:
     intent: str = ""
     mechanic_result: MechanicResult | None = None
     pending_reply: str = ""
+    said: str = ""  # the player's own line, when ``text`` carries a system note in front of it for the models
     autoroll_followups: list[dict[str, Any]] = field(default_factory=list)
     pending_before: tuple[dict, dict] | None = None  # pending checks and Luck decisions as the Executor found them
     obligation_evidence: list[str] = field(default_factory=list)
@@ -214,6 +220,26 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
         _logger.info("Supervisor answered %s from state: Luck decision outstanding", turn.display_name)
         return prompt_config.pending_luck_reply(
             held_luck, actor.name if actor else ""), [], []
+    # An investigator knocked out outside combat: wait for a standing companion, or wake after a time skip when
+    # nobody is left to help, rather than refusing every line forever.
+    knocked_out = (unconscious_wake.decide(turn.state, turn.user_id)
+                   if turn.turn_kind == "player_action" and turn.speaker_role == "player" else None)
+    if knocked_out is not None:
+        actor = turn.state.get_active_character(turn.user_id)
+        assert actor is not None
+        observability.event("turn.short_circuit" if knocked_out == "wait" else "turn.time_skip_wake",
+                            reason="knocked_out", model_requests_avoided=knocked_out == "wait")
+        if knocked_out == "wait":
+            turn_phases.note(route="gameplay_action", short_circuit="knocked_out")
+            return unconscious_wake.wait_reply(actor.name), [], []
+        await asyncio.to_thread(unconscious_wake.wake, turn.conversation_id, actor.character_id,
+                                timeline_id=turn.turn_timeline_id)
+        turn.state = await asyncio.to_thread(state_transaction.refresh_snapshot, turn.state)
+        # The note goes to the models, not into the log as the player's words; the search behind it is redone
+        # for the time skip rather than reused from the prefetch for the line alone.
+        turn.said = turn.text
+        turn.text = unconscious_wake.wake_note(actor.name) + turn.text
+        turn.prefetched_retrieval = None
     # 1. Build Context. The continuation of a roll reuses the evidence its action turn gathered when nothing it
     # depended on has moved, instead of searching the same scene again.
     prefetched_retrieval = turn.prefetched_retrieval
@@ -429,7 +455,7 @@ def _commit(turn: _Turn, draft: reply_pipeline.ReplyDraft) -> TurnReply:
         committed = turn_commit.commit_turn_result(
             state,
             [
-                {"role": "user", "content": f"{turn.speaker_role} {turn.display_name}: {turn.text}"},
+                {"role": "user", "content": f"{turn.speaker_role} {turn.display_name}: {turn.said or turn.text}"},
                 {"role": "assistant", "content": draft.text},
             ],
             timeline_id=turn.turn_timeline_id,
