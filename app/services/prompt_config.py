@@ -463,10 +463,14 @@ def _unfinished_reply(result: MechanicResult, resolution: TurnResolution, state:
     return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
 
 
-def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
+def enforce_mechanic_check_consistency(
+    text: str, result: MechanicResult, *, state: GroupState | None = None, trailing: str = "",
+) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
     ``state`` lets a turn that could not finish name what the table has already been shown (``turn_fallback.scene_hints``).
+    ``trailing`` is what the caller appended after an already repaired reply (the obligation gate's summaries): a repair
+    that rebuilds the reply around its narration puts it back at the end.
     """
     status = result.check_status
     resolution = result.turn_resolution
@@ -485,12 +489,19 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             # The fight did start: the enemy rising is told before whatever is still owed, as a deferral keeps it
             # (Haunting rerun1 turn 28, where a Sanity check left the turn incomplete). This runs before and after
             # the Guard and again after the obligation gate: a reply that already carries ``owed`` keeps what stands
-            # before it (the narration) and after it (an obligation's summary); one the Guard rewrote keeps its
-            # narration and gets ``owed`` rebuilt, so a dropped Luck line comes back and nothing is doubled.
+            # before it (the narration) and after it (an obligation's summary, passed as ``trailing``); one the Guard
+            # rewrote keeps its narration and gets ``owed`` rebuilt, so a dropped Luck line comes back and nothing is
+            # doubled.
+            tail = ""
+            if trailing and text.rstrip().endswith(trailing):
+                text, tail = text.rstrip()[: -len(trailing)], f"\n\n{trailing}"
             if owed in text:
-                narration, tail = text.split(owed, 1)
+                narration, after = text.split(owed, 1)
             else:
-                narration, tail = (_narration_before(text, warning, confirmed) if warning in text else text), ""
+                # The owed lines changed since the last pass (an obligation's outcome joined the confirmed lines, or
+                # the Guard rewrote them): keep the narration before them and rebuild.
+                narration, after = (_narration_before(text, warning, confirmed) if warning in text else text), ""
+            tail = f"{after.rstrip()}{tail}" if after.strip() else tail
             return f"{narration.rstrip()}\n\n{owed}{tail}" if narration.strip() else f"{owed}{tail}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")

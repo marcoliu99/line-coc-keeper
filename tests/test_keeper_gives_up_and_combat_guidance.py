@@ -5,7 +5,12 @@ from __future__ import annotations
 import unittest
 
 from app.agents import executor
-from app.domain.models import MechanicResult, StateDelta, TurnResolution
+from app.domain.models import (
+    MechanicResult,
+    ObservedOutcome,
+    StateDelta,
+    TurnResolution,
+)
 from app.models import Combatant, CombatState, GroupState
 from app.services import prompt_config, turn_fallback
 
@@ -133,6 +138,24 @@ class FightOpeningKeptTests(unittest.TestCase):
         once = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", opened, state=state)
         with_owed = once.rstrip() + "\n\n【理智】George 失去 3 點理智。"
         self.assertEqual(prompt_config.enforce_mechanic_check_consistency(with_owed, opened, state=state), with_owed)
+
+    def test_an_obligation_whose_outcome_joins_the_confirmed_lines_keeps_its_summary(self):
+        opened = _result("incomplete", "model_incomplete", tool_calls=(("initialize_combat", True),),
+                         state_changed=True, combat_opened=True,
+                         pending_luck={"investigator": "George", "roll": 50, "options": []})
+        state = GroupState(group_id="g")
+        once = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", opened, state=state)
+        # The obligation gate ran adjust_character through the same outcome list, then appended its summary.
+        opened.observed_outcomes.append(ObservedOutcome(
+            evidence_ref="e", tool_name="adjust_character", success=True, public_text="George HP 10 → 7。", audience="public"))
+        summary = "劇本規定 George 受到 3 點傷害（1D6），HP 現為 7。"
+        again = prompt_config.enforce_mechanic_check_consistency(
+            once.rstrip() + "\n\n" + summary, opened, state=state, trailing=summary)
+        self.assertTrue(again.startswith("乾屍睜開眼。"))
+        self.assertTrue(again.endswith(summary))
+        self.assertEqual(again.count("George HP 10 → 7。"), 1)
+        self.assertEqual(again.count("這次行動尚未完整處理"), 1)
+        self.assertEqual(again.count("Luck"), once.count("Luck"))
 
     def test_an_incomplete_turn_without_a_fight_start_does_not(self):
         plain = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", True),))
