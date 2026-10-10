@@ -17,8 +17,8 @@ REQUEST = {
 }
 
 
-def _roll(arguments: dict) -> dict:
-    return dice_handlers.roll_dice(registry.ToolCall(GroupState(group_id='g'), arguments, [], [], 'player', 'roll_dice'))
+def _roll(arguments: dict, role: str = 'player') -> dict:
+    return dice_handlers.roll_dice(registry.ToolCall(GroupState(group_id='g'), arguments, [], [], role, 'roll_dice'))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize('expression', ['1d100', '1D100', 'd100', ' 1 d 100 '])
@@ -29,10 +29,15 @@ def test_a_public_percentile_roll_is_refused_toward_skill_check(expression):
 
 @pytest.mark.parametrize('arguments', [
     {'expression': '1d100', 'secret': True}, {'expression': '1d6'}, {'expression': '2d100'}, {'expression': '1d100+5'},
-    {'expression': '1d100', 'roll_context': 'ooc_randomizer'}, {'expression': '1d100', 'roll_context': 'game_resolution'},
 ])
 def test_other_rolls_still_roll(arguments):
     assert _roll(arguments)['ok']
+
+
+@pytest.mark.parametrize('context', ['ooc_randomizer', 'game_resolution'])
+def test_the_kp_assistants_percentile_rolls_and_a_player_turn_cannot_claim_its_context(context):
+    assert _roll({'expression': '1d100', 'roll_context': context}, role='kp_assistant')['ok']
+    assert not _roll({'expression': '1d100', 'roll_context': context})['ok']
 
 
 def test_an_empty_opposed_field_is_named():

@@ -13,7 +13,7 @@ In the 200-turn four-investigator Haunting run of 2026-10-10 on `a62d605` (OpenA
 
 ## Change
 
-- `roll_dice` refuses a public bare percentile (`1d100`, `d100`) with 「1D100 不用這個工具擲：要和調查員的技能或特徵……比對，就用 skill_check 擲那個技能或特徵……守密人自己要暗擲 1D100 才用 roll_dice，並設 secret: true。」 A secret 1D100, any other expression (`1d6`, `2d100`, `1d100+5`) and damage rolls are unchanged, and so is the KP Assistant's roll, which names a `roll_context` (`tool_dispatch` requires one) and rolls for a human Keeper who asked for that number, a random table or a private pick included. The tool description says the same.
+- `roll_dice` refuses a public bare percentile (`1d100`, `d100`) with 「1D100 不用這個工具擲：要和調查員的技能或特徵……比對，就用 skill_check 擲那個技能或特徵……守密人自己要暗擲 1D100 才用 roll_dice，並設 secret: true。」 A secret 1D100, any other expression (`1d6`, `2d100`, `1d100+5`) and damage rolls are unchanged, and so is the KP Assistant's roll (`speaker_role` of the turn, never a field in the model's input), which rolls for a human Keeper who asked for that number, a random table or a private pick included. The tool description says the same.
 - `opposed_checks.contract` names the field and the reason: 「對抗檢定的 on_loss 是空的」, 「對抗檢定的 source 太長（612 字，上限 400 字）」, 「缺少 on_win、on_loss」, 「不接受 opponent_roll（對手的骰果由程式擲）」, each followed by 「只有劇本明寫對手與其數值的對抗檢定才填 opposed；一般技能檢定……整個 opposed 不要填。」 The `opposed` schema description says the same.
 - The stored outcome label says the opposed result in the table's words (`opposed_checks.public_text`): 「一般成功；對抗結果：你勝出」 instead of 「對抗勝方=player」.
 
