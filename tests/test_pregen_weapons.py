@@ -65,3 +65,15 @@ def test_the_scenario_extraction_reports_weapon_numbers_and_pins_them_to_the_sce
 def test_a_malfunction_written_00_is_100_not_a_gun_that_jams_on_every_shot():
     row = pregen_weapons.definition_row(".38 左輪", {**REVOLVER, "malfunction": "00"}, digest=DIGEST)
     assert row is not None and row["malfunction"] == 100
+
+
+def test_a_thrown_weapon_is_a_ranged_shot_with_the_thrower_s_range():
+    row = pregen_weapons.definition_row("投矛", {"skill": "投擲", "damage": "1D8+半DB"}, digest=DIGEST)
+    assert row is not None
+    assert (row["attack_mode"], row["ammo_per_attack"], row["db_policy"]) == ("single_shot", 0, "half")
+    assert row["base_range_yards"] is None and row["base_range_formula"] == "STR/5"
+
+
+def test_a_sheet_weapon_keeps_the_catalog_s_reload_cadence():
+    row = pregen_weapons.definition_row("Crossbow", {"skill": "射擊（弓）", "damage": "1D8+2"}, digest=DIGEST)
+    assert row is not None and row["rounds_per_shot"] == 2

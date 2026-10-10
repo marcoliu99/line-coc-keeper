@@ -10,7 +10,8 @@ The Haunting's pregenerated Evelyn Carter carries a .38 revolver. The reviewed w
   - The skill comes from the sheet's skill, or failing that from the weapon's name: 手槍／左輪 is a handgun; a rifle, shotgun, SMG, machine gun, bow or throw, or one of the Fighting specialisations, maps the same way. The damage must parse in the catalog's damage grammar (`combat_rules.validate_damage`).
   - A trailing 「+DB」 (or 「+半DB」) on the damage sets the damage-bonus policy; without one, a gun adds none, a thrown weapon half and a melee weapon the full bonus.
   - A gun is a `single_shot` attack that spends one round per shot and impales on an Extreme success. It takes its range (yards, or metres converted), capacity and malfunction from the sheet. A malfunction written 「00」 is 100.
-  - What the sheet leaves out comes from the catalog entry the name resolves to, if any.
+  - A thrown weapon is a ranged `single_shot` with no ammunition, its range the thrower's STR/5 unless the sheet gives one.
+  - What the sheet leaves out comes from the catalog entry the name resolves to, if any, including a slow weapon's reload cadence (`rounds_per_shot`, a crossbow's two rounds).
   - A weapon whose numbers cannot be played (no damage, a range-banded shotgun damage such as 4D6/2D6/1D6, no skill a name can imply) gets no definition and resolves from the catalog as before.
   - Aliases are the sheet's original name and, for a revolver or handgun, 左輪／手槍 and their English forms, so a player who says 「左輪」 fires this gun.
 - The definition is pinned to the text it was read from: source `scenario:pregen-sheet`, the text's sha256 and the date. `combat_rules.parse_weapon_definition` now accepts a `scenario:` source URL.

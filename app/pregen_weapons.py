@@ -120,6 +120,7 @@ def definition_row(
         return None
     expression, policy = damage
     firearm = skill_id.startswith("firearms-")
+    thrown = skill_id == "throw"  # a ranged shot, as the catalog's thrown weapons are, with no ammunition
     base = combat_rules.resolve_weapon(name).definition
     rule_source = next(d.rule_source for d in combat_rules.weapon_catalog() if d.id == "i.weapon.brawl")
     capacity = _number(stats.get("capacity"))
@@ -134,7 +135,7 @@ def definition_row(
          *_FIREARM_ALIASES.get(skill_id, ())]) if alias and alias != name]
     definition = combat_rules.WeaponDefinition(
         id=f"p.weapon.{_slug(name)}", name=name, aliases=tuple(aliases), skill_id=skill_id,
-        attack_mode="single_shot" if firearm else "melee",
+        attack_mode="single_shot" if firearm or thrown else "melee",
         damage=expression,
         db_policy=policy if policy is not None else "none" if firearm else "half" if skill_id == "throw" else "full",
         extreme_rule=base.extreme_rule if base else ("impale" if firearm else "maximum"),
@@ -144,9 +145,10 @@ def definition_row(
         ammo_per_attack=1 if firearm else 0,
         capacity=capacity if capacity is not None else (base.capacity if base else None),
         malfunction=malfunction if malfunction is not None else (base.malfunction if base else None),
+        rounds_per_shot=base.rounds_per_shot if base else 1,  # a crossbow's reload cadence is not on a sheet
     )
-    if base and base.base_range_formula and not firearm:
-        definition = replace(definition, base_range_formula=base.base_range_formula)
+    if thrown and definition.base_range_yards is None:
+        definition = replace(definition, base_range_formula="STR/5")
     return asdict(definition)
 
 
