@@ -20,7 +20,7 @@ PERCENTILE_REFUSAL = (
 
 
 def roll_dice(call: ToolCall) -> dict[str, Any]:
-    expression = call.input.get("expression")
+    expression = call.input["expression"]  # required by the schema
     # The KP Assistant rolls for a human Keeper who asked for that number, a random table or a private pick
     # included: its percentile is not a check. The role comes from the turn, never from the model's input, and only
     # a real boolean secret counts (a provider that skipped schema validation may send "false").
