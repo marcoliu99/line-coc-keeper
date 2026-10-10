@@ -52,6 +52,19 @@ def tool_iterations(provider) -> int:
         return MAX_TOOL_ITERATIONS + config.SCENARIO_SEARCH_MAX_PER_TURN
     return MAX_TOOL_ITERATIONS
 
+
+def _gave_up_after_refusal(tool_events: list[dict]) -> bool:
+    """A tool said no and how to do it instead, and nothing else but look-ups ran.
+
+    A refusal that names the right tool (a public 1D100 against APP: use skill_check) is guidance, not a dead end;
+    a Keeper that gave up on it left the player a 「工具失敗了」 (rerun8 turn 3). Nothing changed, so asking once more
+    cannot apply anything twice; a refusal that did write (a combat action paused on a ruling) is not this case.
+    """
+    return (any(not e["result"].get("ok") for e in tool_events)
+            and all(e["name"] in turn_resolution.INFORMATION_QUERY_TOOLS if e["result"].get("ok")
+                    else e.get("gameplay_before") == e.get("gameplay_after") for e in tool_events))
+
+
 async def run_executor(message: AgentMessage) -> MechanicResult:
     """Runs the Executor Agent's tool-calling loop for a GAMEPLAY_ACTION turn.
 
@@ -240,6 +253,12 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         has_scenario=bool(rag_context or (not tool_dispatch.SCENARIO_RAG_ENABLED and state.scenario_text)),
                         before_actor=before_actor, before_gameplay=before_gameplay,
                     )
+                    if verified.validation_code == 'model_incomplete' and _gave_up_after_refusal(tool_events):
+                        return {
+                            'validation_code': 'refusal_not_followed', 'reason': verified.reason,
+                            'instruction': '剛才有工具拒絕了這次呼叫，沒有改動任何狀態；它的錯誤訊息已說明該改用哪個工具'
+                                '或怎麼補參數。照那個說明完成玩家這次的行動；確實做不到時才保留 incomplete 並說明原因。',
+                        }
                     if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
                         return None
                     return {

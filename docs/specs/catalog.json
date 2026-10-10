@@ -2686,6 +2686,22 @@
       "path": "docs/specs/bug/rerun6_combat_friction_design_spec.md",
       "zh_path": "docs/specs/bug/rerun6_combat_friction_design_spec_zh.md",
       "source_revision": "8bcf89203c27a26a5a1a660e30f233edb7bdcf2c"
+    },
+    {
+      "title": "Four replies from one Codex run: a refusal given up on, a fight opening lost, a Luck offer read three times, a refusal after the fight",
+      "zh": "一場 Codex run 裡的四種回覆：被拒絕後放棄、開戰場景被吞掉、Luck 提示講三次、戰鬥結束後還被拒絕",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/executor.py",
+        "app/services/prompt_config.py",
+        "app/services/turn_delivery.py",
+        "app/presentation.py",
+        "tests/test_rerun8_player_facing.py"
+      ],
+      "path": "docs/specs/bug/rerun8_player_replies_design_spec.md",
+      "zh_path": "docs/specs/bug/rerun8_player_replies_design_spec_zh.md",
+      "source_revision": "a4ef8734f2ca601ad0964174eb6ce3086eaba97d"
     }
   ]
 }
