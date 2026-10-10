@@ -35,6 +35,7 @@ CHECK_STATUS_WRITERS = {
     },
     "app/agents/executor.py": {
         "tool_called", "pending", "pending_luck", "resolved", "tool_event_count", "state_changed", "dice_rolled",
+        "combat_opened",
     },
     "app/services/turn_handoff.py": {
         "pending", "pending_luck", "resolved", "waiting_for_name", "current_turn_state",
