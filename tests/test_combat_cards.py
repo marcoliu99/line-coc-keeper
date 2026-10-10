@@ -327,6 +327,11 @@ class CombatCardTests(unittest.TestCase):
         state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "Cold"
         self.assertEqual(combat.planned_damage(state, enemy, 6, "Cold", [], False), (4, "Flesh Ward", 2))
         self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (0, "", 6))
+        # A multi-word scope matches a hit of that very type as written; against anything else it reads as prose,
+        # and prose the parser cannot place means "all": armor that works beats armor that silently does nothing.
+        state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "cold iron"
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "Cold Iron", [], False), (4, "Flesh Ward", 2))
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
 
     def test_armor_scope_reads_the_keepers_wording(self):
         for raw, scope in [(None, "all"), ("", "all"), ("ALL", "all"), ("any", "all"), ("Physical", "physical"),

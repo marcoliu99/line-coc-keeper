@@ -43,7 +43,7 @@ _ARMOR_DESCRIPTION = (
     "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
     "value 填固定數字；劇本要你擲骰決定護甲（例如 Corbitt 的 Flesh Ward「Roll 2D6 for his armor」）就直接填骰子字串 \"2D6\"，"
     "登記時系統只擲這一次並保密——不要先用 roll_dice 擲。護甲吸收多少傷害就少多少（Flesh Ward 這類）加 depletes: true。"
-    "applies_to 不填就是 all（擋所有攻擊）；只有劇本明說只擋某一類才填 physical 或 magic，其他字都會當成 all。"
+    "applies_to 不填就是 all（擋所有攻擊）；只有劇本明說只擋某一類才填：physical、magic，或招式／效果登記的那個 damage_type 單字（例如 fire）。不要寫句子。"
 )
 _ARMOR_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
