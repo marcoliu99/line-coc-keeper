@@ -2649,6 +2649,22 @@
       "path": "docs/specs/enhancement/pregen_weapon_stats_design_spec.md",
       "zh_path": "docs/specs/enhancement/pregen_weapon_stats_design_spec_zh.md",
       "source_revision": "fac75820fed8bc8bf53f87fa1ab63439aff68d84"
+    },
+    {
+      "title": "A hung Codex request is cut at 60 s and resent, not waited out for 120 s",
+      "zh": "掛住的 Codex 請求 60 秒就切掉並重送，不再空等 120 秒",
+      "category": "enhancement",
+      "status": "backlog",
+      "evidence": [
+        "app/config.py",
+        "app/providers/codex_provider.py",
+        "app/providers/codex_request_owner.py",
+        "app/services/turn_fallback.py",
+        "app/domain/models.py"
+      ],
+      "path": "docs/specs/enhancement/codex_request_timeout_and_resend_design_spec.md",
+      "zh_path": "docs/specs/enhancement/codex_request_timeout_and_resend_design_spec_zh.md",
+      "source_revision": "a62d6055d33e90b8d9cc42403a88265f14b18cd4"
     }
   ]
 }
