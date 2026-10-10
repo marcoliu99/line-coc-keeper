@@ -58,6 +58,9 @@ class LuckPromptTests(unittest.TestCase):
         untold = turn_delivery.DeliveryEnvelope("o", "public", "", "James 的拳頭停在半空。", interactions=[ref])
         self.assertIn("骰值 86 還在等 Luck 決定", untold.projected_text())
         self.assertNotIn("不要重擲", untold.projected_text())
+        six = turn_delivery.InteractionRef("luck", "p1", "d1", "t1", roll=6)
+        costs_only = turn_delivery.DeliveryEnvelope("o", "public", "", "或 /coc luck regular（26 點）。", interactions=[six])
+        self.assertIn("骰值 6 還在等", costs_only.projected_text())
 
     def test_a_roll_held_for_luck_is_not_called_settled(self):
         held = turn_delivery.observe_tool(
@@ -81,6 +84,9 @@ class FightOverTests(unittest.TestCase):
                          state_changed=True)
         reply = prompt_config.enforce_mechanic_check_consistency("x", closed, state=state)
         self.assertEqual(reply, "戰鬥已經結束，這一擊不必再出手了。接下來想做什麼？")
+        failed_too = _result("blocked", tool_calls=(("confirm_combat_settlement", True), ("transfer_item", False)),
+                             state_changed=True)
+        self.assertNotIn("接下來想做什麼", prompt_config.enforce_mechanic_check_consistency("x", failed_too, state=state))
         state.characters["p1"].hp = 0  # the party fell: not "what next"
         self.assertNotIn("接下來想做什麼", prompt_config.enforce_mechanic_check_consistency("x", closed, state=state))
 

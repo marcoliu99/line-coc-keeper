@@ -413,6 +413,9 @@ def enforce_resolved_check_consistency(
 
 
 
+_SETTLING = frozenset({"preview_combat_settlement", "confirm_combat_settlement", "get_combat_status"})
+
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
@@ -445,9 +448,11 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
                 return f"{warning}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{skill}。"
             if (resolution.disposition == "blocked" and state is not None and not state.combat.active
                     and ("confirm_combat_settlement", True) in result.tool_calls
+                    and all(ok and name in _SETTLING for name, ok in result.tool_calls)
                     and any(c.hp > 0 for c in state.active_characters())):
                 # The line attacked an enemy already down: the Keeper closed the fight instead, which is the answer,
-                # not 「這個行動無法進行；請改試別的做法」 (rerun8 turn 56).
+                # not 「這個行動無法進行；請改試別的做法」 (rerun8 turn 56). Only when settling was all the turn did:
+                # anything else it ran or failed keeps the ordinary warning.
                 return "戰鬥已經結束，這一擊不必再出手了。接下來想做什麼？"
             if (state is not None and not status.get("scenario_evidence_blocked")
                     and (in_battle := turn_fallback.combat_guidance(state, result.fallback_reason))):
