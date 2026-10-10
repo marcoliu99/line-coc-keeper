@@ -49,6 +49,7 @@ _ARMOR_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "label": {"type": "string", "description": "護甲名稱，例如「Flesh Ward」「厚皮」"},
+        "name": {"type": "string", "description": "label 的別名；兩者填一個就好"},
         "value": {"type": ["integer", "string"], "description": "固定數字（3）或骰子表示式（\"2D6\"，登記時暗擲一次）"},
         "applies_to": {
             "type": "string",
@@ -59,7 +60,7 @@ _ARMOR_ITEM_SCHEMA: dict[str, Any] = {
         "depletes": {"type": "boolean", "description": "true 表示護甲吸收多少傷害就少多少（Flesh Ward）；一般護甲不填"},
         "public_hint": {"type": "string", "description": "可以告訴玩家的中性描述，例如「乾硬如鐵的皮膚」；不含數字"},
     },
-    "required": ["label", "value"],
+    "required": ["value"],
 }
 _FOLLOWUP_CONSEQUENCE_SCHEMA: dict[str, Any] = {
     "type": "array", "maxItems": 4,
