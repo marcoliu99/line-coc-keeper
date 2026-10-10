@@ -4,7 +4,7 @@ import json
 import re
 
 from app import presentation
-from app.domain.models import MechanicResult
+from app.domain.models import MechanicResult, TurnResolution
 from app.models import GroupState
 from app.services import opposed_checks, turn_delivery, turn_fallback
 
@@ -425,6 +425,44 @@ def _narration_before(text: str, warning: str, confirmed: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _unfinished_reply(result: MechanicResult, resolution: TurnResolution, state: GroupState | None,
+                      warning: str, confirmed: list[str]) -> str:
+    """What an incomplete or blocked turn owes the player, narration aside: the confirmed lines, ``warning`` and the
+    instruction that follows (a Luck decision, a pending check, combat guidance, or where to go next)."""
+    status = result.check_status
+    if confirmed:
+        warning = "\n".join(confirmed) + "\n\n" + warning
+    if status.get("state_changed"):
+        warning += "已記錄的變更會保留，請勿重做已完成的部分。"
+    if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
+        warning += "不要重擲已結算的骰。"
+    held_luck = status.get("pending_luck")
+    if held_luck:
+        return f"{warning}\n\n{_pending_luck_fallback(held_luck)}"
+    pending = status.get("pending")
+    if pending:
+        investigator = pending.get("investigator", "調查員")
+        skill = pending.get("skill") or "檢定／選擇"
+        return f"{warning}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{skill}。"
+    if (resolution.disposition == "blocked" and state is not None and not state.combat.active
+            and ("confirm_combat_settlement", True) in result.tool_calls
+            and all(ok and name in _SETTLING for name, ok in result.tool_calls)
+            and any(c.hp > 0 for c in state.active_characters())):
+        # The line attacked an enemy already down: the Keeper closed the fight instead, which is the answer,
+        # not 「這個行動無法進行；請改試別的做法」 (rerun8 turn 56). Only when settling was all the turn did:
+        # anything else it ran or failed keeps the ordinary warning.
+        return "戰鬥已經結束，這一擊不必再出手了。接下來想做什麼？"
+    if (state is not None and not status.get("scenario_evidence_blocked")
+            and (in_battle := turn_fallback.combat_guidance(
+                state, result.fallback_reason, resolution.actor_character_id))):
+        return f"{warning}{in_battle}"
+    hints = turn_fallback.scene_hints(state) if state is not None else ""
+    if status.get("scenario_evidence_blocked"):
+        blocked = f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
+        return f"{blocked}\n{hints}" if hints else blocked
+    return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
+
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
@@ -437,49 +475,23 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
             confirmed = turn_delivery.distinct_lines(
                 [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text])
-            if status.get("combat_opened") and warning in text:
-                # The pass after the Guard sees the repaired reply. Keep its narration and rebuild the rest: a Guard
-                # rewrite that kept the warning but dropped the Luck line still owes the line, and nothing is doubled.
-                text = _narration_before(text, warning, confirmed)
             if (not status.get("pending") and not status.get("pending_luck") and not status.get("state_changed")
                     and any(not o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)):
                 # A refusal that says why and what to do (an empty gun) is the whole answer, not a tool failure.
                 return "\n".join(confirmed)
-            if confirmed:
-                warning = "\n".join(confirmed) + "\n\n" + warning
-            if text.strip() and status.get("combat_opened"):
-                # The fight did start: the enemy rising is told before whatever is still owed, as a deferral keeps it
-                # (Haunting rerun1 turn 28, where a Sanity check left the turn incomplete).
-                warning = f"{text.rstrip()}\n\n{warning}"
-            if status.get("state_changed"):
-                warning += "已記錄的變更會保留，請勿重做已完成的部分。"
-            if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
-                warning += "不要重擲已結算的骰。"
-            held_luck = status.get("pending_luck")
-            if held_luck:
-                return f"{warning}\n\n{_pending_luck_fallback(held_luck)}"
-            pending = status.get("pending")
-            if pending:
-                investigator = pending.get("investigator", "調查員")
-                skill = pending.get("skill") or "檢定／選擇"
-                return f"{warning}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{skill}。"
-            if (resolution.disposition == "blocked" and state is not None and not state.combat.active
-                    and ("confirm_combat_settlement", True) in result.tool_calls
-                    and all(ok and name in _SETTLING for name, ok in result.tool_calls)
-                    and any(c.hp > 0 for c in state.active_characters())):
-                # The line attacked an enemy already down: the Keeper closed the fight instead, which is the answer,
-                # not 「這個行動無法進行；請改試別的做法」 (rerun8 turn 56). Only when settling was all the turn did:
-                # anything else it ran or failed keeps the ordinary warning.
-                return "戰鬥已經結束，這一擊不必再出手了。接下來想做什麼？"
-            if (state is not None and not status.get("scenario_evidence_blocked")
-                    and (in_battle := turn_fallback.combat_guidance(
-                        state, result.fallback_reason, resolution.actor_character_id))):
-                return f"{warning}{in_battle}"
-            hints = turn_fallback.scene_hints(state) if state is not None else ""
-            if status.get("scenario_evidence_blocked"):
-                blocked = f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
-                return f"{blocked}\n{hints}" if hints else blocked
-            return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
+            owed = _unfinished_reply(result, resolution, state, warning, confirmed).rstrip()
+            if not (status.get("combat_opened") and text.strip()):
+                return owed
+            # The fight did start: the enemy rising is told before whatever is still owed, as a deferral keeps it
+            # (Haunting rerun1 turn 28, where a Sanity check left the turn incomplete). This runs before and after
+            # the Guard and again after the obligation gate: a reply that already carries ``owed`` keeps what stands
+            # before it (the narration) and after it (an obligation's summary); one the Guard rewrote keeps its
+            # narration and gets ``owed`` rebuilt, so a dropped Luck line comes back and nothing is doubled.
+            if owed in text:
+                narration, tail = text.split(owed, 1)
+            else:
+                narration, tail = (_narration_before(text, warning, confirmed) if warning in text else text), ""
+            return f"{narration.rstrip()}\n\n{owed}{tail}" if narration.strip() else f"{owed}{tail}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
             waiting = f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"

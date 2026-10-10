@@ -125,6 +125,15 @@ class FightOpeningKeptTests(unittest.TestCase):
         again = prompt_config.enforce_mechanic_check_consistency(rewritten, opened, state=state)
         self.assertEqual(again, once)
 
+    def test_an_obligation_summary_appended_after_the_repair_survives_the_next_pass(self):
+        opened = _result("incomplete", "model_incomplete", tool_calls=(("initialize_combat", True),),
+                         state_changed=True, combat_opened=True,
+                         pending_luck={"investigator": "George", "roll": 50, "options": []})
+        state = GroupState(group_id="g")
+        once = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", opened, state=state)
+        with_owed = once.rstrip() + "\n\n【理智】George 失去 3 點理智。"
+        self.assertEqual(prompt_config.enforce_mechanic_check_consistency(with_owed, opened, state=state), with_owed)
+
     def test_an_incomplete_turn_without_a_fight_start_does_not(self):
         plain = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", True),))
         reply = prompt_config.enforce_mechanic_check_consistency("某段敘事。", plain, state=GroupState(group_id="g"))
