@@ -324,6 +324,9 @@ class CombatCardTests(unittest.TestCase):
         enemy = next(c for c in state.combat.order if c.name == "Corbitt")
         state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "non-magical attacks"
         self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
+        state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "Cold"
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "Cold", [], False), (4, "Flesh Ward", 2))
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (0, "", 6))
 
     def test_armor_scope_reads_the_keepers_wording(self):
         for raw, scope in [(None, "all"), ("", "all"), ("ALL", "all"), ("any", "all"), ("Physical", "physical"),

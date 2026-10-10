@@ -766,9 +766,10 @@ def _best_armor(card: EnemyCombatCard | None, damage_type: str, tags: list[str])
         return None
     best: ArmorRule | None = None
     tag_set = set(tags or [])
+    hit = str(damage_type or "").strip().lower()  # the scope is read lowercased, so the hit's type is too
     for armor in card.armor:
         # Read through armor_scope here too: a card saved by an older version carries the Keeper's wording as is.
-        if armor_scope(armor.applies_to) not in ("all", damage_type):
+        if armor_scope(armor.applies_to) not in ("all", hit):
             continue
         if set(armor.bypass_tags) & tag_set:
             continue
