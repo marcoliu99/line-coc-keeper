@@ -39,7 +39,7 @@ class DistanceBand:
     def __post_init__(self) -> None:
         if not math.isfinite(self.max_distance_yards) or self.max_distance_yards <= 0:
             raise ValueError('Distance bounds must be positive and finite')
-        _validate_damage(self.damage)
+        validate_damage(self.damage)
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ class WeaponDefinition:
     follow_up: str = ''  # a consequence of a hit the table states and the engine does not roll; the Keeper applies it
 
     def __post_init__(self) -> None:
-        _validate_damage(self.damage)
+        validate_damage(self.damage)
         if self.base_range_formula not in ('', 'STR/5'):
             raise ValueError('Unsupported base range formula')
         if self.rounds_per_shot < 1:
@@ -134,7 +134,7 @@ class SeverityResolution:
     reason: str = ''
 
 
-def _validate_damage(expression: str) -> None:
+def validate_damage(expression: str) -> None:
     # Catalog terms are bounded data. Evaluation belongs exclusively to dice.py.
     if len(expression) > 80 or not re.fullmatch(r'(?:\d+d\d+|\d+)(?:[+-](?:\d+d\d+|\d+))*', expression):
         raise ValueError('Invalid catalog damage expression')
@@ -158,7 +158,8 @@ def parse_weapon_definition(payload: dict) -> WeaponDefinition:
         raise ValueError('Definition requires explicit identity, skill, version and damage')
     for key in ('source', 'rule_source'):
         source = dict(row[key])
-        if (not str(source.get('url', '')).startswith(('https://', 'http://'))
+        # A sheet-carried definition cites the scenario text it was read from (``scenario:`` plus that text's hash).
+        if (not str(source.get('url', '')).startswith(('https://', 'http://', 'scenario:'))
                 or not str(source.get('revision', '')).strip()
                 or not re.fullmatch(r'[a-fA-F0-9]{64}', str(source.get('sha256', '')))
                 or not str(source.get('accessed', '')).strip()):

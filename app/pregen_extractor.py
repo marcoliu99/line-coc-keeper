@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any
 
-from app import character_matcher, dictionary
+from app import character_matcher, dictionary, pregen_weapons
 from app.models import BASE_SKILLS, Character, _roll, damage_bonus_and_build, move_rate
 from app.providers.registry import analysis_provider
 from app.skill_aliases import canonical_skill_name
@@ -92,6 +92,25 @@ _REPORT_TOOL = {
                             "（例如劇本是英文就填 'Spot Hidden'；劇本本來就是中文，value 跟 key 填一樣的"
                             "值）。這是為了讓系統學會這個劇本用的技能譯名，之後遇到同樣的原文能直接辨識。",
                             "additionalProperties": {"type": "string"},
+                        },
+                        "weapons": {
+                            "type": "array",
+                            "description": (
+                                "角色卡上列出的武器，一把一筆，數值只照卡上寫的抄，沒寫的欄位省略，不要套用規則書或自己推算。"
+                                "這些數值會直接用在戰鬥裡（例如卡上寫 .38 左輪 1D10，就用 1D10）。"
+                            ),
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string", "description": "武器名稱，照卡上寫法（例如 .38 Revolver）"},
+                                    "skill": {"type": "string", "description": "使用的技能，例如 射擊（手槍）、格鬥（鬥毆）"},
+                                    "damage": {"type": "string", "description": "傷害骰，例如 1D10、1D4+DB"},
+                                    "range": {"type": "string", "description": "射程原文，例如 15 yards"},
+                                    "capacity": {"type": "integer", "description": "裝彈數（彈容量）"},
+                                    "malfunction": {"type": "integer", "description": "故障值"},
+                                },
+                                "required": ["name"],
+                            },
                         },
                         "notes": {"type": "string", "description": "忠實保留原卡的自由文字背景與段落，不為了簡短而刪掉人物關係、信念或動機；未填欄位不可補寫"},
                         "secret_goal": {
@@ -375,8 +394,10 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
     )
     pregens = (result or {}).get("pregens", []) or []
     pages = _scenario_pages(scenario_text)
+    digest = pregen_weapons.sheet_digest(scenario_text)
     for pregen in pregens:
         _clean_pregen_keys(pregen)
+        pregen["weapons"] = _reported_weapons(pregen.get("weapons"), digest)
         if "luck" in pregen:
             verified, reason = _check_pdf_luck(pregen, pregens, pages)
             if verified is None:
@@ -397,6 +418,20 @@ def extract_pregens(scenario_text: str) -> list[dict[str, Any]]:
         _learn_translations_from_pregen(pregen)
         pregen["skills"] = _translate_skill_names(pregen.get("skills") or {})
     return pregens
+
+
+def _reported_weapons(reported: Any, digest: str) -> dict[str, dict[str, Any]]:
+    """The extraction's weapon list in the sheet's weapons shape, each with the definition its numbers make."""
+    weapons: dict[str, dict[str, Any]] = {}
+    for entry in reported if isinstance(reported, list) else []:
+        name = str(entry.get("name") or "").strip() if isinstance(entry, dict) else ""
+        if not name:
+            continue
+        category = _ammo_category(name)
+        weapons[name] = {"ammo_category": category} if category else {}
+        if row := pregen_weapons.definition_row(name, entry, digest=digest):
+            weapons[name]["definition"] = row
+    return weapons
 
 
 _PDF_FIELD_KEYS = {"STR": "str_", "CON": "con", "SIZ": "siz", "DEX": "dex", "APP": "app",
@@ -595,7 +630,15 @@ def _looks_like_weapon(name: str, fields: dict[str, str]) -> bool:
     return bool(skill_value) and any(hint in (skill_value or "") for hint in _COMBAT_SKILL_HINTS)
 
 
-def _classify_item_blocks(text: str) -> tuple[dict[str, dict[str, Any]], list[str]]:
+def _sheet_weapon_stats(fields: dict[str, str]) -> dict[str, str]:
+    """The numbers a sheet's weapon block writes, by the labels sheets use (技能／傷害／射程／彈容量／故障)."""
+    labels = (("skill", ("技能",)), ("damage", ("傷害",)), ("range", ("射程", "距離")),
+              ("capacity", ("彈容量", "彈匣", "裝彈")), ("malfunction", ("故障",)))
+    return {key: value for key, names in labels
+            if (value := next((v for k, v in fields.items() if any(n in k for n in names)), None))}
+
+
+def _classify_item_blocks(text: str, digest: str = "") -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Splits `text` (the combined body of every recognized weapon/item
     section — see _ITEM_SECTION_NAMES) into blank-line-separated blocks and
     classifies each one as a weapon or a plain carried item by CONTENT.
@@ -655,6 +698,9 @@ def _classify_item_blocks(text: str) -> tuple[dict[str, dict[str, Any]], list[st
             weapons[name] = {"ammo_category": category} if category else {}
         else:
             carried_items.append(name)
+            continue
+        if digest and (row := pregen_weapons.definition_row(name, _sheet_weapon_stats(fields), digest=digest)):
+            weapons[name]["definition"] = row
     return weapons, carried_items
 
 
@@ -715,7 +761,7 @@ def parse_role_sheet_text(text: str) -> dict[str, Any] | None:
     # classifying — see _ITEM_SECTION_NAMES' own comment for why this can't
     # be "whichever header, whichever parser".
     combined_items_text = "\n\n".join(sections[name] for name in _ITEM_SECTION_NAMES if sections.get(name))
-    weapons, carried_items = _classify_item_blocks(combined_items_text)
+    weapons, carried_items = _classify_item_blocks(combined_items_text, pregen_weapons.sheet_digest(text))
     pregen["weapons"] = weapons
     pregen["carried_items"] = carried_items
 
@@ -792,8 +838,11 @@ def _resolve_weapon_ammo(weapons: dict[str, dict[str, Any]], era: str) -> dict[s
     table = _AMMO_TABLE.get(era, _AMMO_TABLE["1920s"])
     resolved: dict[str, dict[str, int]] = {}
     for name, info in weapons.items():
+        capacity = (info.get("definition") or {}).get("capacity") if (info.get("definition") or {}).get("ammo_per_attack") else None
         if "ammo" in info:
             resolved[name] = {"ammo": info["ammo"], "ammo_max": info["ammo_max"]}
+        elif isinstance(capacity, int) and capacity > 0:
+            resolved[name] = {"ammo": capacity, "ammo_max": capacity}
         elif "ammo_category" in info:
             capacity = table.get(info["ammo_category"])
             resolved[name] = {"ammo": capacity, "ammo_max": capacity} if capacity else {}
@@ -863,6 +912,7 @@ def pregen_to_character(
         move=move, damage_bonus=db, build=build,
         skills=skills,
         weapons=_resolve_weapon_ammo(pregen.get("weapons") or {}, era),
+        weapon_instances=pregen_weapons.instances(pregen.get("weapons") or {}),
         carried_items=list(pregen.get("carried_items") or []),
         notes=pregen.get("notes", "") or "",
         key_connection=pregen.get("key_connection", "") or "",

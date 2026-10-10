@@ -49,8 +49,27 @@ def public_result(result: dict[str, Any], *, include_private: bool = False) -> d
     return projected
 
 
+def _sheet_instance_named(owned: dict[str, dict], reference: str) -> str | None:
+    """The one owned instance whose sheet-carried definition the reference names ("左輪" for the sheet's
+    ".38 Revolver"), when the reference is not the instance's own name."""
+    named = []
+    for key, metadata in owned.items():
+        try:
+            definitions = tuple(combat_rules.parse_weapon_definition(row)
+                                for row in metadata.get('scenario_definitions', ()))
+        except (ValueError, TypeError, KeyError):
+            continue
+        found = combat_rules.resolve_weapon(reference, scenario_definitions=definitions).definition if definitions else None
+        if found is not None and any(found.id == d.id for d in definitions):
+            named.append(key)
+    return named[0] if len(named) == 1 else None
+
+
 def _owned_weapon_evidence(state, character, reference):
-    metadata = resource_bridge.effective(state, character).weapon_instances.get(reference, {})
+    owned = resource_bridge.effective(state, character).weapon_instances
+    metadata = owned.get(reference, {})
+    if not metadata and (key := _sheet_instance_named(owned, reference)) is not None:
+        reference, metadata = key, owned[key]
     if not metadata:
         return None, ()
     definition_id = metadata.get('definition_id')

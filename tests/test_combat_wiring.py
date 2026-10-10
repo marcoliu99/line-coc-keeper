@@ -822,3 +822,28 @@ def test_outside_battle_effect_stop_saves_a_detached_durable_projection(store):
     assert store['writes'] == 1
     reloaded = group_state.load_state('wiring')
     assert reloaded.postcombat_obligations[0]['status'] == 'resolved'
+
+
+def test_the_sheet_s_own_gun_is_fired_by_a_generic_name_with_the_sheet_s_damage(store):
+    """The Haunting's .38 is not in the catalog: the sheet's numbers play, named 「左輪」 the way a player says it."""
+    from app import pregen_weapons
+    enemy = add_reviewed_enemy(store)
+    state = store['state']
+    actor = next(p for p in state.combat.order if p.is_pc)
+    row = pregen_weapons.definition_row('.38 左輪', {'skill': '射擊（手槍）', 'damage': '1D10', 'range': '15碼',
+                                                     'capacity': 6, 'malfunction': 100}, digest='b' * 64)
+    weapons = {'.38 左輪': {'definition': row}}
+    for character in (state.characters['player'], state.characters_by_id['char:ada']):
+        character.weapons['.38 左輪'] = {'ammo': 6, 'ammo_max': 6}
+        character.weapon_instances.update(pregen_weapons.instances(weapons))
+    for resources in (state.combat.baseline_resources, state.combat.working_resources):
+        resources['char:ada']['weapons'] = deepcopy(state.characters['player'].weapons)
+        resources['char:ada']['weapon_instances'] = deepcopy(state.characters['player'].weapon_instances)
+    result = tool(store, 'declare_combat_action', {
+        'action_id': 'shot:sheet', 'actor_id': actor.combatant_id, 'target_id': enemy.combatant_id,
+        'weapon_reference': '左輪', 'action_kind': 'single_shot', 'distance_yards': 5,
+    })
+    assert result['ok'], result
+    action = store['state'].combat.actions['shot:sheet']
+    assert action['weapon']['damage'] == '1d10' and action['weapon']['name'] == '.38 左輪'
+    assert action['ammo_key'] == '.38 左輪'
