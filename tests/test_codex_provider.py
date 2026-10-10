@@ -76,6 +76,30 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
             await self.run_provider([call(), call()])
         self.assertEqual(self.tool.await_count, 1)
 
+    async def test_a_turns_retry_may_repeat_a_lookup_but_not_a_mutation(self):
+        """docs/specs/bug/rerun6_combat_friction_design_spec.md: the Executor's retry of a turn that changed nothing
+        re-read the enemy's stat block with the same arguments and the turn failed as a duplicate."""
+        lookup = {**TOOL, 'name': 'get_enemy_stat_block'}
+
+        @cp.with_codex_turn
+        async def turn(tools, first, second):
+            self.transport.request.side_effect = [first, final('incomplete'), second, final()]
+            await cp.run_conversation('static', 'state', tools, [], 'go', self.tool, 6)
+            return await cp.run_conversation('static', 'state', tools, [], 'go', self.tool, 6)
+
+        lookup_call = call(name='get_enemy_stat_block')
+        self.assertEqual(await turn([lookup], lookup_call, lookup_call), 'done')
+        self.assertEqual(self.tool.await_count, 2)
+        self.tool.reset_mock()
+        with self.assertRaisesRegex(CodexError, 'duplicate_tool'):
+            await turn([TOOL], call(), call())  # a mutation (or a roll) is never sent twice in one turn
+        self.assertEqual(self.tool.await_count, 1)
+        self.tool.reset_mock()
+        self.transport.request.side_effect = [lookup_call, lookup_call]
+        with self.assertRaisesRegex(CodexError, 'duplicate_tool'):  # the same look-up twice in one conversation
+            await cp.run_conversation('static', 'state', [lookup], [], 'go', self.tool, 6)
+        self.assertEqual(self.tool.await_count, 1)
+
     async def test_iteration_limit_never_runs_an_extra_wrapup(self):
         with self.assertRaisesRegex(CodexError, 'iteration_limit'):
             await self.run_provider([call()], max_iterations=1, enable_wrapup=False)

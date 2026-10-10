@@ -2668,6 +2668,24 @@
       "path": "docs/specs/bug/d100_against_a_characteristic_is_a_check_design_spec.md",
       "zh_path": "docs/specs/bug/d100_against_a_characteristic_is_a_check_design_spec_zh.md",
       "source_revision": "a62d6055d33e90b8d9cc42403a88265f14b18cd4"
+    },
+    {
+      "title": "Three combat-turn failures from one Codex run: the brawl skill as a weapon, a retry that re-read, an owned gun called ambiguous",
+      "zh": "一場 Codex run 裡的三種戰鬥回合失敗：把鬥毆技能當武器、重試時重查被擋、身上的槍被判歧義",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/data/combat_weapons.json",
+        "app/providers/codex_provider.py",
+        "app/keeper_tools/managed_combat.py",
+        "app/keeper_tools/registry.py",
+        "tests/test_combat_rules.py",
+        "tests/test_codex_provider.py",
+        "tests/test_combat_wiring.py"
+      ],
+      "path": "docs/specs/bug/rerun6_combat_friction_design_spec.md",
+      "zh_path": "docs/specs/bug/rerun6_combat_friction_design_spec_zh.md",
+      "source_revision": "8bcf89203c27a26a5a1a660e30f233edb7bdcf2c"
     }
   ]
 }

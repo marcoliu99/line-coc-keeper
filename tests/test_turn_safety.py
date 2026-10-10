@@ -326,6 +326,23 @@ def test_worker_original_timeline_is_rechecked_before_mutator(state):
     assert ran == [] and load_state(state.group_id).timeline_id == "replacement"
 
 
+def test_the_weapon_lookup_is_told_who_is_acting(state):
+    """docs/specs/bug/rerun6_combat_friction_design_spec.md: without the actor the lookup cannot read the acting
+    investigator's own sheet weapon and reports the generic catalog's ambiguity again."""
+    calls = []
+
+    def worker(*args, **kwargs):
+        calls.append((args[1], kwargs.get("actor_id")))
+        return {"ok": True}
+
+    async def scenario():
+        execute = tool_gateway.make_tool_executor(state, [], [], "player", [], observed_outcomes=[], actor_id="u")
+        with patch.object(tool_dispatch, "execute_tool", side_effect=worker):
+            await execute("get_weapon_definition", {"reference": "左輪"})
+    asyncio.run(scenario())
+    assert calls == [("get_weapon_definition", "u")]
+
+
 def test_cancelled_task_does_not_release_live_worker_or_replay_dice(state):
     async def scenario():
         started, release, stopped = threading.Event(), threading.Event(), threading.Event()
