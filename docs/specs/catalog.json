@@ -2720,6 +2720,16 @@
       "path": "docs/specs/bug/uploaded_maps_kept_with_scenario_design_spec.md",
       "zh_path": "docs/specs/bug/uploaded_maps_kept_with_scenario_design_spec_zh.md",
       "source_revision": "f2d04462287a685fd6ef2608efefbc7363455d29"
+    },
+    {
+      "title": "Solo gamebook mode: numbered entries, one reader, jumps only where the book allows",
+      "zh": "單人段落模式：編號段落、一位讀者、只能照書跳轉",
+      "category": "feature",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/feature/solo_gamebook_mode_design_spec.md",
+      "zh_path": "docs/specs/feature/solo_gamebook_mode_design_spec_zh.md",
+      "source_revision": "0c53dcb95c2c5fd81a91815eb70336f9c80049ae"
     }
   ]
 }
