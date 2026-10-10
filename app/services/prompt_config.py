@@ -24,7 +24,7 @@ from app.services import opposed_checks, turn_delivery, turn_fallback
 #       刻意維持規則判斷，省下純角色扮演時多打一次 LLM 的成本，這是這個架構設計
 #       本身要的效能目標，見 docs/specs/refactor/agentic_keeper_design_spec.md）
 #     → executor（GAMEPLAY_ACTION 才會走到；呼叫 LLM＋工具，透過
-#       app/keeper.py._execute_tool 真的擲骰、真的改狀態並落庫）
+#       app/tool_dispatch.py 與 app/keeper_tools/ 的 handler 真的擲骰、真的改狀態並落庫）
 #     → state_reducer（純記錄，不呼叫 LLM，也不套用任何狀態變更——真正的變更已經
 #       在 executor 呼叫工具時安全完成，這裡重複套用只會製造資料錯亂，見該檔案
 #       docstring）

@@ -16,10 +16,10 @@ _Why:_ a copied guard drifts. The pre-combat checkpoint and the duplicate-enemy 
 _Why:_ the old `keeper.py` exposed `_build_static_prompt`, `_mutate_and_save_state` and others to other modules, so any refactor of it had impact across the whole repo; they are now public in `prompt_builder` and `keeper_tools/support`.
 
 **One provider lookup.** Get the active LLM provider through a single function in `app/providers/`. Keep provider-specific branches inside the provider classes.
-_Why:_ the `anthropic`/`gemini`/`openai` map is currently copied into 9 modules. Every provider change has to touch all of them.
+_Why:_ the `anthropic`/`gemini`/`openai` map used to be copied into 9 modules, so every provider change had to touch all of them. `app/providers/registry.py` is now that function; `app/discord_bot.py` keeps the only other map, for startup key checks.
 
-**Keeper tools are named functions.** Write each new tool's logic as its own function; `_execute_tool` only dispatches by tool name.
-_Why:_ `_execute_tool` is about 1,180 lines of `if name == ...` branches, so each new branch makes review and testing harder.
+**Keeper tools are named functions.** Write each new tool's logic as its own handler in `app/keeper_tools/` and register it in `app/keeper_tools/registry.py`; `app/tool_dispatch.py` only dispatches by tool name.
+_Why:_ the old `_execute_tool` was about 1,180 lines of `if name == ...` branches, so each new branch made review and testing harder.
 
 ## Game state
 

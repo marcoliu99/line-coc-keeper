@@ -1,21 +1,17 @@
-"""Per-conversation locks so two messages for the same conversation can't race
-on data/groups/*.json.
+"""Per-conversation locks, so two messages for the same conversation cannot interleave.
 
-app/state.py does a full read-modify-write (load_state -> mutate -> save_state)
-with no locking of its own. Without serialization, two events for the same
-conversation arriving close together can each load the same on-disk snapshot,
-mutate their own in-memory copy, and save — the second save silently discards
-whatever the first one wrote (e.g. an HP/SAN change from a skill check that
-happened "at the same time" as another player's).
+Game state lives in the database and every write goes through
+``app/repositories/state_transaction``, which checks the revision and holds
+``get_state_lock`` (a threading.RLock, usable from Keeper worker threads) for the
+read-modify-write. The transaction alone would refuse a stale write; the locks
+here keep one conversation's messages in order so a turn's tool calls and its
+narration see the state they were planned against, instead of being refused.
 
 "Conversation" here is a Discord channel id, namespaced as
 "discord-channel-..." so it cannot collide with unrelated database keys.
 
-The fix here is coarse but correct: one asyncio.Lock per conversation_id, held
-for the entire duration of handling one message (from the initial load_state
-through every save_state it triggers, including while awaiting a slow Keeper
-LLM call). Different conversations still run fully concurrently — only messages
-within the same conversation queue up behind each other.
+Different conversations run fully concurrently; only messages within the same
+conversation queue up behind each other.
 """
 from __future__ import annotations
 
@@ -36,13 +32,12 @@ from app.services import mutation_admission
 # unchanged while callers are migrated incrementally.
 _locks: dict[str, _ObservableConversationLock] = {}
 
-# State lock: future per-conversation synchronous state transactions around
-# load_state -> mutate -> save_state. It is a threading.RLock so Keeper worker
-# threads can use the same authoritative lock; async callers should not hold it
-# across slow event-loop work.
+# State lock: held by state_transaction around each read-modify-write. It is a
+# threading.RLock so Keeper worker threads use the same authoritative lock; async
+# callers should not hold it across slow event-loop work.
 _state_locks: dict[str, threading.RLock] = {}
 
-# Keeper turn lock: future serialization for Keeper/LLM turns per conversation.
+# Keeper turn lock: serializes Keeper/LLM turns per conversation (taken by the command router).
 _keeper_turn_locks: dict[str, asyncio.Lock] = {}
 
 

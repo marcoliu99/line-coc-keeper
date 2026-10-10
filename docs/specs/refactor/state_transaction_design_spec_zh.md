@@ -37,6 +37,8 @@ mutate(conversation_id, mutation, expected_timeline, action_id, request_fingerpr
 
 Action id 來自操作的可信擁有者，而不是文字相似度：`run_turn` 擁有的 turn id 加上所提交內容的摘要（`turn:<id>:<digest>`），以及已結算檢定的穩定 event id（`check-event:<event_id>`）。第 2、3 階段會在同一個 ledger 上加入檢定與戰鬥的 action id。
 
+取值用的輔助函式 `mutate_value` 與 `run_snapshot` 回傳 `TxResult.value`，而重播的動作不會填這個欄位（保存的收據在 `TxResult.result`）。因此兩者收到 `action_id` 時直接以 `ValueError` 拒絕；可重播的操作改呼叫 `mutate` 或 `commit_for_snapshot` 並讀取 `TxResult`，和 `mutate_tool_state_once` 的做法一樣。
+
 ## 已搬上邊界的寫入者
 
 | 原路徑 | 現在 |
