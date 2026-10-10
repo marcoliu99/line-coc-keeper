@@ -70,7 +70,7 @@ def test_manual_check_persists_one_opponent_roll_and_its_final_outcome():
     assert resolved.should_finalize
     assert resolved.resolved_event['opposed_outcome']['winner'] == 'opponent'
     assert resolved.resolved_event['player_declaration'] == '抓住飛來的刀'
-    assert '對抗勝方=opponent' in resolved.resolved_event['outcome']
+    assert '對抗結果：對手勝出' in resolved.resolved_event['outcome']
     assert not group_state.load_state('scenario-check-test').pending_checks
 
 
