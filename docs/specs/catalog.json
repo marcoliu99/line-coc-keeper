@@ -2720,6 +2720,22 @@
       "path": "docs/specs/bug/uploaded_maps_kept_with_scenario_design_spec.md",
       "zh_path": "docs/specs/bug/uploaded_maps_kept_with_scenario_design_spec_zh.md",
       "source_revision": "f2d04462287a685fd6ef2608efefbc7363455d29"
+    },
+    {
+      "title": "Four replies from the 2026-10-10 soak runs: giving up with evidence, waiting on nobody, a combat prompt to the wrong player, a lost fight opening",
+      "zh": "2026-10-10 四場 soak run 的四種回覆：有證據卻放棄、在等不存在的人、戰鬥提示對錯人、開戰敘事被蓋掉",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/executor.py",
+        "app/services/turn_fallback.py",
+        "app/services/prompt_config.py",
+        "tests/test_keeper_gives_up_and_combat_guidance.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/keeper_gives_up_and_combat_guidance_design_spec.md",
+      "zh_path": "docs/specs/bug/keeper_gives_up_and_combat_guidance_design_spec_zh.md",
+      "source_revision": "0c53dcb95c2c5fd81a91815eb70336f9c80049ae"
     }
   ]
 }

@@ -74,7 +74,8 @@ class CheckStatus(TypedDict, total=False):
 
     * Executor / tool gateway, while tools run: ``tool_called``, ``pending``, ``pending_luck``,
       ``resolved``, ``scenario_evidence_blocked``, ``cleared`` (a wait was removed).
-    * Executor, once the tools are done: ``tool_event_count``, ``state_changed``, ``dice_rolled``.
+    * Executor, once the tools are done: ``tool_event_count``, ``state_changed``, ``dice_rolled``,
+      ``combat_opened`` (a call took the battle from inactive to active).
     * ``turn_handoff.prepare_narrator_handoff``, from the latest state: ``pending``,
       ``pending_luck``, ``resolved`` (cleared while a Luck decision is open),
       ``waiting_for_name``, ``current_turn_state``.
@@ -89,6 +90,7 @@ class CheckStatus(TypedDict, total=False):
     cleared: bool
     tool_event_count: int
     state_changed: bool
+    combat_opened: bool
     dice_rolled: bool
     waiting_for_name: str
     current_turn_state: Any

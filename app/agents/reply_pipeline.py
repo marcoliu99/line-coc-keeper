@@ -62,7 +62,7 @@ def no_mechanics() -> MechanicResult:
     return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
 
-def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str) -> str:
+def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str, *, trailing: str = "") -> str:
     if ctx.turn_kind == "resolved_check_followup":
         origin_check_id = (ctx.resolved_check_context or {}).get("check_id")
         new_pending_check = any(
@@ -73,7 +73,9 @@ def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str) -> str:
             candidate, ctx.resolved_check_context or {}, new_pending_check=new_pending_check,
         )
     if draft.public_result is not None:
-        candidate = prompt_config.enforce_mechanic_check_consistency(candidate, draft.public_result, state=ctx.state)
+        # ``trailing`` is passed only when set, so a pass without one keeps the call shape tests stub.
+        extra = {"trailing": trailing} if trailing else {}
+        candidate = prompt_config.enforce_mechanic_check_consistency(candidate, draft.public_result, state=ctx.state, **extra)
     return candidate
 
 
@@ -105,7 +107,8 @@ async def _obligations(ctx: ReplyContext, draft: ReplyDraft) -> None:
             ctx.state, ctx.user_id, draft.mechanic_result, ctx.handoff_before[0], ctx.handoff_before[1],
             ctx.message.payload)
         draft.public_result = turn_delivery.public_mechanic(draft.mechanic_result, ctx.state)
-        draft.text = _consistent(ctx, draft, draft.text.rstrip() + "\n\n" + "\n".join(item.summary for item in owed))
+        summaries = "\n".join(item.summary for item in owed)
+        draft.text = _consistent(ctx, draft, draft.text.rstrip() + "\n\n" + summaries, trailing=summaries)
 
 
 def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:

@@ -70,8 +70,12 @@ def guidance(reason: str | None, hints: str = "") -> str:
 _COMBAT_REASONS: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_action", "unsupported_action"})
 
 
-def combat_guidance(state: GroupState, reason: str | None) -> str:
-    """What to tell the table when a turn in a running battle could not be played; empty outside one."""
+def combat_guidance(state: GroupState, reason: str | None, actor_character_id: str = "") -> str:
+    """What to tell the table when a turn in a running battle could not be played; empty outside one.
+
+    ``actor_character_id`` is the asking player's investigator: told 「輪到 Julian，還沒輪到你時請稍候」 six turns running
+    while being Julian (Lightless Beacon turns 31–36), a player needs the enemies they can name instead.
+    """
     battle = state.combat
     if reason not in _COMBAT_REASONS or not battle.active or not battle.order:
         return ""
@@ -93,6 +97,11 @@ def combat_guidance(state: GroupState, reason: str | None) -> str:
     if any(action.get("actor_id") == current.combatant_id and action.get("completed")
            and action.get("round") == battle.round_number for action in battle.actions.values()):
         return f"「{current.display_name}」這一輪已經行動完畢，等守密人推進到下一位。"
+    if actor_character_id and current.character_id == actor_character_id:
+        standing = "、".join(f"「{c.display_name}」" for c in enemies if not c.defeated)
+        return (f"戰鬥進行中，現在輪到你（{current.display_name}）行動。目前的敵人：{standing or '無'}。"
+                "要攻擊的話，請指名上面列出的敵人，並說明用什麼方式；也可以改做其他行動（閃避、逃跑、躲藏、掩護同伴等），"
+                "說清楚就好。")
     return (f"戰鬥進行中，現在輪到「{current.display_name}」行動。輪到你時，請說明要對哪個目標、用什麼方式攻擊或行動；"
             "還沒輪到你時，請稍候。")
 
@@ -211,6 +220,11 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     if code in _STATE_CONFLICT:
         return "state_conflict"
     if code in _PENDING:
+        # 「在等別人」 with nobody waiting on anything and no tool run is a turn with no action, not a pending state
+        # (Haunting rerun1 turn 17): a retry is worth more than 「還有尚未完成的檢定」 about a check that does not exist.
+        if (code == "deferral_not_verified" and not result.tool_calls
+                and not state.pending_checks and not state.pending_luck_decisions):
+            return "executor_no_action"
         return "unresolved_pending_state"
     if code in _REJECTED:
         return "tool_result_rejected"
