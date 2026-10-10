@@ -51,8 +51,9 @@ _ARMOR_ITEM_SCHEMA: dict[str, Any] = {
         "label": {"type": "string", "description": "護甲名稱，例如「Flesh Ward」「厚皮」"},
         "value": {"type": ["integer", "string"], "description": "固定數字（3）或骰子表示式（\"2D6\"，登記時暗擲一次）"},
         "applies_to": {
-            "type": "string", "enum": ["all", "physical", "magic"],
-            "description": "預設 all。physical 只擋武器與肉搏（子彈、刀、拳頭都算），magic 只擋法術。劇本沒限制就不要填。",
+            "type": "string",
+            "description": ("預設 all。physical 只擋武器與肉搏（子彈、刀、拳頭都算），magic 只擋法術；"
+                            "要只擋某種招式或效果登記的 damage_type（例如 fire）就填同一個字。劇本沒限制就不要填，也不要寫句子。"),
         },
         "bypass_tags": {"type": "array", "items": {"type": "string"}, "description": "帶這些標籤的攻擊無視此護甲，例如 [\"enchanted\"]；通常不填"},
         "depletes": {"type": "boolean", "description": "true 表示護甲吸收多少傷害就少多少（Flesh Ward）；一般護甲不填"},

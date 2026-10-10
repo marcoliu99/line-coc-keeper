@@ -333,6 +333,7 @@ class CombatCardTests(unittest.TestCase):
                            ("all attacks except for magic", "physical"), ("not affected by magic", "physical"),
                            ("anything other than spells", "physical"), ("不受魔法影響", "physical"),
                            ("magical attacks only", "magic"), ("magic cannot penetrate this armor", "magic"),
+                           ("fire", "fire"), ("Cold", "cold"), ("fire damage only", "all"),
                            ("spells only", "magic"), ("法術", "magic"), ("something else", "all")]:
             self.assertEqual(combat.armor_scope(raw), scope, raw)
 

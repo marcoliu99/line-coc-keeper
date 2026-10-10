@@ -98,7 +98,7 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 
 事後無法確認一場 run 的護甲：登記結果只寫 Corbitt 加入了，傷害紀錄存在遊戲存檔裡，不在 log。現在登記時會回報「有護甲（暗擲，數值不公開）」（固定值護甲則是「有護甲（數值不公開）」），從不寫出數字（`combat.armor_note`，出現在 `initialize_combat` 每個敵人的結果與 `add_npc_to_combat` 的附註）。每一擊被護甲擋下時寫一行 log：`combat.armor target=… armor=… blocked=… left=… raw=… final=…`，任何給玩家的文字都不含這些。從整張卡 `single_shot` 改成近戰的攻擊，和一般近身攻擊一樣可以閃避或反擊。
 
-2026-10-10 的兩場四人《鬼屋》run（Codex 跑 `fac75820`、OpenAI 跑 `a62d605`）都登記了 Corbitt 的護甲（登記結果寫「有護甲（暗擲，數值不公開）」），但一點傷害都沒擋到：兩份 log 都沒有 `combat.armor`，`fac75820` 那場一槍、三拳、一刀就打掉全部 16 HP。護甲規則只在 `applies_to` 是 `all` 或等於這一擊的傷害類型時生效，而引擎結算的武器攻擊全是 `physical`；護甲項目以前沒有 schema，守密人讀到劇本的 "armor against non-magical attacks" 就照抄進去，護甲便靜靜失效。現在護甲項目有 schema（`label`、`value` 填數字或骰式、`applies_to` 只能是 `all`/`physical`/`magic`、`bypass_tags`、`depletes`、`public_hint`），`combat.armor_scope` 把其他字都讀成 `all`（寫武器或非魔法的讀成 `physical`，寫法術的讀成 `magic`），每筆登記的護甲寫一行 log：`combat.armor.registered enemy=… label=… value=… applies_to=… depletes=… rolled_from=…`，下一場 run 的 log 就看得到守密人填了什麼。數值不進任何給玩家的文字。
+2026-10-10 的兩場四人《鬼屋》run（Codex 跑 `fac75820`、OpenAI 跑 `a62d605`）都登記了 Corbitt 的護甲（登記結果寫「有護甲（暗擲，數值不公開）」），但一點傷害都沒擋到：兩份 log 都沒有 `combat.armor`，`fac75820` 那場一槍、三拳、一刀就打掉全部 16 HP。護甲規則只在 `applies_to` 是 `all` 或等於這一擊的傷害類型時生效，而引擎結算的武器攻擊全是 `physical`；護甲項目以前沒有 schema，守密人讀到劇本的 "armor against non-magical attacks" 就照抄進去，護甲便靜靜失效。現在護甲項目有 schema（`label`、`value` 填數字或骰式、`applies_to` 是 `all`、`physical`、`magic` 或招式／效果登記的單字傷害類型、`bypass_tags`、`depletes`、`public_hint`），`combat.armor_scope` 把句子讀成 `all`（寫武器或非魔法的讀成 `physical`，寫法術的讀成 `magic`；`fire` 這類單字保持原樣，照舊精確比對），每筆登記的護甲寫一行 log：`combat.armor.registered enemy=… label=… value=… applies_to=… depletes=… rolled_from=…`，下一場 run 的 log 就看得到守密人填了什麼。數值不進任何給玩家的文字。
 
 ## 未做
 

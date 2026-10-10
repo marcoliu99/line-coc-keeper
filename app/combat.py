@@ -137,18 +137,26 @@ _MAGIC_WORDS = ("magic", "spell", "魔法", "法術")
 _NEGATION = re.compile(r"\b(?:non|not|except|excluding|without|but|unless|other than)\b|以外|除外|之外|非|除了|不含|不受")
 
 
+_DAMAGE_TYPE_TOKEN = re.compile(r"[a-z][a-z_]*")
+_ALL_WORDS = ("any", "anything", "everything", "all_attacks", "default", "none")
+
+
 def armor_scope(raw: Any) -> str:
     """The scope an armor rule applies to, from whatever the Keeper wrote. The entry used to be free text, and a
     Keeper reading "armor against non-magical attacks" wrote that: a scope the engine never matched, so the armor
     covered nothing. Anything not a known scope reads as ``all``, wording for weapons or non-magical as ``physical``,
-    spells as ``magic``."""
+    spells as ``magic``; a single word such as ``fire`` stays the damage type it names, matched exactly as before."""
     text = str(raw or "").strip().lower()
     if text in ARMOR_SCOPES:
         return text
     magic = any(word in text for word in _MAGIC_WORDS)
     if (magic and _NEGATION.search(text)) or any(word in text for word in _PHYSICAL_WORDS):
         return "physical"
-    return "magic" if magic else "all"
+    if magic:
+        return "magic"
+    if _DAMAGE_TYPE_TOKEN.fullmatch(text) and text not in _ALL_WORDS:
+        return text  # a specific damage type an attack or effect may carry ("fire"), matched exactly as before
+    return "all"
 
 
 def _default_attack() -> AttackRule:
