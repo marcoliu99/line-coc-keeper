@@ -414,6 +414,7 @@ def enforce_resolved_check_consistency(
 
 
 _SETTLING = frozenset({"preview_combat_settlement", "confirm_combat_settlement", "get_combat_status"})
+_OPENS_A_FIGHT = frozenset({"initialize_combat", "start_combat"})
 
 
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
@@ -434,6 +435,10 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
                 return "\n".join(confirmed)
             if confirmed:
                 warning = "\n".join(confirmed) + "\n\n" + warning
+            if text.strip() and any(name in _OPENS_A_FIGHT and ok for name, ok in result.tool_calls):
+                # The fight did start: the enemy rising is told before whatever is still owed, as a deferral keeps it
+                # (Haunting rerun1 turn 28, where a Sanity check left the turn incomplete).
+                warning = f"{text.rstrip()}\n\n{warning}"
             if status.get("state_changed"):
                 warning += "已記錄的變更會保留，請勿重做已完成的部分。"
             if status.get("dice_rolled") or status.get("resolved") or status.get("pending_luck"):
@@ -455,7 +460,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
                 # anything else it ran or failed keeps the ordinary warning.
                 return "戰鬥已經結束，這一擊不必再出手了。接下來想做什麼？"
             if (state is not None and not status.get("scenario_evidence_blocked")
-                    and (in_battle := turn_fallback.combat_guidance(state, result.fallback_reason))):
+                    and (in_battle := turn_fallback.combat_guidance(
+                        state, result.fallback_reason, resolution.actor_character_id))):
                 return f"{warning}{in_battle}"
             hints = turn_fallback.scene_hints(state) if state is not None else ""
             if status.get("scenario_evidence_blocked"):

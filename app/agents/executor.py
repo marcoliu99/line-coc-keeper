@@ -65,6 +65,17 @@ def _gave_up_after_refusal(tool_events: list[dict]) -> bool:
                     else e.get("gameplay_before") == e.get("gameplay_after") for e in tool_events))
 
 
+def _gave_up_with_evidence(tool_events: list[dict]) -> bool:
+    """Every call was a look-up that worked, the scenario search found text, and the Keeper still said incomplete.
+
+    Four searches found the passage that answered the line, and the turn still ended 「劇本裡沒有足夠的內容」 (a
+    2026-10-10 soak run, turn 50). Nothing changed, so one more ask cannot apply anything twice.
+    """
+    return (bool(tool_events)
+            and all(e["result"].get("ok") and e["name"] in turn_resolution.INFORMATION_QUERY_TOOLS for e in tool_events)
+            and any(e["name"] == "search_scenario" and e["result"].get("results") for e in tool_events))
+
+
 async def run_executor(message: AgentMessage) -> MechanicResult:
     """Runs the Executor Agent's tool-calling loop for a GAMEPLAY_ACTION turn.
 
@@ -258,6 +269,13 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             'validation_code': 'refusal_not_followed', 'reason': verified.reason,
                             'instruction': '剛才有工具拒絕了這次呼叫，沒有改動任何狀態；它的錯誤訊息已說明該改用哪個工具'
                                 '或怎麼補參數。照那個說明完成玩家這次的行動；確實做不到時才保留 incomplete 並說明原因。',
+                        }
+                    if verified.validation_code == 'model_incomplete' and _gave_up_with_evidence(tool_events):
+                        return {
+                            'validation_code': 'evidence_not_used', 'reason': verified.reason,
+                            'instruction': '剛才的劇本查詢已有結果，而且沒有改動任何狀態。依查到的內容處理玩家這次的行動：'
+                                '需要機制就呼叫對應的工具；不需要機制就交回 no_mechanics 並引用查到的段落。'
+                                '只有查到的內容確實與這次行動無關時才保留 incomplete，並說明缺的是什麼。',
                         }
                     if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
                         return None
