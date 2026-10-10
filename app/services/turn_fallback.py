@@ -100,7 +100,8 @@ def combat_guidance(state: GroupState, reason: str | None, actor_character_id: s
     if actor_character_id and current.character_id == actor_character_id:
         standing = "、".join(f"「{c.display_name}」" for c in enemies if not c.defeated)
         return (f"戰鬥進行中，現在輪到你（{current.display_name}）行動。目前的敵人：{standing or '無'}。"
-                "請說明要攻擊哪一個、用什麼方式；指名的目標必須是上面列出的敵人。")
+                "要攻擊的話，請指名上面列出的敵人，並說明用什麼方式；也可以改做其他行動（閃避、逃跑、躲藏、掩護同伴等），"
+                "說清楚就好。")
     return (f"戰鬥進行中，現在輪到「{current.display_name}」行動。輪到你時，請說明要對哪個目標、用什麼方式攻擊或行動；"
             "還沒輪到你時，請稍候。")
 

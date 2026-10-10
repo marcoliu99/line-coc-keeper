@@ -416,6 +416,15 @@ def enforce_resolved_check_consistency(
 _SETTLING = frozenset({"preview_combat_settlement", "confirm_combat_settlement", "get_combat_status"})
 
 
+def _narration_before(text: str, warning: str, confirmed: list[str]) -> str:
+    """The narration of an already repaired reply: what stood before the confirmed lines and ``warning``."""
+    lines = text[: text.index(warning)].rstrip().split("\n")
+    known = {line.strip() for block in confirmed for line in block.split("\n")}
+    while lines and (not lines[-1].strip() or lines[-1].strip() in known):
+        lines.pop()
+    return "\n".join(lines)
+
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
@@ -426,10 +435,12 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
-            if status.get("combat_opened") and warning in text:
-                return text  # the pass before the Guard already put the narration in front of this warning
             confirmed = turn_delivery.distinct_lines(
                 [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text])
+            if status.get("combat_opened") and warning in text:
+                # The pass after the Guard sees the repaired reply. Keep its narration and rebuild the rest: a Guard
+                # rewrite that kept the warning but dropped the Luck line still owes the line, and nothing is doubled.
+                text = _narration_before(text, warning, confirmed)
             if (not status.get("pending") and not status.get("pending_luck") and not status.get("state_changed")
                     and any(not o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)):
                 # A refusal that says why and what to do (an empty gun) is the whole answer, not a tool failure.

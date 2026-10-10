@@ -71,6 +71,7 @@ class CombatGuidanceAddresseeTests(unittest.TestCase):
         self.assertIn("「Youngling（1）」", text)
         self.assertNotIn("Youngling（2）", text)
         self.assertNotIn("請稍候", text)
+        self.assertIn("其他行動", text)  # dodging, fleeing or hiding is a turn too, not only an attack
 
     def test_anyone_else_is_still_told_to_wait(self):
         text = turn_fallback.combat_guidance(_battle(), "unsupported_action", "legacy-user:p1")
@@ -112,6 +113,17 @@ class FightOpeningKeptTests(unittest.TestCase):
         deferred = _result("deferred", state_changed=True, waiting_for_name="George")
         first = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", deferred)
         self.assertEqual(prompt_config.enforce_mechanic_check_consistency(first, deferred), first)
+
+    def test_a_guard_rewrite_that_dropped_the_luck_line_gets_it_back(self):
+        opened = _result("incomplete", "model_incomplete", tool_calls=(("initialize_combat", True),),
+                         state_changed=True, combat_opened=True,
+                         pending_luck={"investigator": "George", "roll": 50, "options": []})
+        state = GroupState(group_id="g")
+        once = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", opened, state=state)
+        rewritten = once[: once.index("\n\n", once.index("這次行動尚未完整處理"))]  # the Guard kept only the warning
+        self.assertNotIn("Luck", rewritten)
+        again = prompt_config.enforce_mechanic_check_consistency(rewritten, opened, state=state)
+        self.assertEqual(again, once)
 
     def test_an_incomplete_turn_without_a_fight_start_does_not(self):
         plain = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", True),))
