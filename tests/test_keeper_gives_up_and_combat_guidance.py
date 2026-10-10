@@ -92,10 +92,14 @@ class CombatGuidanceAddresseeTests(unittest.TestCase):
 class FightOpeningKeptTests(unittest.TestCase):
     def test_a_fight_opened_this_turn_is_a_transition_not_a_tool_name(self):
         state = _battle()
-        opened = [{**_event("add_npc_to_combat"), "combat_active_before": False}]
+        opened = [{**_event("add_npc_to_combat"), "combat_active_before": False, "combat_active_after": True}]
         self.assertTrue(executor._combat_opened(state, opened))
-        already = [{**_event("initialize_combat"), "combat_active_before": True}]
+        already = [{**_event("initialize_combat"), "combat_active_before": True, "combat_active_after": True}]
         self.assertFalse(executor._combat_opened(state, already))
+        before_it = [{**_event("search_scenario"), "combat_active_before": False, "combat_active_after": False}]
+        self.assertFalse(executor._combat_opened(state, before_it))
+        failed = [{**_event("initialize_combat", ok=False), "combat_active_before": False, "combat_active_after": True}]
+        self.assertFalse(executor._combat_opened(state, failed))
         state.combat.active = False
         self.assertFalse(executor._combat_opened(state, opened))
 

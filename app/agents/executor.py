@@ -79,13 +79,10 @@ def _gave_up_with_evidence(tool_events: list[dict]) -> bool:
                         for e in tool_events))
 
 
-_FIGHT_SETUP_TOOLS = frozenset({"initialize_combat", "start_combat", "add_npc_to_combat"})
-
-
 def _combat_opened(state, tool_events: list[dict]) -> bool:
-    """A call this turn took the battle from inactive to active, and it is still active."""
+    """A call this turn took the battle from inactive to active (whichever tool did it), and it is still active."""
     return bool(state.combat.active) and any(
-        e["name"] in _FIGHT_SETUP_TOOLS and e["result"].get("ok") and not e.get("combat_active_before")
+        e["result"].get("ok") and not e.get("combat_active_before") and e.get("combat_active_after")
         for e in tool_events)
 
 
@@ -253,6 +250,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                 tool_events.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(result),
                                     "inventory_before": inventory_before,
                                     "combat_active_before": combat_active_before,
+                                    "combat_active_after": state.combat.active,
                                     "gameplay_before": gameplay_before_tool,
                                     "gameplay_after": turn_resolution.gameplay_snapshot(state),
                                     "actor_changed": actor_before_tool != turn_resolution.actor_snapshot(state, user_id)})
