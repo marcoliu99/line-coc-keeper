@@ -196,7 +196,7 @@ def format_location_index_block(locations: list[dict[str, Any]]) -> str:
 # artifact alone proves that every movement attempt will be refused.
 EMPTY_SCENE_MAPS_NOTICE = (
     "⚠️ 這份劇本沒有樓層圖,玩家無法在已知房間之間沿路徑移動;"
-    "有劇本依據支持的到達仍可成立。樓層圖只能從 PDF 重新解析取得。"
+    "有劇本依據支持的到達仍可成立。可上傳 map_*.yaml 地圖檔（會跟劇本一起保存），或從 PDF 重新解析取得。"
 )
 
 EMPTY_LOCATION_INDEX_NOTICE = (

@@ -144,8 +144,9 @@ def test_scenario_use_names_the_locations_of_the_maps_that_end_up_committed():
                "active_chapter_id": "", "context_chapter_ids": [], "pregens": [],
                "scene_maps": {"custom_new": {"location_name": "New map place", "rooms": []}}}
     with patch.object(scenario_lifecycle.scenario_activation.page_repairs, "apply_saved",
-                      side_effect=lambda g, s, h, t: t):
-        scenario_lifecycle._use_existing(state, context, "sid", "")
+                      side_effect=lambda g, s, h, t: t), \
+            patch.object(scenario_lifecycle.scenario_maps, "load", return_value={}):
+        scenario_lifecycle._use_existing(state, context, "sid", "", same_scenario=False)
     assert list(state.scene_maps) == ["custom_new"]
     assert [loc["name"] for loc in state.scenario_location_index] == ["Muscoby", "New map place"]
 
@@ -156,6 +157,7 @@ def _install(*, preserve_maps: bool) -> GroupState:
                "active_chapter_id": "", "context_chapter_ids": [], "pregens": [],
                "scene_maps": {"2": {"location_name": "Page map place", "rooms": []}}}
     with patch.object(scenario_activation.page_repairs, "apply_saved", side_effect=lambda g, s, h, t: t), \
+            patch.object(scenario_activation.scenario_maps, "load", return_value={}), \
             patch.object(scenario_activation.scenario_templates, "preferred_variant", return_value=""):
         scenario_activation.install_context_fields(state, "sid", context, preserve_maps=preserve_maps)
     return state

@@ -2702,6 +2702,24 @@
       "path": "docs/specs/bug/rerun8_player_replies_design_spec.md",
       "zh_path": "docs/specs/bug/rerun8_player_replies_design_spec_zh.md",
       "source_revision": "a4ef8734f2ca601ad0964174eb6ce3086eaba97d"
+    },
+    {
+      "title": "Uploaded maps are kept with their scenario, like role cards",
+      "zh": "上傳的地圖像角色卡一樣跟著劇本保存",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/repositories/scenario_maps.py",
+        "app/services/map_service.py",
+        "app/scenario_activation.py",
+        "app/services/scenario_lifecycle.py",
+        "app/scenario_index.py",
+        "app/db.py",
+        "tests/test_scenario_maps_kept.py"
+      ],
+      "path": "docs/specs/bug/uploaded_maps_kept_with_scenario_design_spec.md",
+      "zh_path": "docs/specs/bug/uploaded_maps_kept_with_scenario_design_spec_zh.md",
+      "source_revision": "f2d04462287a685fd6ef2608efefbc7363455d29"
     }
   ]
 }

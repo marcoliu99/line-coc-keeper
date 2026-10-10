@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 
 from app import db, scenario_library, scenario_templates
 from app.models import GroupState
-from app.repositories import group_state, page_repairs
+from app.repositories import group_state, page_repairs, scenario_maps
 from app.scene_map_locations import merge_scene_map_locations
 
 _logger = logging.getLogger(__name__)
@@ -36,11 +36,15 @@ def install_context_fields(
     state.scenario_location_index = context["indexes"].get("locations", [])
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
+    # The maps this conversation uploaded for the scenario come back with it, as its role cards do.
+    saved_maps = scenario_maps.load(state.group_id, scenario_id)
     if not preserve_maps:
-        state.scene_maps = context["scene_maps"]
+        state.scene_maps = {**context["scene_maps"], **saved_maps}
         # The maps the scenario ships with name their places too. (A caller that keeps the running maps merges after
         # it has settled which maps stay: see ``scenario_lifecycle._name_kept_map_locations``.)
         state.scenario_location_index = merge_scene_map_locations(state.scenario_location_index, state.scene_maps)
+    else:
+        state.scene_maps = {**state.scene_maps, **saved_maps}
 
 
 def refresh_context_images(
