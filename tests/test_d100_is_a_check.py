@@ -21,7 +21,7 @@ def _roll(arguments: dict, role: str = 'player') -> dict:
     return dice_handlers.roll_dice(registry.ToolCall(GroupState(group_id='g'), arguments, [], [], role, 'roll_dice'))  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize('expression', ['1d100', '1D100', 'd100', ' 1 d 100 '])
+@pytest.mark.parametrize('expression', ['1d100', '1D100', 'd100', ' 1d100 ', '+1d100', '01d100', 'd0100'])
 def test_a_public_percentile_roll_is_refused_toward_skill_check(expression):
     result = _roll({'expression': expression})
     assert not result['ok'] and 'skill_check' in result['error'] and 'secret' in result['error']
@@ -29,6 +29,7 @@ def test_a_public_percentile_roll_is_refused_toward_skill_check(expression):
 
 @pytest.mark.parametrize('arguments', [
     {'expression': '1d100', 'secret': True}, {'expression': '1d6'}, {'expression': '2d100'}, {'expression': '1d100+5'},
+    {'expression': '1d100-1d100'},
 ])
 def test_other_rolls_still_roll(arguments):
     assert _roll(arguments)['ok']
