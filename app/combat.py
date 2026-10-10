@@ -131,6 +131,10 @@ ARMOR_SCOPES = ("all", "physical", "magic")
 _PHYSICAL_WORDS = ("non-magic", "nonmagic", "non_magic", "physical", "weapon", "melee", "ranged", "bullet", "blow",
                    "物理", "實體", "非魔法", "武器", "近戰", "射擊")
 _MAGIC_WORDS = ("magic", "spell", "魔法", "法術")
+# "non magical", "all attacks except magic", "魔法以外": armor against everything but spells, however it is spelled.
+_NEGATED_MAGIC = re.compile(
+    r"(?:\bnon\b|\bnot\b|\bexcept\b|\bexcluding\b|\bwithout\b|\bbut\b|非|除了?|不含)[\s_\-]*(?:magic|spell|魔法|法術)"
+    r"|(?:magic|spell|魔法|法術)\w*[\s_\-]*(?:以外|除外|之外)", re.IGNORECASE)
 
 
 def armor_scope(raw: Any) -> str:
@@ -141,7 +145,7 @@ def armor_scope(raw: Any) -> str:
     text = str(raw or "").strip().lower()
     if text in ARMOR_SCOPES:
         return text
-    if any(word in text for word in _PHYSICAL_WORDS):
+    if _NEGATED_MAGIC.search(text) or any(word in text for word in _PHYSICAL_WORDS):
         return "physical"
     if any(word in text for word in _MAGIC_WORDS):
         return "magic"

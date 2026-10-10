@@ -319,6 +319,9 @@ class CombatCardTests(unittest.TestCase):
     def test_armor_scope_reads_the_keepers_wording(self):
         for raw, scope in [(None, "all"), ("", "all"), ("ALL", "all"), ("any", "all"), ("Physical", "physical"),
                            ("weapons", "physical"), ("非魔法攻擊", "physical"), ("magic", "magic"),
+                           ("non magical attacks", "physical"), ("all attacks except magic", "physical"),
+                           ("not magical", "physical"), ("魔法以外的攻擊", "physical"), ("除了法術", "physical"),
+                           ("magical attacks only", "magic"),
                            ("spells only", "magic"), ("法術", "magic"), ("something else", "all")]:
             self.assertEqual(combat.armor_scope(raw), scope, raw)
 
