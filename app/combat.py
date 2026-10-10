@@ -9,6 +9,7 @@ of defaulting to "the nearest investigator gets punched".
 """
 from __future__ import annotations
 
+import logging
 import random
 import re
 import uuid
@@ -122,6 +123,42 @@ def start_combat(state: GroupState) -> CombatState:
     return state.combat
 
 
+logger = logging.getLogger(__name__)
+
+# What an armor rule is matched against. Every weapon hit the engine resolves is "physical"; "all" covers it and
+# anything else; "magic" is armor that stops only spells, so no weapon hit.
+ARMOR_SCOPES = ("all", "physical", "magic")
+_PHYSICAL_WORDS = ("non-magic", "nonmagic", "non_magic", "physical", "weapon", "melee", "ranged", "bullet", "blow",
+                   "物理", "實體", "非魔法", "武器", "近戰", "射擊")
+_MAGIC_WORDS = ("magic", "spell", "魔法", "法術")
+# Wording that negates or excepts magic ("non magical", "all attacks except for magic", "not affected by magic",
+# "魔法以外") is armor against everything but spells: a negation word (a whole word in English, so "cannot" is not
+# "not") together with any magic word reads so.
+_NEGATION = re.compile(r"\b(?:non|not|except|excluding|without|but|unless|other than)\b|以外|除外|之外|非|除了|不含|不受")
+
+
+_DAMAGE_TYPE_TOKEN = re.compile(r"[a-z][a-z_]*")
+_ALL_WORDS = ("any", "anything", "everything", "all_attacks", "default", "none")
+
+
+def armor_scope(raw: Any) -> str:
+    """The scope an armor rule applies to, from whatever the Keeper wrote. The entry used to be free text, and a
+    Keeper reading "armor against non-magical attacks" wrote that: a scope the engine never matched, so the armor
+    covered nothing. Anything not a known scope reads as ``all``, wording for weapons or non-magical as ``physical``,
+    spells as ``magic``; a single word such as ``fire`` stays the damage type it names, matched exactly as before."""
+    text = str(raw or "").strip().lower()
+    if text in ARMOR_SCOPES:
+        return text
+    magic = any(word in text for word in _MAGIC_WORDS)
+    if (magic and _NEGATION.search(text)) or any(word in text for word in _PHYSICAL_WORDS):
+        return "physical"
+    if magic:
+        return "magic"
+    if _DAMAGE_TYPE_TOKEN.fullmatch(text) and text not in _ALL_WORDS:
+        return text  # a specific damage type an attack or effect may carry ("fire"), matched exactly as before
+    return "all"
+
+
 def _default_attack() -> AttackRule:
     return AttackRule(id="unarmed", label="徒手攻擊", skill_name="格鬥（鬥毆）", skill_value=25, damage="1D3", range_band="engaged")
 
@@ -143,8 +180,16 @@ def _coerce_armor(raw: list[dict[str, Any]] | None) -> list[ArmorRule]:
             data["value"], data["rolled_from"] = max(0, rolled.total), value.strip()
         else:
             data["value"] = int(value)
+        data["applies_to"] = armor_scope(data.get("applies_to"))
         rules.append(ArmorRule.from_dict(data))
     return rules
+
+
+def _log_armor(enemy: str, rules: list[ArmorRule]) -> None:
+    """One log line per registered rule, so a run's log shows what the Keeper wrote; no player text carries it."""
+    for rule in rules:
+        logger.info("combat.armor.registered enemy=%s label=%s value=%d applies_to=%s depletes=%s rolled_from=%s",
+                    enemy, rule.label or rule.id, rule.value, rule.applies_to, rule.depletes, rule.rolled_from or "-")
 
 
 def _coerce_attacks(raw: list[dict[str, Any]] | None) -> list[AttackRule]:
@@ -203,6 +248,7 @@ def create_enemy_card(
         public_description=public_description,
         incomplete=incomplete,
     )
+    _log_armor(name, card.armor)
     state.combat.enemy_cards[card.id] = card
     return card
 
@@ -505,6 +551,7 @@ def _complete_card(
     card.attacks = coerced_attacks
     if coerced_armor is not None:
         card.armor = coerced_armor
+        _log_armor(card.name, coerced_armor)
     card.abilities = _coerce_abilities(abilities)
     card.source = {**card.source, **(source or {})}
     card.incomplete = False
@@ -719,8 +766,11 @@ def _best_armor(card: EnemyCombatCard | None, damage_type: str, tags: list[str])
         return None
     best: ArmorRule | None = None
     tag_set = set(tags or [])
+    hit = str(damage_type or "").strip().lower()  # the scope is read lowercased, so the hit's type is too
     for armor in card.armor:
-        if armor.applies_to not in ("all", damage_type):
+        # A scope that names the hit's own damage type matches as written, whatever it is ("cold iron"); anything
+        # else is read through armor_scope, so a card saved with the Keeper's wording still works.
+        if str(armor.applies_to or "").strip().lower() != hit and armor_scope(armor.applies_to) not in ("all", hit):
             continue
         if set(armor.bypass_tags) & tag_set:
             continue

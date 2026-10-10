@@ -299,6 +299,52 @@ class CombatCardTests(unittest.TestCase):
         # intent instead of silently blanking the armor's display name.
         self.assertEqual(card.armor[0].label, "Flesh Ward")
 
+    def test_armor_written_with_a_free_text_scope_still_stops_a_hit(self):
+        """docs/specs/enhancement/combat_turn_friction_design_spec.md: two Haunting runs registered Corbitt's
+        Flesh Ward and it never stopped a point, because the Keeper's `applies_to` matched no damage type."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        with self.assertLogs("app.combat", level="INFO") as logs:
+            combat.add_npc(state, "Corbitt", 70, 30, armor=[
+                {"label": "Flesh Ward", "value": 4, "applies_to": "non-magical attacks", "depletes": True},
+            ])
+        enemy = next(c for c in state.combat.order if c.name == "Corbitt")
+        card = state.combat.enemy_cards[enemy.enemy_card_id]
+        self.assertEqual(card.armor[0].applies_to, "physical")
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("combat.armor.registered enemy=Corbitt label=Flesh Ward value=4 applies_to=physical depletes=True rolled_from=-", logs.output[0])
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
+        self.assertEqual(combat.wear_armor(state, enemy, "physical", [], 4), 0)
+
+    def test_a_card_saved_with_the_keepers_wording_still_stops_a_hit(self):
+        """A card saved by an older version carries the scope as written; matching reads through armor_scope."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Corbitt", 70, 30, armor=[{"label": "Flesh Ward", "value": 4}])
+        enemy = next(c for c in state.combat.order if c.name == "Corbitt")
+        state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "non-magical attacks"
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
+        state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "Cold"
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "Cold", [], False), (4, "Flesh Ward", 2))
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (0, "", 6))
+        # A multi-word scope matches a hit of that very type as written; against anything else it reads as prose,
+        # and prose the parser cannot place means "all": armor that works beats armor that silently does nothing.
+        state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "cold iron"
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "Cold Iron", [], False), (4, "Flesh Ward", 2))
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
+
+    def test_armor_scope_reads_the_keepers_wording(self):
+        for raw, scope in [(None, "all"), ("", "all"), ("ALL", "all"), ("any", "all"), ("Physical", "physical"),
+                           ("weapons", "physical"), ("非魔法攻擊", "physical"), ("magic", "magic"),
+                           ("non magical attacks", "physical"), ("all attacks except magic", "physical"),
+                           ("not magical", "physical"), ("魔法以外的攻擊", "physical"), ("除了法術", "physical"),
+                           ("all attacks except for magic", "physical"), ("not affected by magic", "physical"),
+                           ("anything other than spells", "physical"), ("不受魔法影響", "physical"),
+                           ("magical attacks only", "magic"), ("magic cannot penetrate this armor", "magic"),
+                           ("fire", "fire"), ("Cold", "cold"), ("fire damage only", "all"),
+                           ("spells only", "magic"), ("法術", "magic"), ("something else", "all")]:
+            self.assertEqual(combat.armor_scope(raw), scope, raw)
+
     def test_attack_entry_with_an_unexpected_key_does_not_crash(self):
         state = self._state_with_pc()
         combat.start_combat(state)

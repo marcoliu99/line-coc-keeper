@@ -2594,6 +2594,7 @@
         "app/keeper_tools/dice.py",
         "app/keeper_tools/registry.py",
         "app/dice.py",
+        "tests/test_combat_cards.py",
         "tests/test_turn_consistency_handoff.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
