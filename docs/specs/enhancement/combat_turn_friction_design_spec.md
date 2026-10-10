@@ -98,6 +98,8 @@ The investigator's six rounds were spent by turn 40. Each later shot raised "Own
 
 A run's armor could not be checked afterwards: the registration said only that Corbitt was added, and damage receipts live in the saved state, not the log. A registration now reports 「有護甲（暗擲，數值不公開）」 (or 「有護甲（數值不公開）」 for a fixed value) and never the number (`combat.armor_note`, in `initialize_combat`'s per-enemy result and `add_npc_to_combat`'s note). Each hit that armor stops writes one log line, `combat.armor target=… armor=… blocked=… left=… raw=… final=…`, which no player text carries. A melee attack moved off a card-level `single_shot` keeps both defences, Dodge and Fight Back, as for any blow.
 
+At turn 45 of the four-investigator Haunting run on `fac75820` (2026-10-10) Samuel attacked Corbitt after he had fallen; the Keeper rightly called `end_combat` and `confirm_combat_settlement`, the fight closed, and the player still read 「工具的結果沒有通過核對，這次行動沒有被接受」, because `turn_resolution._mutation_evidence` voids a turn whose decision does not cite a successful `end_combat` and the decision cited only the confirmation. An `end_combat` whose fight is closed by the end of the turn (`combat_active_before` and the combat no longer active) now counts as verified whether or not it was cited: the state is the evidence, as a transfer's receipt is. An `end_combat` that only previewed (the fight still active) is still not completion on its own.
+
 ## Not done
 
 - Fight Back still uses Brawl and 1D3 for an investigator rather than the held weapon.

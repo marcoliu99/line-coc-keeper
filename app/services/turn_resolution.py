@@ -92,8 +92,11 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             # failure, and the calls that did change the pack prove the final state below.
             continue
         replay_of_seen = bool(result.get('replayed')) and result.get('operation_id') in committed_operations
+        # A fight this turn closed verifies its own end_combat: the state says so, whether or not the decision
+        # cited the preview (it usually cites the confirmation that followed).
+        closed_this_turn = name == 'end_combat' and bool(event.get('combat_active_before')) and not state.combat.active
         if (name in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
-                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen
+                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen and not closed_this_turn
                                                     and result.get('operation_id') not in cited_operations))):
             return False, False
         if name == 'transfer_item':

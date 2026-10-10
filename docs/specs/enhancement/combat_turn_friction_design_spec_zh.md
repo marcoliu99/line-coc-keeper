@@ -98,6 +98,8 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 
 事後無法確認一場 run 的護甲：登記結果只寫 Corbitt 加入了，傷害紀錄存在遊戲存檔裡，不在 log。現在登記時會回報「有護甲（暗擲，數值不公開）」（固定值護甲則是「有護甲（數值不公開）」），從不寫出數字（`combat.armor_note`，出現在 `initialize_combat` 每個敵人的結果與 `add_npc_to_combat` 的附註）。每一擊被護甲擋下時寫一行 log：`combat.armor target=… armor=… blocked=… left=… raw=… final=…`，任何給玩家的文字都不含這些。從整張卡 `single_shot` 改成近戰的攻擊，和一般近身攻擊一樣可以閃避或反擊。
 
+2026-10-10 在 `fac75820` 上的四人《鬼屋》run 第 45 回合，Samuel 在 Corbitt 倒下後又宣告攻擊；守密人正確地呼叫 `end_combat` 和 `confirm_combat_settlement`，戰鬥也關了，玩家卻看到「工具的結果沒有通過核對，這次行動沒有被接受」，因為 `turn_resolution._mutation_evidence` 會作廢沒引用成功 `end_combat` 的決定，而這次決定只引用了後面的確認。現在只要回合結束時戰鬥已關（`combat_active_before` 為真且戰鬥不再進行），`end_combat` 不論有沒有被引用都算已驗證：狀態本身就是證據，和物品交接的收據一樣。只做了預覽、戰鬥仍在進行的 `end_combat` 仍然不能單獨當作完成。
+
 ## 未做
 
 - 調查員的反擊仍用鬥毆與 1D3，而不是手上的武器。
