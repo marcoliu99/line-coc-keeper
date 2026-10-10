@@ -2632,6 +2632,23 @@
       "path": "docs/specs/enhancement/laya_shadow_routing_design_spec.md",
       "zh_path": "docs/specs/enhancement/laya_shadow_routing_design_spec_zh.md",
       "source_revision": "3a6f0bdd898d118e83bf15659569feee3832c7c4"
+    },
+    {
+      "title": "Pregenerated investigators bring their own weapon numbers",
+      "zh": "預製調查員帶著自己的武器數值進遊戲",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/pregen_weapons.py",
+        "app/pregen_extractor.py",
+        "app/combat_rules.py",
+        "app/keeper_tools/managed_combat.py",
+        "tests/test_pregen_weapons.py",
+        "tests/test_combat_wiring.py"
+      ],
+      "path": "docs/specs/enhancement/pregen_weapon_stats_design_spec.md",
+      "zh_path": "docs/specs/enhancement/pregen_weapon_stats_design_spec_zh.md",
+      "source_revision": "fac75820fed8bc8bf53f87fa1ab63439aff68d84"
     }
   ]
 }
