@@ -413,6 +413,9 @@ def enforce_resolved_check_consistency(
 
 
 
+_SETTLING = frozenset({"preview_combat_settlement", "confirm_combat_settlement", "get_combat_status"})
+
+
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
@@ -443,6 +446,14 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
                 investigator = pending.get("investigator", "調查員")
                 skill = pending.get("skill") or "檢定／選擇"
                 return f"{warning}\n\n請按檢定按鈕或輸入 /coc check，擲 {investigator} 的{skill}。"
+            if (resolution.disposition == "blocked" and state is not None and not state.combat.active
+                    and ("confirm_combat_settlement", True) in result.tool_calls
+                    and all(ok and name in _SETTLING for name, ok in result.tool_calls)
+                    and any(c.hp > 0 for c in state.active_characters())):
+                # The line attacked an enemy already down: the Keeper closed the fight instead, which is the answer,
+                # not 「這個行動無法進行；請改試別的做法」 (rerun8 turn 56). Only when settling was all the turn did:
+                # anything else it ran or failed keeps the ordinary warning.
+                return "戰鬥已經結束，這一擊不必再出手了。接下來想做什麼？"
             if (state is not None and not status.get("scenario_evidence_blocked")
                     and (in_battle := turn_fallback.combat_guidance(state, result.fallback_reason))):
                 return f"{warning}{in_battle}"
@@ -453,7 +464,12 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
         if resolution.disposition == "deferred":
             waiting_name = status.get("waiting_for_name", "目前行動者")
-            return f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"
+            waiting = f"你的這次行動尚未執行，請先等待{waiting_name}完成目前的行動；輪到你時再宣告。"
+            # A deferral may only change state by setting up the fight (turn_resolution._setup_only): the line that
+            # started it keeps its scene, the enemy rising and who goes first, rather than only the wait (rerun8 turn 33).
+            if status.get("state_changed") and text.strip():
+                return f"{text.rstrip()}\n\n{waiting}"
+            return waiting
         if resolution.disposition == "cancelled":
             return "已取消這筆尚未擲骰的檢定；已結算的結果與其他人的待處理項目保持不變。"
     pending = status.get("pending")

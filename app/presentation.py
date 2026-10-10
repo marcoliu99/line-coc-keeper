@@ -26,7 +26,9 @@ _LABELLED = re.compile(rf"(?P<label>(?:原始|所需|最終|實際)?(?:難度|�
 # not reach across a line break to take the next line's first word.
 _ID_LABELLED = re.compile(
     r"[（(\[【]?\s*(?:check_id|decision_id|event_id|timeline_id|source_check_id)\s*[=:：][ \t]*[A-Za-z0-9_.:-]*[ \t]*[）)\]】]?")
-_ID_BARE = re.compile(r"(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?![\w-])")
+# A Luck decision's id is its check's plus ":luck"; the suffix and any code quotes go with it, or the reply showed
+# 「仍待你作答：`:luck`。」 (rerun8 turn 44).
+_ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?![\w-])`?")
 
 
 def tier_label(value: str) -> str:
@@ -143,7 +145,8 @@ def _map_internal_terms(text: str) -> str:
         return text
     text = _ID_LABELLED.sub("", text)
     text = _ID_BARE.sub("", text)
-    return re.sub(r"[ \t]+([，。；、）)])", r"\1", re.sub(r"（\s*）|\(\s*\)", "", text))
+    text = re.sub(r"（\s*）|\(\s*\)", "", text)
+    return re.sub(r"[ \t]+([，。；、）)])|[：:][ \t]*([。；，])", lambda m: m[1] or m[2], text)
 
 
 # --- party size ------------------------------------------------------------------------------------------------

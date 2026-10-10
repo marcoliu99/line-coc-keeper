@@ -53,7 +53,9 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             quantity = int(result.get("quantity") or 1)
             amount = f" {quantity} 份" if quantity > 1 else ""
             text = f"{result.get('from', '調查員')} 已把{amount}「{result['item']}」交給 {result.get('to', '調查員')}。"
-        elif name in {"skill_check", "sanity_check"} and result.get("resolved"):
+        elif name in {"skill_check", "sanity_check"} and result.get("resolved") and not result.get("pending_luck"):
+            # Not while a Luck decision holds it: 「已結算」 beside 「仍等待 Luck 決定」 read as a contradiction, and the
+            # Luck line already gives the roll.
             text = (f"{result.get('investigator', '調查員')} 的檢定已結算："
                     f"骰值 {result.get('roll')}，等級 {presentation.tier_label(str(result.get('tier')))}。")
         elif name == "apply_resolved_check_damage":
@@ -110,8 +112,17 @@ class InteractionRef:
     def instruction(self) -> str:
         if self.kind == "luck":
             value = f" {self.roll} " if self.roll is not None else ""
-            return f"既有骰值{value}仍等待 Luck 決定，請使用 Luck 按鈕或 /coc luck skip；不要重擲。"
+            return f"骰值{value}還在等 Luck 決定：請按 Luck 按鈕，或輸入 /coc luck skip 保留原結果。"
         return "已有待處理檢定／選擇，請使用檢定按鈕或 /coc check。"
+
+    def told_in(self, narrative: str) -> bool:
+        """The reply already gives this Luck decision's roll and command, so the line would only repeat it.
+
+        A Luck offer read three times in one reply (the narration, the command list, this line) in the rerun8 run.
+        """
+        # The roll as a whole number, and not a cost: a roll of 6 is told by neither 「（26 點）」 nor 「（花費 6 點）」.
+        return (self.kind == "luck" and "/coc luck" in narrative
+                and (self.roll is None or re.search(rf"(?<!\d){self.roll}(?!\d)(?!\s*點)", narrative) is not None))
 
 
 @dataclass
@@ -129,7 +140,7 @@ class DeliveryEnvelope:
     def projected_text(self) -> str:
         lines = [fact.public_text for fact in self.authorized_facts if fact.public_text]
         lines.extend(fact.text for fact in self.verified_fact_refs)
-        lines.extend(dict.fromkeys(ref.instruction for ref in self.interactions))
+        lines.extend(dict.fromkeys(ref.instruction for ref in self.interactions if not ref.told_in(self.narrative)))
         return "\n".join(distinct_lines(lines))
 
     def render(self) -> str:
