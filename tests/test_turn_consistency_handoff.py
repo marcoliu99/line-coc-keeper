@@ -315,6 +315,24 @@ def test_real_end_combat_is_completion_without_roll(state, refs):
     assert not group_state.load_state(state.group_id).combat.active
 
 
+@pytest.mark.parametrize('refs', [['tool:1', 'tool:2'], ['tool:2'], ['state']])
+def test_a_fight_rolled_back_after_its_preview_does_not_prove_completion(state, refs):
+    combat.start_combat(state)
+    group_state.save_state(state)
+    async def provider(*args, **kwargs):
+        await args[5]('end_combat', {})
+        rolled = await args[5]('rollback_combat', {
+            'combat_id': group_state.load_state(state.group_id).combat.combat_id,
+            'event_id': 'rollback:1', 'reason': 'the fight was declared by mistake'})
+        assert rolled['ok'], rolled
+        return decision(state, 'resolved', evidence_refs=refs)
+    fake = AsyncMock(side_effect=provider)
+    with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert result.turn_resolution.disposition == 'incomplete', result.turn_resolution
+    assert not group_state.load_state(state.group_id).combat.active
+
+
 @pytest.mark.parametrize('mode', ['old_craft_check', 'new_other_check', 'failed_add', 'missing_ref', 'old_luck'])
 def test_completion_does_not_hide_remaining_or_unproven_work(state, mode):
     if mode == 'old_craft_check':
