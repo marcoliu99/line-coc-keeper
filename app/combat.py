@@ -734,6 +734,15 @@ def _armor_reduction(card: EnemyCombatCard | None, damage_type: str, tags: list[
     return (best.value, best.label) if best else (0, "")
 
 
+def armor_note(state: GroupState, combatant: Combatant) -> str:
+    """What a registration reports about an enemy's armor, never its value: the Keeper and the log see that it is
+    there (and was rolled in secret), the player is not told the number."""
+    card = card_for(state, combatant)
+    if card is None or not card.armor:
+        return ""
+    return "有護甲（暗擲，數值不公開）" if any(a.rolled_from for a in card.armor) else "有護甲（數值不公開）"
+
+
 def wear_armor(state: GroupState, combatant: Combatant, damage_type: str, tags: list[str], absorbed: int) -> int | None:
     """Take what a hit's armor absorbed off armor that wears away (Flesh Ward); the points it has left, else None."""
     armor = _best_armor(card_for(state, combatant), damage_type, tags)

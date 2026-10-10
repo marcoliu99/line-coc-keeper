@@ -5,6 +5,7 @@ Authoritative check callbacks are server-only; tools never accept die results.
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from copy import deepcopy
@@ -22,6 +23,7 @@ from app import (
 )
 from app.models import (
     BASE_SKILLS,
+    AttackRule,
     Character,
     CombatAction,
     Combatant,
@@ -47,6 +49,8 @@ _WEAPON_ONLY_BASES = {'fighting-axe': 15, 'fighting-sword': 20, 'fighting-spear'
                       'firearms-submachine-gun': 15, 'firearms-machine-gun': 10}
 _BASE_SKILLS = {skill_id: BASE_SKILLS[label] if label in BASE_SKILLS else _WEAPON_ONLY_BASES[skill_id]
                 for skill_id, label in _SKILLS.items()}  # a weapon skill without a base is a programming error
+
+logger = logging.getLogger(__name__)
 
 
 def _error(message: str) -> dict[str, Any]:
@@ -273,6 +277,10 @@ def _item_is_weapon(item: str, weapon: combat_rules.WeaponDefinition) -> bool:
     return weapon.name.strip().casefold() in text
 
 
+class OutOfAmmo(ValueError):
+    """The declared gun is the investigator's but has fewer rounds loaded than a shot needs."""
+
+
 def _weapon_actor_evidence(
     state: GroupState, actor: Combatant, weapon: combat_rules.WeaponDefinition,
     reference: str, instance: combat_rules.WeaponInstance | None = None,
@@ -302,7 +310,11 @@ def _weapon_actor_evidence(
             raise ValueError('Weapon skill has no authoritative investigator value')
         result: CombatAction = {'skill': skill[0], 'skill_value': skill[1], 'db': effective.damage_bonus}
         if weapon.ammo_per_attack:
-            if effective.weapons.get(inventory_key, {}).get('ammo', 0) < weapon.ammo_per_attack:
+            loaded = effective.weapons.get(inventory_key, {}).get('ammo')
+            if isinstance(loaded, int) and loaded < weapon.ammo_per_attack:
+                raise OutOfAmmo(f'{inventory_key}沒有子彈了（剩 {loaded} 發）：這一槍開不出去。'
+                                '要先裝填（身上有子彈的話），或這一輪改做別的事。')
+            if not isinstance(loaded, int):
                 raise ValueError('Owned ammunition mapping missing or insufficient')
             result['ammo_key'] = inventory_key
         return result
@@ -373,6 +385,16 @@ def declare_action(
         del state.combat.actions[action_id]
         return _error(f'{weapon.name} is still being reloaded (rate of fire 1/{weapon.rounds_per_shot}): the next '
                       f'shot is possible in round {reloading}. Declare another action this round.')
+    try:
+        action.update(_weapon_actor_evidence(state, actor, weapon, weapon_reference, weapon_instance))
+    except OutOfAmmo as exc:
+        # An empty gun is the player's to deal with, not a ruling that pauses the fight: nothing is declared and
+        # the actor may reload or do something else this round. Checked before the range, so a shot declared
+        # without a distance is not first paused for one it can never fire.
+        del state.combat.actions[action_id]
+        return _error(str(exc))
+    except ValueError as exc:
+        return _ruling(state, action, str(exc))
     damage = combat_rules.resolve_weapon_damage(weapon, distance_yards=distance_yards)
     if damage.damage is None:
         return _ruling(state, action, damage.reason)
@@ -382,10 +404,6 @@ def declare_action(
         if range_result.difficulty is None:
             return _ruling(state, action, range_result.reason)
         difficulty = range_result.difficulty
-    try:
-        action.update(_weapon_actor_evidence(state, actor, weapon, weapon_reference, weapon_instance))
-    except ValueError as exc:
-        return _ruling(state, action, str(exc))
     try:
         dice.max_expression_value(damage.damage)
         dice.max_expression_value(action.get('db', '0'))
@@ -855,6 +873,12 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     mode = attack_metadata.get('attack_mode')
     if mode not in ('melee', 'single_shot'):
         mode = 'melee'
+    declared_here = (source.get('attacks', {}).get(attack.id) or {}).get('attack_mode') == 'single_shot'
+    if mode == 'single_shot' and not declared_here and not _shoots(attack):
+        # A card marked single_shot as a whole still only shoots with a gun or a bow. A claw, a bite or a flung or
+        # floating blade (Corbitt's knife, POW against Dodge) is dodged like any blow; as a shot it waited every round
+        # for ammunition and a range nobody could give, and the Keeper cancelled it (49 rounds, 2026-10-09).
+        mode = 'melee'
     if mode == 'single_shot' and (attack.ammo_or_uses is None or attack.ammo_or_uses < 1
                                   or attack_metadata.get('distance_yards') is None or attack_metadata.get('base_range_yards') is None):
         action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
@@ -880,6 +904,23 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
               'source': deepcopy(source), 'npc_attack_id': attack.id, 'plan_id': plan_id}
     state.combat.actions[identity] = action
     return run_action(state, identity)
+
+
+_SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|火槍|槍械|左輪|弓|弩|\b(?:firearms?|guns?|handgun|pistol|revolver|'
+                       r'rifle|carbine|musket|shotgun|smg|submachine|machine gun|(?:long|short|cross)?bow)\b', re.IGNORECASE)
+
+
+_FIGHTING = re.compile(r'格鬥|鬥毆|\b(?:fighting|brawl)\b', re.IGNORECASE)
+
+
+def _shoots(attack: AttackRule) -> bool:
+    """Whether an enemy attack is a shot: it counts ammunition, or names a gun or a bow and is not rolled on a
+    Fighting skill (a rifle butt or a pistol whip is a blow)."""
+    if attack.ammo_or_uses is not None:
+        return True
+    if _FIGHTING.search(attack.skill_name or ''):
+        return False
+    return bool(_SHOOTING.search(f'{attack.skill_name} {attack.label}'))
 
 
 def _give_up_unplayable_enemy_turns(
@@ -1337,6 +1378,16 @@ def resolve_ruling(
             return _ruling(state, action, damage.reason or 'Unsupported changed attack mode')
         try:
             evidence = _weapon_actor_evidence(state, actor, weapon, reference, weapon_instance)
+        except OutOfAmmo as exc:
+            if action.get('checks'):
+                return _ruling(state, action, str(exc))
+            # Mapped onto a gun with no rounds left before anything was rolled: refused the way a declaration is,
+            # so the actor may reload or do something else instead of the fight waiting on another ruling.
+            del state.combat.actions[action_id]
+            state.combat.phase = 'READY'
+            refused = _error(str(exc))
+            combat_resources.record_event(state, event_id, 'ruling', data=deepcopy(refused), reason=reason)
+            return refused
         except ValueError as exc:
             return _ruling(state, action, str(exc))
         if action.get('checks') and action.get('skill') != evidence['skill']:
@@ -1648,7 +1699,7 @@ def apply_managed_damage(
     target = combat.find_combatant(state, target_id)
     if target is None:
         return {'ok': False, 'error': 'Unknown combat participant'}
-    _, armor_label, final = combat.planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
+    armor, armor_label, final = combat.planned_damage(state, target, raw_damage, damage_type, tags or [], bypass_armor)
     pc = combat.character_for_combatant(state, target) if target.is_pc else None
     effective = combat_resources.effective_character(state, pc) if pc else None
     before = effective.hp if effective else target.hp
@@ -1681,6 +1732,11 @@ def apply_managed_damage(
     target.hp = after
     target.defeated = after == 0 or bool(injury.get('unconscious'))
     armor_left = None if bypass_armor else combat.wear_armor(state, target, damage_type, tags or [], raw_damage - final)
+    if raw_damage - final > 0:
+        # Kept out of every public text; the log is where a run's armor can be checked afterwards.
+        logger.info('combat.armor target=%s armor=%s blocked=%d left=%d raw=%d final=%d event=%s',
+                    target.display_name, armor_label, raw_damage - final, armor if armor_left is None else armor_left,
+                    raw_damage, final, event_id)
     card = combat.card_for(state, target)
     if card:
         card.hp = after

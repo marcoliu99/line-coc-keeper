@@ -111,10 +111,11 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
                 attacks=tool_input.get("attacks") or ()),
             skills=_reviewed_skills(tool_input.get("skills")),
         ))
+        armor = f"（{note}）" if (note := combat.armor_note(target_state, added.combatant)) else ""
         if added.reused and added.completed_card:
             return support.ToolStateMutation(
                 f"（「{added.combatant.name}」已經在戰鬥中，沒有重複建立；原本缺的攻擊／能力已補上，"
-                "血量與狀態沿用原本那份，下一次輪到它時引擎就會讓它出手。）",
+                f"血量與狀態沿用原本那份，下一次輪到它時引擎就會讓它出手。）{armor}",
                 should_save=True,
             )
         if added.reused:
@@ -131,7 +132,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
                 f"如果這其實是同一隻，請明確更正「{new.display_name}」的建立紀錄，"
                 "並依原本倒下的狀態敘事。）"
             )
-        return support.ToolStateMutation(index_note, should_save=True)
+        return support.ToolStateMutation(index_note + armor, should_save=True)
 
     index_note = support.mutate_tool_state(state, mutate)
     if isinstance(index_note, dict):  # refused on the latest state
@@ -236,6 +237,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
             result: dict[str, Any] = {
                 "name": added.combatant.display_name, "ok": True, "reused": added.reused,
                 **({"completed_card": True} if added.completed_card else {}),
+                **({"armor": note} if (note := combat.armor_note(target_state, added.combatant)) else {}),
             }
             if index_note:
                 result["note"] = index_note

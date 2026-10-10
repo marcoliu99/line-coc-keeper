@@ -1053,7 +1053,9 @@ for _spec in _SPECS:
     if _spec.schema['name'] in {'add_npc_to_combat', 'initialize_combat'}:
         _source_schema = {'type': 'object', 'properties': {
             'url': {'type': 'string'}, 'revision': {'type': 'string'}, 'sha256': {'type': 'string'},
-            'attack_mode': {'type': 'string', 'enum': ['melee', 'single_shot']},
+            'attack_mode': {'type': 'string', 'enum': ['melee', 'single_shot'],
+                            'description': ('single_shot 只給槍、弓弩這類射擊武器（要附彈藥 ammo_or_uses）；爪、咬、刀、投擲物、'
+                                            '被操縱飛來的物品（Corbitt 的浮空匕首，調查員用閃避對抗）都填 melee。')},
             'extreme_rule': {'type': 'string', 'enum': ['maximum', 'impale']},
         }, 'required': ['url', 'revision', 'sha256', 'attack_mode', 'extreme_rule']}
         _properties = _spec.schema['input_schema']['properties']

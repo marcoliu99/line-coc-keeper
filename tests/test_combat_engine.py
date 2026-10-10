@@ -187,12 +187,27 @@ def test_b2_a_shot_spends_one_round_and_a_retry_spends_none():
     assert combat_resources.effective_character(after, after.characters["p1"]).weapons[".45 Automatic"]["ammo"] == 6
 
 
-def test_b2_an_empty_magazine_asks_for_a_ruling_before_any_roll():
+def test_b2_an_empty_magazine_is_refused_before_any_roll_without_pausing_the_fight():
+    """An empty gun is the player's to deal with (reload, or do something else); the fight does not wait on a ruling."""
     _battle(weapons={".45 Automatic": {"ammo": 0, "ammo_max": 7}}, first_enemy=False)
     declared, script, _ = _shoot([])
-    assert not declared["ok"] and declared["phase"] == "NEEDS_RULING"
+    assert not declared["ok"] and "沒有子彈了" in declared["error"] and "裝填" in declared["error"]
     assert script.rolls_taken == 0
     state = _load()
+    assert state.combat.phase == "READY" and not [a for a in state.combat.actions if not a.startswith("system:")], \
+        "nothing declared, nothing to rule on"
+
+
+def test_b2_an_empty_gun_declared_without_a_distance_is_refused_not_paused_for_the_distance():
+    _battle(weapons={".45 Automatic": {"ammo": 0, "ammo_max": 7}}, first_enemy=False)
+    state = _load()
+    enemy = next(p for p in state.combat.order if p.side == "enemy")
+    declared = combat_engine.handle(state, act.Declare(
+        action_id="shot-no-range", actor_id="調查員p1", target_id=enemy.combatant_id,
+        weapon_reference=".45 Automatic", action_kind="single_shot", distance_yards=None,
+    ))
+    assert not declared["ok"] and "沒有子彈了" in declared["error"], declared
+    assert state.combat.phase == "READY" and "shot-no-range" not in state.combat.actions
     assert combat_resources.effective_character(state, state.characters["p1"]).weapons[".45 Automatic"]["ammo"] == 0
 
 
@@ -643,3 +658,25 @@ def test_a_non_critical_attack_still_offers_dodge_and_fight_back():
     run, _ = _enemy_turn([20])
     assert run["phase"] == "PLAYER_CHOICE"
     assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dodge", "counter"]
+
+
+def test_b2_a_ruling_that_maps_the_shot_onto_an_empty_gun_refuses_it_instead_of_pausing_again():
+    _battle(weapons={".45 Automatic": {"ammo": 0, "ammo_max": 7}}, first_enemy=False)
+    state = _load()
+    enemy = next(p for p in state.combat.order if p.side == "enemy")
+    paused = combat_engine.handle(state, act.Declare(
+        action_id="shot-unmapped", actor_id="調查員p1", target_id=enemy.combatant_id,
+        weapon_reference="some odd pistol", action_kind="single_shot", distance_yards=5,
+    ))
+    assert paused["phase"] == "NEEDS_RULING", paused
+    resumed = combat_engine.handle(state, act.Rule(
+        combat_id=state.combat.combat_id, action_id="shot-unmapped", event_id="ruling:map", reason="it is the .45",
+        decision="resume", weapon_reference=".45 Automatic", distance_yards=5,
+    ))
+    assert not resumed["ok"] and "沒有子彈了" in resumed["error"], resumed
+    assert state.combat.phase == "READY" and "shot-unmapped" not in state.combat.actions
+    again = combat_engine.handle(state, act.Rule(
+        combat_id=state.combat.combat_id, action_id="shot-unmapped", event_id="ruling:map", reason="it is the .45",
+        decision="resume", weapon_reference=".45 Automatic", distance_yards=5,
+    ))
+    assert again == resumed, "a resent ruling replays its refusal"

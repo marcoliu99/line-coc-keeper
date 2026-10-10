@@ -122,6 +122,8 @@ def test_registering_the_skipped_enemy_again_with_attacks_lets_it_act():
                                             "attacks": [{"name": "Claw", "skill_value": 40, "damage": "1D4"}],
                                             "armor": [{"label": "ward", "value": "2D6", "depletes": True}]})
     assert "已補上" in str(added), added
+    assert "有護甲（暗擲，數值不公開）" in str(added) and "8" not in str(added.get("note", "")), \
+        "the registration says the armor is there, never its value"
     ward = combat.card_for(_load(), thing).armor
     assert [(a.value, a.rolled_from, a.depletes) for a in ward] == [(8, "2D6", True)], "the armor comes with the attacks"
     state = _load()
@@ -1031,3 +1033,37 @@ def test_a_dodged_blow_that_owes_a_con_roll_is_not_narrated_again_after_it():
     assert _load().pending_checks["p1"]["skill"] == "CON"
     con, _ = _player("/coc check", [10])
     assert not con.resolved_event["combat_receipt"]["blow"]
+
+
+def test_an_empty_gun_is_told_to_the_player_instead_of_a_tool_failure():
+    from app.domain.models import MechanicResult, StateDelta, TurnResolution
+
+    refused = {"ok": False, "provisional": True,  # what the managed declaration tool returns
+               "error": "左輪沒有子彈了（剩 0 發）：這一槍開不出去。要先裝填（身上有子彈的話），或這一輪改做別的事。"}
+    outcome = turn_delivery.observe_tool("declare_combat_action", refused, 1, {})
+    assert outcome.audience == "public" and not outcome.success
+    assert outcome.public_text == refused["error"], "nothing was declared, so nothing is provisional"
+    result = MechanicResult(success=False, action_type="tool_calls", narrative_facts=[], state_delta=StateDelta(),
+                            turn_resolution=TurnResolution(disposition="incomplete", validation_code="model_incomplete"),
+                            observed_outcomes=[outcome], tool_calls=(("declare_combat_action", False),),
+                            fallback_reason="tool_failure")
+    text = prompt_config.enforce_mechanic_check_consistency("", result)
+    assert text == refused["error"] and "工具" not in text
+    paused = turn_delivery.observe_tool("resolve_combat_ruling", {**refused, "phase": "NEEDS_RULING"}, 1, {})
+    assert paused.audience == "internal", "a shot still waiting on a ruling is not told as refused"
+    changed = MechanicResult(success=False, action_type="tool_calls", narrative_facts=[], state_delta=StateDelta(),
+                             turn_resolution=result.turn_resolution, observed_outcomes=[outcome],
+                             tool_calls=result.tool_calls, fallback_reason="tool_failure",
+                             check_status={"state_changed": True})
+    assert "已記錄的變更會保留" in prompt_config.enforce_mechanic_check_consistency("", changed)
+
+
+def test_each_hit_the_armor_stops_is_logged_for_the_keeper_not_shown(caplog):
+    """A run's armor can be checked from its log afterwards: what each hit's armor stopped and what is left."""
+    state, enemy = _warded_enemy("2D6")  # 8 points
+    with caplog.at_level("INFO", logger="app.combat_flow"):
+        first = combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:1")
+        combat_flow.apply_managed_damage(state, enemy.combatant_id, 5, event_id="t:2")
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("combat.armor")]
+    assert "blocked=5 left=3" in lines[0] and "blocked=3 left=0" in lines[1], lines
+    assert "Flesh Ward" not in first["public_summary"] and "3" not in first["public_summary"]
