@@ -1700,7 +1700,7 @@
       ],
       "path": "docs/specs/refactor/state_transaction_design_spec.md",
       "zh_path": "docs/specs/refactor/state_transaction_design_spec_zh.md",
-      "source_revision": "2affd06c9b90105d454d19c6eb4f7e7c1fb232f8"
+      "source_revision": "05cbbb2da9804b783743a1b2033c9a56f2000945"
     },
     {
       "title": "Check engine",

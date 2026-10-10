@@ -37,6 +37,8 @@ mutate(conversation_id, mutation, expected_timeline, action_id, request_fingerpr
 
 Action ids come from a trusted owner of the operation, never from text similarity: the turn id owned by `run_turn` plus a digest of the committed entries (`turn:<id>:<digest>`), and the stable event id of a resolved check (`check-event:<event_id>`). Phase 2 and 3 add check and combat action ids on the same ledger.
 
+The value helpers `mutate_value` and `run_snapshot` return `TxResult.value`, which a replayed action leaves empty (its stored receipt is in `TxResult.result`). They therefore refuse an `action_id` with a `ValueError`; a replayable operation calls `mutate` or `commit_for_snapshot` and reads the `TxResult`, as `mutate_tool_state_once` does.
+
 ## Writers moved onto the boundary
 
 | Former route | Now |
