@@ -426,6 +426,8 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
+            if status.get("combat_opened") and warning in text:
+                return text  # the pass before the Guard already put the narration in front of this warning
             confirmed = turn_delivery.distinct_lines(
                 [o.public_text for o in result.observed_outcomes if o.audience == "public" and o.public_text])
             if (not status.get("pending") and not status.get("pending_luck") and not status.get("state_changed")
@@ -473,7 +475,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
             # A deferral may only change state by setting up the fight (turn_resolution._setup_only): the line that
             # started it keeps its scene, the enemy rising and who goes first, rather than only the wait (rerun8 turn 33).
             if status.get("state_changed") and text.strip():
-                return f"{text.rstrip()}\n\n{waiting}"
+                return text if waiting in text else f"{text.rstrip()}\n\n{waiting}"  # once, not once per pass
             return waiting
         if resolution.disposition == "cancelled":
             return "已取消這筆尚未擲骰的檢定；已結算的結果與其他人的待處理項目保持不變。"

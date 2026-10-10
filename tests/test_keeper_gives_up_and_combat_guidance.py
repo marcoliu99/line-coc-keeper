@@ -101,6 +101,18 @@ class FightOpeningKeptTests(unittest.TestCase):
         self.assertTrue(reply.startswith("木板後的乾屍睜開眼。"))
         self.assertIn("Luck", reply)
 
+    def test_the_repair_runs_before_and_after_the_guard_without_doubling(self):
+        opened = _result("incomplete", "model_incomplete", tool_calls=(("initialize_combat", True),),
+                         state_changed=True, combat_opened=True,
+                         pending_luck={"investigator": "George", "roll": 50, "options": []})
+        state = GroupState(group_id="g")
+        once = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", opened, state=state)
+        self.assertEqual(prompt_config.enforce_mechanic_check_consistency(once, opened, state=state), once)
+        self.assertEqual(once.count("這次行動尚未完整處理"), 1)
+        deferred = _result("deferred", state_changed=True, waiting_for_name="George")
+        first = prompt_config.enforce_mechanic_check_consistency("乾屍睜開眼。", deferred)
+        self.assertEqual(prompt_config.enforce_mechanic_check_consistency(first, deferred), first)
+
     def test_an_incomplete_turn_without_a_fight_start_does_not(self):
         plain = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", True),))
         reply = prompt_config.enforce_mechanic_check_consistency("某段敘事。", plain, state=GroupState(group_id="g"))
