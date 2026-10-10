@@ -73,7 +73,20 @@ def _gave_up_with_evidence(tool_events: list[dict]) -> bool:
     """
     return (bool(tool_events)
             and all(e["result"].get("ok") and e["name"] in turn_resolution.INFORMATION_QUERY_TOOLS for e in tool_events)
-            and any(e["name"] == "search_scenario" and e["result"].get("results") for e in tool_events))
+            and any(e["name"] == "search_scenario" and e["result"].get("results") for e in tool_events)
+            # A search that says the evidence it found is not enough to act on is a reason to stay incomplete.
+            and not any(e["name"] == "search_scenario" and e["result"].get("complete_for_action") is False
+                        for e in tool_events))
+
+
+_FIGHT_SETUP_TOOLS = frozenset({"initialize_combat", "start_combat", "add_npc_to_combat"})
+
+
+def _combat_opened(state, tool_events: list[dict]) -> bool:
+    """A call this turn took the battle from inactive to active, and it is still active."""
+    return bool(state.combat.active) and any(
+        e["name"] in _FIGHT_SETUP_TOOLS and e["result"].get("ok") and not e.get("combat_active_before")
+        for e in tool_events)
 
 
 async def run_executor(message: AgentMessage) -> MechanicResult:
@@ -270,7 +283,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             'instruction': '剛才有工具拒絕了這次呼叫，沒有改動任何狀態；它的錯誤訊息已說明該改用哪個工具'
                                 '或怎麼補參數。照那個說明完成玩家這次的行動；確實做不到時才保留 incomplete 並說明原因。',
                         }
-                    if verified.validation_code == 'model_incomplete' and _gave_up_with_evidence(tool_events):
+                    if (verified.validation_code == 'model_incomplete' and _gave_up_with_evidence(tool_events)
+                            and not check_status.get("scenario_evidence_blocked")):
                         return {
                             'validation_code': 'evidence_not_used', 'reason': verified.reason,
                             'instruction': '剛才的劇本查詢已有結果，而且沒有改動任何狀態。依查到的內容處理玩家這次的行動：'
@@ -337,6 +351,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
         state_delta=StateDelta(),
         check_status={**check_status, "tool_event_count": len(tool_events),
                       "state_changed": state_changed,
+                      "combat_opened": _combat_opened(state, tool_events),
                       "dice_rolled": any(e["result"].get("ok") and (e["name"] in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"} or e["result"].get("resolved")) for e in tool_events)},
         events=inventory_events,
         turn_resolution=resolution,

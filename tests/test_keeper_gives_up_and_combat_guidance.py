@@ -34,6 +34,7 @@ class GaveUpWithEvidenceTests(unittest.TestCase):
         self.assertFalse(executor._gave_up_with_evidence([_event("search_scenario", results="")]))
         self.assertFalse(executor._gave_up_with_evidence([_event("search_scenario", results="x"), _event("skill_check")]))
         self.assertFalse(executor._gave_up_with_evidence([_event("search_scenario", results="x"), _event("roll_dice", ok=False)]))
+        self.assertFalse(executor._gave_up_with_evidence([_event("search_scenario", results="x", complete_for_action=False)]))
 
 
 class WaitOnNobodyTests(unittest.TestCase):
@@ -83,9 +84,19 @@ class CombatGuidanceAddresseeTests(unittest.TestCase):
 
 
 class FightOpeningKeptTests(unittest.TestCase):
+    def test_a_fight_opened_this_turn_is_a_transition_not_a_tool_name(self):
+        state = _battle()
+        opened = [{**_event("add_npc_to_combat"), "combat_active_before": False}]
+        self.assertTrue(executor._combat_opened(state, opened))
+        already = [{**_event("initialize_combat"), "combat_active_before": True}]
+        self.assertFalse(executor._combat_opened(state, already))
+        state.combat.active = False
+        self.assertFalse(executor._combat_opened(state, opened))
+
     def test_an_incomplete_turn_that_started_the_fight_keeps_its_narration(self):
         opened = _result("incomplete", "model_incomplete", tool_calls=(("initialize_combat", True), ("sanity_check", True)),
-                         state_changed=True, pending_luck={"investigator": "George", "roll": 50, "options": []})
+                         state_changed=True, combat_opened=True,
+                         pending_luck={"investigator": "George", "roll": 50, "options": []})
         reply = prompt_config.enforce_mechanic_check_consistency("木板後的乾屍睜開眼。", opened, state=GroupState(group_id="g"))
         self.assertTrue(reply.startswith("木板後的乾屍睜開眼。"))
         self.assertIn("Luck", reply)

@@ -17,10 +17,10 @@
 
 ## 變更
 
-- **找到劇本文字的守密人再問一次。** Executor 的 `final_feedback` 裡，`model_incomplete` 的結論在下列情況可用掉既有的那一次重試：這回合所有呼叫都是成功的查詢（`INFORMATION_QUERY_TOOLS`），而且至少一次 `search_scenario` 有查到文字。提示會說查詢已有結果、狀態沒有改動，請依查到的內容用工具處理，或以 `no_mechanics` 引用那段敘事；只有查到的文字確實與行動無關時才保留 `incomplete`。沒有任何狀態改動，所以重試不會把任何事套用兩次。
+- **找到劇本文字的守密人再問一次。** Executor 的 `final_feedback` 裡，`model_incomplete` 的結論在下列情況可用掉既有的那一次重試：這回合所有呼叫都是成功的查詢（`INFORMATION_QUERY_TOOLS`），至少一次 `search_scenario` 有查到文字，且沒有任何搜尋把結果標為 `complete_for_action: false`（gateway 也沒有因證據不完整而封鎖這回合）。提示會說查詢已有結果、狀態沒有改動，請依查到的內容用工具處理，或以 `no_mechanics` 引用那段敘事；只有查到的文字確實與行動無關時才保留 `incomplete`。沒有任何狀態改動，所以重試不會把任何事套用兩次。
 - **在等不存在的人，就是沒有行動。** `turn_fallback.classify` 在回合沒呼叫工具、也沒有任何人有待擲檢定或 Luck 決定時，把 `deferral_not_verified` 歸為 `executor_no_action`。這個原因可以重試，supervisor 會再跑一次 Executor；再失敗，玩家看到的是「沒有行動」的文字，不是關於不存在檢定的說法。有待處理項目、或呼叫過工具時，仍歸為待處理狀態。
 - **戰鬥提示知道是誰在問。** `combat_guidance` 多收行動角色；目前行動者就是提問者時，回「戰鬥進行中，現在輪到你（Julian Price）行動。目前的敵人：「Youngling（1）」…。請說明要攻擊哪一個、用什麼方式；指名的目標必須是上面列出的敵人。」，列出還站著的敵人。其他人仍被告知等待。`enforce_mechanic_check_consistency` 傳入 `turn_resolution.actor_character_id`。
-- **開戰敘事在 incomplete 回合也保留。** incomplete 回合的呼叫裡有成功的 `initialize_combat` 或 `start_combat`、敘事又不是空的時，回覆先是敘事，再接確認行和警告，最後是還欠的東西（Luck 決定、待擲檢定）。和延後那條路同一個規則。
+- **開戰敘事在 incomplete 回合也保留。** 這回合有呼叫把戰鬥從未開啟變成開啟（`initialize_combat`、`start_combat` 或 `add_npc_to_combat`，看記錄下來的狀態轉換，不看工具名稱）、敘事又不是空的時，回覆先是敘事，再接確認行和警告，最後是還欠的東西（Luck 決定、待擲檢定）。和延後那條路同一個規則。
 
 ## 不變更
 
@@ -34,4 +34,5 @@
 - 有查到文字的成功搜尋符合重試條件；沒有事件、結果為空、呼叫裡有寫入、或有拒絕，都不符合。
 - `deferral_not_verified` 在沒工具、沒待處理項目時歸為 `executor_no_action`；別人有待擲檢定、或呼叫過工具時，歸為 `unresolved_pending_state`（`tests/test_turn_fallback.py` 的參數表為第一種情況更新）。
 - 目前行動者會被告知輪到自己和哪些敵人還站著（倒下的不列出）；其他玩家被告知等待；回覆會傳入行動角色。
-- 有成功 `initialize_combat` 的 incomplete 回合以敘事開頭，並仍帶 Luck 指示；沒有的只保留警告。
+- 只有「未開啟→開啟」的轉換算開戰：未開啟時的 `add_npc_to_combat` 算，戰鬥已在進行時的 `initialize_combat` 不算。開了戰的 incomplete 回合以敘事開頭，並仍帶 Luck 指示；沒有的只保留警告。
+- 搜尋結果標為 `complete_for_action: false` 的回合不符合重試條件。

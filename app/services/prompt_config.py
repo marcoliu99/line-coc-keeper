@@ -414,7 +414,6 @@ def enforce_resolved_check_consistency(
 
 
 _SETTLING = frozenset({"preview_combat_settlement", "confirm_combat_settlement", "get_combat_status"})
-_OPENS_A_FIGHT = frozenset({"initialize_combat", "start_combat"})
 
 
 def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, state: GroupState | None = None) -> str:
@@ -435,7 +434,7 @@ def enforce_mechanic_check_consistency(text: str, result: MechanicResult, *, sta
                 return "\n".join(confirmed)
             if confirmed:
                 warning = "\n".join(confirmed) + "\n\n" + warning
-            if text.strip() and any(name in _OPENS_A_FIGHT and ok for name, ok in result.tool_calls):
+            if text.strip() and status.get("combat_opened"):
                 # The fight did start: the enemy rising is told before whatever is still owed, as a deferral keeps it
                 # (Haunting rerun1 turn 28, where a Sanity check left the turn incomplete).
                 warning = f"{text.rstrip()}\n\n{warning}"
