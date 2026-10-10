@@ -23,7 +23,7 @@ Markdown 轉換檔（`scenario_Alone_Against_the_Flames.md`，160 KB）於 2026-
 | 跳轉寫法 | 只有 `go to N` 和 `turn to N`，不分大小寫，有時跨行（「go to\n189」）。所有目標都存在。 |
 | 每段出口數 | 0 個：15 段，1 個：139 段，2 個：93 段，3 個：14 段，4 個：4 段，5 個：2 段，6 個：2 段，7 個：1 段（合計 270） |
 | 結局 | 15 段以「The End」收尾：77、80、92、123、171、185、193、196、220、223、231、243、247、255、270 |
-| 隱藏段落 | 四段會解鎖一個加法：「add 100 / 40 / 50 / 20 to your current entry number and go to that new entry」（112、197、202、259）。全書有八段沒有任何 `go to` 指向它們，只能靠加法到達：50、80、90、107、171、187、200、212。沒有加法時 55 段到不了；加上後每一段都可達。 |
+| 隱藏段落 | 四段會解鎖一個加法：「add 100 / 40 / 50 / 20 to your current entry number and go to that new entry」（112、197、202、259；2026-10-10 以 PDF 原文核對：這幾句在 PDF 裡都落在同一個標題下，抽查的段落在轉換檔裡的第一句也都對應 PDF 同號段落）。全書有八段沒有任何 `go to` 指向它們，只能靠加法到達：50、80、90、107、171、187、200、212。沒有加法時 55 段到不了；加上後每一段都可達。 |
 | 擲骰 | 66 段含有「roll」一字；約 12 段寫成可選（「You may make a Hard Spot Hidden roll」、「If you wish to Push」），其餘是必須（「Make a Climb roll」）。幸運 7、SAN 17、生命值 23、困難 12、極難 4、推骰 4、對抗 5 |
 | 條件 | 15 處「If you have …」；26 處「check-mark the box beside the skill」（成長） |
 | 戰鬥 | 3 段（熊、騎士、工匠）寫「Conduct close-quarters combat using pages 12-13 of the Quick-Start Rules」 |
@@ -43,7 +43,7 @@ Markdown 轉換檔（`scenario_Alone_Against_the_Flames.md`，160 KB）於 2026-
 
 ### 待決定
 
-- **角色創建。** 第 1 段之前必須有讀者的角色：目前沒有角色時玩家的發言會被拒絕（`app/commands/router.py`），`/coc start` 也拒絕沒有角色的局，所以光靠 `set_skill` 和 `adjust_character` 無法開始這本書。而且開局前一般發言會被丟掉，所以也不能在讀者第一次發言時建角色。建議：這個模式下 `/coc start` 替執行的玩家建一個暫定調查員（走現有的快速建卡路徑，名字取自玩家、職業留空），並把他記為讀者；之後書裡的職業段落再用 `set_skill` 和 `adjust_character` 設定信用評級和職業技能。讀者若已用 `/coc pc` 建好角色就沿用，守密人只核對。另一個做法是要求在第 1 段之前先 `/coc pc`，跳過創建段落。
+- **角色創建。** 第 1 段之前必須有讀者的角色：目前沒有角色時玩家的發言會被拒絕（`app/commands/router.py`），`/coc start` 也拒絕沒有角色的局，所以光靠 `set_skill` 和 `adjust_character` 無法開始這本書。而且開局前一般發言會被丟掉，所以也不能在讀者第一次發言時建角色。建議：這個模式下 `/coc start` 替執行的玩家建一個暫定調查員（走現有的快速建卡路徑，名字取自玩家、職業留空），並把他記為讀者；之後書裡的職業段落再用 `set_skill` 和 `adjust_character` 設定信用評級和職業技能，職業本身則用這個功能新增的設定方式（`adjust_character` 加 `occupation` 欄位，或模式自己的工具）：目前沒有工具能改角色職業，快速建卡會把空白職業填成「自由人」。讀者若已用 `/coc pc` 建好角色就沿用，守密人只核對。另一個做法是要求在第 1 段之前先 `/coc pc`，跳過創建段落。
 - **交付方式。** 建議分兩個 PR。第一個做標記、切段、狀態、`go_to_entry`、只看目前段落和檢定對接，這樣就能把整本玩完。第二個做隱藏加法、成長標記和結局／重玩回覆。
 
 ## 不在範圍內
