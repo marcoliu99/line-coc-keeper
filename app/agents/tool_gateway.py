@@ -150,7 +150,7 @@ def make_tool_executor(
                     try:
                         if tool_name in {"apply_resolved_check_damage", "create_triggered_check", "declare_combat_action", "submit_combat_choice", "request_stabilization_check",
                                          "add_carried_item", "remove_carried_item", "transfer_item",
-                                         "advance_combat_turn"}:
+                                         "advance_combat_turn", "get_weapon_definition"}:
                             result = tool_dispatch.execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests,
                                 speaker_role, actor_id=actor_id,
