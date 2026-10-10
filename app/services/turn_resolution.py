@@ -68,6 +68,17 @@ def _combat_changed(event: dict[str, Any]) -> bool:
     return bool((event.get('gameplay_before') or {}).get('combat') != (event.get('gameplay_after') or {}).get('combat'))
 
 
+def _settled_preview(state: GroupState, event: dict[str, Any]) -> bool:
+    """Whether an ``end_combat`` preview's settlement was committed by the end of the turn. The receipt for the
+    preview's own combat is the evidence, not the combat slot: a turn may confirm one fight and start the next."""
+    preview = event['result'].get('preview')
+    if not event['result'].get('ok') or not event.get('combat_active_before') or not isinstance(preview, dict):
+        return False
+    receipt = state.closed_combat_receipts.get(str(preview.get('combat_id') or ''), {})
+    return bool(preview.get('settlement_id') and receipt.get('status') == 'committed'
+                and receipt.get('settlement_id') == preview.get('settlement_id'))
+
+
 def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: list[str], actor_name: str) -> tuple[bool, bool]:
     """Return (verified mutation, independent exact-item transfer).
 
@@ -92,8 +103,12 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             # failure, and the calls that did change the pack prove the final state below.
             continue
         replay_of_seen = bool(result.get('replayed')) and result.get('operation_id') in committed_operations
+        # A fight this turn settled verifies its own end_combat: the preview's settlement is the committed receipt,
+        # whether or not the decision cited the preview (it usually cites the confirmation that followed). A fight
+        # rolled back after the preview also ends inactive, and proves nothing.
+        closed_this_turn = name == 'end_combat' and _settled_preview(state, event)
         if (name in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}
-                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen
+                and (not result.get('ok') or (f'tool:{i}' not in refs and not replay_of_seen and not closed_this_turn
                                                     and result.get('operation_id') not in cited_operations))):
             return False, False
         if name == 'transfer_item':
@@ -174,7 +189,7 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
             combat_completed = combat_completed or bool(
                 result.get('combat_id') == state.combat.combat_id and _combat_changed(event))
         if name == 'end_combat':
-            ended = bool(event.get('combat_active_before') and not state.combat.active)
+            ended = ended or _settled_preview(state, event)
     chars = {c.name: c for c in state.active_characters()}
     by_id = {(c.character_id or c.owner_id): c for c in state.active_characters()}
     if any((by_id.get(owner) or chars.get(owner)) is None or (by_id.get(owner) or chars[owner]).carried_items != items

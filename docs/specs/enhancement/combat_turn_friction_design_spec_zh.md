@@ -100,6 +100,8 @@ CoC 7e 規則本身不變：閃避與反擊仍是防守方的選擇、以對抗�
 
 2026-10-10 的兩場四人《鬼屋》run（Codex 跑 `fac75820`、OpenAI 跑 `a62d605`）都登記了 Corbitt 的護甲（登記結果寫「有護甲（暗擲，數值不公開）」），但一點傷害都沒擋到：兩份 log 都沒有 `combat.armor`，`fac75820` 那場一槍、三拳、一刀就打掉全部 16 HP。護甲規則只在 `applies_to` 是 `all` 或等於這一擊的傷害類型時生效，而引擎結算的武器攻擊全是 `physical`；護甲項目以前沒有 schema，守密人讀到劇本的 "armor against non-magical attacks" 就照抄進去，護甲便靜靜失效。現在護甲項目有 schema（`label`、`value` 填數字或骰式、`applies_to` 是 `all`、`physical`、`magic` 或招式／效果登記的單字傷害類型、`bypass_tags`、`depletes`、`public_hint`），`combat.armor_scope` 把句子讀成 `all`（寫武器或非魔法的讀成 `physical`，寫法術的讀成 `magic`；`fire` 這類單字保持原樣，照舊精確比對），每筆登記的護甲寫一行 log：`combat.armor.registered enemy=… label=… value=… applies_to=… depletes=… rolled_from=…`，下一場 run 的 log 就看得到守密人填了什麼。數值不進任何給玩家的文字。
 
+2026-10-10 在 `fac75820` 上的四人《鬼屋》run 第 45 回合，Samuel 在 Corbitt 倒下後又宣告攻擊；守密人正確地呼叫 `end_combat` 和 `confirm_combat_settlement`，戰鬥也關了，玩家卻看到「工具的結果沒有通過核對，這次行動沒有被接受」，因為 `turn_resolution._mutation_evidence` 會作廢沒引用成功 `end_combat` 的決定，而這次決定只引用了後面的確認。現在只要回合結束時預覽已被確認（`combat_active_before` 為真，且預覽所屬那場戰鬥的結案收據以它的 `settlement_id` 標記為 committed；不看目前的戰鬥欄位，因為同一回合可以結掉一場再開下一場），`end_combat` 不論有沒有被引用都算已驗證：收據本身就是證據，和物品交接的收據一樣。只做了預覽、戰鬥仍在進行的 `end_combat`，以及預覽後被 rollback 的戰鬥（同樣不再進行，但什麼都沒確認），仍然不能單獨當作完成。
+
 ## 未做
 
 - 調查員的反擊仍用鬥毆與 1D3，而不是手上的武器。

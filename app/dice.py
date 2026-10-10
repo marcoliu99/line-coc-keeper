@@ -78,6 +78,16 @@ class RollResult:
         return f"{self.expression} = [{rolls_str}]{mod_str} = {self.total}"
 
 
+def is_percentile(expression: str) -> bool:
+    """Whether the expression is one positive d100 and nothing else, however it is spelled ("d100", "+1d100",
+    "01d100"); an expression the grammar rejects is not."""
+    try:
+        dice, modifier = _parse_expression(expression)
+    except ValueError:
+        return False
+    return modifier == 0 and dice == [(1, 1, 100)]
+
+
 def roll_expression(expression: str) -> RollResult:
     """Roll a bounded sum, e.g. '3d6+2', '1d8+1d4-1', or '-2'.
 
