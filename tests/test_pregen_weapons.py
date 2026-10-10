@@ -77,3 +77,11 @@ def test_a_thrown_weapon_is_a_ranged_shot_with_the_thrower_s_range():
 def test_a_sheet_weapon_keeps_the_catalog_s_reload_cadence():
     row = pregen_weapons.definition_row("Crossbow", {"skill": "射擊（弓）", "damage": "1D8+2"}, digest=DIGEST)
     assert row is not None and row["rounds_per_shot"] == 2
+
+
+def test_a_role_sheet_weapon_with_an_english_skill_is_still_a_weapon():
+    text = ("【角色資料】\n姓名：Evelyn Carter\n【屬性】\n力量 STR：50\n"
+            "【武器】\nHunting Knife\n技能：Fighting (Brawl)\n傷害：1D4+DB\n")
+    pregen = pregen_extractor.parse_role_sheet_text(text)
+    assert pregen is not None and "Hunting Knife" not in pregen["carried_items"]
+    assert pregen["weapons"]["Hunting Knife"]["definition"]["damage"] == "1d4"

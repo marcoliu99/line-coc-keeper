@@ -572,7 +572,7 @@ _WEAPON_NAME_KEYWORDS = (
 
 # A block's "技能" field naming one of these implies a combat/weapon skill —
 # COC7e's own official skill names for anything you'd carry a weapon to use.
-_COMBAT_SKILL_HINTS = ("射擊", "格鬥", "投擲")
+_COMBAT_SKILL_HINTS = ("射擊", "格鬥", "投擲", "firearms", "fighting", "brawl", "throw")
 
 # Generic-category keyword -> canonical ammo-table key (see _AMMO_TABLE). A
 # bare "手槍" with neither "左輪" nor "半自動" is deliberately NOT mapped
@@ -627,7 +627,7 @@ def _looks_like_weapon(name: str, fields: dict[str, str]) -> bool:
     if any(kw in name or kw in lowered_name for kw in _WEAPON_NAME_KEYWORDS):
         return True
     skill_value = next((v for k, v in fields.items() if "技能" in k), None)
-    return bool(skill_value) and any(hint in (skill_value or "") for hint in _COMBAT_SKILL_HINTS)
+    return bool(skill_value) and any(hint in (skill_value or "").lower() for hint in _COMBAT_SKILL_HINTS)
 
 
 def _sheet_weapon_stats(fields: dict[str, str]) -> dict[str, str]:
