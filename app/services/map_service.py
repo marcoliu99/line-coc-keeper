@@ -23,7 +23,7 @@ from app.config import SCENARIO_RAG_ENABLED
 from app.models import (
     GroupState,
 )
-from app.repositories import state_transaction
+from app.repositories import scenario_maps, state_transaction
 from app.repositories.group_state import load_state
 from app.services import mutation_admission
 
@@ -253,14 +253,20 @@ async def handle_map_upload(
         state.scenario_location_index = scenario_index.merge_scene_map_locations(
             state.scenario_location_index, state.scene_maps,
             replaced=str(previous.get("location_name") or "") if isinstance(previous, dict) else "")
-        state_transaction.commit_snapshot(state)
+        scenario_id = state.scenario_library_id or None
+        title = state.scenario_title if scenario_id else ""
+        # Kept with the scenario like a role card, so a new game or choosing the scenario again needs no re-upload.
+        state_transaction.commit_snapshot(
+            state, mutate_tx=lambda conn: scenario_maps.save(conn, conversation_id, scenario_id, {key: data}))
 
     entry_room = scene_map_engine.get_room(data, data.get("entry_room_id", ""))
     entry_note = f"，入口房間「{entry_room['name']}」" if entry_room else ""
     warning_note = ""
     if import_warnings:
         warning_note = "\n\n⚠️ 轉換時有幾個地方略過了：\n" + "\n".join(f"・{w}" for w in import_warnings)
+    kept_note = (f"已和《{title}》一起保存，之後開新局或重新選這個劇本都會自動帶入。" if title
+                 else "目前還沒有載入劇本，地圖會跟下一個載入的劇本一起保存。")
     await push(
         f"地圖「{data.get('location_name') or key}」已儲存（{len(data['rooms'])} 個房間{entry_note}）。\n"
-        f"用「/coc enter {key}」載入這張地圖。" + warning_note
+        f"{kept_note}\n用「/coc enter {key}」載入這張地圖。" + warning_note
     )

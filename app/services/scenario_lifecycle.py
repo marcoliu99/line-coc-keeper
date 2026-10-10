@@ -26,7 +26,7 @@ from app import (
 )
 from app.keeper_tools import resource_bridge
 from app.models import GroupState
-from app.repositories import manual_pregens, state_transaction
+from app.repositories import manual_pregens, scenario_maps, state_transaction
 from app.repositories.group_state import load_state
 
 _logger = logging.getLogger(__name__)
@@ -159,10 +159,15 @@ def _name_kept_map_locations(state: GroupState) -> None:
         state.scenario_location_index, state.scene_maps)
 
 
-def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, variant_id: str) -> None:
+def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, variant_id: str, *,
+                  same_scenario: bool) -> None:
     scenario_activation.install_context_fields(
         state, scenario_id, context, variant_id=variant_id, preserve_maps=True,
     )
+    # The uploaded maps that stay: this scenario's saved ones, plus whatever is running when it is the same scenario
+    # chosen again. Another scenario's uploads are not carried into this one.
+    kept = (scenario_maps.custom(state.scene_maps) if same_scenario
+            else scenario_maps.load(state.group_id, scenario_id))
     old_timeline_id = state.timeline_id or f"legacy-{state.group_id}"
     state.timeline_id = f"timeline-{uuid4().hex[:8]}"
     state.pending_checks.clear()
@@ -174,7 +179,7 @@ def _use_existing(state: GroupState, context: dict[str, Any], scenario_id: str, 
         old_timeline_id=old_timeline_id, requested_timeline_id=state.timeline_id,
         provider="openai",
     )
-    _keep_valid_map_locations(state, context["scene_maps"])
+    _keep_valid_map_locations(state, {**context["scene_maps"], **kept})
     _name_kept_map_locations(state)  # after the maps are settled: the ones that will be committed
     state.openai_previous_response_id = ""
     state.openai_previous_response_timeline_id = ""
@@ -187,6 +192,10 @@ def _commit_activation(
     claimed: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, bool]:
     install_result: dict[str, bool] = {}
+    if old_scenario_id is None and (waiting := scenario_maps.load(state.group_id, None)):
+        # Maps uploaded before any scenario was loaded join the first one, as role cards do.
+        state.scene_maps = {**state.scene_maps, **waiting}
+        _name_kept_map_locations(state)
 
     def install_cards(conn) -> None:
         manual_pregens.capture_legacy(conn, state.group_id, old_scenario_id, old_pool, old_hash)
@@ -194,6 +203,10 @@ def _commit_activation(
             conn, state.group_id, scenario_id, context,
             bind_unassigned=(old_scenario_id is None), claimed=claimed,
         )
+        # Every uploaded map the scenario runs with is kept for it, including one uploaded before maps were saved.
+        scenario_maps.save(conn, state.group_id, scenario_id, scenario_maps.custom(state.scene_maps))
+        if old_scenario_id is None:
+            scenario_maps.drop_pending(conn, state.group_id)
 
     _, image_refreshed = scenario_activation.commit_and_refresh(
         lambda: state_transaction.commit_snapshot(state, mutate_tx=install_cards),
@@ -493,14 +506,15 @@ async def activate_existing_scenario(
                 old_hash = scenario_library.load_context(old_scenario_id)["manifest"].get("content_hash", "")
             except (FileNotFoundError, ValueError):
                 pass
-        _use_existing(state, context, scenario_id, selected_variant)
-        artifact_notice = scenario_index.report_location_index(
-            state.scenario_location_index, source="scenario_use",
-            scenario_title=state.scenario_title, scene_maps=state.scene_maps,
-        )
+        _use_existing(state, context, scenario_id, selected_variant, same_scenario=old_scenario_id == scenario_id)
         image_refreshed, stale_cards = _commit_activation(
             state, scenario_id, context, old_scenario_id=old_scenario_id,
             old_pool=old_pool, old_hash=old_hash,
+        )
+        # After the commit: maps waiting for a scenario join this one there.
+        artifact_notice = scenario_index.report_location_index(
+            state.scenario_location_index, source="scenario_use",
+            scenario_title=state.scenario_title, scene_maps=state.scene_maps,
         )
         if variant_id is not None:
             scenario_templates.select_variant(conversation_id, scenario_id, selected_variant)
