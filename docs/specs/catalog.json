@@ -2593,11 +2593,12 @@
         "app/agents/tool_gateway.py",
         "app/keeper_tools/dice.py",
         "app/keeper_tools/registry.py",
-        "app/dice.py"
+        "app/dice.py",
+        "tests/test_turn_consistency_handoff.py"
       ],
       "path": "docs/specs/enhancement/combat_turn_friction_design_spec.md",
       "zh_path": "docs/specs/enhancement/combat_turn_friction_design_spec_zh.md",
-      "source_revision": "d6a03bbd5f0b663d78dbd3082f97fa2196421621"
+      "source_revision": "a62d6055d33e90b8d9cc42403a88265f14b18cd4"
     },
     {
       "title": "Combat turn latency: the prompt carries this round, and state loads leave the event loop",
