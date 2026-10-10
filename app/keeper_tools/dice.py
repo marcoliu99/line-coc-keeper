@@ -20,12 +20,14 @@ PERCENTILE_REFUSAL = (
 
 
 def roll_dice(call: ToolCall) -> dict[str, Any]:
-    expression = str(call.input.get("expression") or "")
+    expression = call.input.get("expression")
     # The KP Assistant rolls for a human Keeper who asked for that number, a random table or a private pick
-    # included: its percentile is not a check. The role comes from the turn, never from the model's input.
-    if dice.is_percentile(expression) and not call.input.get("secret") and call.speaker_role != "kp_assistant":
+    # included: its percentile is not a check. The role comes from the turn, never from the model's input, and only
+    # a real boolean secret counts (a provider that skipped schema validation may send "false").
+    if (isinstance(expression, str) and dice.is_percentile(expression) and call.input.get("secret") is not True
+            and call.speaker_role != "kp_assistant"):
         return {"ok": False, "error": PERCENTILE_REFUSAL}
-    roll_result = dice.roll_expression(expression)
+    roll_result = dice.roll_expression(expression)  # anything but a string is refused by the grammar, as before
     return {
         "ok": True, "expression": roll_result.expression, "rolls": roll_result.rolls,
         "modifier": roll_result.modifier, "total": roll_result.total,

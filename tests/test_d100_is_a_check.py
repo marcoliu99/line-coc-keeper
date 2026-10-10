@@ -35,6 +35,12 @@ def test_other_rolls_still_roll(arguments):
     assert _roll(arguments)['ok']
 
 
+def test_a_string_secret_does_not_lift_the_refusal_and_a_non_string_expression_is_still_an_error():
+    assert not _roll({'expression': '1d100', 'secret': 'false'})['ok']
+    with pytest.raises(ValueError):
+        _roll({'expression': 100})
+
+
 @pytest.mark.parametrize('context', ['ooc_randomizer', 'game_resolution'])
 def test_the_kp_assistants_percentile_rolls_and_a_player_turn_cannot_claim_its_context(context):
     assert _roll({'expression': '1d100', 'roll_context': context}, role='kp_assistant')['ok']
