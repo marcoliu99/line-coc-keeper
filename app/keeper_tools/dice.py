@@ -1,6 +1,7 @@
 """Keeper dice and weapon-damage handlers."""
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from app import dice
@@ -10,8 +11,21 @@ if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
 
 
+# A bare percentile roll. A scenario's "roll 1D100 and compare it with the investigator's APP or Credit Rating" is a
+# characteristic check: `skill_check` rolls it, grades the tier and lets the player press the button, while a public
+# `roll_dice` here left the Keeper with a number no check could settle and the player with a fallback.
+_PERCENTILE = re.compile(r"^\s*1?\s*d\s*100\s*$", re.IGNORECASE)
+PERCENTILE_REFUSAL = (
+    "1D100 不用這個工具擲：要和調查員的技能或特徵（外貌、信用評級、幸運、心理學……）比對，就用 skill_check 擲那個技能或"
+    "特徵，玩家自己按鈕擲骰、系統判定成功等級；守密人自己要暗擲 1D100 才用 roll_dice，並設 secret: true。"
+)
+
+
 def roll_dice(call: ToolCall) -> dict[str, Any]:
-    roll_result = dice.roll_expression(call.input["expression"])
+    expression = str(call.input.get("expression") or "")
+    if _PERCENTILE.match(expression) and not call.input.get("secret"):
+        return {"ok": False, "error": PERCENTILE_REFUSAL}
+    roll_result = dice.roll_expression(expression)
     return {
         "ok": True, "expression": roll_result.expression, "rolls": roll_result.rolls,
         "modifier": roll_result.modifier, "total": roll_result.total,

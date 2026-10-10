@@ -7,9 +7,13 @@ from typing import Any
 from app import dice
 
 FIELDS = ('opponent_skill', 'opponent_value', 'tie_winner', 'source', 'on_win', 'on_loss')
+MAX_TEXT = 400
+NOT_FOR_PLAIN_CHECKS = '只有劇本明寫對手與其數值的對抗檢定才填 opposed；一般技能檢定（圖書館使用、心理學、快速交談……）整個 opposed 不要填。'
 SCHEMA = {
     'type': 'object',
-    'description': '劇本指定的對抗檢定。對手由程式擲一次並保存，不可先用 npc_skill_check 或自行填骰果。',
+    'description': ('劇本指定的對抗檢定：只有劇本明寫對手和對手的數值（例如「對抗 Dooley 的說服 40」）才填。'
+                    '一般技能檢定（圖書館使用、心理學、快速交談……）整個 opposed 都不要填。'
+                    '對手由程式擲一次並保存，不可先用 npc_skill_check 或自行填骰果。'),
     'properties': {
         'opponent_skill': {'type': 'string'},
         'opponent_value': {'type': 'integer', 'minimum': 0, 'maximum': 100},
@@ -27,12 +31,19 @@ SCHEMA = {
 def contract(value: Any) -> dict | None:
     if value is None:
         return None
-    if not isinstance(value, dict) or set(value) != set(FIELDS):
-        raise ValueError('對抗檢定須提供完整規則，不接受模型提供骰果。')
+    if not isinstance(value, dict):
+        raise ValueError(f'opposed 要是物件，欄位為 {"、".join(FIELDS)}。{NOT_FOR_PLAIN_CHECKS}')  # noqa: TRY004
+    missing, extra = [f for f in FIELDS if f not in value], [f for f in value if f not in FIELDS]
+    if missing or extra:
+        parts = [f'缺少 {"、".join(missing)}' if missing else '', f'不接受 {"、".join(extra)}（對手的骰果由程式擲）' if extra else '']
+        raise ValueError(f'對抗檢定的 opposed {"；".join(p for p in parts if p)}。{NOT_FOR_PLAIN_CHECKS}')
     result = deepcopy(value)
     for field in ('opponent_skill', 'source', 'on_win', 'on_loss'):
-        if not isinstance(result[field], str) or not result[field].strip() or len(result[field]) > 400:
-            raise ValueError('對抗檢定缺少有效的能力、來源或勝敗後果。')
+        text = result[field]
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f'對抗檢定的 {field} 是空的。{NOT_FOR_PLAIN_CHECKS}')
+        if len(text) > MAX_TEXT:
+            raise ValueError(f'對抗檢定的 {field} 太長（{len(text)} 字，上限 {MAX_TEXT} 字），請只寫這次適用的條件。')
     if type(result['opponent_value']) is not int or not 0 <= result['opponent_value'] <= 100:
         raise ValueError('對抗能力數值無效。')
     if result['tie_winner'] not in ('player', 'opponent', 'neither'):

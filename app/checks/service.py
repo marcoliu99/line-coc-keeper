@@ -88,7 +88,7 @@ def _origin_fields(state: GroupState) -> dict[str, Any]:
 def _outcome_label(result: Any, opposed: dict | None = None, *, luck_spent: int = 0) -> str:
     text = f"{result.tier} {'成功' if result.success else '失敗'}"
     if opposed:
-        text += f"；對抗勝方={opposed['winner']}"
+        text += "；" + opposed_checks.public_text(opposed).rstrip("。")
     if luck_spent:
         text += f"；花費 Luck {luck_spent}"
     return text

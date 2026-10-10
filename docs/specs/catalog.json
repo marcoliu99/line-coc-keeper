@@ -2649,6 +2649,23 @@
       "path": "docs/specs/enhancement/pregen_weapon_stats_design_spec.md",
       "zh_path": "docs/specs/enhancement/pregen_weapon_stats_design_spec_zh.md",
       "source_revision": "fac75820fed8bc8bf53f87fa1ab63439aff68d84"
+    },
+    {
+      "title": "A 1D100 against an investigator's number is a check, and an opposed field filled wrong says which",
+      "zh": "比對調查員數值的 1D100 是檢定；填錯的對抗欄位會說是哪一格",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper_tools/dice.py",
+        "app/keeper_tools/registry.py",
+        "app/services/opposed_checks.py",
+        "app/checks/service.py",
+        "tests/test_d100_is_a_check.py",
+        "tests/test_scenario_action_check_handoff.py"
+      ],
+      "path": "docs/specs/bug/d100_against_a_characteristic_is_a_check_design_spec.md",
+      "zh_path": "docs/specs/bug/d100_against_a_characteristic_is_a_check_design_spec_zh.md",
+      "source_revision": "a62d6055d33e90b8d9cc42403a88265f14b18cd4"
     }
   ]
 }
