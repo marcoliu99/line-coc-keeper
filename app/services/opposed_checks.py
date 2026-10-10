@@ -43,7 +43,7 @@ def contract(value: Any) -> dict | None:
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f'對抗檢定的 {field} 是空的。{NOT_FOR_PLAIN_CHECKS}')
         if len(text) > MAX_TEXT:
-            raise ValueError(f'對抗檢定的 {field} 太長（{len(text)} 字，上限 {MAX_TEXT} 字），請只寫這次適用的條件。')
+            raise ValueError(f'對抗檢定的 {field} 太長（{len(text)} 字，上限 {MAX_TEXT} 字），請只寫這次適用的條件。{NOT_FOR_PLAIN_CHECKS}')
     if type(result['opponent_value']) is not int or not 0 <= result['opponent_value'] <= 100:
         raise ValueError('對抗能力數值無效。')
     if result['tie_winner'] not in ('player', 'opponent', 'neither'):

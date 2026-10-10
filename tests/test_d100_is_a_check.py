@@ -53,7 +53,7 @@ def test_an_empty_opposed_field_is_named():
 
 
 def test_an_overlong_opposed_field_is_named_with_its_length():
-    with pytest.raises(ValueError, match='source 太長（900 字，上限 400 字）'):
+    with pytest.raises(ValueError, match='source 太長（900 字，上限 400 字）.*一般技能檢定'):
         opposed_checks.contract({**REQUEST, 'source': 'x' * 900})
 
 
