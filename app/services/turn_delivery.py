@@ -120,9 +120,9 @@ class InteractionRef:
 
         A Luck offer read three times in one reply (the narration, the command list, this line) in the rerun8 run.
         """
-        # The roll as a whole number: a roll of 6 is not told by 「/coc luck regular（26 點）」.
+        # The roll as a whole number, and not a cost: a roll of 6 is told by neither 「（26 點）」 nor 「（花費 6 點）」.
         return (self.kind == "luck" and "/coc luck" in narrative
-                and (self.roll is None or re.search(rf"(?<!\d){self.roll}(?!\d)", narrative) is not None))
+                and (self.roll is None or re.search(rf"(?<!\d){self.roll}(?!\d)(?!\s*點)", narrative) is not None))
 
 
 @dataclass

@@ -61,6 +61,12 @@ class LuckPromptTests(unittest.TestCase):
         six = turn_delivery.InteractionRef("luck", "p1", "d1", "t1", roll=6)
         costs_only = turn_delivery.DeliveryEnvelope("o", "public", "", "或 /coc luck regular（26 點）。", interactions=[six])
         self.assertIn("骰值 6 還在等", costs_only.projected_text())
+        same_cost = turn_delivery.DeliveryEnvelope("o", "public", "", "/coc luck extreme（花費 6 點）", interactions=[six])
+        self.assertIn("骰值 6 還在等", same_cost.projected_text())
+        sixty = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 60，可用 /coc luck skip。", interactions=[six])
+        self.assertIn("骰值 6 還在等", sixty.projected_text())
+        told = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 6，可用 /coc luck skip。", interactions=[six])
+        self.assertEqual(told.projected_text(), "")
 
     def test_a_roll_held_for_luck_is_not_called_settled(self):
         held = turn_delivery.observe_tool(
