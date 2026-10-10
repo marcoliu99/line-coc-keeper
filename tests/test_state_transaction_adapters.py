@@ -275,3 +275,18 @@ class RollbackAtomicityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ValueHelpersRefuseReplayableActions(unittest.TestCase):
+    """A replayed action keeps its stored receipt in ``TxResult.result``; the value helpers would hand back ``None``
+    for it, so they refuse an ``action_id`` instead of returning something that looks like a success."""
+
+    def test_both_helpers_refuse_an_action_id_and_write_nothing(self):
+        conversation = _conversation()
+        state = _seed(conversation, _investigator())
+        before = group_state.load_state(conversation).state_revision
+        with self.assertRaisesRegex(ValueError, "replayed action"):
+            state_transaction.mutate_value(conversation, lambda ctx: 1, reason="test", action_id="a1")
+        with self.assertRaisesRegex(ValueError, "replayed action"):
+            state_transaction.run_snapshot(state, lambda ctx: 1, reason="test", action_id="a1")
+        self.assertEqual(group_state.load_state(conversation).state_revision, before)

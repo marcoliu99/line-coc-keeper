@@ -651,8 +651,15 @@ async def amutate(
     return await asyncio.shield(asyncio.to_thread(lambda: mutate(conversation_id, mutation, **kwargs)))
 
 
+_NO_REPLAY = ("a replayed action returns its stored receipt in TxResult.result, not a value: "
+              "call mutate()/commit_for_snapshot() and read the TxResult instead")
+
+
 def mutate_value(conversation_id: str, mutation: Mutation[T], **kwargs: Any) -> T:
-    """``mutate`` for callers that treat anything but success as an error."""
+    """``mutate`` for callers that treat anything but success as an error. Not for a replayable action: a
+    duplicate has no ``value`` to return."""
+    if kwargs.get("action_id"):
+        raise ValueError(_NO_REPLAY)
     outcome = mutate(conversation_id, mutation, **kwargs)
     if not outcome.ok:
         raise StateTransactionFailed(outcome)
@@ -711,12 +718,15 @@ def run_snapshot(
     request_fingerprint: str | None = None,
     expected_revision: int | None = None,
 ) -> T:
-    """``commit_for_snapshot`` for callers that treat a failure as an exception.
+    """``commit_for_snapshot`` for callers that treat a failure as an exception. Not for a replayable action:
+    a duplicate has no ``value`` to return.
 
     A stale snapshot timeline raises ``MutationHeld``; a revision conflict
     raises ``StateRevisionConflict``; a rule rejection raises
     ``StateTransactionFailed``.
     """
+    if action_id:
+        raise ValueError(_NO_REPLAY)
     outcome = commit_for_snapshot(
         state, mutation, reason=reason, action_id=action_id,
         request_fingerprint=request_fingerprint, expected_revision=expected_revision,
