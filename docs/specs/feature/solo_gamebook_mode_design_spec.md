@@ -21,9 +21,9 @@ The Markdown conversion (`scenario_Alone_Against_the_Flames.md`, 160 KB) was mea
 |---|---|
 | Entries | 270, headed `## 1` … `## 270`, all present; `## INTRODUCTION` before them ends 「Now go to 1.」 |
 | Jump phrasing | `go to N` and `turn to N` only, case-insensitive, sometimes split across a line break (「go to\n189」). Every target exists. |
-| Exits per entry | 0: 15, 1: 139, 2: 82, 3: 14, 4–7: 9 |
+| Exits per entry | 0: 15, 1: 139, 2: 93, 3: 14, 4: 4, 5: 2, 6: 2, 7: 1 (total 270) |
 | Endings | 15 entries end with 「The End」: 77, 80, 92, 123, 171, 185, 193, 196, 220, 223, 231, 243, 247, 255, 270 |
-| Hidden entries | Four entries unlock an offset: 「add 100 / 40 / 50 / 20 to your current entry number and go to that new entry」 (112, 197, 202, 259). Without the offsets 55 entries are unreachable; with them every entry is. |
+| Hidden entries | Four entries unlock an offset: 「add 100 / 40 / 50 / 20 to your current entry number and go to that new entry」 (112, 197, 202, 259). Eight entries have no incoming `go to` anywhere in the book and are reached only by an offset: 50, 80, 90, 107, 171, 187, 200, 212. Without the offsets 55 entries are unreachable; with them every entry is. |
 | Rolls | 64 entries ask for a roll; Luck 7, Sanity 17, hit points 23, Hard 12, Extreme 4, pushed 4, opposed 5 |
 | Conditions | 15 「If you have …」; 26 「check-mark the box beside the skill」 (experience) |
 | Combat | 3 entries (a bear, a rider, an artisan) say 「Conduct close-quarters combat using pages 12-13 of the Quick-Start Rules」 |
@@ -33,29 +33,32 @@ The Markdown conversion (`scenario_Alone_Against_the_Flames.md`, 160 KB) was mea
 
 1. **The scenario declares the mode.** A Markdown scenario opts in with an explicit marker near the top of the file (the exact line is settled at implementation; a front-matter line such as `mode: solo_gamebook` is the candidate). No automatic detection: a scenario with numbered headings is not necessarily a gamebook.
 2. **Ingestion splits the book into entries.** Each entry records its number, its text, its exits (every `go to N` / `turn to N`, line breaks tolerated), any offset hint (「add N to your current entry number」) and whether it is an ending (no exits, or 「The End」). The introduction is kept as entry 0 with the single exit it names. A broken link (a target that does not exist) is reported at upload, like an incomplete location index.
-3. **The state records the reading.** The current entry, the entries visited, and the offsets unlocked. A new game starts at the introduction, whose only exit is entry 1.
+3. **The state records the reading.** The current entry, the entries visited, and the offsets unlocked, each with the entry that granted it. A new game starts at the introduction, whose only exit is entry 1.
 4. **The Keeper sees the current entry only.** Its context is that entry's text, the exits, the reader's sheet and the unlocked offsets. Whole-text scenario search is off in this mode, so no other branch reaches the prompt.
-5. **One tool turns the page: `go_to_entry(n)`.** It is accepted when `n` is an exit of the current entry, or equals the current number plus an unlocked offset. Anything else is refused with the list of allowed targets. The tool returns the new entry's text, which is the Keeper's narration source for the rest of the turn. Reaching an ending records it and stops the reading; the reply says the book has ended and that `/coc newgame` starts it again.
-6. **Rolls use the existing checks.** When the entry asks for a roll, the Keeper creates it with the existing tools (`skill_check`, `sanity_check`, Luck, pushed rolls, Hard and Extreme difficulties). The reader presses the button as now. After the result is settled, the Keeper turns the page to the exit that result names; the turn is not complete until it does, and `go_to_entry` is the only way to complete it. Hit-point and Sanity losses written in the entry are applied with `adjust_character`.
+5. **One tool turns the page: `go_to_entry(n)`.** It is accepted when `n` is an exit of the current entry, or equals the current number plus an unlocked offset **and** `n` is one of the book's secret entries (an entry no `go to` in the book targets; the splitter computes this set). An unlocked offset is therefore not a general shortcut: 40 unlocked at entry 197 reaches 50 from 10 or 80 from 40, because those are secret entries, and nothing from 11. Anything else is refused with the list of allowed targets. While the reader has a pending check or Luck decision, and in an entry that asked for a roll until that roll is settled, the page does not turn at all. The tool returns the new entry's text, which is the Keeper's narration source for the rest of the turn. Reaching an ending records it and stops the reading; the reply says the book has ended and that `/coc newgame` starts it again.
+6. **Rolls use the existing checks.** When the entry asks for a roll, the Keeper creates it with the existing tools (`skill_check`, `sanity_check`, Luck, pushed rolls, Hard and Extreme difficulties). The reader presses the button as now. After the result is settled, the Keeper turns the page to the exit that result names; the turn is not complete until it does, and `go_to_entry` is the only way to complete it. Which exit a result or a 「If you have …」 condition names is read from the entry's prose by the Keeper, with the settled result and the reader's inventory in its context; the engine does not parse the conditions (see *Not in scope*). What it does enforce is the order: no page turn before the roll is settled, and no target outside the entry's exits. Hit-point and Sanity losses written in the entry are applied with `adjust_character`.
 7. **Items and experience use existing state.** 「If you have …」 reads the reader's carried items (`add_carried_item` when the book gives one). 「Check-mark the box beside the skill」 adds a status tag naming the skill; an ending that grants experience converts the tags to skill improvements with `set_skill`. No new fields.
 8. **Combat uses the engine.** The three combat entries register the enemy from the entry's own numbers with `initialize_combat` and resolve with the existing managed combat; the entry's exits decide what follows the outcome.
 9. **One reader.** The first player to act in the group is the reader for the game; other members' lines are answered as observers (no state change, no page turn). The party-size and initiative rules do not apply.
 
 ### Open decisions
 
-- **Character creation.** Recommended: follow the book. The occupation entries set Credit Rating and occupation skills; the Keeper applies them with `set_skill` and `adjust_character` as the reader reaches them. A reader who already made a character with `/coc pc` keeps it, and the Keeper only reconciles. The alternative is to require `/coc pc` before entry 1 and skip the creation entries.
+- **Character creation.** A reader character must exist before entry 1: a player line with no active character is refused today (`app/commands/router.py`) and `/coc start` refuses a game with no characters, so `set_skill` and `adjust_character` alone cannot start the book. Recommended: the mode creates a provisional investigator for the reader on their first line (the existing quick-create path, name from the player, occupation blank), and the book's occupation entries then set Credit Rating and occupation skills through `set_skill` and `adjust_character`. A reader who already made a character with `/coc pc` keeps it, and the Keeper only reconciles. The alternative is to require `/coc pc` before entry 1 and skip the creation entries.
 - **Delivery.** Recommended: two PRs. The first ships the marker, the splitter, the state, `go_to_entry`, entry-only context and the check hookup, which plays the book end to end. The second adds the offset secrets, experience tags and the ending/restart reply.
 
 ## Not in scope
 
 - Running *Alone Against the Flames* before this is implemented.
 - Other gamebooks' conventions (section symbols, lettered entries, inline dice tables). The splitter is written for `## N` headings and `go to` / `turn to` links; another book needs its own measurement first.
+- Parsing branch conditions out of the prose (「If you succeed, go to 76. Otherwise …」, 「If you have the key …」) into machine rules. The phrasings vary across 64 roll entries and 15 item conditions, and a parser that got one wrong would send the reader down a branch the book did not allow. The engine enforces what it can know for certain (the roll is settled first, the target is an exit of this entry, a secret entry only by its offset); the Keeper, reading one entry with the result in front of it, picks between the two or three exits.
 - Changing the multi-player Keeper. Everything above is gated on the mode marker.
 
 ## Verification (when implemented)
 
 - The converted book splits into 270 entries plus the introduction; every exit resolves; the 15 endings and 4 offsets are found; with the offsets every entry is reachable from 1.
-- `go_to_entry` refuses a number that is neither an exit nor current + unlocked offset, and accepts both of those.
+- `go_to_entry` refuses a number that is neither an exit nor current + unlocked offset, accepts an exit, accepts current + unlocked offset only when the target is a secret entry (50, 80, 90, 107, 171, 187, 200, 212 in this book), and refuses current + offset to a non-secret entry.
+- The splitter finds exactly those eight secret entries in the converted book.
+- In an entry that asked for a roll, `go_to_entry` is refused until the reader's check is settled.
 - The Keeper's prompt in this mode contains the current entry and no other.
 - A roll entry: the check is created, the reader settles it, and the page turns to the exit the result names; the turn is incomplete until then.
 - An ending stops the reading and tells the reader how to start again.
