@@ -69,12 +69,13 @@ def _combat_changed(event: dict[str, Any]) -> bool:
 
 
 def _settled_preview(state: GroupState, event: dict[str, Any]) -> bool:
-    """Whether an ``end_combat`` preview's settlement was committed by the end of the turn."""
+    """Whether an ``end_combat`` preview's settlement was committed by the end of the turn. The receipt for the
+    preview's own combat is the evidence, not the combat slot: a turn may confirm one fight and start the next."""
     preview = event['result'].get('preview')
     if not event['result'].get('ok') or not event.get('combat_active_before') or not isinstance(preview, dict):
         return False
     receipt = state.closed_combat_receipts.get(str(preview.get('combat_id') or ''), {})
-    return bool(not state.combat.active and preview.get('settlement_id') and receipt.get('status') == 'committed'
+    return bool(preview.get('settlement_id') and receipt.get('status') == 'committed'
                 and receipt.get('settlement_id') == preview.get('settlement_id'))
 
 

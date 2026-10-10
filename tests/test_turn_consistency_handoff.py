@@ -293,8 +293,8 @@ def test_real_crafting_resolved_uses_inventory_evidence(state):
     assert group_state.load_state(state.group_id).get_active_character('a').carried_items == ['未點燃燃燒瓶']
 
 
-@pytest.mark.parametrize('refs', [['tool:1', 'tool:2'], ['tool:2']])
-def test_real_end_combat_is_completion_without_roll(state, refs):
+@pytest.mark.parametrize(('refs', 'next_fight'), [(['tool:1', 'tool:2'], False), (['tool:2'], False), (['tool:2'], True)])
+def test_real_end_combat_is_completion_without_roll(state, refs, next_fight):
     """docs/specs/enhancement/combat_turn_friction_design_spec.md: a fight the turn closed proves itself, so a
     decision that cites only the confirmation (as the Keeper did at turn 45 of the `fac75820` Haunting run) is not
     thrown away."""
@@ -307,12 +307,14 @@ def test_real_end_combat_is_completion_without_roll(state, refs):
             'combat_id': group_state.load_state(state.group_id).combat.combat_id,
             'settlement_id': preview['preview']['settlement_id'], 'reason': 'bot controller confirms final resources'})
         assert confirmation['ok'], confirmation
+        if next_fight:  # the same turn starts the next fight: the first one's receipt still proves its end
+            assert (await args[5]('start_combat', {}))['ok']
         return decision(state, 'resolved', evidence_refs=refs)
     fake = AsyncMock(side_effect=provider)
     with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
-    assert not group_state.load_state(state.group_id).combat.active
+    assert group_state.load_state(state.group_id).combat.active == next_fight
 
 
 @pytest.mark.parametrize('refs', [['tool:1', 'tool:2'], ['tool:2'], ['state']])
