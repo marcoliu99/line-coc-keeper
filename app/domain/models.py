@@ -89,6 +89,7 @@ class CheckStatus(TypedDict, total=False):
     cleared: bool
     tool_event_count: int
     state_changed: bool
+    combat_opened: bool
     dice_rolled: bool
     waiting_for_name: str
     current_turn_state: Any
