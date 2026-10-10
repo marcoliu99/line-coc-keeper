@@ -11,6 +11,21 @@ from app.combat_rules import (
 )
 
 
+@pytest.mark.parametrize('reference', ['格鬥（鬥毆）', '格鬥(鬥毆)', '鬥毆', '空手', 'fist', 'Fighting (Brawl)'])
+def test_the_brawl_skill_as_a_player_says_it_is_an_unarmed_blow(reference):
+    """docs/specs/bug/rerun6_combat_friction_design_spec.md: 「我以格鬥（鬥毆）攻擊」 reached the engine as an unknown
+    weapon three times in one run."""
+    assert weapon(reference).id == 'i.weapon.brawl'
+    assert resolve_weapon('格鬥刀').status == 'needs_ruling'  # "格鬥" alone is not an alias: it would take this
+
+
+def test_every_catalog_name_and_alias_still_names_its_own_weapon():
+    for definition in weapon_catalog():
+        for reference in (definition.name, *definition.aliases):
+            result = resolve_weapon(reference)
+            assert result.status != 'resolved' or result.definition.id == definition.id, reference
+
+
 def weapon(reference):
     result = resolve_weapon(reference)
     assert result.status == 'resolved', result.reason

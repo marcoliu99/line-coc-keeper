@@ -847,3 +847,10 @@ def test_the_sheet_s_own_gun_is_fired_by_a_generic_name_with_the_sheet_s_damage(
     action = store['state'].combat.actions['shot:sheet']
     assert action['weapon']['damage'] == '1d10' and action['weapon']['name'] == '.38 左輪'
     assert action['ammo_key'] == '.38 左輪'
+
+    # The lookup reads the same weapon: not "ambiguous" against the catalog's revolvers.
+    for args in ({'reference': '.38 左輪'}, {'reference': '左輪', 'investigator': 'Ada'}):
+        lookup = tool(store, 'get_weapon_definition', args)
+        assert lookup['ok'] and lookup['owned'] and lookup['definition']['damage'] == '1d10', lookup
+    generic = tool(store, 'get_weapon_definition', {'reference': '左輪'}, actor='nobody')
+    assert not generic['ok'] and '查不到確定的武器「左輪」' in generic['error'] and '候選' in generic['error']

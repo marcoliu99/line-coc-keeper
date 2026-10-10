@@ -334,6 +334,7 @@ async def run_conversation(
     final_feedback: Callable[[str], dict | None] | None = None,
 ) -> str:
     budget = _current.get() or TurnBudget()
+    asked_here: set[str] = set()  # this conversation's own calls; ``budget.attempted`` spans the whole turn
     started = time.monotonic()
     deadline = request_owner.deadline()
     transport = None
@@ -429,12 +430,17 @@ async def run_conversation(
             except (ValueError, TypeError, ValidationError, StopIteration, RecursionError):
                 raise CodexError('codex_tool_schema_changed') from None
             identity = json.dumps([name, arguments], sort_keys=True, ensure_ascii=False)
-            if identity in budget.attempted:
+            # A look-up changes nothing, so the turn's retry (a second Executor conversation, run only when the first
+            # touched no game state) may read the same thing again; it has not seen the first conversation's results.
+            # Inside one conversation the same look-up is still refused, as is any repeated mutation or roll.
+            reread = identity not in asked_here and not counts_against_tool_budget(name)
+            if identity in budget.attempted and not reread:
                 # Same-state retries are unsafe even after a tool exception. The
                 # caller may have committed before raising; require a new action.
                 raise CodexError('codex_duplicate_tool_attempt')
             remaining()  # Do not start another mutation after deadline.
             budget.attempted.add(identity)
+            asked_here.add(identity)
             if counts_against_tool_budget(name):
                 budget.tools_used += 1
             try:

@@ -255,13 +255,43 @@ def reconcile_combat_correction(call: ToolCall) -> dict[str, Any]:
     )))
 
 
+def _owned_lookup(call: ToolCall, reference: str) -> combat_rules.WeaponResolution | None:
+    """The reference resolved as a weapon the investigator carries (a pregen sheet's own .38), else None. The
+    investigator is the one named, or the acting player's own; a KP Assistant call without a name looks at none."""
+    name = str(call.input.get('investigator') or '').strip()
+    character = (support.find_character(call.state, name) if name
+                 else call.state.get_active_character(call.actor_id) if call.actor_id else None)
+    if character is None:
+        return None
+    try:
+        instance, scenario_definitions = _owned_weapon_evidence(call.state, character, reference)
+    except (ValueError, TypeError, KeyError):
+        return None
+    if instance is None and not scenario_definitions:
+        return None
+    lookup = combat_rules.resolve_weapon(instance.instance_id if instance else reference,
+                                         scenario_definitions=scenario_definitions, instance=instance)
+    return lookup if lookup.status == 'resolved' else None
+
+
 def get_weapon_definition(call: ToolCall) -> dict[str, Any]:
-    """Definition lookup establishes no owned weapon identity or ammunition."""
-    lookup = combat_rules.resolve_weapon(call.input['reference'])
-    return {'ok': lookup.status == 'resolved', 'status': lookup.status,
-            'definition': asdict(lookup.definition) if lookup.definition else None,
-            'candidates': [asdict(d) for d in lookup.candidates], 'reason': lookup.reason,
-            'note': 'Reviewed type lookup does not establish ownership, ammo or scenario authority'}
+    """Definition lookup establishes no owned weapon identity or ammunition. A weapon the investigator carries is
+    looked up first, the way ``declare_combat_action`` will resolve it, so the sheet's own gun is not reported
+    ambiguous against the generic catalog."""
+    reference = call.input['reference']
+    owned = _owned_lookup(call, reference)
+    lookup = owned or combat_rules.resolve_weapon(reference)
+    result = {'ok': lookup.status == 'resolved', 'status': lookup.status, 'owned': owned is not None,
+              'definition': asdict(lookup.definition) if lookup.definition else None,
+              'candidates': [asdict(d) for d in lookup.candidates], 'reason': lookup.reason,
+              'note': 'Reviewed type lookup does not establish ownership, ammo or scenario authority'}
+    if not result['ok']:
+        # The tool summary the Keeper reads shows ``error``; without it a refusal read 「未知錯誤」.
+        names = '、'.join(d.name for d in lookup.candidates[:5])
+        result['error'] = (f"查不到確定的武器「{reference}」（{lookup.reason}）"
+                           + (f"；候選：{names}" if names else "")
+                           + "。調查員身上的武器請填 investigator；徒手攻擊填「徒手」。")
+    return result
 
 
 def stabilize_investigator(call: ToolCall) -> dict[str, Any]:

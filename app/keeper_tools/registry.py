@@ -1062,7 +1062,7 @@ _SPECS += (
         handler=scenario_handlers.get_enemy_stat_block,
         read_only=True, bounded_query=True, information_query=True, kp_assistant=True, resolved_check_followup=True,
     ),
-    ToolSpec(schema={'name': 'get_weapon_definition', 'description': '離線查詢已核對武器ID/精確名稱/明確別名，返回骰式、DB、距離表及來源；含糊描述返回候選，不推定持有或彈藥。', 'input_schema': {'type': 'object','properties': {'reference': {'type': 'string'}},'required': ['reference']}}, handler=managed_handlers.get_weapon_definition, read_only=True, bounded_query=True, information_query=True, kp_assistant=True),
+    ToolSpec(schema={'name': 'get_weapon_definition', 'description': '離線查詢已核對武器ID/精確名稱/明確別名，返回骰式、DB、距離表及來源；含糊描述返回候選，不推定持有或彈藥。', 'input_schema': {'type': 'object','properties': {'reference': {'type': 'string'}, 'investigator': {'type': 'string', 'description': '查調查員身上的武器時填他的名字（例如角色卡上的 .38 左輪）；不填就查行動玩家自己的武器，再查通用目錄'}},'required': ['reference']}}, handler=managed_handlers.get_weapon_definition, read_only=True, bounded_query=True, information_query=True, kp_assistant=True),
 )
 
 for _spec in _SPECS:
