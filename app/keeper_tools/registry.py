@@ -38,6 +38,28 @@ def _summary_dispatch_rejected(call: ToolCall) -> dict[str, Any]:
     return {"ok": False, "error": f"未知工具 {call.name}"}
 
 
+_ARMOR_DESCRIPTION = (
+    "敵人護甲規則（欄位名稱是 label，不是 name，不要跟 attacks/abilities 的 name 搞混）；"
+    "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
+    "value 填固定數字；劇本要你擲骰決定護甲（例如 Corbitt 的 Flesh Ward「Roll 2D6 for his armor」）就直接填骰子字串 \"2D6\"，"
+    "登記時系統只擲這一次並保密——不要先用 roll_dice 擲。護甲吸收多少傷害就少多少（Flesh Ward 這類）加 depletes: true。"
+    "applies_to 不填就是 all（擋所有攻擊）；只有劇本明說只擋某一類才填 physical 或 magic，其他字都會當成 all。"
+)
+_ARMOR_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "description": "護甲名稱，例如「Flesh Ward」「厚皮」"},
+        "value": {"type": "string", "description": "固定數字（\"3\"）或骰子表示式（\"2D6\"，登記時暗擲一次）"},
+        "applies_to": {
+            "type": "string", "enum": ["all", "physical", "magic"],
+            "description": "預設 all。physical 只擋武器與肉搏（子彈、刀、拳頭都算），magic 只擋法術。劇本沒限制就不要填。",
+        },
+        "bypass_tags": {"type": "array", "items": {"type": "string"}, "description": "帶這些標籤的攻擊無視此護甲，例如 [\"enchanted\"]；通常不填"},
+        "depletes": {"type": "boolean", "description": "true 表示護甲吸收多少傷害就少多少（Flesh Ward）；一般護甲不填"},
+        "public_hint": {"type": "string", "description": "可以告訴玩家的中性描述，例如「乾硬如鐵的皮膚」；不含數字"},
+    },
+    "required": ["label", "value"],
+}
 _FOLLOWUP_CONSEQUENCE_SCHEMA: dict[str, Any] = {
     "type": "array", "maxItems": 4,
     "description": (
@@ -681,13 +703,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                         "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
                         "armor": {
                             "type": "array",
-                            "description": (
-                                "敵人護甲規則，每筆含 id/label/value/applies_to/bypass_tags/public_hint 等"
-                                "（不是 name——欄位名稱是 label，不要跟 attacks/abilities 的 name 搞混）；"
-                                "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
-                                "value 填固定數字；劇本要你擲骰決定護甲（例如 Corbitt 的 Flesh Ward「Roll 2D6 for his armor」）就直接填骰子字串 \"2D6\"，登記時系統只擲這一次並保密——不要先用 roll_dice 擲。護甲吸收多少傷害就少多少（Flesh Ward 這類）加 depletes: true。"
-                            ),
-                            "items": {"type": "object"},
+                            "description": _ARMOR_DESCRIPTION,
+                            "items": _ARMOR_ITEM_SCHEMA,
                         },
                         "attacks": {
                             "type": "array",
@@ -744,13 +761,8 @@ _SPECS: tuple[ToolSpec, ...] = (
                                     "is_ally": {"type": "boolean", "description": "true 表示這是站在調查員這邊的 NPC 隊友，不是敵人"},
                                     "armor": {
                                         "type": "array",
-                                        "description": (
-                                            "敵人護甲規則，每筆含 id/label/value/applies_to/bypass_tags/public_hint 等"
-                                            "（不是 name——欄位名稱是 label，不要跟 attacks/abilities 的 name 搞混）；"
-                                            "玩家未發現前不要公開具體數字，public_hint 可用中性描述代替。"
-                                "value 填固定數字；劇本要你擲骰決定護甲（例如 Corbitt 的 Flesh Ward「Roll 2D6 for his armor」）就直接填骰子字串 \"2D6\"，登記時系統只擲這一次並保密——不要先用 roll_dice 擲。護甲吸收多少傷害就少多少（Flesh Ward 這類）加 depletes: true。"
-                                        ),
-                                        "items": {"type": "object"},
+                                        "description": _ARMOR_DESCRIPTION,
+                                        "items": _ARMOR_ITEM_SCHEMA,
                                     },
                                     "attacks": {
                                         "type": "array",

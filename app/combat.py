@@ -9,6 +9,7 @@ of defaulting to "the nearest investigator gets punched".
 """
 from __future__ import annotations
 
+import logging
 import random
 import re
 import uuid
@@ -122,6 +123,31 @@ def start_combat(state: GroupState) -> CombatState:
     return state.combat
 
 
+logger = logging.getLogger(__name__)
+
+# What an armor rule is matched against. Every weapon hit the engine resolves is "physical"; "all" covers it and
+# anything else; "magic" is armor that stops only spells, so no weapon hit.
+ARMOR_SCOPES = ("all", "physical", "magic")
+_PHYSICAL_WORDS = ("non-magic", "nonmagic", "non_magic", "physical", "weapon", "melee", "ranged", "bullet", "blow",
+                   "物理", "實體", "非魔法", "武器", "近戰", "射擊")
+_MAGIC_WORDS = ("magic", "spell", "魔法", "法術")
+
+
+def armor_scope(raw: Any) -> str:
+    """The scope an armor rule applies to, from whatever the Keeper wrote. The entry used to be free text, and a
+    Keeper reading "armor against non-magical attacks" wrote that: a scope the engine never matched, so the armor
+    covered nothing. Anything not a known scope reads as ``all``, wording for weapons or non-magical as ``physical``,
+    spells as ``magic``."""
+    text = str(raw or "").strip().lower()
+    if text in ARMOR_SCOPES:
+        return text
+    if any(word in text for word in _PHYSICAL_WORDS):
+        return "physical"
+    if any(word in text for word in _MAGIC_WORDS):
+        return "magic"
+    return "all"
+
+
 def _default_attack() -> AttackRule:
     return AttackRule(id="unarmed", label="徒手攻擊", skill_name="格鬥（鬥毆）", skill_value=25, damage="1D3", range_band="engaged")
 
@@ -143,8 +169,16 @@ def _coerce_armor(raw: list[dict[str, Any]] | None) -> list[ArmorRule]:
             data["value"], data["rolled_from"] = max(0, rolled.total), value.strip()
         else:
             data["value"] = int(value)
+        data["applies_to"] = armor_scope(data.get("applies_to"))
         rules.append(ArmorRule.from_dict(data))
     return rules
+
+
+def _log_armor(enemy: str, rules: list[ArmorRule]) -> None:
+    """One log line per registered rule, so a run's log shows what the Keeper wrote; no player text carries it."""
+    for rule in rules:
+        logger.info("combat.armor.registered enemy=%s label=%s value=%d applies_to=%s depletes=%s rolled_from=%s",
+                    enemy, rule.label or rule.id, rule.value, rule.applies_to, rule.depletes, rule.rolled_from or "-")
 
 
 def _coerce_attacks(raw: list[dict[str, Any]] | None) -> list[AttackRule]:
@@ -203,6 +237,7 @@ def create_enemy_card(
         public_description=public_description,
         incomplete=incomplete,
     )
+    _log_armor(name, card.armor)
     state.combat.enemy_cards[card.id] = card
     return card
 
@@ -505,6 +540,7 @@ def _complete_card(
     card.attacks = coerced_attacks
     if coerced_armor is not None:
         card.armor = coerced_armor
+        _log_armor(card.name, coerced_armor)
     card.abilities = _coerce_abilities(abilities)
     card.source = {**card.source, **(source or {})}
     card.incomplete = False
