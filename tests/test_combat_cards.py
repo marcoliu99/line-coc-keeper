@@ -316,6 +316,15 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
         self.assertEqual(combat.wear_armor(state, enemy, "physical", [], 4), 0)
 
+    def test_a_card_saved_with_the_keepers_wording_still_stops_a_hit(self):
+        """A card saved by an older version carries the scope as written; matching reads through armor_scope."""
+        state = self._state_with_pc()
+        combat.start_combat(state)
+        combat.add_npc(state, "Corbitt", 70, 30, armor=[{"label": "Flesh Ward", "value": 4}])
+        enemy = next(c for c in state.combat.order if c.name == "Corbitt")
+        state.combat.enemy_cards[enemy.enemy_card_id].armor[0].applies_to = "non-magical attacks"
+        self.assertEqual(combat.planned_damage(state, enemy, 6, "physical", [], False), (4, "Flesh Ward", 2))
+
     def test_armor_scope_reads_the_keepers_wording(self):
         for raw, scope in [(None, "all"), ("", "all"), ("ALL", "all"), ("any", "all"), ("Physical", "physical"),
                            ("weapons", "physical"), ("非魔法攻擊", "physical"), ("magic", "magic"),
@@ -323,7 +332,7 @@ class CombatCardTests(unittest.TestCase):
                            ("not magical", "physical"), ("魔法以外的攻擊", "physical"), ("除了法術", "physical"),
                            ("all attacks except for magic", "physical"), ("not affected by magic", "physical"),
                            ("anything other than spells", "physical"), ("不受魔法影響", "physical"),
-                           ("magical attacks only", "magic"),
+                           ("magical attacks only", "magic"), ("magic cannot penetrate this armor", "magic"),
                            ("spells only", "magic"), ("法術", "magic"), ("something else", "all")]:
             self.assertEqual(combat.armor_scope(raw), scope, raw)
 

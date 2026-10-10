@@ -49,7 +49,7 @@ _ARMOR_ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "label": {"type": "string", "description": "護甲名稱，例如「Flesh Ward」「厚皮」"},
-        "value": {"type": "string", "description": "固定數字（\"3\"）或骰子表示式（\"2D6\"，登記時暗擲一次）"},
+        "value": {"type": ["integer", "string"], "description": "固定數字（3）或骰子表示式（\"2D6\"，登記時暗擲一次）"},
         "applies_to": {
             "type": "string", "enum": ["all", "physical", "magic"],
             "description": "預設 all。physical 只擋武器與肉搏（子彈、刀、拳頭都算），magic 只擋法術。劇本沒限制就不要填。",

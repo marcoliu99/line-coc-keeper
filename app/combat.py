@@ -132,9 +132,9 @@ _PHYSICAL_WORDS = ("non-magic", "nonmagic", "non_magic", "physical", "weapon", "
                    "物理", "實體", "非魔法", "武器", "近戰", "射擊")
 _MAGIC_WORDS = ("magic", "spell", "魔法", "法術")
 # Wording that negates or excepts magic ("non magical", "all attacks except for magic", "not affected by magic",
-# "魔法以外") is armor against everything but spells: any negation word together with any magic word reads so.
-_NEGATION_WORDS = ("non", "not", "except", "excluding", "without", "but", "unless", "other than", "以外", "除外",
-                   "之外", "非", "除了", "不含", "不受")
+# "魔法以外") is armor against everything but spells: a negation word (a whole word in English, so "cannot" is not
+# "not") together with any magic word reads so.
+_NEGATION = re.compile(r"\b(?:non|not|except|excluding|without|but|unless|other than)\b|以外|除外|之外|非|除了|不含|不受")
 
 
 def armor_scope(raw: Any) -> str:
@@ -146,7 +146,7 @@ def armor_scope(raw: Any) -> str:
     if text in ARMOR_SCOPES:
         return text
     magic = any(word in text for word in _MAGIC_WORDS)
-    if (magic and any(word in text for word in _NEGATION_WORDS)) or any(word in text for word in _PHYSICAL_WORDS):
+    if (magic and _NEGATION.search(text)) or any(word in text for word in _PHYSICAL_WORDS):
         return "physical"
     return "magic" if magic else "all"
 
@@ -759,7 +759,8 @@ def _best_armor(card: EnemyCombatCard | None, damage_type: str, tags: list[str])
     best: ArmorRule | None = None
     tag_set = set(tags or [])
     for armor in card.armor:
-        if armor.applies_to not in ("all", damage_type):
+        # Read through armor_scope here too: a card saved by an older version carries the Keeper's wording as is.
+        if armor_scope(armor.applies_to) not in ("all", damage_type):
             continue
         if set(armor.bypass_tags) & tag_set:
             continue
