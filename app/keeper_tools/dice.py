@@ -23,7 +23,9 @@ PERCENTILE_REFUSAL = (
 
 def roll_dice(call: ToolCall) -> dict[str, Any]:
     expression = str(call.input.get("expression") or "")
-    if _PERCENTILE.match(expression) and not call.input.get("secret"):
+    # The KP Assistant names a roll_context on every roll (tool_dispatch requires it) and rolls for a human Keeper
+    # who asked for that number, a random table or a private pick included: its percentile is not a check.
+    if _PERCENTILE.match(expression) and not call.input.get("secret") and not call.input.get("roll_context"):
         return {"ok": False, "error": PERCENTILE_REFUSAL}
     roll_result = dice.roll_expression(expression)
     return {

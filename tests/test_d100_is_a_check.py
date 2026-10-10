@@ -29,6 +29,7 @@ def test_a_public_percentile_roll_is_refused_toward_skill_check(expression):
 
 @pytest.mark.parametrize('arguments', [
     {'expression': '1d100', 'secret': True}, {'expression': '1d6'}, {'expression': '2d100'}, {'expression': '1d100+5'},
+    {'expression': '1d100', 'roll_context': 'ooc_randomizer'}, {'expression': '1d100', 'roll_context': 'game_resolution'},
 ])
 def test_other_rolls_still_roll(arguments):
     assert _roll(arguments)['ok']
