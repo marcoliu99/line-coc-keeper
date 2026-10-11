@@ -91,8 +91,9 @@ def _applied_by_executor(obligation: event_obligations.Obligation, mechanic_resu
         # demands, nor does a check still waiting from an earlier turn (the handoff carries it forward).
         status = mechanic_result.check_status
         return "skill_check" in done and any(
-            entry.get("investigator") == actor and entry.get("skill") == obligation.arg("skill")
-            for entry in (status.get("resolved") or {}, status.get("pending") or {}))
+            entry.get("investigator") == actor
+            and (entry.get("skill") or entry.get("skill_name")) == obligation.arg("skill")
+            for entry in (status.get("resolved") or {}, status.get("pending") or {}, status.get("pending_luck") or {}))
     return bool(_EXECUTOR_TOOLS[obligation.kind] & done)
 
 

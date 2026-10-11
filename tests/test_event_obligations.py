@@ -245,6 +245,15 @@ async def test_the_same_roll_made_this_turn_is_the_forced_check(state) -> None:
 
 
 @aio
+async def test_the_same_roll_waiting_on_luck_is_the_forced_check(state) -> None:
+    result = _rolled("聆聽")
+    result.check_status["resolved"] = None
+    result.check_status["pending_luck"] = {"investigator": "Marco", "skill_name": "聆聽", "roll": 60}
+    applied, _ = await _enforce(state, CELLAR, CELLAR_RULE, result=result)
+    assert applied == []
+
+
+@aio
 async def test_a_required_skill_check_is_created(state) -> None:
     applied, _ = await _enforce(state, "你走進地下室，腳下的木板吱嘎作響。", ["走進地下室的人須通過 聆聽 檢定，否則聽不見腳步聲。"])
     assert [item.kind for item in applied] == ["forced_check"]
