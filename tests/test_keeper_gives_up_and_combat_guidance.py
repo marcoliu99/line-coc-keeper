@@ -54,8 +54,11 @@ class WaitOnNobodyTests(unittest.TestCase):
         self.assertEqual(turn_fallback.classify(_result("incomplete", "deferral_not_verified"), state, "p1"),
                          "unresolved_pending_state")
         self.assertEqual(turn_fallback.classify(
-            _result("incomplete", "deferral_not_verified", tool_calls=(("search_scenario", True),)), GroupState(group_id="g"), "p1"),
+            _result("incomplete", "deferral_not_verified", tool_calls=(("add_carried_item", True),)), GroupState(group_id="g"), "p1"),
             "unresolved_pending_state")
+        self.assertEqual(turn_fallback.classify(  # a look-up is not a reason to call it a pending state
+            _result("incomplete", "deferral_not_verified", tool_calls=(("search_scenario", True),)), GroupState(group_id="g"), "p1"),
+            "executor_no_action")
 
 
 def _battle() -> GroupState:

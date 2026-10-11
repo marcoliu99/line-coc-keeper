@@ -328,7 +328,14 @@ def validate_resolution(
             f"tool:{i}" in refs and e['name'] == 'search_scenario' and e['result'].get('results')
             for i, e in enumerate(tool_events, 1)
         )
-        if disposition == "resolved_without_check" and not (mutation or scenario_evidence):
+        # A roll made or a record written this turn (a Sanity roll, a clue noted) is what happened; the decision
+        # need not also quote the scenario for it (a 2026-10-11 run, turn 5: a failed Sanity roll,
+        # then 「免檢定完成缺少劇本依據」 and no retry because the dice had been rolled).
+        wrote = any(
+            f"tool:{i}" in refs and e["result"].get("ok") and e["name"] not in tool_registry.READ_ONLY_TOOL_NAMES
+            and not _changed_nothing(e, tool_events) and _changed_the_game(e, state, before_gameplay)
+            for i, e in enumerate(tool_events, 1))
+        if disposition == "resolved_without_check" and not (mutation or rolled or wrote or scenario_evidence):
             return incomplete("免檢定完成缺少劇本或可核對的工具變更依據", "missing_scenario_or_mutation_evidence")
         # A tool that wrote nothing (refused, or an inventory no-op) leaves "no mechanics" true; the state check below
         # still catches anything that did change.
@@ -364,6 +371,14 @@ _NON_GAMEPLAY_FIELDS = {
     "state_revision", "log", "kp_ooc_log", "campaign_summary",
     "openai_previous_response_id", "openai_previous_response_timeline_id",
 }
+
+
+def _changed_the_game(event: dict[str, Any], state: GroupState, before_gameplay: dict[str, Any] | None) -> bool:
+    """Whether this call itself changed the game: its own before/after snapshots when the gateway recorded them
+    (a no-op clue beside a real HP change is still a no-op), else the turn's."""
+    if "gameplay_after" in event:
+        return event.get("gameplay_before") != event.get("gameplay_after")
+    return before_gameplay is None or gameplay_snapshot(state) != before_gameplay
 
 
 def gameplay_snapshot(state: GroupState) -> dict[str, Any]:

@@ -514,3 +514,14 @@ def test_a_defeated_current_actor_is_waiting_for_the_keeper_to_advance() -> None
     )
     text = turn_fallback.combat_guidance(state, "unsupported_action")
     assert "已經倒下" in text and "請說明要對哪個目標" not in text
+
+
+def test_a_deferral_with_nobody_waiting_is_no_action_even_after_a_look_up() -> None:
+    """Camp Sunny 2026-10-11 rerun3 turn 45: one search_scenario, then 「等警長離開再…」 answered as deferred; the player was
+    told to finish a check that did not exist. A look-up is not a reason to call it a pending state."""
+    looked = _result("incomplete", "deferral_not_verified", tool_calls=(("search_scenario", True),))
+    assert turn_fallback.classify(looked, _state(), "u1") == "executor_no_action"
+    wrote = _result("incomplete", "deferral_not_verified", tool_calls=(("add_carried_item", True),))
+    assert turn_fallback.classify(wrote, _state(), "u1") == "unresolved_pending_state"
+    rolled = _result("incomplete", "deferral_not_verified", tool_calls=(("roll_dice", True),))
+    assert turn_fallback.classify(rolled, _state(), "u1") == "unresolved_pending_state", "a die rolled is not a look-up"

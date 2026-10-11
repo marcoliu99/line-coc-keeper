@@ -222,8 +222,11 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     if code in _PENDING:
         # 「在等別人」 with nobody waiting on anything and no tool run is a turn with no action, not a pending state
         # (Haunting rerun1 turn 17): a retry is worth more than 「還有尚未完成的檢定」 about a check that does not exist.
-        if (code == "deferral_not_verified" and not result.tool_calls
-                and not state.pending_checks and not state.pending_luck_decisions):
+        from app.keeper_tools import (
+            registry,  # imported here: the tool registry imports modules that import this one
+        )
+        if (code == "deferral_not_verified" and not state.pending_checks and not state.pending_luck_decisions
+                and all(name in registry.INFORMATION_QUERY_TOOL_NAMES for name, _ok in result.tool_calls)):
             return "executor_no_action"
         return "unresolved_pending_state"
     if code in _REJECTED:

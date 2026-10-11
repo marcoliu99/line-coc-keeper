@@ -55,6 +55,8 @@ EXECUTOR_INSTRUCTION = """你是 TRPG 機制執行者（Executor Agent），下�
 可用 disposition：no_mechanics（本次不需新增機制，可含成功的唯讀查詢；不等於既有檢定消失）、await_check、await_luck、
 deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊）、resolved（已擲骰結算或有可核對的工具變更）、
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
+前往劇本已出現的地點、對 NPC 說話、等 NPC 回應或等場景推進，都是敘事（no_mechanics），不是 blocked 或 deferred；
+deferred 只用於戰鬥順位未到或別人的檢定真的擋住這個行動。「如果／若…就…」的條件句，依目前狀態直接判斷並回答，不等。
 actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指其他真正持有待處理項目的角色。
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
 失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。

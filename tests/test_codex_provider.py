@@ -95,9 +95,9 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
             await turn([TOOL], call(), call())  # a mutation (or a roll) is never sent twice in one turn
         self.assertEqual(self.tool.await_count, 1)
         self.tool.reset_mock()
-        self.transport.request.side_effect = [lookup_call, lookup_call]
-        with self.assertRaisesRegex(CodexError, 'duplicate_tool'):  # the same look-up twice in one conversation
-            await cp.run_conversation('static', 'state', [lookup], [], 'go', self.tool, 6)
+        self.transport.request.side_effect = [lookup_call, lookup_call, final()]
+        # The same look-up twice in one conversation is answered from the transcript, not refused: it changes nothing.
+        self.assertEqual(await cp.run_conversation('static', 'state', [lookup], [], 'go', self.tool, 6), 'done')
         self.assertEqual(self.tool.await_count, 1)
 
     async def test_iteration_limit_never_runs_an_extra_wrapup(self):

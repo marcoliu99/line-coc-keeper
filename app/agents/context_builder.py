@@ -393,7 +393,10 @@ async def build_context(
         for result in collected:
             if isinstance(result, asyncio.CancelledError):
                 raise result
-        rag_context, rag_status = result_by_kind.get("scenario", ("", "error"))
+        # No scenario task means the search is off, not that it failed: a turn that then cannot finish is an
+        # unsupported action, not 「查不到劇本依據」, and recovery does not search again (a 2026-10-11 run: every one
+        # of 27 fallbacks was labelled no_scenario_evidence with the search disabled).
+        rag_context, rag_status = result_by_kind.get("scenario", ("", "disabled" if rag_task is None else "error"))
         memory_context, memory_status = result_by_kind.get("memory", ("", "error"))
 
     # 3. Compile the payload
