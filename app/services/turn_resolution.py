@@ -305,8 +305,20 @@ def validate_resolution(
         if (not actual_wait or pending or luck or now != before_actor
                 or any(e.get("actor_changed") for e in tool_events)
                 or not _isolated_changes(state, before_gameplay, tool_events, user_id, actor.name, "deferred")):
-            return incomplete("暫緩裁決與目前順位或已提交變更不一致", "deferral_not_verified")
-    elif disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
+            # The turn's own tools changed the game (a Sanity roll, the fight opened, an attack settled) and then it
+            # waited on someone else: what happened is that change, not a wait. Said so here rather than spending a
+            # model retry that failed the same way (Haunting 2026-10-11 rerun3, turn 31: 50 s, then 「尚未完整處理」).
+            changed = [f"tool:{i}" for i, e in enumerate(tool_events, 1)
+                       if e["result"].get("ok") and e["name"] not in tool_registry.READ_ONLY_TOOL_NAMES
+                       and not _changed_nothing(e, tool_events) and _changed_the_game(e, state, before_gameplay)]
+            opened = (any(before_pending.get(owner) != record for owner, record in state.pending_checks.items())
+                      or any(before_luck.get(owner) != record for owner, record in state.pending_luck_decisions.items()))
+            if (not changed or pending or luck or opened or before_gameplay is None
+                    or gameplay_snapshot(state) == before_gameplay):
+                return incomplete("暫緩裁決與目前順位或已提交變更不一致", "deferral_not_verified")
+            # Then held to everything a completed turn is held to, below.
+            disposition, waiting, refs = "resolved_without_check", "", changed
+    if disposition in {"resolved", "resolved_without_check", "no_mechanics", "blocked"}:
         mutation, transfer = _mutation_evidence(state, tool_events, refs, actor.name)
         if disposition in {"resolved", "resolved_without_check"}:
             if any(e['name'] in {'add_carried_item', 'remove_carried_item', 'transfer_item', 'end_combat'}

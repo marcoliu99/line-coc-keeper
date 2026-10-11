@@ -369,7 +369,8 @@ def test_compensated_ammunition_change_is_not_deferred(state):
     with patch.object(config, 'LLM_PROVIDER', 'openai'), patch.dict(registry.CONVERSATION_PROVIDERS, {'openai': SimpleNamespace(run_conversation=fake)}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert state.get_active_character('a').weapons['gun']['ammo'] == 6
-    assert result.turn_resolution.disposition == 'incomplete'
+    # Never a wait over a spent shot; the recorded spend and restore are this turn's change.
+    assert result.turn_resolution.disposition != 'deferred'
 
 
 @pytest.mark.parametrize('name,result', [
@@ -878,7 +879,8 @@ def test_deferred_rejects_reviewed_native_enemy_damage(state):
 
     with patch('app.dice.random.randint', return_value=3):
         result = _executor_with_provider(state, provider)
-    assert result.turn_resolution.disposition == 'incomplete'
+    # Not a wait: the damage this turn applied is what happened, and the turn is told as that.
+    assert result.turn_resolution.disposition == 'resolved_without_check'
     assert combat.find_combatant(group_state.load_state(state.group_id), 'Enemy').hp == 7
 
 
@@ -1034,18 +1036,22 @@ def test_a_deferral_with_nobody_waiting_is_told_to_narrate(state):
     assert result.turn_resolution.disposition == "no_mechanics"
 
 
-def test_a_deferral_after_a_committed_change_is_told_to_complete_with_it(state):
+def test_a_deferral_after_a_committed_change_is_that_change_without_a_retry(state):
+    """Haunting 2026-10-11 rerun3, turn 31: a Sanity roll and the fight opened, then a wait on the next actor; the
+    model's retry failed the same way and the player read 「尚未完整處理」 after 50 s."""
     seen = []
     async def provider(*args, **kwargs):
         assert (await args[5]("add_carried_item", {"investigator": "Marco", "item": "手電筒"}))["ok"]
-        seen.append(kwargs["final_feedback"](decision(state, "deferred", waiting_for=turn_context.character_id(state, "b"),
-                                                      reason="等 Paul 回話", evidence_refs=["tool:1"])))
-        return decision(state, "resolved_without_check", evidence_refs=["tool:1"])
+        deferred = decision(state, "deferred", waiting_for=turn_context.character_id(state, "b"),
+                            reason="等 Paul 回話", evidence_refs=["tool:1"])
+        seen.append(kwargs["final_feedback"](deferred))
+        return deferred
     stub = SimpleNamespace(run_conversation=AsyncMock(side_effect=provider), SUPPORTS_FINAL_FEEDBACK=True)
     with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
         result = asyncio.run(executor.run_executor(message(state)))
-    assert seen[0]["validation_code"] == "nobody_waiting" and "resolved_without_check" in seen[0]["instruction"]
+    assert seen[0] is None  # nothing to send back
     assert result.turn_resolution.disposition == "resolved_without_check"
+    assert result.turn_resolution.evidence_refs == ["tool:1"] and not result.turn_resolution.waiting_for
 
 
 def test_a_deferral_after_only_a_roll_keeps_the_generic_feedback(state):

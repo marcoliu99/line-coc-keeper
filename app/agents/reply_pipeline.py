@@ -81,8 +81,12 @@ def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str, *, trailin
 
 def _scrub_leaks(ctx: ReplyContext, draft: ReplyDraft) -> None:
     scrubbed = presentation.strip_junk_tail(presentation.strip_leaked_decision(draft.text))
-    # A reply that was nothing but the decision object leaves no narration; the player is told so, not sent a blank.
-    draft.text = scrubbed if scrubbed or not draft.text.strip() else turn_fallback.guidance("narration_failure")
+    if draft.text.strip() and not scrubbed:
+        # A reply that was nothing but the decision object leaves no narration. The lines the steps below add (the
+        # roll, the Luck offer) still reach the player; ``finalize`` says the narration failed only if nothing does
+        # (Haunting 2026-10-11 rerun3: two Luck turns read only 「守密人暫時無法完成敘事」).
+        turn_fallback.record("narration_failure", state=ctx.state, user_id=ctx.user_id, turn_id=ctx.turn_id)
+    draft.text = scrubbed
 
 
 def _repair_consistency(ctx: ReplyContext, draft: ReplyDraft) -> None:
@@ -123,6 +127,8 @@ def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:
 
 def _finalize(ctx: ReplyContext, draft: ReplyDraft) -> None:
     draft.text, draft.private_controls = turn_delivery.finalize(ctx.message, draft.text)
+    if not draft.text.strip():
+        draft.text = turn_fallback.guidance("narration_failure")  # nothing at all to send: say so, never a blank
 
 
 def _player_text(ctx: ReplyContext, draft: ReplyDraft) -> None:

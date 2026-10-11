@@ -150,8 +150,11 @@ class InteractionRef:
         carrying the command (the rerun8 run read the same offer three times in one reply). A narration that states a
         roll other than the real one keeps the line, which is the only text here that carries the engine's number.
         """
-        if self.kind != "luck" or not any(
-                marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
+        if self.kind != "luck":
+            # The roll command itself, which the reply's own check line always carries: the generic 「請使用檢定按鈕」
+            # line repeated it on 79 of 100 replies (a 2026-10-11 run, three times in one).
+            return "/coc check" in narrative
+        if not any(marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
             return False
         # Only the number right after the verb is a claim (「擲出 60」, 「骰值為 60 點」); 「花費 6 點」 names a cost.
         return self.roll is None or all(int(n) == self.roll for n in _ROLL_CLAIM.findall(narrative))
