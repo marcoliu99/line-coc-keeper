@@ -26,9 +26,14 @@ class SettledAttackLineTests(unittest.TestCase):
 
     def test_a_miss_armor_counter_and_malfunction_are_said_as_such(self):
         self.assertIn("沒有命中", turn_delivery.observe_tool("declare_combat_action", _receipt(hit=False, opposed="both_miss"), 1).public_text)
-        # An enemy's armour fields are private and stripped before delivery: the zero damage alone says it was absorbed.
-        armored = turn_delivery.observe_tool("run_combat_action", _receipt(hit=True, damage={"target": "幼體", "final_damage": 0}), 1)
+        # An enemy's armour fields are private and stripped before delivery; the public summary still says it was absorbed.
+        armored = turn_delivery.observe_tool("run_combat_action", _receipt(hit=True, damage={
+            "target": "幼體", "final_damage": 0, "public_summary": "幼體 受到 0 點傷害（戰鬥暫定）（部分傷害被擋下）"}), 1)
         self.assertIn("全被 幼體 的護甲擋下", armored.public_text)
+        nothing = turn_delivery.observe_tool("run_combat_action", _receipt(hit=True, damage={
+            "target": "Cultist", "final_damage": 0, "public_summary": "Cultist 受到 0 點傷害（戰鬥暫定）"}), 1)
+        self.assertIn("命中，Cultist 受到 0 點傷害", nothing.public_text, "no damage before armour is not credited to armour")
+        self.assertNotIn("護甲", nothing.public_text)
         chosen = turn_delivery.observe_tool("submit_combat_choice", _receipt(
             hit=True, opposed="attacker_wins", damage={"target": "Celia", "final_damage": 2}), 1)
         self.assertIn("Celia 受到 2 點傷害", chosen.public_text, "a choice that settled the attack tells it too")

@@ -967,3 +967,16 @@ def test_a_replay_cited_instead_of_the_original_transfer_still_verifies(state):
             patch('app.observability.current_context', return_value={'turn_id': 'turn-cite'}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
+
+
+def test_a_choice_that_settled_the_attack_is_the_turns_effect(state):
+    """A no-defence choice settles the attack inside submit_combat_choice; citing it validates a resolved turn."""
+    state.combat.active = True
+    state.combat.combat_id = "combat:x"
+    state.combat.actions["swing"] = {"action_id": "swing", "completed": True}
+    settled = [{"name": "submit_combat_choice", "result": {"ok": True, "completed": True, "action_id": "swing",
+                                                           "combat_id": "combat:x", "result": {"hit": True}}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=settled, has_scenario=False, before_actor={})
+    # The validator files a completion with a mutation and no roll as resolved_without_check; the point is that it passed.
+    assert result.validation_code == "validated" and result.disposition == "resolved_without_check", result

@@ -307,7 +307,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                         return {
                             'validation_code': 'attack_settled_not_deferred', 'reason': verified.reason,
                             'instruction': '你這回合宣告的攻擊已經由引擎結算了（工具結果裡有命中與傷害），那是已提交的變更，'
-                                '不能再交回 deferred。改交 resolved 並引用那次 declare_combat_action；敘事先說這一擊的結果'
+                                '不能再交回 deferred。改交 resolved 並引用結算它的那次工具（declare_combat_action、'
+                                'run_combat_action 或 submit_combat_choice）；敘事先說這一擊的結果'
                                 '（命中或落空、造成多少傷害），再說接著輪到誰。',
                         }
                     if verified.validation_code == 'deferral_not_verified' and _passed_the_turn(tool_events):

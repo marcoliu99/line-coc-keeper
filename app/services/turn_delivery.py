@@ -111,8 +111,9 @@ def _attack_line(outcome: dict[str, Any]) -> str:
         return "⚔️ 這一擊沒有命中。"
     damage = outcome.get("damage") or {}
     target, final = damage.get("target", "目標"), damage.get("final_damage", 0)
-    if not final:
-        # A hit that did nothing was absorbed: the enemy's armour fields are kept private, so the zero says it.
+    # An enemy's armour fields are private; the public summary still says when armour took some of the blow.
+    absorbed = bool(damage.get("armor_reduction")) or "被擋下" in str(damage.get("public_summary", ""))
+    if not final and absorbed:
         return f"⚔️ 命中，但傷害全被 {target} 的護甲擋下。"
     landed = "對方反擊得手" if outcome.get("opposed") == "defender_wins" else "命中"
     return f"⚔️ {landed}，{target} 受到 {final} 點傷害{'，倒下了' if damage.get('defeated') else ''}。"
