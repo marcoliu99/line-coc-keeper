@@ -55,6 +55,11 @@ class ManagedCombatChecks:
             result.skill_value, result.roll, result.tier, character.luck, result.required_tier,
             allowed=pending.get("allow_luck", True),
         )
+        if str((pending.get("combat_context") or {}).get("check_role", "")).startswith("defense"):
+            attack = _attack_action(state, pending) or {}
+            options = dice.useful_defence_luck(attack.get("defense_kind"),
+                                               ((attack.get("checks") or {}).get("attack") or {}).get("tier"),
+                                               result.tier, options)
         if options:
             decision = {
                 **pending, "decision_id": pending["check_id"] + ":luck",
@@ -110,8 +115,9 @@ class ManagedCombatChecks:
             return outcome_for(user_id, pending, reply_text=outcome.get("error", "選擇遭拒"))
         chosen = f"已選擇「{option['label']}」。"
         rolled = state.pending_checks.get(user_id)
-        if option["kind"] == "no_defense" and outcome.get("completed") and (rolled is None or rolled.get("type") != "skill"):
-            # No roll, but the shot was settled by the choice (damage applied, the turn possibly moved on, even to
+        if outcome.get("completed") and (rolled is None or rolled.get("type") != "skill"):
+            # No roll left for the player, but the attack was settled by the choice (no defence, or a defence the engine
+            # rolled itself: a counter that hit read only 「已依系統紀錄處理」, Haunting 2026-10-11 rerun4; damage applied, the turn possibly moved on, even to
             # the next enemy's attack and its own choice): the Keeper narrates it from the receipt, as after any
             # settled roll, instead of the thread ending here. Only a skill check left for the player (the wound's
             # CON roll) keeps the turn with them first.
@@ -201,8 +207,11 @@ def _is_defence_roll_for(rolled: dict, choice: dict, option: dict) -> bool:
 def _settled_without_roll(
     state: GroupState, character, user_id: str, pending: dict, option: dict, outcome: dict, before: dict,
 ) -> CheckOutcome:
-    """A choice that settled the attack with no roll of the player's (no defence against a shot)."""
+    """A choice that settled the attack with no roll of the player's: no defence, or a defence the engine rolled."""
     header = f"{character.name} 選擇「{option['label']}」"
+    # The engine's own defence roll, when it made one, is the check this event records; only no defence has none.
+    defence = (((_attack_action(state, pending) or {}).get("checks") or {}).get("defense") or {})
+    rolled = isinstance(defence.get("roll"), int)
     status = "戰鬥已結算" if outcome.get("settled") else "戰鬥機械結果暫定；尚未結算"
     blow = _blow(state, pending, outcome)
     feedback = f"{header}。" + ("\n⚔️ " + blow if blow else "")
@@ -218,10 +227,14 @@ def _settled_without_roll(
                 check_id=pending["check_id"],
                 timeline_id=pending.get("timeline_id", state.timeline_id or f"legacy-{state.group_id}"),
                 owner_id=user_id, character_id=character.character_id, investigator=character.name,
-                skill=option["label"], skill_value=0, roll=0, difficulty="regular",
-                outcome=f"{option['label']}，攻擊已結算", before=before, tracked_roll_fields=(), check_context=pending,
+                skill=option["label"], skill_value=defence.get("skill_value", 0) if rolled else 0,
+                roll=defence["roll"] if rolled else 0, difficulty=defence.get("required_tier", "regular"),
+                outcome=(f"{defence.get('tier')} " + ("成功" if defence.get("success") else "失敗") if rolled
+                         else f"{option['label']}，攻擊已結算"),
+                before=before, tracked_roll_fields=(), check_context=pending,
+                success=bool(defence.get("success")) if rolled else None,
             ),
-            "no_roll": True, "provisional": not outcome.get("settled"),
+            "no_roll": not rolled, "provisional": not outcome.get("settled"),
             "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
             # The blow was told with the choice that took it; the follow-up's fixed line does not repeat it.
             "combat_receipt": {**_combat_receipt(outcome), "blow": blow, "blow_already_told": True},
@@ -380,7 +393,10 @@ def _wound_tail(state: GroupState, action: CombatAction, damage: dict) -> str:
     if injury.get("dying"):
         return "，倒地瀕死"
     if not damage.get("major_wound_triggered"):
-        return "，倒地昏迷" if injury.get("unconscious") else ""
+        if injury.get("unconscious"):
+            return "，倒地昏迷"
+        # An enemy has no injury record: a 20-point kill read only 「受到 20 點傷害」 (Lightless 2026-10-12).
+        return "，倒下了" if damage.get("defeated") else ""
     action_id = str(action.get("action_id", ""))
     con = next((check for other_id, other in state.combat.actions.items() if other.get("kind") == "injury"
                 and (other.get("parent_action_id") == action_id or str(other_id).startswith(action_id + ":damage"))
