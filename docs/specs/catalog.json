@@ -2995,8 +2995,10 @@
         "app/agents/executor.py",
         "app/services/prompt_config.py",
         "app/prompt_builder.py",
+        "app/agents/obligation_gate.py",
         "tests/test_turn_consistency_handoff.py",
-        "tests/test_narrative_boundary_prompts.py"
+        "tests/test_narrative_boundary_prompts.py",
+        "tests/test_event_obligations.py"
       ],
       "path": "docs/specs/bug/executor_retry_opening_npc_design_spec.md",
       "zh_path": "docs/specs/bug/executor_retry_opening_npc_design_spec_zh.md",

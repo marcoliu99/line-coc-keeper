@@ -24,6 +24,10 @@ from app.services import event_obligations
 
 _logger = logging.getLogger(__name__)
 _CAP = 4  # obligations applied in one turn; a longer list is a retrieval accident, not a scene
+# The Executor's own tool for each kind: when it already applied one this turn (it read the same scenario rule), the
+# gate does not apply it a second time under its own receipt.
+_EXECUTOR_TOOLS = {"sanity_check": {"sanity_check"}, "damage": {"adjust_character", "apply_resolved_check_damage"},
+                   "forced_check": {"skill_check"}}
 
 
 @dataclass(frozen=True)
@@ -130,7 +134,11 @@ async def enforce(
         observed_outcomes=observed_outcomes, actor_id=user_id,
     )
     applied: list[Applied] = []
+    done = {outcome.tool_name for outcome in mechanic_result.observed_outcomes if outcome.success}
     for obligation in due[:_CAP]:
+        if _EXECUTOR_TOOLS[obligation.kind] & done:
+            observability.event("turn.obligation", status="applied_by_executor", kind=obligation.kind, key=obligation.key)
+            continue
         identity = event_obligations.identity(state.timeline_id, actor.character_id, obligation, turn_id)
         # Reserved and marked without awaiting anything, so a cancellation can only arrive once the tool is running.
         if not _reserve(state, identity, obligation):

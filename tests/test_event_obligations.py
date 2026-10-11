@@ -118,6 +118,16 @@ REVEAL = "你掀開紅色水桶的蓋子，裡面泡著一隻斷手。"
 
 
 @aio
+async def test_a_rule_the_executor_already_applied_this_turn_is_not_applied_again(state) -> None:
+    """The Executor read the same rule and rolled Sanity; the gate must not owe it a second time."""
+    from app.domain.models import ObservedOutcome
+    result = _result()
+    result.observed_outcomes = [ObservedOutcome("tool:1", "sanity_check", True)]
+    applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], result=result)
+    assert applied == [] and "a" not in group_state.load_state(state.group_id).pending_checks
+
+
+@aio
 async def test_a_revealed_event_creates_the_san_check_in_the_same_turn(state) -> None:
     applied, result = await _enforce(state, REVEAL, [BUCKET_RULE])
     assert [item.kind for item in applied] == ["sanity_check"] and applied[0].pending
