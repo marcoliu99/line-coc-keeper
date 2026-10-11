@@ -13,7 +13,7 @@ The Lightless Beacon 2026-10-11 fresh5 run (autoroll on): Thomas's shot at turn 
 ## Change
 
 - **A settled attack gets one fixed line.** When `declare_combat_action`, `run_combat_action` or `submit_combat_choice` returns `completed` with a `result` carrying `hit`, the observed outcome is public: 「⚔️ 命中，幼體（深海夢魘） 受到 9 點傷害，倒下了。」, 「⚔️ 這一擊沒有命中。」, 「⚔️ 命中，但傷害全被 … 的護甲擋下。」 (a hit for 0: the enemy's armour fields are private), 「⚔️ 對方反擊得手，Celia 受到 2 點傷害。」, or 「⚔️ 武器故障，這一擊沒有打出去。」; the provisional mark follows as for other combat outcomes. An attack still waiting on the player's roll says nothing, as before: the roll reply tells it.
-- **A deferral over a settled attack is sent back with the answer.** `final_feedback` adds `attack_settled_not_deferred`: the attack is a committed change, answer `resolved` citing the declaration, and narrate the blow before who is next.
+- **A deferral over a settled attack is sent back with the answer.** `final_feedback` adds `attack_settled_not_deferred`: the attack is a committed change; when the engine's auto-advance then opened the next defence (a new pending check exists), answer `await_check` with that check id and its owner, otherwise `resolved` citing the tool that settled it (declare, run or `submit_combat_choice`); narrate the blow before who is next. A turn that only rolled, or whose call changed nothing (a stored receipt replayed for a reused id), gets no such hint: a replayed receipt is neither a settled attack nor the turn's effect, and its line stays internal; an empty-gun refusal, which also changes nothing, is still told.
 
 ## Not changing
 

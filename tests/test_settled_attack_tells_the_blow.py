@@ -76,6 +76,9 @@ class ReplayAndNextDefenceTests(unittest.TestCase):
         fresh = [line]
         executor._silence_replayed_attack(fresh, "declare_combat_action", {"round": 2}, {"round": 3})
         self.assertEqual(fresh[0].public_text, line.public_text, "a call that changed the game keeps its line")
+        refused = [ObservedOutcome("tool:1", "declare_combat_action", False, ".38 Revolver沒有子彈了（剩 0 發）：這一槍開不出去。", "public")]
+        executor._silence_replayed_attack(refused, "declare_combat_action", {"round": 2}, {"round": 2})
+        self.assertEqual(refused[0].audience, "public", "an empty-gun refusal changes nothing and must still be told")
 
     def test_the_check_the_turn_opened_is_found(self):
         state = GroupState(group_id="g")

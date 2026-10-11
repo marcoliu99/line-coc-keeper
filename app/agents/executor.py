@@ -103,7 +103,9 @@ def _attack_settled(tool_events: list[dict]) -> bool:
 def _silence_replayed_attack(observed: list, name: str, before: dict, after: dict) -> None:
     """An attack call that changed nothing replayed a stored receipt (the same action id sent again, rerun8 turn
     54): its line would tell an old blow as this turn's, so it is kept internal."""
-    if name in _ATTACK_TOOLS and before == after and observed and observed[-1].tool_name == name and observed[-1].public_text:
+    if (name in _ATTACK_TOOLS and before == after and observed and observed[-1].tool_name == name
+            and observed[-1].success and observed[-1].public_text.startswith("⚔️")):
+        # Only the settled-attack line: a refusal the player can act on (an empty gun) changed nothing either and stays.
         observed[-1] = replace(observed[-1], public_text="", audience="internal")
 
 
