@@ -40,13 +40,14 @@ def _resolved_events_for_character(
     state: GroupState, user_id: str, character_id: str, conversation_id: str
 ) -> list[dict[str, Any]]:
     timeline_id = state.timeline_id or f"legacy-{conversation_id}"
+    # This investigator's own last rolls, however many the rest of the table made since.
     return [
         dict(event)
-        for event in state.resolved_check_events[-20:]
+        for event in state.resolved_check_events
         if event.get("owner_id") == user_id
         and event.get("character_id") == character_id
         and event.get("timeline_id") == timeline_id
-    ]
+    ][-20:]
 
 
 @dataclass(frozen=True)

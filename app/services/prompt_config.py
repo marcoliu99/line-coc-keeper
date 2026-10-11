@@ -149,11 +149,15 @@ def build_resolved_check_history_block(
     if not events:
         lines.append("沒有可用的近期檢定事件紀錄。這不代表角色目前數值沒有變化；目前數值以上方存檔為準。")
         return "\n".join(lines)
-    for event in events[-5:]:
+    for event in events[-8:]:
+        # What the roll was for, so the same task is answered from it instead of rolled again (a hard success at
+        # turn 18 rolled again at turn 78 and failed, 2026-10-11).
+        purpose = " ".join(str(event.get("action_context") or event.get("player_declaration") or "").split())[:80]
         lines.append(
             f"- {event.get('investigator', '調查員')}：{event.get('skill', '檢定')} "
             f"{event.get('skill_value', '?')}%，擲出 {event.get('roll', '?')}，"
             f"難度 {presentation.difficulty_label(event.get('difficulty', 'regular'))}，結果 {presentation.outcome_label(str(event.get('outcome', '未知')))}。"
+            + (f"（當時的行動：{purpose}）" if purpose else "")
         )
         if event.get('provisional'):
             lines.append('  此戰鬥紀錄是暫定機械結果；擲骰保留，但不能獨立建立已提交的世界後果。')

@@ -1437,7 +1437,7 @@ class GroupState:
             party_facing=data["party_facing"] if isinstance(data.get("party_facing"), dict) else {},
             pending_checks=data.get("pending_checks", {}),
             resolved_check_events=(
-                [dict(item) for item in data.get("resolved_check_events", [])[-20:] if isinstance(item, dict)]
+                [dict(item) for item in data.get("resolved_check_events", [])[-100:] if isinstance(item, dict)]
                 if isinstance(data.get("resolved_check_events", []), list)
                 else []
             ),

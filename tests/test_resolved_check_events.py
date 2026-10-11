@@ -121,7 +121,7 @@ class ResolvedCheckEventTests(unittest.TestCase):
         state.set_active_character("p1", char.character_id)
         state.resolved_check_events = [
             {"event_id": f"old-{i}", "timeline_id": "timeline-a", "owner_id": "p1"}
-            for i in range(20)
+            for i in range(100)
         ]
         seed = {
             "event_id": "new", "check_id": "new", "timeline_id": "timeline-a",
@@ -133,7 +133,7 @@ class ResolvedCheckEventTests(unittest.TestCase):
         _persist_resolved_check_event("g", seed)
 
         events = group_state.load_state("g").resolved_check_events
-        self.assertEqual(len(events), 20)
+        self.assertEqual(len(events), 100)
         self.assertEqual(events[-1]["event_id"], "new")
         self.assertEqual(events[0]["event_id"], "old-1")
 

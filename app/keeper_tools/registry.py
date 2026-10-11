@@ -215,7 +215,9 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "type": "object",
                     "properties": {
                         "investigator": {"type": "string", "description": "調查員角色名稱"},
-                        "skill": {"type": "string", "description": "技能或屬性名稱，例如：偵查、潛行、STR、POW"},
+                        "skill": {"type": "string", "description": (
+                            "一個技能或屬性名稱，例如：偵查、潛行、STR、POW。一次只擲一個技能，不要把兩個技能合成一個名字"
+                            "（例如「偵查與聆聽」）；開車是「汽車駕駛」，「駕駛」是飛機、船等其他載具。")},
                         "bonus_dice": {"type": "integer", "description": "獎勵骰數量（情境有利時），預設 0"},
                         "penalty_dice": {"type": "integer", "description": "懲罰骰數量（情境不利時），預設 0"},
                         "pushed": {
@@ -379,10 +381,11 @@ _SPECS: tuple[ToolSpec, ...] = (
                         "loss_failure": {"type": "string", "description": "檢定失敗時的理智損失，如 '1d6'、'1d10'"},
                         "action_context": {
                             "type": "string",
-                            "description": "用一句不超過 240 字的短句記錄角色正在什麼情境做什麼，供 Keeper 收到系統結果後接續敘事。",
+                            "description": ("寫明看見了什麼（例如「看見 Corbitt 的屍體動起來」），不超過 240 字；"
+                                            "之後再遇到同一個景象或同一種怪物時，靠這句知道已經擲過。"),
                         },
                     },
-                    "required": ["investigator", "loss_success", "loss_failure"],
+                    "required": ["investigator", "loss_success", "loss_failure", "action_context"],
                 },
             },
         handler=check_handlers.sanity_check,

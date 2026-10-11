@@ -35,10 +35,12 @@ def resolve_skill_value(char: Character, skill_name: str, *, register_unknown: b
             return v
 
     norm = key.replace(" ", "").lower()
-    for k, v in char.skills.items():
-        kk = k.replace(" ", "").lower()
-        if norm == kk or norm in kk or kk in norm:
-            return v
+    matches = [v for k, v in char.skills.items()
+               if (kk := k.replace(" ", "").lower()) and (norm == kk or norm in kk or kk in norm)]
+    if matches:
+        # A name that covers two skills (「偵查與聆聽」) took whichever came first on the sheet: Spot Hidden 65 rolled
+        # at Listen's 25 (a 2026-10-11 soak run). The investigator uses the better of the skills named.
+        return max(matches)
 
     # Unknown skill: calculate its canonical base rate first. Registration
     # callers defer writing the character card until check admission succeeds.
