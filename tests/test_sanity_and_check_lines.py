@@ -33,6 +33,10 @@ def test_a_skill_roll_names_the_skill():
                                                        "tier": "regular", "success": False, "required_tier": "hard"},
                                        1, {"skill": "偵查"}).public_text
     assert short == "已結算檢定：Alan 的偵查，骰值 40，結果為「失敗（擲出一般成功，未達困難）」。"
+    lost = turn_delivery.observe_tool("skill_check", {"ok": True, "resolved": True, "investigator": "Alan", "roll": 40,
+                                                      "tier": "regular", "success": False, "required_tier": "regular",
+                                                      "opposed_outcome": {"winner": "opponent"}}, 1, {"skill": "說服"}).public_text
+    assert lost == "已結算檢定：Alan 的說服，骰值 40，結果為「失敗（擲出一般成功，對抗落敗）」。"
 
 
 def test_a_name_that_covers_two_skills_uses_the_better_one():

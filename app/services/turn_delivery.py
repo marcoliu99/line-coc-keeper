@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from app import observability, presentation, spoiler_policy
+from app import dice, observability, presentation, spoiler_policy
 from app.domain.models import MechanicResult, ObservedOutcome
 from app.models import GroupState
 from app.services import canonical_facts
@@ -40,9 +40,11 @@ def _settled_outcome(result: dict) -> str:
     (a Regular success against a Hard check read 「一般成功」 while the check had failed)."""
     tier = str(result.get("tier"))
     label = presentation.tier_label(tier)
-    if result.get("success") is False and tier in {"regular", "hard", "extreme", "critical"}:
-        needed = presentation.difficulty_label(str(result.get("required_tier") or result.get("difficulty") or "regular"))
-        return f"失敗（擲出{label}，未達{needed}）"
+    if result.get("success") is False and tier in dice.TIER_RANK and dice.TIER_RANK[tier] >= dice.TIER_RANK["regular"]:
+        required = str(result.get("required_tier") or result.get("difficulty") or "regular")
+        if result.get("opposed_outcome") or dice.TIER_RANK.get(required, 0) <= dice.TIER_RANK[tier]:
+            return f"失敗（擲出{label}，對抗落敗）"  # a success the opponent beat, not a difficulty missed
+        return f"失敗（擲出{label}，未達{presentation.difficulty_label(required)}）"
     return label
 
 
