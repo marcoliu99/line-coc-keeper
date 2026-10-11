@@ -98,7 +98,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                            "public" if text else "internal", fact_ref=fact_ref)
 
 
-_ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|骰值(?:是|為)?)\s*(\d{1,3})(?!\d)(?!\s*點)")
+_ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|骰值(?:是|為)?)\s*(\d{1,3})(?!\d)")  # the number right after the verb
 
 
 @dataclass(frozen=True)
@@ -129,7 +129,7 @@ class InteractionRef:
         if self.kind != "luck" or not any(
                 marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
             return False
-        # A cost is not a roll: 「擲出 60，可用…」 claims a roll, 「花費 6 點」 does not.
+        # Only the number right after the verb is a claim (「擲出 60」, 「骰值為 60 點」); 「花費 6 點」 names a cost.
         return self.roll is None or all(int(n) == self.roll for n in _ROLL_CLAIM.findall(narrative))
 
 
