@@ -345,7 +345,8 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
 
 # 「Fighting 70% (35/14), damage 8D6」, 「Claw 50% (25/10), damage 1D6+DB」, 「爪擊 50%（25/10），傷害 1D6+DB」.
 _BLOCK_ATTACK = re.compile(
-    r"(?P<label>[A-Za-z][A-Za-z' -]{1,30}?|[\u4e00-\u9fff]{1,10})\s*(?P<value>\d{1,3})\s*[%％]\s*"
+    r"(?P<label>(?:[A-Za-z][A-Za-z' -]{1,30}?|[\u4e00-\u9fff]{1,10})(?:\s*[（(][^）)\d]{1,20}[）)])?)\s*"
+    r"(?P<value>\d{1,3})\s*[%％]\s*"
     r"(?:[（(][^）)]{0,40}[）)])?\s*[,，、]?\s*(?:damage|傷害)\s*[:：]?\s*"
     r"(?P<damage>\d*\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d*\s*[dD]\s*\d+|\d+|DB|db|damage bonus|傷害加值))*)",
 )
@@ -378,6 +379,8 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
         label = match.group("label").strip()
         if _NOT_AN_ATTACK.match(label) or _RANGED.search(label):
             continue
+        if block[match.end():match.end() + 4].lstrip().startswith("/"):
+            continue  # 「1D6 + 1/2 DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」
         damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
         if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
             if not bonus:
