@@ -969,7 +969,6 @@ def test_a_replay_cited_instead_of_the_original_transfer_still_verifies(state):
     assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
 
 
-<<<<<<< HEAD
 def test_a_choice_that_settled_the_attack_is_the_turns_effect(state):
     """A no-defence choice settles the attack inside submit_combat_choice; citing it validates a resolved turn."""
     state.combat.active = True
@@ -981,7 +980,8 @@ def test_a_choice_that_settled_the_attack_is_the_turns_effect(state):
         state=state, user_id="a", before_pending={}, before_luck={}, tool_events=settled, has_scenario=False, before_actor={})
     # The validator files a completion with a mutation and no roll as resolved_without_check; the point is that it passed.
     assert result.validation_code == "validated" and result.disposition == "resolved_without_check", result
-=======
+
+
 def test_a_roll_or_a_record_made_this_turn_is_evidence_enough_for_a_no_check_completion(state):
     """Scritch Scratch 2026-10-11 rerun4 turn 5: a Sanity roll was made, SAN lost, and the completion was refused for
     not quoting the scenario; the dice had been rolled, so there was no retry and the player read an error."""
@@ -1057,4 +1057,3 @@ def test_a_deferral_after_only_a_roll_keeps_the_generic_feedback(state):
     with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
         asyncio.run(executor.run_executor(message(state)))
     assert seen[0] is not None and seen[0]["validation_code"] != "nobody_waiting"
->>>>>>> origin/main_v2
