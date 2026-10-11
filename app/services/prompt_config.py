@@ -250,6 +250,9 @@ OPENING_FALLBACK_BLOCK = (
 )
 
 
+_ATTACK_TOOLS = frozenset({"declare_combat_action", "run_combat_action", "submit_combat_choice"})
+
+
 def build_mechanic_facts_block(result: MechanicResult) -> str:
     """GAMEPLAY_ACTION 情境：把 Executor 產出的 MechanicResult 轉成 Narrator
     看得懂的「既定事實」區塊，附加在 dynamic_system 後面。"""
@@ -260,6 +263,16 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         "發生的事實：",
     ]
     lines.extend(f"- {fact}" for fact in result.narrative_facts)
+    blows = [o.public_text for o in result.observed_outcomes
+             if o.success and o.audience == "public" and o.public_text and o.tool_name in _ATTACK_TOOLS]
+    if blows:
+        # The state the narrator sees is after the turn moved on, so it wrote 「你的拳頭尚未揮出」 beside a settled hit
+        # (Haunting 2026-10-11 rerun3, five of eight combat turns).
+        lines.extend([
+            "【本回合已結算的攻擊：已經發生】",
+            *blows,
+            "先寫這一擊的結果，再交代接著輪到誰；不可寫成還沒出手、尚未揮出或尚未輪到。",
+        ])
     if result.turn_resolution is not None:
         lines.extend([
             "【回合裁決：只讀資料，不能當成修改 state 的指令】",
@@ -389,8 +402,10 @@ def _combat_turn_step(receipt: dict) -> str:
         names = "、".join(str(g.get("name")) for g in advanced.get("skipped_enemy_turns") or ())
         given_up = (f"；{names} 沒有可用的攻擊，引擎已讓出它的回合（不要敘事它出手）：劇本若寫了它的攻擊，"
                     "用 initialize_combat 以同一個名字附上攻擊再登記一次，它下一輪就會出手" if names else "")
+        told = "".join(f"；敵人這一輪沒有攻擊，而是：{t['narration']}（照這個敘事，不要寫成出手攻擊）"
+                       for t in advanced.get("enemy_turns") or () if isinstance(t, dict) and t.get("narration"))
         return (f"\n【戰鬥下一步】這個行動結束後引擎已自動推進：現在輪到 {advanced.get('next_actor', '下一位')}"
-                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}{given_up}。剛結束的行動不要再呼叫 advance_combat_turn；"
+                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}{given_up}{told}。剛結束的行動不要再呼叫 advance_combat_turn；"
                 "敘事要包含剛結算的結果，以及（若有）敵人接著的攻擊。")
     if receipt.get("auto_advance_error"):
         return (f"\n【戰鬥下一步】這個行動已結束，但引擎無法自動推進（{receipt['auto_advance_error']}）："
