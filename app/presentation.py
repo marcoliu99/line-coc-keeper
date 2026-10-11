@@ -163,25 +163,39 @@ def strip_leaked_decision(text: str) -> str:
 # the wrapper, sometimes with a stray token after it, survived the parse (2026-10-11 soak runs: an opening whose raw
 # text ended `…又為何前往羅克波特？」}} bheidh`, a scene reply that ended `…你要怎麼查看？」}}`).
 _STRAY_WORD = re.compile(r"[}\]]\s+[A-Za-z]{1,12}\s*$")
+_OPENER = {"{": "}", "[": "]"}
+
+
+def _unmatched_closers(text: str) -> set[int]:
+    """Positions of the ``}``/``]`` in ``text`` that no earlier opener of their kind is waiting for."""
+    depth = {"}": 0, "]": 0}
+    unmatched: set[int] = set()
+    for index, char in enumerate(text):
+        if char in _OPENER:
+            depth[_OPENER[char]] += 1
+        elif char in depth:
+            if depth[char]:
+                depth[char] -= 1
+            else:
+                unmatched.add(index)
+    return unmatched
 
 
 def strip_junk_tail(text: str) -> str:
-    """``text`` without the closing ``}``/``]`` at its end that nothing in the text opened, and the stray word after.
+    """``text`` without the closing ``}``/``]`` at its end that nothing opened, and the stray word after them.
 
-    Only the unmatched closers go: a balanced ``{hp: 13}`` before them stays. A closing 」 left dangling by the cut
-    goes with the tail.
+    Only a closer with no opener waiting for it goes: a balanced ``{hp: 13}`` at the end stays. A closing 」 left
+    dangling by the cut goes with the tail.
     """
-    excess = {"}": text.count("}") - text.count("{"), "]": text.count("]") - text.count("[")}
-    if max(excess.values()) <= 0:
+    unmatched = _unmatched_closers(text)
+    if not unmatched:
         return text
     kept = text.rstrip()
-    if stray := _STRAY_WORD.search(kept):
+    if (stray := _STRAY_WORD.search(kept)) and stray.start() in unmatched:
         kept = kept[:stray.start() + 1]
     cut = False
-    while kept and (kept[-1] in "\"”" or kept[-1].isspace() or excess.get(kept[-1], 0) > 0):
-        if kept[-1] in excess:
-            excess[kept[-1]] -= 1
-            cut = True
+    while kept and (kept[-1] in "\"”" or kept[-1].isspace() or len(kept) - 1 in unmatched):
+        cut = cut or len(kept) - 1 in unmatched
         kept = kept[:-1]
     if not cut:
         return text

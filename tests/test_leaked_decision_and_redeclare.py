@@ -55,6 +55,10 @@ class JunkTailTests(unittest.TestCase):
         self.assertEqual(presentation.strip_junk_tail("資料是 {hp: 13}}"), "資料是 {hp: 13}")
         self.assertEqual(presentation.strip_junk_tail("名單 [Alan]]} bheidh"), "名單 [Alan]")
 
+    def test_an_unmatched_closer_earlier_does_not_cost_a_balanced_ending_its_brace(self):
+        text = "先前多了一個 }，但資料是 {hp: 13}"
+        self.assertEqual(presentation.strip_junk_tail(text), text)
+
     def test_a_quote_the_narration_opened_stays_with_its_text(self):
         self.assertEqual(presentation.strip_junk_tail("他低聲說：「走吧。」}}"), "他低聲說：「走吧。」")
 
