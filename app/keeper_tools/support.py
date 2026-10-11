@@ -353,7 +353,7 @@ _BLOCK_ATTACK = re.compile(
 _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
 # Read as a blow, a shot would be fought back against and spend no ammunition: only melee attacks are taken this way.
-_RANGED = re.compile(r"pistol|revolver|rifle|shotgun|handgun|carbine|smg|gun|firearm|bow|throw|"
+_RANGED = re.compile(r"pistol|revolver|rifle|shotgun|musket|handgun|carbine|smg|gun|firearm|bow|throw|"
                      r"手槍|步槍|霰彈|左輪|衝鋒槍|槍|射擊|弓|弩|投擲", re.IGNORECASE)
 # 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
 _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
