@@ -363,4 +363,23 @@ def _blow(state: GroupState, pending: dict, outcome: dict) -> str:
     if absorbed and not damage.get("final_damage"):
         return head + f"{landed}，但傷害全被 {damage.get('target', '目標')} 的護甲擋下。"
     blocked = "（部分被護甲擋下）" if absorbed else ""
-    return head + f"{landed}，{damage.get('target', '目標')} 受到 {damage.get('final_damage', 0)} 點傷害{blocked}。"
+    return (head + f"{landed}，{damage.get('target', '目標')} 受到 {damage.get('final_damage', 0)} 點傷害{blocked}"
+            + _wound_tail(state, action, damage) + "。")
+
+
+def _wound_tail(state: GroupState, action: CombatAction, damage: dict) -> str:
+    """What a heavy blow did beyond its points: the fallen, or the major wound and its CON roll once made. Said in
+    the line the player always reads (Haunting 2026-10-11 rerun2 turn 41: Clara lost 9 of 12 HP and read only
+    that her counter had missed)."""
+    injury = damage.get("injury") or {}
+    if injury.get("dying"):
+        return "，倒地瀕死"
+    if not damage.get("major_wound_triggered"):
+        return "，倒地昏迷" if injury.get("unconscious") else ""
+    action_id = str(action.get("action_id", ""))
+    con = next((check for other_id, other in state.combat.actions.items() if other.get("kind") == "injury"
+                and (other.get("parent_action_id") == action_id or str(other_id).startswith(action_id + ":damage"))
+                for key, check in (other.get("checks") or {}).items() if key.startswith("injury")), None)
+    if con is None:
+        return "——重傷，還要過 CON 檢定"
+    return "——重傷，CON 檢定" + ("過了，仍站得住" if con.get("success") else "失敗，昏迷倒地")
