@@ -159,7 +159,14 @@ def make_tool_executor(
                             result = tool_dispatch.execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests, speaker_role
                             )
-                        observability.event("turn.observed", tool_name=tool_name,
+                        failed = not result.get("ok")
+                        if failed:
+                            # The reason goes to the text log, not the structured event (which carries no free-form
+                            # text): the structured line alone said a combat tool ran, not that it failed. The turn's
+                            # own facts line holds the same text only if the turn finishes; this one survives a timeout.
+                            _logger.warning("tool %s failed: %s", tool_name, str(result.get("error") or "")[:300])
+                        observability.event("turn.observed", tool_name=tool_name, ok=not failed,
+                                            phase=result.get("phase") if failed else None,
                                             dice_rolled=bool(result.get("ok") and (result.get("resolved") or result.get("pending_luck") or tool_name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"})))
                         # Record before settlement, including late/cancelled awaiters.
                         facts.append(_describe_tool_call(tool_name, result))

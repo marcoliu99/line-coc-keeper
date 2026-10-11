@@ -278,8 +278,14 @@ def base_range_for(weapon: WeaponDefinition, thrower_str: int | None) -> float |
 
 
 def resolve_range_difficulty(distance_yards: float | None, base_range_yards: float | None) -> RangeResolution:
-    """Single-shot hit bands; caller still owns ammo, source and damage admission."""
-    if distance_yards is None or base_range_yards is None:
+    """Single-shot hit bands; caller still owns ammo, source and damage admission.
+
+    A shot with no stated distance is taken at the nearest range, a regular roll: the table is not stopped for a number
+    nobody gave. A stated distance still needs the weapon's base range to be judged.
+    """
+    if distance_yards is None:
+        return RangeResolution('regular')
+    if base_range_yards is None:
         return RangeResolution(reason='Single shot requires trusted physical distance and reviewed base range')
     if (type(distance_yards) not in (int, float) or type(base_range_yards) not in (int, float)
             or not math.isfinite(distance_yards) or not math.isfinite(base_range_yards)
@@ -324,7 +330,8 @@ def resolve_weapon_damage(
             return DamageResolution('needs_ruling', reason='Unknown or conflicting distance band ruling')
         selected = ruled
     if selected is None:
-        return DamageResolution('needs_ruling', reason='Physical distance or explicit band ruling required')
+        # No distance and no ruled band: the nearest band, as the hit roll takes the nearest range.
+        selected = definition.distance_bands[0]
     return DamageResolution('resolved', damage=selected.damage, band_id=selected.id)
 
 

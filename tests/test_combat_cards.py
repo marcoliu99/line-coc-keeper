@@ -134,7 +134,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertNotIn("Song of Lost Dreams", plan["public_hint"])
         self.assertNotIn("POW", plan["public_hint"])
 
-    def test_unsupported_enemy_action_requires_ruling_without_consuming_usage(self):
+    def test_unsupported_enemy_action_is_given_up_without_consuming_usage(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(
@@ -156,8 +156,9 @@ class CombatCardTests(unittest.TestCase):
         result = calls.resolve_enemy_action(state, plan["plan_id"])
         second_plan = calls.plan_enemy_turn(state)
 
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["phase"], "NEEDS_RULING")
+        self.assertTrue(result["ok"])  # the engine has no table for it: given up and narrated, not paused
+        self.assertTrue(result["result"]["special_given_up"])
+        self.assertNotEqual(result["phase"], "NEEDS_RULING")
         self.assertEqual(second_plan["selected_action"], "special_ability")
         self.assertEqual(state.combat.enemy_cards[plan["enemy_card_id"]].abilities[0].usage.get("used_total", 0), 0)
 
@@ -235,7 +236,7 @@ class CombatCardTests(unittest.TestCase):
 
         self.assertNotEqual(plan["selected_action"], "attack")
 
-    def test_missing_planned_ability_is_a_retryable_error(self):
+    def test_a_planned_ability_that_is_gone_is_given_up_not_an_error(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(state, "Ability Enemy", 60, 14, abilities=[
@@ -247,7 +248,7 @@ class CombatCardTests(unittest.TestCase):
 
         result = calls.resolve_enemy_action(state, plan["plan_id"])
 
-        self.assertFalse(result["ok"])
+        self.assertTrue(result["ok"] and result["result"]["special_given_up"])
         self.assertFalse(plan.get("resolved", False))
 
     def test_resolve_enemy_action_is_idempotent_for_same_plan(self):
@@ -273,9 +274,9 @@ class CombatCardTests(unittest.TestCase):
         first = calls.resolve_enemy_action(state, plan["plan_id"])
         second = calls.resolve_enemy_action(state, plan["plan_id"])
 
-        self.assertFalse(first["ok"])
+        self.assertTrue(first["ok"])
         self.assertEqual(first, second)
-        self.assertEqual(first["phase"], "NEEDS_RULING")
+        self.assertNotEqual(first["phase"], "NEEDS_RULING")
         self.assertEqual(card.abilities[0].usage.get("used_total", 0), 0)
         self.assertEqual(card.abilities[0].usage.get("used_this_round", 0), 0)
 
@@ -415,9 +416,9 @@ class CombatCardTests(unittest.TestCase):
 
         ability = state.combat.enemy_cards[first["enemy_card_id"]].abilities[0]
         self.assertEqual(first["plan_id"], second["plan_id"])
-        self.assertFalse(result["ok"])
+        self.assertTrue(result["ok"])
         self.assertEqual(result, duplicate_result)
-        self.assertEqual(result["phase"], "NEEDS_RULING")
+        self.assertNotEqual(result["phase"], "NEEDS_RULING")
         self.assertEqual(ability.usage.get("used_total", 0), 0)
 
     def test_enemy_plan_cannot_resolve_outside_enemy_turn(self):
@@ -521,7 +522,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(state.combat.effects, [])
         self.assertEqual(state.combat.enemy_cards[plan["enemy_card_id"]].abilities[0].usage.get("used_total", 0), 0)
 
-    def test_ability_effect_requires_outcome_before_consuming_usage(self):
+    def test_a_given_up_ability_effect_is_not_applied_and_consumes_no_usage(self):
         state = self._state_with_pc()
         combat.start_combat(state)
         combat.add_npc(
@@ -542,7 +543,7 @@ class CombatCardTests(unittest.TestCase):
 
         result = calls.resolve_enemy_action(state, plan["plan_id"])
 
-        self.assertFalse(result["ok"])
+        self.assertTrue(result["ok"] and result["result"]["special_given_up"])  # no effect applied, only narrated
         card = state.combat.enemy_cards[plan["enemy_card_id"]]
         self.assertEqual(card.abilities[0].usage.get("used_total", 0), 0)
         self.assertFalse(plan.get("resolved", False))
@@ -694,7 +695,7 @@ class CombatCardTests(unittest.TestCase):
         self.assertEqual(after_damage["selected_action"], "special_ability")
         self.assertEqual(after_damage["selected_id"], "retaliate")
         self.assertEqual(after_resolve["selected_action"], "special_ability")
-        self.assertEqual(state.combat.phase, "NEEDS_RULING")
+        self.assertEqual(state.combat.phase, "READY")
 
     def test_target_in_range_trigger_uses_abstract_range_band(self):
         state = self._state_with_pc()

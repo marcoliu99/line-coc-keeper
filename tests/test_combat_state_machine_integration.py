@@ -480,7 +480,6 @@ def test_single_shot_uses_owned_ammo_once_and_preserves_persistent_weapon_mappin
 
 @pytest.mark.parametrize(('weapon', 'action_kind', 'distance'), [
     ('unknown alien weapon', 'melee', None),
-    ('.45 Automatic', 'single_shot', None),
     ('.45 Automatic', 'burst', 5),
 ])
 def test_unsupported_or_unsourced_action_needs_ruling_before_rng_or_ammo(battle, weapon, action_kind, distance):
@@ -492,6 +491,23 @@ def test_unsupported_or_unsourced_action_needs_ruling_before_rng_or_ammo(battle,
     assert battle.effective().weapons['.45 Automatic']['ammo'] == 7
     assert battle.load().characters_by_id['char:ada'].weapons['.45 Automatic']['ammo'] == 7
     assert not battle.load().pending_checks
+
+
+def test_a_players_shot_with_no_stated_distance_is_a_regular_roll_not_a_paused_fight(battle):
+    """A player who says only 「我開槍」 shoots inside the base range; the fight is not paused for a number
+    (Camp Sunny rerun2: five shots in a row stalled the table in NEEDS_RULING)."""
+    battle.start()
+    declared = battle.declare('shot:nodistance', weapon='.45 Automatic', action_kind='single_shot')
+    assert declared['ok'], declared
+    assert declared['phase'] != 'NEEDS_RULING'
+    assert battle.load().combat.actions['shot:nodistance']['difficulty'] == 'regular'
+
+
+def test_a_players_shot_still_uses_a_stated_distance(battle):
+    battle.start()
+    far = battle.declare('shot:far', weapon='.45 Automatic', action_kind='single_shot', distance_yards=60)
+    assert far['ok'], far
+    assert battle.load().combat.actions['shot:far']['difficulty'] != 'regular'
 
 
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
@@ -672,26 +688,45 @@ def test_source_bound_stop_persists_outside_battle_but_rolls_back_new_working_st
         assert battle.load().characters_by_id['char:ada'].hp == 10
 
 
-def test_unsourced_first_npc_ruling_can_be_cancelled_and_advanced_without_damage(battle):
+def test_an_unsourced_enemy_with_the_first_turn_attacks_as_a_blow_and_waits_for_the_defence(battle):
+    """It used to pause the fight for a ruling at the first turn (Lightless rerun3); now its opening attack is a melee
+    blow with the card's own values, and the player chooses a defence before anything is rolled against them."""
     with patch.dict(SOURCE, {'attack_mode': 'melee'}, clear=True):
-        assert battle.start(npc_first=True)['ok']
-    before = battle.load()
-    npc_id = before.combat.order[before.combat.current_index].combatant_id
-    plan = battle.tool('plan_enemy_turn', {'enemy': 'Cultist'})
-    with patch.object(dice, 'skill_check') as rng:
-        blocked = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
-        assert blocked['phase'] == 'NEEDS_RULING'
-        assert not blocked['ok']
-        cancelled = battle.tool('resolve_combat_ruling', {'combat_id': before.combat.combat_id,
-                    'action_id': blocked['action_id'], 'event_id': 'unsourced:cancel', 'decision': 'cancel',
-                    'reason': 'controller cancels unsupported unsourced attack'})
-        assert cancelled['ok']
-        advanced = battle.tool('advance_combat_turn', {'actor_id': npc_id, 'event_id': 'unsourced:advance'})
-        assert advanced['ok'], advanced
-        rng.assert_not_called()
+        started = battle.start(npc_first=True)
+    assert started['ok'], started
     current = battle.load()
-    assert current.combat.order[current.combat.current_index].combatant_id == 'pc:char:ada'
-    assert current.characters_by_id['char:ada'].hp == 10
+    assert current.combat.phase == 'PLAYER_CHOICE', current.combat.phase
+    assert not any(a.get('needs_ruling') for a in current.combat.actions.values())
+    assert current.characters_by_id['char:ada'].hp == 10, 'the blow is not rolled before the defence is chosen'
+
+
+def test_an_enemys_special_ability_the_engine_cannot_play_is_given_up_and_narrated_not_paused(battle):
+    """Lightless rerun3: a plan the engine had no table for paused the fight for a ruling every player waited on."""
+    enemy = {'name': 'Dream Singer', 'dex': 90, 'hp': 14, 'source': SOURCE,
+             'attacks': [{'id': 'claw', 'skill_name': 'Brawl', 'skill_value': 45, 'damage': '1d4', 'range_band': 'engaged'}],
+             'abilities': [{'id': 'song', 'name': 'Song of Lost Dreams', 'priority': 100,
+                            'trigger': {'type': 'first_available'},
+                            'check': {'type': 'opposed', 'attacker_stat': 'POW', 'defender_stat': 'POW'},
+                            'usage': {'per_combat': 1},
+                            'reveal_policy': {'player_facing_name': '', 'hide_numbers': True, 'hide_weakness': True}}]}
+    started = battle.tool('initialize_combat', {'enemies': [enemy]})
+    assert started['ok'], started
+    current = battle.load()
+    if current.combat.order[current.combat.current_index].side != 'enemy':
+        pytest.skip('the enemy did not take the first turn')
+    plan = battle.tool('plan_enemy_turn', {'enemy': 'Dream Singer'})
+    assert plan['selected_action'] == 'special_ability', plan
+    with patch.object(dice, 'skill_check') as rng:
+        ran = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+        rng.assert_not_called()
+    assert ran['ok'] and ran['phase'] != 'NEEDS_RULING', ran
+    assert ran['result']['special_given_up'] and ran['result']['narration']
+    assert battle.load().combat.phase == 'READY'
+    again = battle.tool('run_enemy_combat_plan', {'plan_id': plan['plan_id']})
+    assert again == ran, 'a replay returns the same receipt'
+    advanced = battle.tool('advance_combat_turn', {'actor_id': 'Dream Singer', 'event_id': 'special:advance'})
+    assert advanced['ok'], advanced
+    assert battle.load().characters_by_id['char:ada'].hp == 10
 
 
 def test_distinct_healer_owned_first_aid_stabilizes_only_bound_patient_and_receipt_once(battle):
@@ -830,7 +865,8 @@ def test_source_ruling_keeps_owned_instance_key_through_real_tool_reload(battle)
     character.weapon_instances = {'owned:gun': {'definition_id': weapon.id}}
     group_state.save_state(state)
     battle.start()
-    assert battle.declare(weapon='owned:gun', action_kind='single_shot')['phase'] == 'NEEDS_RULING'
+    # A distance past the weapon's extreme range still needs the Keeper's ruling (a missing one no longer does).
+    assert battle.declare(weapon='owned:gun', action_kind='single_shot', distance_yards=1000)['phase'] == 'NEEDS_RULING'
     current = battle.load()
     action_id = next(k for k, a in current.combat.actions.items() if not a.get('completed'))
     resumed = battle.tool('resolve_combat_ruling', {

@@ -279,18 +279,17 @@ def test_source_ruling_resumes_unknown_weapon_without_arbitrary_damage():
     assert state.pending_checks['player']['skill'] == '格鬥（鬥毆）'
 
 
-def test_unsupported_special_cancellation_preserves_evidence():
+def test_an_unsupported_special_is_given_up_and_keeps_its_usage():
     state, _, enemy = battle(npc_first=True)
     card = state.combat.enemy_cards[enemy.enemy_card_id]
     from app.models import SpecialAbility
     card.abilities.append(SpecialAbility(id='spell', name='Spell'))
     plan = calls.plan_enemy_turn(state)
     result = calls.resolve_enemy_action(state, plan['plan_id'])
-    assert result['phase'] == 'NEEDS_RULING'
-    result = combat_flow.resolve_ruling(state, action_id='npc:' + plan['plan_id'], event_id='cancel',
-                                       reason='Controller cancels unsupported special', decision='cancel')
-    assert result['completed']
-    assert state.combat.actions['npc:' + plan['plan_id']]['cancelled']
+    assert result['ok'] and result['completed'] and result['phase'] == 'READY', result
+    assert result['result']['special_given_up'] and result['result']['narration']
+    action = state.combat.actions['npc:' + plan['plan_id']]
+    assert action['kind'] == 'skip' and action['completed'] and not action.get('cancelled')
     assert card.abilities[0].usage == {}
 
 
@@ -666,7 +665,7 @@ def test_verified_npc_ruling_resumes_missing_damage_bonus_from_card():
     assert state.combat.actions['npc:club']['db'] == '1d4'
 
 
-def test_verified_npc_single_shot_ruling_resumes_missing_distance():
+def test_an_npc_single_shot_with_no_stated_distance_is_not_a_ruling():
     from app import combat_rules
     weapon = next(w for w in combat_rules.weapon_catalog() if w.attack_mode == 'single_shot'
                   and w.db_policy == 'none' and not w.ruling_reason and not w.distance_bands)
@@ -674,16 +673,30 @@ def test_verified_npc_single_shot_ruling_resumes_missing_distance():
     card = state.combat.enemy_cards[enemy.enemy_card_id]
     card.attacks[0].id = weapon.id
     card.attacks[0].ammo_or_uses = 3
-    result = combat_flow.declare_action(state, action_id='npc:shot', actor_id=enemy.combatant_id,
-        target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
-    assert result['phase'] == 'NEEDS_RULING'
     with patch('app.dice.skill_check') as rng:
-        result = combat_flow.resolve_ruling(state, action_id='npc:shot', event_id='ruling:shot',
-            reason='Verified distance', decision='resume', distance_yards=1)
+        result = combat_flow.declare_action(state, action_id='npc:shot', actor_id=enemy.combatant_id,
+            target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
     rng.assert_not_called()  # Player first chooses whether to dive.
     assert result['phase'] == 'PLAYER_CHOICE'
-    assert state.combat.actions['npc:shot']['npc_attack_id'] == weapon.id
-    assert card.attacks[0].ammo_or_uses == 3
+    assert state.combat.actions['npc:shot']['difficulty'] == 'regular'
+
+
+def test_an_enemy_shot_with_no_ammunition_waits_for_a_ruling_the_keeper_can_read():
+    """The rulings that remain are the Keeper's to make, so the Keeper's context must say what each one is about."""
+    from app import combat_rules
+    from app.services import turn_context
+    weapon = next(w for w in combat_rules.weapon_catalog() if w.attack_mode == 'single_shot'
+                  and w.db_policy == 'none' and not w.ruling_reason and not w.distance_bands)
+    state, _, enemy = battle(npc_first=True)
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.attacks[0].id = weapon.id
+    card.attacks[0].ammo_or_uses = 0
+    result = combat_flow.declare_action(state, action_id='npc:empty', actor_id=enemy.combatant_id,
+        target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
+    assert result['phase'] == 'NEEDS_RULING' and 'ammunition' in result['error']
+    shown = turn_context.combat_projection(state)
+    assert shown['phase'] == 'NEEDS_RULING'
+    assert 'ammunition' in shown['actions']['npc:empty']['needs_ruling']
 
 
 def test_unknown_effect_stop_rejected_and_recorded_stop_replayed_after_reload():
