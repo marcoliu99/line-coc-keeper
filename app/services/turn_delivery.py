@@ -255,9 +255,16 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
     resolved = message.payload.get("resolved_check_context")
     if resolved:
         private_result = is_private(resolved)
+        # The blow a combat roll settled (hit, damage, a major wound) rides the line the player always reads: the
+        # narration may skip it, as it did when Clara lost 9 HP (Haunting 2026-10-11 rerun2 turn 41).
+        receipt = resolved.get("combat_receipt") or {}
+        blow = "" if receipt.get("blow_already_told") else str(receipt.get("blow") or "").strip()
+        if blow and resolved.get("provisional"):
+            blow += "（戰鬥尚未結算）"  # the fight's numbers are provisional until it settles, as the roll reply says
         outcomes.append(ObservedOutcome(
             f"resolved-check:{resolved.get('check_id', 'current')}", "resolved_check", True,
-            f"已結算檢定：骰值 {resolved.get('roll', '未知')}，結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。",
+            f"已結算檢定：骰值 {resolved.get('roll', '未知')}，結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。"
+            + (f"⚔️ {blow}" if blow else ""),
             "player_private" if private_result else "public",
             message.payload.get("user_id", "") if private_result else "",
         ))
