@@ -303,6 +303,15 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                                 'resolved_without_check 並引用 advance_combat_turn 的工具證據；敘事說清楚這位玩家這一輪'
                                 '已經行動完畢（不重複他的攻擊），以及接著輪到誰、有什麼結果。',
                         }
+                    if (verified.validation_code == 'deferral_not_verified' and not state.combat.active
+                            and not state.pending_checks and not state.pending_luck_decisions):
+                        # The 2026-10-11 runs: 「等 NPC 回話」 answered as deferred, nine times.
+                        return {
+                            'validation_code': 'nobody_waiting', 'reason': verified.reason,
+                            'instruction': '現在沒有任何人在等：沒有待處理的檢定或 Luck 決定，也不在戰鬥中。等 NPC 回話、'
+                                '等劇情推進、前往劇本已出現的地點、對 NPC 說話，都是敘事，不是 deferred。改交 no_mechanics'
+                                '（需要機制就先呼叫對應工具），讓敘事直接回答玩家這一句。',
+                        }
                     if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
                         return None
                     return {

@@ -967,3 +967,37 @@ def test_a_replay_cited_instead_of_the_original_transfer_still_verifies(state):
             patch('app.observability.current_context', return_value={'turn_id': 'turn-cite'}):
         result = asyncio.run(executor.run_executor(message(state)))
     assert result.turn_resolution.disposition == 'resolved_without_check', result.turn_resolution
+
+
+def test_a_roll_or_a_record_made_this_turn_is_evidence_enough_for_a_no_check_completion(state):
+    """Scritch Scratch 2026-10-11 rerun4 turn 5: a Sanity roll was made, SAN lost, and the completion was refused for
+    not quoting the scenario; the dice had been rolled, so there was no retry and the player read an error."""
+    rolled = [{"name": "sanity_check", "result": {"ok": True, "resolved": True, "investigator": "Marco",
+                                                   "timeline_id": state.timeline_id}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=rolled, has_scenario=False, before_actor={})
+    assert result.disposition == "resolved_without_check", result
+    noted = [{"name": "record_clue", "result": {"ok": True}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=noted, has_scenario=False, before_actor={})
+    assert result.disposition == "resolved_without_check", result
+    looked = [{"name": "search_scenario", "result": {"ok": True, "results": []}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=looked, has_scenario=False, before_actor={})
+    assert result.disposition == "incomplete", "a look-up that found nothing is still no evidence"
+
+
+def test_a_deferral_with_nobody_waiting_is_told_to_narrate(state):
+    """Scritch Scratch / Camp Sunny 2026-10-11: 「向保羅確認」 and 「等警長離開」 answered as deferred nine times, each time
+    retried with a generic hint and ending as an error. The retry now says nobody is waiting."""
+    seen = []
+    async def provider(*args, **kwargs):
+        seen.append(kwargs["final_feedback"](decision(state, "deferred", waiting_for=turn_context.character_id(state, "b"),
+                                                      reason="等 Paul 回話")))
+        return decision(state, "no_mechanics", reason="Paul 回答了")
+    fake = AsyncMock(side_effect=provider)
+    stub = SimpleNamespace(run_conversation=fake, SUPPORTS_FINAL_FEEDBACK=True)
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert seen[0]["validation_code"] == "nobody_waiting" and "no_mechanics" in seen[0]["instruction"]
+    assert result.turn_resolution.disposition == "no_mechanics"

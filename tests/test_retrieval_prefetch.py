@@ -169,3 +169,16 @@ class PrefetchDecisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DisabledSearchStatusTests(unittest.TestCase):
+    def test_a_turn_without_a_scenario_search_reports_the_search_as_disabled_not_failed(self):
+        """Scritch Scratch 2026-10-11 rerun4: with the scenario search off, every turn carried rag_status "error", so
+        each fallback was labelled 「查不到劇本依據」 and the recovery searched again for nothing."""
+        state = _state(scenario_text="劇本", scenario_title="T")
+        with patch.object(context_builder, "SCENARIO_RAG_ENABLED", False), \
+                patch.object(context_builder.memory_rag, "search_memory", return_value=("MEMORY", "success")):
+            message = asyncio.run(context_builder.build_context(
+                state=state, user_id="u1", display_name="Marco", text="我推開門",
+                resolved_location=None, speaker_role="player", conversation_id="g"))
+        self.assertEqual(message.payload["rag_status"], "disabled")

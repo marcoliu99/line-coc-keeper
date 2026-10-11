@@ -2834,6 +2834,27 @@
       "path": "docs/specs/enhancement/enemy_down_auto_settle_and_fixed_reply_design_spec.md",
       "zh_path": "docs/specs/enhancement/enemy_down_auto_settle_and_fixed_reply_design_spec_zh.md",
       "source_revision": "25b6d13fce478ec6b31e0a01be28f54ce5613658"
+    },
+    {
+      "title": "Going somewhere or talking to an NPC is narration; a roll made is evidence; a repeated look-up is answered",
+      "zh": "前往地點、對 NPC 說話是敘事；擲過的骰就是依據；重複的查詢直接回答",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "app/agents/executor.py",
+        "app/services/turn_resolution.py",
+        "app/agents/context_builder.py",
+        "app/services/turn_fallback.py",
+        "app/providers/codex_provider.py",
+        "tests/test_turn_consistency_handoff.py",
+        "tests/test_turn_fallback.py",
+        "tests/test_retrieval_prefetch.py",
+        "tests/test_codex_decision_context.py"
+      ],
+      "path": "docs/specs/bug/executor_travel_npc_and_evidence_design_spec.md",
+      "zh_path": "docs/specs/bug/executor_travel_npc_and_evidence_design_spec_zh.md",
+      "source_revision": "c85efbd43529ad9dc8eb8d407dc57bf7f8f53221"
     }
   ]
 }

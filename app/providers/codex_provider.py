@@ -434,6 +434,18 @@ async def run_conversation(
             # touched no game state) may read the same thing again; it has not seen the first conversation's results.
             # Inside one conversation the same look-up is still refused, as is any repeated mutation or roll.
             reread = identity not in asked_here and not counts_against_tool_budget(name)
+            if identity in asked_here and not counts_against_tool_budget(name):
+                # The same look-up again in this conversation: it changes nothing, so answer it from the transcript
+                # rather than end the turn as an internal error (a 2026-10-11 run, turn 76). The
+                # iteration limit still bounds a model that keeps asking.
+                earlier = next((t['result'] for t in reversed(transcript) if t.get('role') == 'tool'
+                                and json.dumps([t.get('name'), t.get('arguments')], sort_keys=True,
+                                               ensure_ascii=False) == identity), None)
+                if earlier is not None:
+                    observability.event('codex.tool.lookup_replayed', stage=response_stage, tool=name)
+                    transcript.append({'role': 'tool', 'name': name, 'arguments': arguments, 'result': earlier,
+                                       'replayed': True})
+                    continue
             if identity in budget.attempted and not reread:
                 # Same-state retries are unsafe even after a tool exception. The
                 # caller may have committed before raising; require a new action.

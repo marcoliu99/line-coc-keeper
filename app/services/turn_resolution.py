@@ -328,7 +328,12 @@ def validate_resolution(
             f"tool:{i}" in refs and e['name'] == 'search_scenario' and e['result'].get('results')
             for i, e in enumerate(tool_events, 1)
         )
-        if disposition == "resolved_without_check" and not (mutation or scenario_evidence):
+        # A roll made or a record written this turn (a Sanity roll, a clue noted) is what happened; the decision
+        # need not also quote the scenario for it (a 2026-10-11 run, turn 5: a failed Sanity roll,
+        # then 「免檢定完成缺少劇本依據」 and no retry because the dice had been rolled).
+        wrote = any(f"tool:{i}" in refs and e["result"].get("ok") and e["name"] not in tool_registry.READ_ONLY_TOOL_NAMES
+                    and not _changed_nothing(e, tool_events) for i, e in enumerate(tool_events, 1))
+        if disposition == "resolved_without_check" and not (mutation or rolled or wrote or scenario_evidence):
             return incomplete("免檢定完成缺少劇本或可核對的工具變更依據", "missing_scenario_or_mutation_evidence")
         # A tool that wrote nothing (refused, or an inventory no-op) leaves "no mechanics" true; the state check below
         # still catches anything that did change.

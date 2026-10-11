@@ -174,3 +174,24 @@ class FreshSchemaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, 'blocked')
         self.assertEqual(transport.request.await_count, 2)
         callback.assert_not_awaited()
+
+
+class RepeatedLookupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_same_look_up_again_is_answered_from_the_transcript(self):
+        """Camp Sunny 2026-10-11 rerun3 turn 76: a second identical search_scenario ended the turn as an internal
+        error. A look-up changes nothing, so it is answered again; the host tool runs once."""
+        tool = {'name': 'search_scenario', 'input_schema': {'type': 'object', 'properties': {}}}
+        lookup = json.dumps({'decision': {'type': 'tool_call', 'name': 'search_scenario', 'arguments_json': '{}'}})
+        transport = AsyncMock()
+        transport.request.side_effect = [lookup, lookup, json.dumps({'decision': {'type': 'final', 'content': 'done'}})]
+        callback = AsyncMock(return_value={'ok': True, 'results': ['page 3']})
+        with patch.object(codex_provider.config, 'CODEX_TRANSPORT', 'exec'), \
+             patch.object(codex_provider, 'ExecTransport', return_value=transport):
+            result = await codex_provider.run_conversation('', '', [tool], [], '', callback, 6,
+                                                          response_stage='executor')
+        self.assertEqual(result, 'done')
+        callback.assert_awaited_once()
+        conversation = json.loads(transport.request.call_args_list[-1].args[0])['current_conversation']
+        replayed = [entry for entry in conversation if entry.get('role') == 'tool' and entry.get('replayed')]
+        self.assertEqual(len(replayed), 1)
+        self.assertEqual(replayed[0]['result'], {'ok': True, 'results': ['page 3']})
