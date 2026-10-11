@@ -279,18 +279,17 @@ def test_source_ruling_resumes_unknown_weapon_without_arbitrary_damage():
     assert state.pending_checks['player']['skill'] == '格鬥（鬥毆）'
 
 
-def test_unsupported_special_cancellation_preserves_evidence():
+def test_an_unsupported_special_is_given_up_and_keeps_its_usage():
     state, _, enemy = battle(npc_first=True)
     card = state.combat.enemy_cards[enemy.enemy_card_id]
     from app.models import SpecialAbility
     card.abilities.append(SpecialAbility(id='spell', name='Spell'))
     plan = calls.plan_enemy_turn(state)
     result = calls.resolve_enemy_action(state, plan['plan_id'])
-    assert result['phase'] == 'NEEDS_RULING'
-    result = combat_flow.resolve_ruling(state, action_id='npc:' + plan['plan_id'], event_id='cancel',
-                                       reason='Controller cancels unsupported special', decision='cancel')
-    assert result['completed']
-    assert state.combat.actions['npc:' + plan['plan_id']]['cancelled']
+    assert result['ok'] and result['completed'] and result['phase'] == 'READY', result
+    assert result['result']['special_given_up'] and result['result']['narration']
+    action = state.combat.actions['npc:' + plan['plan_id']]
+    assert action['kind'] == 'skip' and action['completed'] and not action.get('cancelled')
     assert card.abilities[0].usage == {}
 
 
