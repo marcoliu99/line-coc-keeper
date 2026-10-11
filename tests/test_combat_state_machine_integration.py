@@ -951,6 +951,8 @@ def test_stat_block_attacks_read_the_common_layouts():
                                         "Fighting (Brawl) 50% (25/10), damage 1D3\nBite 40%, damage 1D6 + 1/2 DB\n")
     assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(beast, 'Beast')] == [(50, '1D3')], \
         "a specialised Fighting line is read; half a bonus is not truncated to +1"
+    plain = GroupState('g', scenario_text="### Thug\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\nFighting 50%, Damage 1D3\n")
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(plain, 'Thug')] == [(50, '1D3')]
 
 
 @pytest.mark.parametrize('corrected_id', ['attack:1', 'attack:3'])

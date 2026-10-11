@@ -349,6 +349,7 @@ _BLOCK_ATTACK = re.compile(
     r"(?P<value>\d{1,3})\s*[%％]\s*"
     r"(?:[（(][^）)]{0,40}[）)])?\s*[,，、]?\s*(?:damage|傷害)\s*[:：]?\s*"
     r"(?P<damage>\d*\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d*\s*[dD]\s*\d+|\d+|DB|db|damage bonus|傷害加值))*)",
+    re.IGNORECASE,
 )
 _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
