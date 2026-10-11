@@ -377,6 +377,11 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "type": "object",
                     "properties": {
                         "investigator": {"type": "string"},
+                        "witnesses": {
+                            "type": "array", "items": {"type": "string"},
+                            "description": ("同時看見這個景象的其他在場調查員名字；每人各自擲一次、各自扣 SAN。"
+                                            "只有 investigator 一人看見時省略。"),
+                        },
                         "loss_success": {"type": "string", "description": "檢定成功時的理智損失，如 '0'、'1'、'1d4'"},
                         "loss_failure": {"type": "string", "description": "檢定失敗時的理智損失，如 '1d6'、'1d10'"},
                         "action_context": {

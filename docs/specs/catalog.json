@@ -2954,6 +2954,21 @@
       "path": "docs/specs/bug/sanity_and_check_lines_design_spec.md",
       "zh_path": "docs/specs/bug/sanity_and_check_lines_design_spec_zh.md",
       "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
+    },
+    {
+      "title": "Sanity for every witness in one call, a backticked roll command counts, and the settled line names the roll",
+      "zh": "一次呼叫替每位目擊者擲理智、反引號裡的擲骰指令也算數、已結算那行說出擲了什麼",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/tool_gateway.py",
+        "app/keeper_tools/registry.py",
+        "app/services/turn_delivery.py",
+        "tests/test_sanity_witnesses_told_skill.py"
+      ],
+      "path": "docs/specs/bug/sanity_witnesses_told_skill_design_spec.md",
+      "zh_path": "docs/specs/bug/sanity_witnesses_told_skill_design_spec_zh.md",
+      "source_revision": "707ad2670ce8661628e6fd4bc2b2b39ab110e702"
     }
   ]
 }
