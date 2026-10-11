@@ -102,7 +102,7 @@ def test_every_reason_is_stable_enumerable_and_has_a_player_message() -> None:
     ("invalid_evidence_reference", "invalid_tool_plan"), ("missing_actor", "invalid_tool_plan"),
     ("pending_identity_mismatch", "state_conflict"), ("cancellation_not_verified", "state_conflict"),
     ("luck_takes_precedence", "unresolved_pending_state"), ("unfinished_check_or_luck", "unresolved_pending_state"),
-    ("deferral_not_verified", "unresolved_pending_state"),
+    ("deferral_not_verified", "executor_no_action"),
     ("inventory_or_combat_not_verified", "tool_result_rejected"), ("missing_resolved_effect", "tool_result_rejected"),
     ("no_mechanics_has_effects", "tool_result_rejected"),
     ("missing_scenario_or_mutation_evidence", "no_scenario_evidence"),
