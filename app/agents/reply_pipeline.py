@@ -17,7 +17,7 @@ from app import presentation
 from app.agents import guard, obligation_gate
 from app.domain.models import AgentMessage, MechanicResult, SpeakerRole, StateDelta
 from app.models import GroupState
-from app.services import prompt_config, turn_delivery, turn_handoff
+from app.services import prompt_config, turn_delivery, turn_fallback, turn_handoff
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,9 @@ def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str, *, trailin
 
 
 def _scrub_leaks(ctx: ReplyContext, draft: ReplyDraft) -> None:
-    draft.text = presentation.strip_leaked_decision(draft.text)
+    scrubbed = presentation.strip_leaked_decision(draft.text)
+    # A reply that was nothing but the decision object leaves no narration; the player is told so, not sent a blank.
+    draft.text = scrubbed if scrubbed or not draft.text.strip() else turn_fallback.guidance("narration_failure")
 
 
 def _repair_consistency(ctx: ReplyContext, draft: ReplyDraft) -> None:
