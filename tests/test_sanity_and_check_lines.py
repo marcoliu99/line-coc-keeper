@@ -88,3 +88,11 @@ def test_the_stored_history_keeps_enough_for_each_investigator():
     data["resolved_check_events"] = [mine, *others]
     loaded = GroupState.from_dict(data)
     assert mine in loaded.resolved_check_events
+
+
+def test_every_witness_can_roll_sanity_within_one_turn_and_says_what_was_seen():
+    from app.providers import codex_provider
+    assert not codex_provider.counts_against_tool_budget("sanity_check")  # owed by each witness, not chosen
+    assert codex_provider.counts_against_tool_budget("skill_check")
+    schema = registry.REGISTRY["sanity_check"].schema["input_schema"]
+    assert "action_context" in schema["required"] and "看見了什麼" in schema["properties"]["action_context"]["description"]

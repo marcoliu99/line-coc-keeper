@@ -64,12 +64,14 @@ def counts_against_tool_budget(name: str) -> bool:
 
     A look-up (``search_scenario``, ``search_memory``, the ``get_*`` queries) changes nothing, and the scenario
     search has its own per-turn cap, so it does not: a Keeper that searched four times for an enemy's trigger could
-    otherwise no longer register the enemy. Dice and every mutation still count.
+    otherwise no longer register the enemy. Dice and every other mutation still count.
     """
     from app.keeper_tools import (
         registry as tool_registry,  # the registry imports modules that import providers
     )
-    return name not in tool_registry.INFORMATION_QUERY_TOOLS
+    # A Sanity roll is owed by every witness, not chosen by the Keeper: a party of five seeing a horror took the whole
+    # budget and left the fight unopened. One per investigator bounds it.
+    return name not in tool_registry.INFORMATION_QUERY_TOOLS and name != "sanity_check"
 
 
 def response_schema(tools: list[dict]) -> dict:
