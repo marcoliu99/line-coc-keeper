@@ -64,6 +64,8 @@ def event_seed(
             "opposed_outcome": opposed_outcome,
             "player_declaration": context.get("player_declaration", ""),
             "action_basis": context.get("action_basis", ""),
+            # What the check was for, as the Keeper put it: the history shows it so the same task is not rolled again.
+            "action_context": context.get("action_context", ""),
         })
     cause = caused_by_check_id or str(context.get("source_check_id") or "")
     if cause:

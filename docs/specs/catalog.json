@@ -2921,6 +2921,24 @@
       "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
     },
     {
+      "title": "A turn that changed the game is not a wait, an empty narration still sends its lines, and two repeats removed",
+      "zh": "改動了遊戲的回合不是等待、空白敘事仍送出該有的行、拿掉兩種重複",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_resolution.py",
+        "app/agents/reply_pipeline.py",
+        "app/presentation.py",
+        "app/services/turn_delivery.py",
+        "tests/test_turn_consistency_handoff.py",
+        "tests/test_leaked_decision_and_redeclare.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/empty_narration_and_deferral_design_spec.md",
+      "zh_path": "docs/specs/bug/empty_narration_and_deferral_design_spec_zh.md",
+      "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
+    },
+    {
       "title": "Sanity on first sight, rolls the player can read, and no second roll for a settled goal",
       "zh": "第一次看見就擲理智、玩家看得懂擲了什麼、已定的事不再重擲",
       "category": "bug",

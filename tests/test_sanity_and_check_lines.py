@@ -102,3 +102,11 @@ def test_a_sanity_roll_is_still_a_mutation_for_repeats_and_cached_lookups():
     from app.providers import codex_provider
     assert not codex_provider._is_lookup("sanity_check")  # never re-run as a look-up, and it invalidates cached reads
     assert codex_provider._is_lookup("get_character_sheet")
+
+
+def test_a_skill_event_keeps_what_the_check_was_for():
+    from app.checks import events
+    seed = events.event_seed(check_id="c", timeline_id="t", owner_id="p1", character_id="c1", investigator="Daniel",
+                             skill="化學", skill_value=40, roll=12, difficulty="regular", outcome="hard 成功",
+                             before={}, check_context={"action_context": "辨認架上容器的成分"})
+    assert seed["action_context"] == "辨認架上容器的成分"

@@ -775,6 +775,7 @@ def autoroll_skill(
             "consequences": consequences,
             "player_declaration": metadata["player_declaration"],
             "action_basis": metadata["action_basis"],
+            "action_context": metadata["action_context"],
         },
         opposed_outcome=opposed_outcome, success=result["success"], include_medical_context=False,
     ) if state.autoroll_checks else None
