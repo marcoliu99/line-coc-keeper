@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Any, Literal, cast
 
 from app import (
@@ -376,17 +376,17 @@ def declare_action(
     weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     combat_resources.initialize_working_state(state)
-    before = deepcopy(state.combat.actions)
+    before = deepcopy(state.combat) if state.combat.phase == 'NEEDS_RULING' else None
     withdrawn = _withdraw_unrolled_ruling(state, actor_id)
     result = _declare_action(
         state, action_id=action_id, actor_id=actor_id, target_id=target_id, weapon_reference=weapon_reference,
         action_kind=action_kind, distance_yards=distance_yards, scenario_definitions=scenario_definitions,
         weapon_instance=weapon_instance)
-    if withdrawn is not None and not result.get('ok') and state.combat.phase != 'NEEDS_RULING':
-        # The correction was itself refused before it took the paused one's place (a bad target, a check the actor
-        # still owes): whatever it left behind goes, and the ruling stands as it was.
-        state.combat.actions = before
-        state.combat.phase = 'NEEDS_RULING'
+    if withdrawn is not None and before is not None and not result.get('ok') and state.combat.phase != 'NEEDS_RULING':
+        # The correction was itself refused before it took the paused one's place (a bad target, a check someone
+        # still owes): the whole battle goes back as it was, events and rolls included, and the ruling stands.
+        for item in fields(before):
+            setattr(state.combat, item.name, getattr(before, item.name))
     return result
 
 

@@ -956,9 +956,11 @@ def test_a_correction_refused_after_it_was_written_leaves_only_the_paused_declar
     state = battle.load()
     state.pending_checks['player'] = {'check_id': 'owed', 'type': 'skill', 'skill': '偵查', 'timeline_id': state.timeline_id}
     group_state.save_state(state)
+    before = battle.load()
     refused = battle.declare(corrected_id, weapon='unarmed')
     current = battle.load()
     if refused['ok']:
         pytest.skip('this path does not refuse an owed check')
     declared = {k: v for k, v in current.combat.actions.items() if not k.startswith('system:')}
     assert current.combat.phase == 'NEEDS_RULING' and declared == {'attack:1': paused}
+    assert current.combat.events == before.combat.events and current.combat.roll_receipts == before.combat.roll_receipts
