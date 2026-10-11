@@ -379,8 +379,10 @@ def _combat_next_step(result: dict) -> str:
     receipt = result.get("combat_receipt") or {}
     if not receipt.get("combat_id"):
         return ""
-    blow = (f"\n【這一擊的結果】{receipt['blow']}照這個寫：閃避或反擊擲出成功，不代表躲開；命中就寫中招受傷，"
-            "沒命中才寫躲開或落空。" if receipt.get("blow") else "")
+    # Whose roll it was does not decide the blow: an attack rolled a success and was dodged, and the narration had the
+    # fist land (Lightless 2026-10-12 turn 55).
+    blow = (f"\n【這一擊的結果】{receipt['blow']}照這個寫：攻擊、閃避或反擊擲出成功，都不代表打中或躲開；"
+            "寫「沒有命中」就寫落空或被躲開，不可寫打中、對方受創或一震；命中才寫中招受傷。" if receipt.get("blow") else "")
     follow_up = f"\n【武器後續】這次命中依武器表還有後續，引擎沒有擲：{receipt['follow_up']}" if receipt.get("follow_up") else ""
     return blow + follow_up + _combat_turn_step(receipt)
 

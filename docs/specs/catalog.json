@@ -3018,6 +3018,27 @@
       "path": "docs/specs/bug/down_investigators_wake_design_spec.md",
       "zh_path": "docs/specs/bug/down_investigators_wake_design_spec_zh.md",
       "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
+    },
+    {
+      "title": "The blow is told once, a Luck offer shows its roll, settled lines read alike, a follow-up can roll Sanity, and research ends in a result",
+      "zh": "這一擊只說一次、Luck 提示附上骰值、結算行格式一致、後續回合能擲理智、查資料要有結果",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/managed_checks.py",
+        "app/services/turn_delivery.py",
+        "app/services/prompt_config.py",
+        "app/presentation.py",
+        "app/keeper_tools/registry.py",
+        "app/prompt_builder.py",
+        "tests/test_combat_turn_friction.py",
+        "tests/test_rerun8_player_facing.py",
+        "tests/test_sanity_and_check_lines.py",
+        "tests/test_sanity_witnesses_told_skill.py"
+      ],
+      "path": "docs/specs/bug/delivery_lines_followup_sanity_design_spec.md",
+      "zh_path": "docs/specs/bug/delivery_lines_followup_sanity_design_spec_zh.md",
+      "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
     }
   ]
 }

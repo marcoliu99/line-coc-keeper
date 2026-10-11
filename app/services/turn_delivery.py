@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import observability, presentation, spoiler_policy
+from app.checks import narration as check_narration
 from app.domain.models import MechanicResult, ObservedOutcome
 from app.models import GroupState
 from app.services import canonical_facts
@@ -63,10 +64,10 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                        else "SAN 沒有損失。"))
         elif name == "skill_check" and result.get("resolved") and not result.get("pending_luck"):
             # Not while a Luck decision holds it: 「已結算」 beside 「仍等待 Luck 決定」 read as a contradiction, and the
-            # Luck line already gives the roll.
-            skill = str(args.get("skill") or "").strip()
-            text = (f"{result.get('investigator', '調查員')} 的{skill or '檢定'}已結算："
-                    f"骰值 {result.get('roll')}，等級 {presentation.tier_label(str(result.get('tier')))}。")
+            # Luck line already gives the roll. Worded as the settled line after a follow-up, one format for one thing.
+            skill = presentation.skill_label(str(args.get("skill") or ""))
+            text = (f"已結算檢定：{result.get('investigator', '調查員')} 的{skill or '檢定'}，"
+                    f"骰值 {result.get('roll')}，結果為「{check_narration.settled_outcome_zh(result)}」。")
         elif name == "apply_resolved_check_damage":
             text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"
                     f"HP {result.get('hp_before')} → {result.get('hp_after')}。")
@@ -150,12 +151,10 @@ class InteractionRef:
         return "已有待處理檢定／選擇，請使用檢定按鈕或 /coc check。"
 
     def told_in(self, narrative: str) -> bool:
-        """The reply already tells the player how to keep the roll, so the line would only repeat it.
+        """The reply already tells the player the roll and how to keep it, so the line would only repeat it.
 
-        What a player needs is the way to decide: the keep command or the button. The narration seldom repeats the
-        roll itself, and a test for it left this line on 82 of 400 replies in the 2026-10-11 runs, each already
-        carrying the command (the rerun8 run read the same offer three times in one reply). A narration that states a
-        roll other than the real one keeps the line, which is the only text here that carries the engine's number.
+        A Luck offer needs both: the number to decide on, and the keep command or the button. A narration that leaves
+        the number out, or states another one, keeps the line, which carries the engine's number.
         """
         if self.kind != "luck":
             # The roll command itself, which the reply's own check line always carries: the generic 「請使用檢定按鈕」
@@ -166,7 +165,10 @@ class InteractionRef:
         if not any(marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
             return False
         # Only the number right after the verb is a claim (「擲出 60」, 「骰值為 60 點」); 「花費 6 點」 names a cost.
-        return self.roll is None or all(int(n) == self.roll for n in _ROLL_CLAIM.findall(narrative))
+        # The narration must state the roll itself: an offer to spend Luck on a number the player never read (11 of
+        # 17 Luck prompts in a 2026-10-12 run) left them choosing blind.
+        claims = [int(n) for n in _ROLL_CLAIM.findall(narrative)]
+        return self.roll is None or (bool(claims) and all(n == self.roll for n in claims))
 
 
 @dataclass
@@ -295,7 +297,7 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         # Whose roll and which skill: after a Luck decision the line stood alone, and 「骰值 52」 did not say what was
         # rolled (2026-10-11 soak runs).
         who = str(resolved.get("investigator") or "").strip()
-        skill = str(resolved.get("skill") or "").strip()
+        skill = presentation.skill_label(str(resolved.get("skill") or ""))
         subject = f"{who} 的{skill}" if who and skill else (who or skill)
         if resolved.get("no_roll"):
             # A choice that settled the attack by itself (不閃躲): no die was rolled, so no 「骰值 0」.
