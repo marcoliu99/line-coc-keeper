@@ -73,6 +73,19 @@ def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, An
             'tags: ["impale"]。')
 
 
+def _with_block_attacks(state: GroupState, name: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """The entry with the attacks its scenario stat block writes out, when it was given none it could fight with.
+
+    An enemy with abilities alone, or nothing, could only give up its turns; the block's own numbers make it fight.
+    An entry that brings its own attacks, or an ally, keeps them as given.
+    """
+    attacks = entry.get("attacks")
+    if entry.get("is_ally") or (isinstance(attacks, list) and any(support.well_formed_attack(a) for a in attacks)):
+        return entry
+    filled = support.attacks_from_stat_block(state, name)
+    return {**entry, "attacks": filled} if filled else entry
+
+
 def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
@@ -83,6 +96,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
         return refusal
 
     def mutate(target_state: GroupState) -> Any:
+        tool_input = _with_block_attacks(target_state, npc_name, call.input)
         if missing := _attackless_scenario_enemy(target_state, npc_name, tool_input):
             return support.ToolStateMutation({"ok": False, "error": missing}, should_save=False)
         hp = requested_hp
@@ -195,6 +209,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
 
                 hp = int(entry["hp"])
                 dex = int(entry["dex"])
+                entry = _with_block_attacks(target_state, requested_name, entry)
                 for field, rule_type in (
                     ("armor", ArmorRule), ("attacks", AttackRule), ("abilities", SpecialAbility),
                 ):

@@ -877,3 +877,42 @@ def test_source_ruling_keeps_owned_instance_key_through_real_tool_reload(battle)
     assert reloaded.combat.actions[action_id]['ammo_key'] == 'owned:gun'
     assert reloaded.combat.actions[action_id]['weapon_reference'] == 'owned:gun'
     assert battle.effective().weapons['owned:gun']['ammo'] == 7
+
+
+BILLY_BLOCK = """### Billy, pet shoggoth
+
+STR 300 CON 210 SIZ 420 DEX 20 INT 45 POW 40 HP 63 DB: +8D6 Build: 9
+
+Engulf: Billy may choose to engulf a target.
+
+Fighting 70% (35/14), damage 8D6 or can choose to engulf. Dodge 10% (5/2)
+"""
+
+
+def test_an_enemy_registered_without_attacks_fights_with_its_stat_block_attacks(battle):
+    """Camp Sunny 2026-10-12: Billy, registered with his engulf alone, gave up every turn and never struck."""
+    state = battle.load()
+    state.scenario_text = BILLY_BLOCK
+    group_state.save_state(state)
+    started = battle.tool('initialize_combat', {'enemies': [{
+        'name': 'Billy（修格斯）', 'dex': 20, 'hp': 63,
+        'abilities': [{'name': 'Engulf', 'trigger': {'type': 'first_available'}}]}]})
+    assert started['ok'], started
+    current = battle.load()
+    billy = next(p for p in current.combat.order if p.side == 'enemy')
+    card = current.combat.enemy_cards[billy.enemy_card_id]
+    assert [(a.skill_value, a.damage) for a in card.attacks] == [(70, '8D6')] and not card.incomplete
+
+
+@pytest.mark.parametrize('corrected_id', ['attack:1', 'attack:2'])
+def test_a_declaration_paused_on_a_weapon_name_gives_way_to_the_corrected_one(battle, corrected_id):
+    """Lightless 2026-10-12 turn 50: Brawl under a name the catalog did not know paused the battle for a ruling, and
+    the Keeper, having looked the weapon up, could declare nothing until it was made: the turn ended unfinished."""
+    battle.start()
+    with patch.object(dice, 'skill_check') as rng:
+        paused = battle.declare('attack:1', weapon='a spork of doom')
+        rng.assert_not_called()
+    assert paused['phase'] == 'NEEDS_RULING'
+    assert battle.declare(corrected_id, weapon='unarmed')['ok']  # the same id corrected, or a new one
+    current = battle.load()
+    assert current.combat.phase != 'NEEDS_RULING' and not any(a.get('needs_ruling') for a in current.combat.actions.values())

@@ -343,6 +343,50 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
     return True
 
 
+# 「Fighting 70% (35/14), damage 8D6」, 「Claw 50% (25/10), damage 1D6+DB」, 「爪擊 50%（25/10），傷害 1D6+DB」.
+_BLOCK_ATTACK = re.compile(
+    r"(?P<label>[A-Za-z][A-Za-z' -]{1,30}?|[\u4e00-\u9fff]{1,10})\s*(?P<value>\d{1,3})\s*[%％]\s*"
+    r"(?:[（(][^）)]{0,12}[）)])?\s*[,，、]?\s*(?:damage|傷害)\s*[:：]?\s*"
+    r"(?P<damage>\d*\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d*\s*[dD]\s*\d+|\d+|DB|db|damage bonus|傷害加值))*)",
+)
+_BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
+_NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
+
+
+def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]]:
+    """The attacks this enemy's stat block writes out as a skill value and damage, ready to register; [] when the
+    scenario gives it no block or the block states no attack that way.
+
+    An enemy registered without them can only give up its turns: Billy (Fighting 70%, damage 8D6) never struck in a
+    2026-10-12 soak run. The values are the scenario's own, so nothing is guessed: a damage bonus written as DB is
+    the block's own DB line, and an attack whose bonus the block does not give is left out.
+    """
+    found = stat_block_for(state, name)
+    if found is None:
+        return []
+    block = found[1]
+    db_match = _BLOCK_DB.search(block)
+    bonus = db_match.group("db").replace(" ", "") if db_match else ""
+    attacks: list[dict[str, Any]] = []
+    for match in _BLOCK_ATTACK.finditer(block):
+        label = match.group("label").strip()
+        if _NOT_AN_ATTACK.match(label):
+            continue
+        damage = re.sub(r"\s+", "", match.group("damage"))
+        if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
+            if not bonus:
+                continue
+            damage = re.sub(r"[+-]?(?:db|damagebonus|傷害加值)", "" if bonus in {"0", "+0", "-0"} else
+                            ("+" + bonus.lstrip("+") if not bonus.startswith("-") else bonus), damage, flags=re.IGNORECASE)
+        try:
+            dice.max_expression_value(damage)
+        except ValueError:
+            continue
+        attacks.append({"label": label, "skill_name": "格鬥", "skill_value": int(match.group("value")),
+                        "damage": damage.upper()})
+    return attacks
+
+
 def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[str, Any]] = ()) -> bool:
     """Whether the loaded scenario text carries a stat block for this enemy, found either way:
 

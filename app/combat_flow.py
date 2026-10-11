@@ -67,6 +67,22 @@ def _settlement_pending(state: GroupState) -> dict[str, Any] | None:
         f'settlement_id ({settlement_id}), or rollback_combat. Advancing, declaring or running an NPC turn would make the preview stale.')}
 
 
+def _withdraw_unrolled_ruling(state: GroupState, actor_id: str) -> None:
+    """A declaration paused for a ruling before any die (a weapon name that matched nothing, a mode the weapon has
+    not) gives way to the same actor's new declaration: the Keeper looked the weapon up and declares it properly.
+    Kept, nothing could be declared until the ruling was made, and the turn ended unfinished (Lightless 2026-10-12
+    turn 50: Brawl under another name). A ruling the Keeper still wants to make is made with resolve_combat_ruling."""
+    if state.combat.phase != 'NEEDS_RULING' or state.combat.interaction:
+        return
+    actor = combat.find_combatant(state, actor_id)
+    open_actions = [a for a in state.combat.actions.values() if not a.get('completed')]
+    if (actor is not None and len(open_actions) == 1 and open_actions[0].get('needs_ruling')
+            and open_actions[0].get('stage') == 'attack' and open_actions[0].get('actor_id') == actor.combatant_id
+            and not open_actions[0].get('checks')):
+        del state.combat.actions[open_actions[0]['action_id']]
+        state.combat.phase = 'READY'
+
+
 def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:
     state.combat.phase = 'NEEDS_RULING'
     action['needs_ruling'] = reason
@@ -358,6 +374,7 @@ def declare_action(
     weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     combat_resources.initialize_working_state(state)
+    _withdraw_unrolled_ruling(state, actor_id)
     if action_id in state.combat.actions:
         action = state.combat.actions[action_id]
         if any(action.get(k) != v for k, v in {'actor_id': actor_id, 'target_id': target_id,
