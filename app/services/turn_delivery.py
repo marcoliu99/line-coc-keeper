@@ -53,10 +53,19 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             quantity = int(result.get("quantity") or 1)
             amount = f" {quantity} 份" if quantity > 1 else ""
             text = f"{result.get('from', '調查員')} 已把{amount}「{result['item']}」交給 {result.get('to', '調查員')}。"
-        elif name in {"skill_check", "sanity_check"} and result.get("resolved") and not result.get("pending_luck"):
+        elif name == "sanity_check" and result.get("resolved"):
+            # The roll, the loss and where SAN now stands: 「檢定已結算：骰值 30」 alone hid that a Sanity point was lost
+            # (2026-10-11 soak runs).
+            loss = result.get("loss") or 0
+            text = (f"{result.get('investigator', '調查員')} 的理智檢定：骰值 {result.get('roll')}／{result.get('current_san')}，"
+                    f"{presentation.tier_label(str(result.get('tier')))}，"
+                    + (f"SAN −{loss}（{result.get('current_san')}→{result.get('san_after')}）。" if loss
+                       else "SAN 沒有損失。"))
+        elif name == "skill_check" and result.get("resolved") and not result.get("pending_luck"):
             # Not while a Luck decision holds it: 「已結算」 beside 「仍等待 Luck 決定」 read as a contradiction, and the
             # Luck line already gives the roll.
-            text = (f"{result.get('investigator', '調查員')} 的檢定已結算："
+            skill = str(args.get("skill") or "").strip()
+            text = (f"{result.get('investigator', '調查員')} 的{skill or '檢定'}已結算："
                     f"骰值 {result.get('roll')}，等級 {presentation.tier_label(str(result.get('tier')))}。")
         elif name == "apply_resolved_check_damage":
             text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"

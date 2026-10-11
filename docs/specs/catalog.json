@@ -2900,6 +2900,23 @@
       "path": "docs/specs/bug/narrator_continuity_and_junk_tail_design_spec.md",
       "zh_path": "docs/specs/bug/narrator_continuity_and_junk_tail_design_spec_zh.md",
       "source_revision": "6b59dc516204a16483f4d2f7f48458fe3c3ff3ac"
+    },
+    {
+      "title": "Sanity on first sight, rolls the player can read, and no second roll for a settled goal",
+      "zh": "第一次看見就擲理智、玩家看得懂擲了什麼、已定的事不再重擲",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_delivery.py",
+        "app/checks/skills.py",
+        "app/prompt_builder.py",
+        "app/keeper_tools/scenario.py",
+        "app/keeper_tools/registry.py",
+        "tests/test_sanity_and_check_lines.py"
+      ],
+      "path": "docs/specs/bug/sanity_and_check_lines_design_spec.md",
+      "zh_path": "docs/specs/bug/sanity_and_check_lines_design_spec_zh.md",
+      "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
     }
   ]
 }

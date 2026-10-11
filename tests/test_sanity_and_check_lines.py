@@ -1,0 +1,43 @@
+"""Checks from the 2026-10-11 soak runs: a Sanity point lost without the player being told, a mixed skill name
+rolled at the wrong value, and the guidance that keeps a settled check from being rolled again."""
+from __future__ import annotations
+
+from app.checks.skills import resolve_skill_value
+from app.keeper_tools import registry
+from app.models import Character, GroupState
+from app.prompt_builder import build_static_prompt
+from app.services import turn_delivery
+
+
+def test_a_sanity_roll_says_it_was_sanity_and_what_was_lost():
+    line = turn_delivery.observe_tool("sanity_check", {
+        "ok": True, "resolved": True, "investigator": "Helen", "roll": 30, "tier": "regular", "success": True,
+        "current_san": 40, "san_after": 39, "loss": 1}, 1).public_text
+    assert line == "Helen 的理智檢定：骰值 30／40，一般成功，SAN −1（40→39）。", line
+    kept = turn_delivery.observe_tool("sanity_check", {
+        "ok": True, "resolved": True, "investigator": "Helen", "roll": 30, "tier": "regular",
+        "current_san": 40, "san_after": 40, "loss": 0}, 1).public_text
+    assert "SAN 沒有損失" in kept
+
+
+def test_a_skill_roll_names_the_skill():
+    line = turn_delivery.observe_tool("skill_check", {"ok": True, "resolved": True, "investigator": "Alan",
+                                                      "roll": 30, "tier": "hard"}, 1, {"skill": "偵查"}).public_text
+    assert line.startswith("Alan 的偵查已結算：骰值 30")
+
+
+def test_a_name_that_covers_two_skills_uses_the_better_one():
+    alan = Character(name="Alan", owner_id="p1", skills={"聆聽": 25, "偵查": 65})
+    assert resolve_skill_value(alan, "偵查與聆聽", register_unknown=False) == 65
+    assert resolve_skill_value(alan, "聆聽", register_unknown=False) == 25  # an exact name is still that skill
+
+
+def test_the_keeper_is_told_sanity_per_witness_on_first_sight_and_no_second_roll():
+    prompt = build_static_prompt(GroupState(group_id="g"))
+    assert "在場目擊的每一位調查員各擲一次" in prompt and "不用再擲" in prompt
+    assert "就沿用那次的結果" in prompt and "不要再建立一次新的檢定" in prompt
+
+
+def test_the_skill_field_says_one_skill_and_drive_is_not_pilot():
+    schema = registry.REGISTRY["skill_check"].schema["input_schema"]["properties"]["skill"]["description"]
+    assert "一次只擲一個技能" in schema and "開車是「汽車駕駛」" in schema

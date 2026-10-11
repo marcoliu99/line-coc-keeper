@@ -215,7 +215,9 @@ _SPECS: tuple[ToolSpec, ...] = (
                     "type": "object",
                     "properties": {
                         "investigator": {"type": "string", "description": "調查員角色名稱"},
-                        "skill": {"type": "string", "description": "技能或屬性名稱，例如：偵查、潛行、STR、POW"},
+                        "skill": {"type": "string", "description": (
+                            "一個技能或屬性名稱，例如：偵查、潛行、STR、POW。一次只擲一個技能，不要把兩個技能合成一個名字"
+                            "（例如「偵查與聆聽」）；開車是「汽車駕駛」，「駕駛」是飛機、船等其他載具。")},
                         "bonus_dice": {"type": "integer", "description": "獎勵骰數量（情境有利時），預設 0"},
                         "penalty_dice": {"type": "integer", "description": "懲罰骰數量（情境不利時），預設 0"},
                         "pushed": {
