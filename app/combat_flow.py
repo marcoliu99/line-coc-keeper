@@ -242,6 +242,9 @@ def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRol
         state.pending_checks.pop(character.owner_id, None)
         available = combat_resources.effective_character(state, character).luck
         options = [] if injury else luck.buyable_options(value, result.roll, result.tier, available, result.required_tier)
+        if role == 'defense':
+            attack = ((action.get('checks') or {}).get('attack') or {}).get('tier')
+            options = dice.useful_defence_luck(action.get('defense_kind'), attack, result.tier, options)
         if options:
             pending = {**registration.pending, 'decision_id': registration.check_id + ':luck',
                        'original_tier': result.tier, 'value': value, 'roll': result.roll,
@@ -878,6 +881,11 @@ def request_injury_check(state: GroupState, character: Character, event_id: str)
                 if tag not in effective.status_tags:
                     effective.status_tags.append(tag)
         combat_resources.reconcile_effective_character(state, effective, event_id=identity + ':con', reason='Major wound CON')
+        # Down as the rolled CON check would leave them: an unconscious investigator kept attacking for two turns
+        # when only the manual roll set this (Haunting 2026-10-11 rerun4).
+        participant = next((p for p in state.combat.order if p.character_id == character.character_id), None)
+        if participant is not None:
+            participant.defeated = participant.hp == 0 or bool(effective.injury.get('unconscious'))
         action['checks']['injury'] = result
         action['completed'] = True
         return {'pending': False, **result}
