@@ -28,6 +28,11 @@ def test_a_skill_roll_names_the_skill():
     english = turn_delivery.observe_tool("skill_check", {"ok": True, "resolved": True, "investigator": "Alan",
                                                          "roll": 6, "tier": "extreme"}, 1, {"skill": "INT"}).public_text
     assert english == "已結算檢定：Alan 的智力，骰值 6，結果為「極難成功」。"
+    # A Regular success against a Hard check failed: the line says so.
+    short = turn_delivery.observe_tool("skill_check", {"ok": True, "resolved": True, "investigator": "Alan", "roll": 40,
+                                                       "tier": "regular", "success": False, "required_tier": "hard"},
+                                       1, {"skill": "偵查"}).public_text
+    assert short == "已結算檢定：Alan 的偵查，骰值 40，結果為「失敗（擲出一般成功，未達困難）」。"
 
 
 def test_a_name_that_covers_two_skills_uses_the_better_one():

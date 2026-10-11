@@ -35,6 +35,17 @@ def is_private(entry: dict) -> bool:
     return entry.get("visibility", entry.get("audience", "public")) != "public"
 
 
+def _settled_outcome(result: dict) -> str:
+    """The check's result as it counts: the roll's own tier, or a failure when that tier fell short of the difficulty
+    (a Regular success against a Hard check read 「一般成功」 while the check had failed)."""
+    tier = str(result.get("tier"))
+    label = presentation.tier_label(tier)
+    if result.get("success") is False and tier in {"regular", "hard", "extreme", "critical"}:
+        needed = presentation.difficulty_label(str(result.get("required_tier") or result.get("difficulty") or "regular"))
+        return f"失敗（擲出{label}，未達{needed}）"
+    return label
+
+
 def observe_tool(name: str, result: dict, number: int, arguments: dict | None = None) -> ObservedOutcome:
     text = ""
     args = arguments or {}
@@ -66,7 +77,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
             # Luck line already gives the roll. Worded as the settled line after a follow-up, one format for one thing.
             skill = presentation.skill_label(str(args.get("skill") or ""))
             text = (f"已結算檢定：{result.get('investigator', '調查員')} 的{skill or '檢定'}，"
-                    f"骰值 {result.get('roll')}，結果為「{presentation.tier_label(str(result.get('tier')))}」。")
+                    f"骰值 {result.get('roll')}，結果為「{_settled_outcome(result)}」。")
         elif name == "apply_resolved_check_damage":
             text = (f"{result.get('investigator', '調查員')} 已結算傷害 {result.get('damage')}，"
                     f"HP {result.get('hp_before')} → {result.get('hp_after')}。")
