@@ -1141,7 +1141,7 @@ def test_the_defence_roll_tells_the_player_the_hit_the_damage_and_the_wound():
     assert blow in outcome.roll_line
     msg = AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": outcome.resolved_event})
     reply, _ = turn_delivery.finalize(msg, "你踉蹌後退。")
-    assert "已結算檢定：骰值 95，結果為「失敗」。⚔️ " + blow in reply, reply
+    assert "已結算檢定：骰值 95，結果為「失敗」。⚔️ " + blow + "（戰鬥尚未結算）" in reply, reply
     # The CON roll after a no-defence hit was shown the blow with the choice; its follow-up does not repeat it.
     con_event = {**outcome.resolved_event, "combat_receipt": {**outcome.resolved_event["combat_receipt"], "blow_already_told": True}}
     reply, _ = turn_delivery.finalize(AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": con_event}), "你撐住了。")
