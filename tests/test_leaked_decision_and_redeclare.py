@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app import presentation
 from app.agents import executor, reply_pipeline
+from app.models import GroupState
 from app.services import turn_fallback
 
 LEAK = ('{"disposition":"await_luck","actor_character_id":"legacy-user:player-1","waiting_for":"legacy-user:player-1",'
@@ -51,6 +53,10 @@ class JunkTailTests(unittest.TestCase):
         self.assertEqual(presentation.strip_junk_tail('雨還在下。"}'), "雨還在下。")
         self.assertEqual(presentation.strip_junk_tail("雨還在下。]}\n"), "雨還在下。")
 
+    def test_a_stray_word_glued_to_the_closers_goes_too(self):
+        self.assertEqual(presentation.strip_junk_tail("還是進入 lobby？」}}.Begin"), "還是進入 lobby？")
+        self.assertEqual(presentation.strip_junk_tail("雨還在下。}}Begin"), "雨還在下。")
+
     def test_only_the_unmatched_closer_goes_when_balanced_braces_come_before_it(self):
         self.assertEqual(presentation.strip_junk_tail("資料是 {hp: 13}}"), "資料是 {hp: 13}")
         self.assertEqual(presentation.strip_junk_tail("名單 [Alan]]} bheidh"), "名單 [Alan]")
@@ -75,14 +81,42 @@ class JunkTailTests(unittest.TestCase):
         self.assertEqual(draft.text, "林間靜了下來。")
         self.assertEqual(reply_pipeline.STEPS[0].name, "scrub_leaks")
 
-    def test_a_reply_that_was_only_the_decision_tells_the_player_instead_of_a_blank(self):
+    def test_a_reply_that_was_only_the_decision_is_recorded_and_left_for_the_lines_the_pipeline_adds(self):
+        ctx = SimpleNamespace(state=GroupState(group_id="g"), user_id="p1", turn_id="t1",
+                              message=SimpleNamespace(payload={"rag_context": "ctx"}))
         for text in (LEAK, f"```json\n{LEAK}\n```"):
-            draft = SimpleNamespace(text=text)
-            reply_pipeline._scrub_leaks(SimpleNamespace(), draft)
-            self.assertEqual(draft.text, turn_fallback.guidance("narration_failure"), text)
-        empty = SimpleNamespace(text="")
-        reply_pipeline._scrub_leaks(SimpleNamespace(), empty)
-        self.assertEqual(empty.text, "", "a reply that was empty to begin with is another path's problem")
+            draft = SimpleNamespace(text=text, mechanic_result="result")
+            with patch.object(turn_fallback, "record") as record:
+                reply_pipeline._scrub_leaks(ctx, draft)
+            self.assertEqual(draft.text, "", text)
+            record.assert_called_once_with("narration_failure", state=ctx.state, user_id="p1", turn_id="t1",
+                                           result="result", rag_context="ctx")
+        empty = SimpleNamespace(text="", mechanic_result=None)
+        with patch.object(turn_fallback, "record") as record:
+            reply_pipeline._scrub_leaks(ctx, empty)
+        self.assertEqual(empty.text, "")
+        record.assert_not_called()  # a reply that was empty to begin with is another path's problem
+
+    def test_finalize_sends_the_luck_line_alone_and_the_failure_text_only_when_nothing_is_left(self):
+        draft = SimpleNamespace(text="", private_controls=None)
+        with patch.object(reply_pipeline.turn_delivery, "finalize", return_value=("骰值 63 還在等 Luck 決定。", [])):
+            reply_pipeline._finalize(SimpleNamespace(message=SimpleNamespace(payload={})), draft)
+        self.assertEqual(draft.text, "骰值 63 還在等 Luck 決定。")
+        delivered = []
+        def finalize(_message, text):
+            delivered.append(text)
+            return text, []
+        draft.text = ""
+        message = SimpleNamespace(payload={})
+        with patch.object(reply_pipeline.turn_delivery, "finalize", side_effect=finalize):
+            reply_pipeline._finalize(SimpleNamespace(message=message), draft)
+        failure = turn_fallback.guidance("narration_failure")
+        self.assertEqual(draft.text, failure)
+        self.assertEqual(delivered, ["", failure])  # the failure text goes through delivery too
+        private = SimpleNamespace(text="", private_controls=None)
+        with patch.object(reply_pipeline.turn_delivery, "finalize", return_value=("", [("p1", "請擲你的檢定。")])):
+            reply_pipeline._finalize(SimpleNamespace(message=SimpleNamespace(payload={})), private)
+        self.assertEqual(private.text, "")  # a private instruction is the reply; no public failure text
 
 
 def _event(name: str, ok: bool = True, *, changed: bool = True) -> dict:

@@ -525,3 +525,12 @@ def test_a_deferral_with_nobody_waiting_is_no_action_even_after_a_look_up() -> N
     assert turn_fallback.classify(wrote, _state(), "u1") == "unresolved_pending_state"
     rolled = _result("incomplete", "deferral_not_verified", tool_calls=(("roll_dice", True),))
     assert turn_fallback.classify(rolled, _state(), "u1") == "unresolved_pending_state", "a die rolled is not a look-up"
+
+
+def test_the_generic_roll_line_is_not_repeated_after_a_reply_that_gives_the_command() -> None:
+    ref = turn_delivery.InteractionRef("check", "p1", "check-1", "t")
+    assert ref.told_in("請按檢定按鈕或輸入 /coc check，擲 Mark 的偵查 檢定。")
+    assert not ref.told_in("你俯身細看泥地上的痕跡。")
+    assert not ref.told_in("想回到上個存檔點，用 /coc checkpoint。")  # another command, not the roll
+    assert not ref.told_in("輸入 /coc check偵查 擲骰。")  # not a command the router reads
+    assert ref.told_in("請輸入 /coc check。") and ref.told_in("輸入 /coc check")
