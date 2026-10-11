@@ -85,7 +85,8 @@ def _scrub_leaks(ctx: ReplyContext, draft: ReplyDraft) -> None:
         # A reply that was nothing but the decision object leaves no narration. The lines the steps below add (the
         # roll, the Luck offer) still reach the player; ``finalize`` says the narration failed only if nothing does
         # (Haunting 2026-10-11 rerun3: two Luck turns read only 「守密人暫時無法完成敘事」).
-        turn_fallback.record("narration_failure", state=ctx.state, user_id=ctx.user_id, turn_id=ctx.turn_id)
+        turn_fallback.record("narration_failure", state=ctx.state, user_id=ctx.user_id, turn_id=ctx.turn_id,
+                             result=draft.mechanic_result, rag_context=ctx.message.payload.get("rag_context", ""))
     draft.text = scrubbed
 
 
