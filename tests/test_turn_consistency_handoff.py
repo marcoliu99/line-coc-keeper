@@ -1029,3 +1029,18 @@ def test_a_deferral_after_a_committed_change_is_told_to_complete_with_it(state):
         result = asyncio.run(executor.run_executor(message(state)))
     assert seen[0]["validation_code"] == "nobody_waiting" and "resolved_without_check" in seen[0]["instruction"]
     assert result.turn_resolution.disposition == "resolved_without_check"
+
+
+def test_a_deferral_after_only_a_roll_keeps_the_generic_feedback(state):
+    """A die rolled is neither a look-up nor a change: the 「nobody waiting」 hint would prescribe a disposition the
+    validator refuses, so the generic feedback stays."""
+    seen = []
+    async def provider(*args, **kwargs):
+        assert (await args[5]("roll_dice", {"expression": "1d6"}))["ok"]
+        seen.append(kwargs["final_feedback"](decision(state, "deferred", waiting_for=turn_context.character_id(state, "b"),
+                                                      reason="等 Paul 回話", evidence_refs=["tool:1"])))
+        return decision(state, "no_mechanics", evidence_refs=["tool:1"])
+    stub = SimpleNamespace(run_conversation=AsyncMock(side_effect=provider), SUPPORTS_FINAL_FEEDBACK=True)
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
+        asyncio.run(executor.run_executor(message(state)))
+    assert seen[0] is not None and seen[0]["validation_code"] != "nobody_waiting"
