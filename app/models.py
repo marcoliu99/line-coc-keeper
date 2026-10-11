@@ -226,7 +226,6 @@ class InjuryState(TypedDict, total=False):
     unconscious: bool
     dying: bool
     dead: bool
-    first_aid_offered: bool  # down outside combat, the party was told First Aid could help (unconscious_wake)
 
 
 class PostcombatObligation(TypedDict, total=False):

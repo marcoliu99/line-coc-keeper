@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Literal
 
 from app import combat
-from app.models import Character, GroupState, InjuryState
+from app.models import Character, GroupState
 from app.repositories import state_transaction
 
 KNOCKED_OUT_TAGS = ("昏迷", "倒地")
@@ -28,8 +28,20 @@ def knocked_out(character: Character) -> bool:
 
 
 def dying(character: Character) -> bool:
+    """Dying as the injury says; HP 0 with a major wound only when nothing says otherwise (stabilized is dying=False)."""
     injury = character.injury or {}
-    return bool(injury.get("dying")) or (character.hp <= 0 and bool(injury.get("major_wound")))
+    if "dying" in injury:
+        return bool(injury["dying"])
+    return character.hp <= 0 and bool(injury.get("major_wound"))
+
+
+def _offer_key(character_id: str) -> str:
+    return f"first-aid-offered:{character_id}"
+
+
+def _down_as(character: Character) -> dict:
+    """This knockout as it stands: an offer made for another one (woken by First Aid, down again) does not count."""
+    return {"hp": character.hp, "injury": dict(character.injury or {})}
 
 
 def _standing(character: Character) -> bool:
@@ -46,7 +58,8 @@ def decide(state: GroupState, user_id: str) -> Literal["wake", "wait"] | None:
     if dying(actor):
         return "wait"
     companions = [c for c in combat.active_characters(state) if c.character_id != actor.character_id]
-    if any(_standing(c) for c in companions) and not (actor.injury or {}).get("first_aid_offered"):
+    offered = (state.check_consequence_receipts.get(_offer_key(actor.character_id)) or {}).get("result")
+    if any(_standing(c) for c in companions) and offered != {"status": "offered", **_down_as(actor)}:
         return "wait"
     return "wake"
 
@@ -62,13 +75,14 @@ def wait_reply(character: Character) -> str:
 def offer_first_aid(conversation_id: str, character_id: str, *, timeline_id: str | None) -> None:
     """Remember that the party was told First Aid could help, so the investigator's next line wakes them."""
     def apply(ctx: state_transaction.TxContext) -> None:
-        copies = [c for c in [*ctx.state.characters.values(), *ctx.state.characters_by_id.values()]
-                  if c.character_id == character_id]
-        if not copies or all((c.injury or {}).get("first_aid_offered") for c in copies):
+        # Kept beside the character, not in its injury record: the combat engine validates that record's keys.
+        character = ctx.state.characters_by_id.get(character_id) or next(
+            (c for c in ctx.state.characters.values() if c.character_id == character_id), None)
+        if character is None:
             ctx.skip_save()
             return
-        for character in copies:
-            character.injury = {**(character.injury or {}), "first_aid_offered": True}
+        ctx.state.check_consequence_receipts[_offer_key(character_id)] = {
+            "fingerprint": "first_aid_offered", "result": {"status": "offered", **_down_as(character)}}
 
     state_transaction.mutate(conversation_id, apply, reason="unconscious_first_aid_offered",
                              expected_timeline=timeline_id)
@@ -88,10 +102,9 @@ def wake(conversation_id: str, character_id: str, *, timeline_id: str | None) ->
         if not any(knocked_out(c) for c in copies):
             ctx.skip_save()
             return
+        ctx.state.check_consequence_receipts.pop(_offer_key(character_id), None)
         for character in copies:
-            injury = InjuryState(**(character.injury or {}))
-            injury.pop("first_aid_offered", None)
-            character.injury = {**injury, "unconscious": False}
+            character.injury = {**(character.injury or {}), "unconscious": False}
             character.status_tags = [tag for tag in character.status_tags if tag not in KNOCKED_OUT_TAGS]
             if character.hp <= 0:
                 character.hp = 1  # come round from HP 0 after the time skip, as natural recovery would leave them

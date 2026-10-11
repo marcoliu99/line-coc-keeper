@@ -14,8 +14,8 @@ From the Haunting soak run of 2026-10-12 at b0c11f3:
 ## Change
 
 - **HP 0 is down.** `unconscious_wake.knocked_out` now also covers HP 0 and dying, outside combat. Dead is excluded.
-- **A dying investigator waits.** HP 0 with a major wound, or a `dying` injury, waits for First Aid on every line, with 「…倒地瀕死…隊友要盡快替…急救」. The combat obligations decide whether they live.
-- **Told once, then woken.** Any other knocked-out investigator with a companion standing gets the First Aid line once. It also tells the player that without First Aid, their next action wakes them after a time skip. The offer is remembered in the injury record (`first_aid_offered`), and the next line takes the existing time-skip wake. When nobody is left standing, the first line wakes them, as before.
+- **A dying investigator waits.** A `dying` injury, or HP 0 with a major wound when the injury doesn't say otherwise (a stabilized patient is `dying=False`), waits for First Aid on every line, with 「…倒地瀕死…隊友要盡快替…急救」. The combat obligations decide whether they live.
+- **Told once, then woken.** Any other knocked-out investigator with a companion standing gets the First Aid line once. It also tells the player that without First Aid, their next action wakes them after a time skip. The offer is remembered in the state's consequence receipts, keyed by the character, with the HP and injury it was made for (outside the injury record, whose keys the combat engine validates). The next line of that same knockout takes the existing time-skip wake; an offer from an earlier knockout doesn't count. When nobody is left standing, the first line wakes them, as before.
 - **Waking from HP 0** leaves the investigator at HP 1. The major wound stays, and the wake clears the offer.
 
 ## Verification
