@@ -846,21 +846,32 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
            and a.get('round') == state.combat.round_number for a in state.combat.actions.values()):
         return _error('NPC actor already completed this turn; advance initiative')
     if plan.get('selected_action') != 'attack':
-        action: CombatAction = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
-                  'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
+        # A special ability or a movement the engine has no table for is the enemy's turn, given up: it is narrated
+        # from the plan's public hint and no mechanic applies, rather than pausing the fight for a ruling every
+        # player waits on (Lightless rerun3). The Keeper may still apply a stated effect with the owned tools.
+        narration = str(plan.get('public_hint') or '').strip() or f'{actor.display_name or actor.name} 做出了特殊舉動。'
+        action: CombatAction = {'action_id': identity, 'kind': 'skip', 'completed': True, 'actor_id': actor.combatant_id,
+                  'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number,
+                  'plan_id': plan_id}
         state.combat.actions[identity] = action
-        return _ruling(state, action, 'NPC special/movement plan requires an explicit ruling')
+        state.combat.phase = 'READY'
+        receipt = _result(state, action)
+        receipt['result'] = {'special_given_up': True, 'narration': narration,
+                             'note': '引擎沒有這個特殊能力的規則，這一回合只敘述、不產生機制效果；要套用效果請用對應的工具。'}
+        action['receipt'] = deepcopy(receipt)
+        return receipt
     card = state.combat.enemy_cards.get(actor.enemy_card_id)
     attack = next((a for a in card.attacks if a.id == plan.get('selected_id')), None) if card else None
     targets = plan.get('target_ids', [])
     if not attack or not card or card.incomplete or len(targets) != 1:
         return _error('NPC attack requires a complete single-target definition')
     source = card.source
-    if not source or not source.get('url') or not source.get('revision') or not source.get('sha256'):
-        action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
-                  'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
-        state.combat.actions[identity] = action
-        return _ruling(state, action, 'NPC attack requires verified scenario provenance')
+    unsourced = not source or not source.get('url') or not source.get('revision') or not source.get('sha256')
+    if unsourced:
+        # An attack the scenario gives no source for is played as a blow, with the values the card carries: a poison
+        # needle or a spit the engine has no table for must not stop the fight for a ruling the Keeper cannot make
+        # (Lightless rerun3: five turns of every player's shot refused, then the Keeper cancelled it).
+        source = {'extreme_rule': 'maximum', 'attack_mode': 'melee'}
     try:
         dice.max_expression_value(attack.damage)
     except ValueError:
@@ -868,10 +879,10 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     attack_metadata = {'extreme_rule': source.get('extreme_rule'), 'attack_mode': source.get('attack_mode'),
                        **source.get('attacks', {}).get(attack.id, source if len(card.attacks) == 1 else {})}
     tags = attack.tags if isinstance(attack.tags, list) else [attack.tags]  # a model may send null or one string
-    if 'impale' in tags:  # the scenario says this attack impales on an Extreme success (Corbitt's knife)
+    if 'impale' in tags and not unsourced:  # the scenario says this attack impales on an Extreme success (Corbitt's knife)
         attack_metadata['extreme_rule'] = 'impale'
     mode = attack_metadata.get('attack_mode')
-    if mode not in ('melee', 'single_shot'):
+    if mode not in ('melee', 'single_shot') or unsourced:
         mode = 'melee'
     declared_here = (source.get('attacks', {}).get(attack.id) or {}).get('attack_mode') == 'single_shot'
     if mode == 'single_shot' and not declared_here and not _shoots(attack):
@@ -879,16 +890,15 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
         # floating blade (Corbitt's knife, POW against Dodge) is dodged like any blow; as a shot it waited every round
         # for ammunition and a range nobody could give, and the Keeper cancelled it (49 rounds, 2026-10-09).
         mode = 'melee'
-    if mode == 'single_shot' and (attack.ammo_or_uses is None or attack.ammo_or_uses < 1
-                                  or attack_metadata.get('distance_yards') is None or attack_metadata.get('base_range_yards') is None):
+    if mode == 'single_shot' and (attack.ammo_or_uses is None or attack.ammo_or_uses < 1):
         action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
                   'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}
         state.combat.actions[identity] = action
-        return _ruling(state, action, 'NPC single shot requires ammunition and reviewed physical range')
+        return _ruling(state, action, 'NPC single shot requires ammunition')
     difficulty = 'regular'
     if mode == 'single_shot':
         range_result = combat_rules.resolve_range_difficulty(
-            attack_metadata['distance_yards'], attack_metadata['base_range_yards'])
+            attack_metadata.get('distance_yards'), attack_metadata.get('base_range_yards'))
         if range_result.difficulty is None:
             action = {'action_id': identity, 'completed': False, 'actor_id': actor.combatant_id,
                       'target_id': next(iter(plan.get('target_ids', [])), ''), 'round': state.combat.round_number}

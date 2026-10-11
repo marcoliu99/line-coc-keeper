@@ -2746,6 +2746,29 @@
       "path": "docs/specs/bug/keeper_gives_up_and_combat_guidance_design_spec.md",
       "zh_path": "docs/specs/bug/keeper_gives_up_and_combat_guidance_design_spec_zh.md",
       "source_revision": "0c53dcb95c2c5fd81a91815eb70336f9c80049ae"
+    },
+    {
+      "title": "A shot with no stated distance paused the whole fight, a creature named in the players' words found no stat block, an attack with no source stopped the fight, and the log did not say why a combat tool failed",
+      "zh": "射擊沒說距離就暫停整場戰鬥、用玩家的說法叫生物卻找不到數值表、沒有出處的攻擊卡住戰鬥、log 看不出戰鬥工具為什麼失敗",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_rules.py",
+        "app/combat_flow.py",
+        "app/keeper_tools/support.py",
+        "app/agents/tool_gateway.py",
+        "tests/test_combat_rules.py",
+        "tests/test_combat_flow.py",
+        "tests/test_combat_state_machine_integration.py",
+        "tests/test_combat_mechanics_coverage.py",
+        "tests/test_combat_turn_friction.py",
+        "tests/test_turn_phases.py",
+        "tests/test_enemy_source_from_index.py",
+        "tests/test_combat_skip_turn.py"
+      ],
+      "path": "docs/specs/bug/single_shot_without_distance_design_spec.md",
+      "zh_path": "docs/specs/bug/single_shot_without_distance_design_spec_zh.md",
+      "source_revision": "e4a9a1f196be92e9a6ea6ba5b3ff8bc40fc464fa"
     }
   ]
 }

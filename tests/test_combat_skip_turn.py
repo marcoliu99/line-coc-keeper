@@ -99,7 +99,10 @@ def test_a_skip_still_succeeds_when_the_next_enemy_needs_a_ruling():
 
     state = _battle("p1", enemies=(("Rat swarm", 30),), first_enemy=False)
     for card in state.combat.enemy_cards.values():
-        card.source = {}  # no verified provenance: the enemy's attack will pause for a ruling
+        # A shot with no rounds left: the enemy's turn needs a ruling, which the skip must not wait on.
+        card.source = {"url": "u", "revision": "r", "sha256": "s", "attack_mode": "single_shot"}
+        for attack in card.attacks:
+            attack.ammo_or_uses = 0
     state_transaction.mutate_value(state.group_id, lambda ctx: ctx.replace_state(state), reason="test_setup")
     cur, owner = _current(_load())
     arguments = {"actor_id": cur.combatant_id, "event_id": "e6", "skip": True}

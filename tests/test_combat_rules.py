@@ -90,9 +90,13 @@ def test_shotgun_damage_uses_trusted_physical_distance(distance, damage, band):
     assert (result.status, result.damage, result.band_id) == ('resolved', damage, band)
 
 
-def test_shotgun_missing_invalid_or_conflicting_distance_requires_ruling():
+def test_shotgun_with_no_stated_distance_uses_the_nearest_band():
+    result = resolve_weapon_damage(weapon('12-gauge Shotgun (2B)'))
+    assert (result.status, result.damage, result.band_id) == ('resolved', '4d6', 'normal')
+
+
+def test_shotgun_invalid_or_conflicting_distance_requires_ruling():
     shotgun = weapon('12-gauge Shotgun (2B)')
-    assert resolve_weapon_damage(shotgun).status == 'needs_ruling'
     for distance in [-1, 51, float('inf'), float('nan')]:
         assert resolve_weapon_damage(shotgun, distance_yards=distance).status == 'needs_ruling'
     assert resolve_weapon_damage(shotgun, authorized_band_id='long').damage == '2d6'
@@ -147,7 +151,13 @@ def test_physical_single_shot_range_boundaries(distance, expected):
     assert resolve_range_difficulty(distance, 10).difficulty == expected
 
 
-@pytest.mark.parametrize(('distance', 'base'), [(None, 10), (1, None), (1, 0),
+@pytest.mark.parametrize('base', [10, None, 0])
+def test_a_shot_with_no_stated_distance_is_a_regular_roll(base):
+    from app.combat_rules import resolve_range_difficulty
+    assert resolve_range_difficulty(None, base).difficulty == 'regular'
+
+
+@pytest.mark.parametrize(('distance', 'base'), [(1, None), (1, 0),
     (-1, 10), (True, 10), (1, True), (float('nan'), 10), (float('inf'), 10)])
 def test_invalid_physical_range_requires_ruling(distance, base):
     from app.combat_rules import resolve_range_difficulty

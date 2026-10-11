@@ -427,3 +427,19 @@ async def test_a_supervised_turn_names_its_route_in_the_summary_line(events, cap
     await _supervised(make_state(), "player_action")
     lines = [r.getMessage() for r in caplog.records if r.name == "app.turn"]
     assert len(lines) == 1 and " route=gameplay_action " in lines[0] and lines[0].startswith("turn.summary ")
+
+
+@aio
+async def test_a_failed_tool_call_logs_why_it_failed(events, caplog) -> None:
+    """The rerun3 structured log said only that a combat tool ran; the reason a call failed goes to the text log."""
+    reason = "Resolve the current action before declaring another"
+    results = iter([{"ok": False, "error": reason, "phase": "NEEDS_RULING"}, {"ok": True, "results": "x"}])
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: next(results)), \
+            caplog.at_level("WARNING", logger=tool_gateway.__name__):
+        execute = tool_gateway.make_tool_executor(make_state(), [], [], "player", [], actor_id="a")
+        await execute("declare_combat_action", {"action_id": "a1"})
+        await execute("search_scenario", {"query": "q"})
+    failed, fine = named(events, "turn.observed")
+    assert (failed["ok"], failed["phase"]) == (False, "NEEDS_RULING") and "error" not in failed  # no free text
+    assert fine["ok"] is True and fine["phase"] is None
+    assert [r.getMessage() for r in caplog.records] == [f"tool declare_combat_action failed: {reason}"]

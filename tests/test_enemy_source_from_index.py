@@ -85,12 +85,27 @@ def test_a_card_level_single_shot_does_not_make_a_bite_or_a_floating_knife_a_sho
     assert [o["kind"] for o in _load().pending_checks["p1"]["options"]] == ["dodge", "counter"]
 
 
-def test_an_enemy_the_index_does_not_name_still_pauses_for_a_ruling():
+def test_an_enemy_the_index_does_not_name_attacks_as_a_blow_instead_of_pausing_for_a_ruling():
+    """Lightless rerun3: a poison needle with no source paused the fight and every player's shot was refused until
+    the Keeper cancelled it. An attack with no source is played as a melee blow with the card's own values."""
     _scenario_battle(["別的怪物"])
     enemy = _add("鼠群")
     assert not _load().combat.enemy_cards[enemy.enemy_card_id].source
     run, _ = _enemy_turn([20])
-    assert run["phase"] == "NEEDS_RULING" and "provenance" in run["error"]
+    assert run["phase"] == "PLAYER_CHOICE", run
+    action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
+    assert action["action_kind"] == "melee" and action["weapon"]["extreme_rule"] == "maximum"
+
+
+def test_an_unsourced_attack_ignores_a_model_supplied_impale_tag():
+    """The impale tag is the scenario's claim about an attack (Corbitt's knife); with no source it is only the model's,
+    and the unsourced blow stays an ordinary one."""
+    _scenario_battle(["別的怪物"])
+    _add("鼠群", [{**BITE, "tags": ["impale"]}])
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "PLAYER_CHOICE", run
+    action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
+    assert action["weapon"]["extreme_rule"] == "maximum"
 
 
 def test_what_the_model_gave_wins_over_the_scenarios_defaults():
