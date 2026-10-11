@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat, combat_flow, combat_resources, config, dice
+from app import combat, combat_flow, combat_resources, combat_rules, config, dice
 from app.models import Character, Combatant, GroupState
 from tests import combat_calls as calls
 
@@ -857,3 +857,18 @@ def test_fight_back_prefers_the_weapon_of_the_defenders_last_attack():
     pc.carried_items.clear()
     bare = combat_flow._counter_weapon(state, pc)
     assert bare['label'] == '反擊' and bare['counter_damage'] == '1d3'
+
+
+def test_fight_back_honours_a_pinned_weapon_definition():
+    """A pregen's hunting knife carries its own reviewed definition (1d4 here, where the catalog says 1d4+2): the
+    counter uses the pinned damage, and an entry whose definition cannot be read is passed over, not guessed."""
+    from dataclasses import asdict, replace
+    knife = combat_rules.resolve_weapon('獵刀').definition
+    assert knife is not None and knife.damage == '1d4+2'
+    pin = replace(knife, damage='1d4', catalog_version='pregen-v1')
+    state, pc, _enemy = battle(weapon_instances={
+        '獵刀': {'definition_id': pin.id, 'catalog_version': pin.catalog_version, 'pinned_definition': asdict(pin)},
+        '怪東西': {'definition_id': 'x', 'pinned_definition': {'id': 'x'}},
+    })
+    option = combat_flow._counter_weapon(state, pc)
+    assert option['label'] == '反擊（獵刀）' and option['counter_damage'] == '1d4'

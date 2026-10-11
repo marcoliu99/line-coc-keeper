@@ -448,14 +448,28 @@ def _counter_weapon(state: GroupState, character: Character) -> dict[str, Any]:
         if skill:
             return option(last['weapon_reference'], skill, last['damage'], last['weapon'].get('db_policy', 'full'))
     best: dict[str, Any] | None = None
-    for item in [*effective.weapons, *effective.carried_items]:
-        definition = combat_rules.resolve_weapon(item).definition
+    for item in dict.fromkeys([*effective.weapon_instances, *effective.weapons, *effective.carried_items]):
+        definition = _carried_definition(effective, item)
         if definition is None or definition.attack_mode != 'melee' or definition.id == 'i.weapon.brawl':
             continue
         skill = _skill(effective, definition.skill_id)
         if skill and (best is None or skill[1] > best['skill_value']):
             best = option(item, skill, definition.damage, definition.db_policy)
     return best or bare
+
+
+def _carried_definition(effective: Character, item: str) -> combat_rules.WeaponDefinition | None:
+    """What a sheet entry is: its pinned definition (a pregen's or scenario's own weapon, with its own damage) or the
+    scenario definitions stored with it, else the catalog by its text. Nothing when it cannot be read."""
+    metadata = effective.weapon_instances.get(item) or {}
+    try:
+        if metadata.get('pinned_definition'):
+            return combat_rules.parse_weapon_definition(metadata['pinned_definition'])
+        scenario = tuple(combat_rules.parse_weapon_definition(row) for row in metadata.get('scenario_definitions', ()))
+        instance = combat_rules.WeaponInstance(item, metadata.get('definition_id')) if metadata else None
+        return combat_rules.resolve_weapon(item, scenario_definitions=scenario, instance=instance).definition
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 def _defense_choice(state: GroupState, action: CombatAction, character: Character) -> dict[str, Any]:

@@ -14,7 +14,7 @@ The main_v2 code review of 2026-10-11 found three places where the engine depart
 
 ## Change
 
-- **Fight Back uses the weapon in hand.** The counter option carries the weapon's skill, value, damage and DB policy. In hand means: the weapon of the defender's own last melee attack this fight; otherwise the carried melee weapon they are best with (weapons entries and carried items resolved against the catalog); otherwise bare hands, 1d3 + DB as before. The option's label names it (「反擊（小刀）」) so the button and the threshold hint say what the player swings; a typed 「反擊」 still picks it. The receipt names the weapon (`counter_weapon`). An extreme counter still does normal damage, as before.
+- **Fight Back uses the weapon in hand.** The counter option carries the weapon's skill, value, damage and DB policy. In hand means: the weapon of the defender's own last melee attack this fight; otherwise the carried melee weapon they are best with (a sheet entry's pinned or scenario definition when it has one, else the catalog by its text); otherwise bare hands, 1d3 + DB as before. The option's label names it (「反擊（小刀）」) so the button and the threshold hint say what the player swings; a typed 「反擊」 still picks it. The receipt names the weapon (`counter_weapon`). An extreme counter still does normal damage, as before.
 - **Bonus and penalty dice compare whole rolls.** Each tens die is composed with the ones die into the roll it would make (00 → 100); a bonus die keeps the lowest roll, a penalty die the highest.
 - **Creation points follow the rulebook:** EDU×4 and INT×2.
 
