@@ -365,6 +365,22 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                                    '讓敘事直接回答玩家這一句。' if changed
                                    else '改交 no_mechanics（需要機制就先呼叫對應工具），讓敘事直接回答玩家這一句。'),
                         }
+                    if (verified.validation_code == 'pending_identity_mismatch' and state.autoroll_checks
+                            and not state.pending_checks and not state.pending_luck_decisions
+                            and not any(e['result'].get('resolved') or e['result'].get('pending_luck')
+                                        for e in tool_events)):
+                        # Twice in the 2026-10-12 soak runs: await_check answered before any dice, at a table where
+                        # nothing ever waits for a roll.
+                        return {
+                            'validation_code': 'autoroll_rolls_now', 'reason': verified.reason,
+                            'instruction': '這個群組是自動擲骰：檢定不會等玩家擲，也就沒有可以 await_check 的檢定。'
+                                '需要檢定就現在呼叫 skill_check（理智用 sanity_check），系統會立刻擲出結果；'
+                                '拿到結果後交回 resolved 並引用那次工具。要玩家在互斥選項中選一個時，仍用 offer_check_choice '
+                                '建立選擇（它會等玩家選），再交回 await_check 並填它的 check_id。'
+                                + ('不需要檢定就交回 resolved_without_check，引用這回合已改動狀態的工具。'
+                                   if turn_resolution.gameplay_snapshot(state) != before_gameplay
+                                   else '不需要檢定就交回 no_mechanics。'),
+                        }
                     if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
                         return None
                     return {

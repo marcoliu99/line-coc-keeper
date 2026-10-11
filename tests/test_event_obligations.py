@@ -118,6 +118,19 @@ REVEAL = "你掀開紅色水桶的蓋子，裡面泡著一隻斷手。"
 
 
 @aio
+async def test_a_rule_the_executor_already_applied_this_turn_is_not_applied_again(state) -> None:
+    """The Executor read the same rule and rolled Sanity; the gate must not owe it a second time."""
+    from app.domain.models import ObservedOutcome
+    result = _result()
+    result.observed_outcomes = [ObservedOutcome("tool:1", "sanity_check", True)]
+    applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], result=result)
+    assert applied == [] and "a" not in group_state.load_state(state.group_id).pending_checks
+    # Recorded as applied: a later turn that shows the hand again does not owe it either.
+    applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], turn_id="turn-2")
+    assert applied == [] and "a" not in group_state.load_state(state.group_id).pending_checks
+
+
+@aio
 async def test_a_revealed_event_creates_the_san_check_in_the_same_turn(state) -> None:
     applied, result = await _enforce(state, REVEAL, [BUCKET_RULE])
     assert [item.kind for item in applied] == ["sanity_check"] and applied[0].pending
@@ -197,6 +210,47 @@ async def test_an_event_that_costs_hit_points_goes_through_the_same_mechanism(st
     assert [item.kind for item in applied] == ["damage"] and not applied[0].pending and again == []
     stored = group_state.load_state(state.group_id)
     assert stored.characters["a"].hp == 7 and "4" in applied[0].summary
+
+
+CELLAR_RULE = ["走進地下室的人須通過 聆聽 檢定，否則聽不見腳步聲。"]
+CELLAR = "你走進地下室，腳下的木板吱嘎作響。"
+
+
+def _rolled(skill: str, *, now: bool = True, key: str = "resolved") -> MechanicResult:
+    from app.domain.models import ObservedOutcome
+    result = _result()
+    if now:
+        result.observed_outcomes = [ObservedOutcome("tool:1", "skill_check", True)]
+    result.check_status[key] = {"investigator": "Marco", "skill": skill}
+    return result
+
+
+@aio
+async def test_another_roll_this_turn_does_not_stand_in_for_a_forced_check(state) -> None:
+    """A Spot Hidden the player asked for does not stand in for the Listen the cellar demands."""
+    applied, _ = await _enforce(state, CELLAR, CELLAR_RULE, result=_rolled("偵查"))
+    assert [item.kind for item in applied] == ["forced_check"]
+
+
+@aio
+async def test_a_check_still_waiting_from_an_earlier_turn_does_not_stand_in_for_a_forced_check(state) -> None:
+    applied, _ = await _enforce(state, CELLAR, CELLAR_RULE, result=_rolled("聆聽", now=False, key="pending"))
+    assert [item.kind for item in applied] == ["forced_check"]
+
+
+@aio
+async def test_the_same_roll_made_this_turn_is_the_forced_check(state) -> None:
+    applied, _ = await _enforce(state, CELLAR, CELLAR_RULE, result=_rolled("聆聽"))
+    assert applied == [] and "a" not in group_state.load_state(state.group_id).pending_checks
+
+
+@aio
+async def test_the_same_roll_waiting_on_luck_is_the_forced_check(state) -> None:
+    result = _rolled("聆聽")
+    result.check_status["resolved"] = None
+    result.check_status["pending_luck"] = {"investigator": "Marco", "skill_name": "聆聽", "roll": 60}
+    applied, _ = await _enforce(state, CELLAR, CELLAR_RULE, result=result)
+    assert applied == []
 
 
 @aio

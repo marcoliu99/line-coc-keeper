@@ -1067,3 +1067,47 @@ def test_a_deferral_after_only_a_roll_keeps_the_generic_feedback(state):
     with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
         asyncio.run(executor.run_executor(message(state)))
     assert seen[0] is not None and seen[0]["validation_code"] != "nobody_waiting"
+
+
+def test_a_stray_citation_beside_a_real_one_is_dropped_not_a_retry(state):
+    """Camp Sunny 2026-10-12 rerun5: a reply citing scenario_context with no scenario retrieved was retried whole."""
+    result = turn_resolution.validate_resolution(decision(state, "no_mechanics", evidence_refs=["state", "scenario_context"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=[], has_scenario=False, before_actor={})
+    assert result.disposition == "no_mechanics" and result.evidence_refs == ["state"]
+    result = turn_resolution.validate_resolution(decision(state, "no_mechanics", evidence_refs=["scenario_context"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=[], has_scenario=False, before_actor={})
+    assert result.validation_code == "invalid_evidence_reference"
+
+
+def test_await_check_before_any_dice_at_an_autoroll_table_is_told_to_roll_now(state):
+    """Camp Sunny 2026-10-12 rerun5: await_check with no roll made, twice; at an autoroll table nothing waits."""
+    state.autoroll_checks = True
+    seen = []
+    async def provider(*args, **kwargs):
+        seen.append(kwargs["final_feedback"](decision(state, "await_check", check_id="made-up",
+                                                      waiting_for=turn_context.character_id(state, "a"))))
+        return decision(state, "no_mechanics")
+    stub = SimpleNamespace(run_conversation=AsyncMock(side_effect=provider), SUPPORTS_FINAL_FEEDBACK=True)
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
+        asyncio.run(executor.run_executor(message(state)))
+    assert seen[0]["validation_code"] == "autoroll_rolls_now" and "skill_check" in seen[0]["instruction"]
+    assert "no_mechanics" in seen[0]["instruction"]
+    assert "offer_check_choice" in seen[0]["instruction"]  # a player's choice still waits for the player
+
+
+def test_await_check_after_a_committed_change_at_an_autoroll_table_keeps_that_change(state):
+    """A change already made is cited as resolved_without_check; no_mechanics would be refused for its effects."""
+    state.autoroll_checks = True
+    group_state.save_state(state)
+    seen = []
+    async def provider(*args, **kwargs):
+        assert (await args[5]("add_carried_item", {"investigator": "Marco", "item": "手電筒"}))["ok"]
+        seen.append(kwargs["final_feedback"](decision(state, "await_check", check_id="made-up",
+                                                      waiting_for=turn_context.character_id(state, "a"),
+                                                      evidence_refs=["tool:1"])))
+        return decision(state, "resolved_without_check", evidence_refs=["tool:1"])
+    stub = SimpleNamespace(run_conversation=AsyncMock(side_effect=provider), SUPPORTS_FINAL_FEEDBACK=True)
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
+        asyncio.run(executor.run_executor(message(state)))
+    assert seen[0]["validation_code"] == "autoroll_rolls_now"
+    assert "resolved_without_check" in seen[0]["instruction"] and "no_mechanics" not in seen[0]["instruction"]

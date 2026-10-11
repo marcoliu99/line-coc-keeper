@@ -24,6 +24,9 @@ from app.services import event_obligations
 
 _logger = logging.getLogger(__name__)
 _CAP = 4  # obligations applied in one turn; a longer list is a retrieval accident, not a scene
+# The Executor's own tool for a SAN loss or damage: when it already applied one this turn (it read the same scenario
+# rule), the gate does not take SAN or HP a second time. A forced check is matched by its investigator and skill.
+_EXECUTOR_TOOLS = {"sanity_check": {"sanity_check"}, "damage": {"adjust_character", "apply_resolved_check_damage"}}
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,25 @@ def _executing(state: GroupState, identity: str) -> None:
     support.mutate_tool_state(state, mutate)
 
 
+def _applied_by_executor(obligation: event_obligations.Obligation, mechanic_result: MechanicResult, actor: str) -> bool:
+    done = {outcome.tool_name for outcome in mechanic_result.observed_outcomes if outcome.success}
+    if obligation.kind == "forced_check":
+        # Only the same roll, made this turn: a Spot Hidden the player asked for does not stand in for the Dodge a trap
+        # demands, nor does a check still waiting from an earlier turn (the handoff carries it forward).
+        status = mechanic_result.check_status
+        return "skill_check" in done and any(
+            entry.get("investigator") == actor
+            and (entry.get("skill") or entry.get("skill_name")) == obligation.arg("skill")
+            for entry in (status.get("resolved") or {}, status.get("pending") or {}, status.get("pending_luck") or {}))
+    return bool(_EXECUTOR_TOOLS[obligation.kind] & done)
+
+
+def _record_executor_application(state: GroupState, identity: str, obligation: event_obligations.Obligation) -> None:
+    """Kept in the ledger like the gate's own application, so a later turn showing the trigger does not owe it."""
+    if _reserve(state, identity, obligation):
+        _settle(state, identity, {"kind": obligation.kind, "key": obligation.key, "by": "executor"})
+
+
 def _settle(state: GroupState, identity: str, result: dict[str, Any] | None) -> None:
     """Keep the receipt of a success; drop the reservation of a failure so a later turn may try again."""
 
@@ -132,6 +154,10 @@ async def enforce(
     applied: list[Applied] = []
     for obligation in due[:_CAP]:
         identity = event_obligations.identity(state.timeline_id, actor.character_id, obligation, turn_id)
+        if _applied_by_executor(obligation, mechanic_result, actor.name):
+            _record_executor_application(state, identity, obligation)
+            observability.event("turn.obligation", status="applied_by_executor", kind=obligation.kind, key=obligation.key)
+            continue
         # Reserved and marked without awaiting anything, so a cancellation can only arrive once the tool is running.
         if not _reserve(state, identity, obligation):
             observability.event("turn.obligation", status="already_applied", kind=obligation.kind, key=obligation.key)
