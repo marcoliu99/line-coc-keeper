@@ -990,6 +990,15 @@ def test_a_roll_or_a_record_made_this_turn_is_evidence_enough_for_a_no_check_com
         state=state, user_id="a", before_pending={}, before_luck={}, tool_events=unchanged, has_scenario=False,
         before_actor={}, before_gameplay=turn_resolution.gameplay_snapshot(state))
     assert result.disposition == "incomplete", "a write that changed nothing is no evidence either"
+    # Beside a real change, a cited no-op is still a no-op: the decision must cite the call that changed the game.
+    compound = [{"name": "adjust_character", "result": {"ok": True}, "gameplay_before": {"hp": 10}, "gameplay_after": {"hp": 7}},
+                {"name": "record_clue", "result": {"ok": True, "recorded": False}, "gameplay_before": {"hp": 7}, "gameplay_after": {"hp": 7}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:2"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=compound, has_scenario=False, before_actor={})
+    assert result.disposition == "incomplete"
+    result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=compound, has_scenario=False, before_actor={})
+    assert result.disposition == "resolved_without_check"
 
 
 def test_a_deferral_with_nobody_waiting_is_told_to_narrate(state):
