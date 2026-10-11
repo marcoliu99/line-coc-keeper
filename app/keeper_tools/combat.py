@@ -74,13 +74,17 @@ def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, An
 
 
 def _with_block_attacks(state: GroupState, name: str, entry: dict[str, Any]) -> dict[str, Any]:
-    """The entry with the attacks its scenario stat block writes out, when it was given none it could fight with.
+    """The entry with the attacks its scenario stat block writes out, when it brings abilities but no attack.
 
-    An enemy with abilities alone, or nothing, could only give up its turns; the block's own numbers make it fight.
-    An entry that brings its own attacks, or an ally, keeps them as given.
+    Such an entry passes the attackless refusal, yet an ability the engine has no rule for is only narrated, so the
+    enemy gave up every turn: one registered with its engulf alone never struck (2026-10-12 soak runs). An entry
+    with nothing is still refused, so the Keeper registers how the scenario says it attacks (Corbitt's floating
+    knife, not his fists); one that brings its own attacks, or an ally, keeps them as given.
     """
-    attacks = entry.get("attacks")
-    if entry.get("is_ally") or (isinstance(attacks, list) and any(support.well_formed_attack(a) for a in attacks)):
+    attacks, abilities = entry.get("attacks"), entry.get("abilities")
+    named_ability = isinstance(abilities, list) and any(isinstance(a, dict) and a.get("name") for a in abilities)
+    if (entry.get("is_ally") or not named_ability
+            or (isinstance(attacks, list) and any(support.well_formed_attack(a) for a in attacks))):
         return entry
     filled = support.attacks_from_stat_block(state, name)
     return {**entry, "attacks": filled} if filled else entry

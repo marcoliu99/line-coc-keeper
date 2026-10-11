@@ -346,11 +346,14 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
 # 「Fighting 70% (35/14), damage 8D6」, 「Claw 50% (25/10), damage 1D6+DB」, 「爪擊 50%（25/10），傷害 1D6+DB」.
 _BLOCK_ATTACK = re.compile(
     r"(?P<label>[A-Za-z][A-Za-z' -]{1,30}?|[\u4e00-\u9fff]{1,10})\s*(?P<value>\d{1,3})\s*[%％]\s*"
-    r"(?:[（(][^）)]{0,12}[）)])?\s*[,，、]?\s*(?:damage|傷害)\s*[:：]?\s*"
+    r"(?:[（(][^）)]{0,40}[）)])?\s*[,，、]?\s*(?:damage|傷害)\s*[:：]?\s*"
     r"(?P<damage>\d*\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d*\s*[dD]\s*\d+|\d+|DB|db|damage bonus|傷害加值))*)",
 )
 _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
+# 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
+_BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
+                               re.IGNORECASE)
 
 
 def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]]:
@@ -364,7 +367,7 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     found = stat_block_for(state, name)
     if found is None:
         return []
-    block = found[1]
+    block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), found[1]))
     db_match = _BLOCK_DB.search(block)
     bonus = db_match.group("db").replace(" ", "") if db_match else ""
     attacks: list[dict[str, Any]] = []
@@ -372,7 +375,7 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
         label = match.group("label").strip()
         if _NOT_AN_ATTACK.match(label):
             continue
-        damage = re.sub(r"\s+", "", match.group("damage"))
+        damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
         if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
             if not bonus:
                 continue

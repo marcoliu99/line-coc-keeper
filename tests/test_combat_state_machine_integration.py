@@ -916,3 +916,28 @@ def test_a_declaration_paused_on_a_weapon_name_gives_way_to_the_corrected_one(ba
     assert battle.declare(corrected_id, weapon='unarmed')['ok']  # the same id corrected, or a new one
     current = battle.load()
     assert current.combat.phase != 'NEEDS_RULING' and not any(a.get('needs_ruling') for a in current.combat.actions.values())
+
+
+def test_a_refused_correction_leaves_the_paused_declaration_as_it_was(battle):
+    battle.start()
+    assert battle.declare('attack:1', weapon='a spork of doom')['phase'] == 'NEEDS_RULING'
+    refused = battle.tool('declare_combat_action', {'action_id': 'system:bad', 'actor_id': 'pc:char:ada',
+                                                    'target_id': 'pc:char:ada', 'weapon_reference': 'unarmed',
+                                                    'action_kind': 'melee'})
+    assert not refused['ok']
+    current = battle.load()
+    assert current.combat.phase == 'NEEDS_RULING' and current.combat.actions['attack:1'].get('needs_ruling')
+
+
+def test_stat_block_attacks_read_the_common_layouts():
+    """「Fighting 50% (Hard 25%/Extreme10%), damage 1D3 + damage bonus(1D4)」 (the Haunting's Corbitt) and a Chinese
+    block with its bonus in place both give an attack; the block's own numbers, nothing guessed."""
+    from app.keeper_tools import support
+    filler = "\n".join(f"Prose line {n}." for n in range(14))
+    text = (f"### Walter Corbitt, Undead Fiend\n\nSTR 80 CON 130 SIZ 65 DEX 35 INT 85 POW 90 HP 19\n"
+            f"Fighting \t 50% (Hard 25%/Extreme10%), damage 1D3 + \t\ndamage bonus(1D4) + possible infection\n\n{filler}\n\n"
+            "### 食屍鬼\n\n力量 80 體質 65 體型 65 敏捷 65 意志 65 HP 13\n爪擊 40%（20/8），傷害 1D6+傷害加值（-1）\n閃避 30%\n")
+    state = GroupState('g', scenario_text=text)
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, 'Walter Corbitt')] == [(50, '1D3+1D4')]
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '食屍鬼')] == [(40, '1D6-1')]
+    assert support.attacks_from_stat_block(state, 'Nobody') == []

@@ -67,13 +67,13 @@ def _settlement_pending(state: GroupState) -> dict[str, Any] | None:
         f'settlement_id ({settlement_id}), or rollback_combat. Advancing, declaring or running an NPC turn would make the preview stale.')}
 
 
-def _withdraw_unrolled_ruling(state: GroupState, actor_id: str) -> None:
+def _withdraw_unrolled_ruling(state: GroupState, actor_id: str) -> CombatAction | None:
     """A declaration paused for a ruling before any die (a weapon name that matched nothing, a mode the weapon has
     not) gives way to the same actor's new declaration: the Keeper looked the weapon up and declares it properly.
     Kept, nothing could be declared until the ruling was made, and the turn ended unfinished (Lightless 2026-10-12
     turn 50: Brawl under another name). A ruling the Keeper still wants to make is made with resolve_combat_ruling."""
     if state.combat.phase != 'NEEDS_RULING' or state.combat.interaction:
-        return
+        return None
     actor = combat.find_combatant(state, actor_id)
     open_actions = [a for a in state.combat.actions.values() if not a.get('completed')]
     if (actor is not None and len(open_actions) == 1 and open_actions[0].get('needs_ruling')
@@ -81,6 +81,8 @@ def _withdraw_unrolled_ruling(state: GroupState, actor_id: str) -> None:
             and not open_actions[0].get('checks')):
         del state.combat.actions[open_actions[0]['action_id']]
         state.combat.phase = 'READY'
+        return open_actions[0]
+    return None
 
 
 def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:
@@ -374,7 +376,25 @@ def declare_action(
     weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     combat_resources.initialize_working_state(state)
-    _withdraw_unrolled_ruling(state, actor_id)
+    withdrawn = _withdraw_unrolled_ruling(state, actor_id)
+    result = _declare_action(
+        state, action_id=action_id, actor_id=actor_id, target_id=target_id, weapon_reference=weapon_reference,
+        action_kind=action_kind, distance_yards=distance_yards, scenario_definitions=scenario_definitions,
+        weapon_instance=weapon_instance)
+    if (withdrawn is not None and not result.get('ok') and state.combat.phase != 'NEEDS_RULING'
+            and withdrawn['action_id'] not in state.combat.actions):
+        # The correction was itself refused before it took the paused one's place: the ruling stands as it was.
+        state.combat.actions[withdrawn['action_id']] = withdrawn
+        state.combat.phase = 'NEEDS_RULING'
+    return result
+
+
+def _declare_action(
+    state: GroupState, *, action_id: str, actor_id: str, target_id: str,
+    weapon_reference: str, action_kind: ActionKind, distance_yards: float | None,
+    scenario_definitions: tuple[combat_rules.WeaponDefinition, ...],
+    weapon_instance: combat_rules.WeaponInstance | None,
+) -> dict[str, Any]:
     if action_id in state.combat.actions:
         action = state.combat.actions[action_id]
         if any(action.get(k) != v for k, v in {'actor_id': actor_id, 'target_id': target_id,

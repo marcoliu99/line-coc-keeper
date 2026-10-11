@@ -13,10 +13,10 @@ From the 2026-10-12 soak runs at b0c11f3:
 
 ## Change
 
-- **Attacks from the block.** When `initialize_combat` or `add_npc_to_combat` registers a non-ally enemy without a well-formed attack (skill value and damage), `support.attacks_from_stat_block` reads the attacks its scenario stat block writes as `<name> NN% … damage <dice>` and registers those.
+- **Attacks from the block.** When `initialize_combat` or `add_npc_to_combat` registers a non-ally enemy with a named ability but no well-formed attack (skill value and damage), `support.attacks_from_stat_block` reads the attacks its scenario stat block writes as `<name> NN% … damage <dice>` and registers those.
   - A `DB` in the damage is the block's own DB line. An attack whose bonus the block doesn't give is left out.
   - Dodge is not an attack.
-  - Attacks the Keeper did give are kept as given. When the block states no attack that way, the existing refusal still asks for them.
+  - Attacks the Keeper did give are kept as given. An entry with nothing at all is still refused as before, so the Keeper registers how the scenario says the enemy attacks (Corbitt's floating knife, not his Fighting line). The block may write the bonus in place (`damage bonus(1D4)`, 「傷害加值（-1）」), and a difficulty annotation such as `(Hard 25%/Extreme10%)` is skipped.
 - **A corrected declaration replaces the paused one.** An unknown weapon still pauses for a ruling, because that is how a scenario-only weapon gets its definition. But when the same actor declares again while the only open action is that actor's attack, paused for a ruling before any die, the paused action is withdrawn and the new declaration proceeds. This works with the same action id or a new one. A ruling the Keeper still wants to make goes through `resolve_combat_ruling` as before.
 
 ## Verification
