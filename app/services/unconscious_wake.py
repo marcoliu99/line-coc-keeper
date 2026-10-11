@@ -93,6 +93,17 @@ def wake_note(name: str) -> str:
             "敵人趁這段時間做了什麼，再處理接下來這句行動：")
 
 
+def revive(state: GroupState, character: Character) -> None:
+    """Bring them round in this state: unconscious no longer, HP 0 becomes 1, the First Aid offer spent. The major
+    wound stays. Shared by the time-skip wake and a companion's First Aid (removing 昏迷), so either leaves a state
+    ``knocked_out`` reads as awake and a later knockout gets its own offer."""
+    state.check_consequence_receipts.pop(_offer_key(character.character_id), None)
+    character.injury = {**(character.injury or {}), "unconscious": False}
+    character.status_tags = [tag for tag in character.status_tags if tag not in KNOCKED_OUT_TAGS]
+    if character.hp <= 0:
+        character.hp = 1  # First Aid's point, or natural recovery over the time skip
+
+
 def wake(conversation_id: str, character_id: str, *, timeline_id: str | None) -> None:
     """Clear the unconscious state on the latest committed state; the major wound itself stays, HP 0 becomes 1."""
     def apply(ctx: state_transaction.TxContext) -> None:
@@ -102,11 +113,7 @@ def wake(conversation_id: str, character_id: str, *, timeline_id: str | None) ->
         if not any(knocked_out(c) for c in copies):
             ctx.skip_save()
             return
-        ctx.state.check_consequence_receipts.pop(_offer_key(character_id), None)
         for character in copies:
-            character.injury = {**(character.injury or {}), "unconscious": False}
-            character.status_tags = [tag for tag in character.status_tags if tag not in KNOCKED_OUT_TAGS]
-            if character.hp <= 0:
-                character.hp = 1  # come round from HP 0 after the time skip, as natural recovery would leave them
+            revive(ctx.state, character)
 
     state_transaction.mutate(conversation_id, apply, reason="unconscious_time_skip", expected_timeline=timeline_id)

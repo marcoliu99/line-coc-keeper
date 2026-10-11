@@ -9,6 +9,7 @@ from uuid import uuid4
 from app import combat_resources, observability
 from app.keeper_tools import operation_ids, resource_bridge, support
 from app.models import GroupState
+from app.services import unconscious_wake
 
 if TYPE_CHECKING:
     from app.keeper_tools.registry import ToolCall
@@ -347,10 +348,12 @@ def remove_status_tag(call: ToolCall) -> dict[str, Any]:
         changed = tag in target_char.status_tags
         if changed:
             target_char.status_tags.remove(tag)
-            injury = target_char.injury or {}
-            if tag == "昏迷" and injury.get("unconscious") and not injury.get("dying") and not injury.get("dead"):
-                # Out of a fight, taking 昏迷 away (First Aid, rest) is waking them: the injury record follows the tag.
-                target_char.injury = {**injury, "unconscious": False}
+        if (tag == "昏迷" and unconscious_wake.knocked_out(target_char)
+                and not unconscious_wake.dying(target_char)):
+            # Out of a fight, taking 昏迷 away (First Aid, rest) is waking them, tag or no tag: the injury record
+            # follows, HP 0 becomes the point First Aid gives, and the First Aid offer is spent.
+            unconscious_wake.revive(target_state, target_char)
+            changed = True
         return support.ToolStateMutation((target_char.name, target_char.status_tags), should_save=changed)
     investigator, tags = support.mutate_tool_state(state, _mutate_remove_tag)
     return {"ok": True, "investigator": investigator, "tag": tag, "status_tags": tags,

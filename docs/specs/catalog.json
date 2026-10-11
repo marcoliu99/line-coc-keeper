@@ -3012,6 +3012,7 @@
       "evidence": [
         "app/services/unconscious_wake.py",
         "app/agents/supervisor.py",
+        "app/keeper_tools/inventory.py",
         "tests/test_unconscious_wake.py"
       ],
       "path": "docs/specs/bug/down_investigators_wake_design_spec.md",
