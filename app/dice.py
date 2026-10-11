@@ -337,9 +337,10 @@ def roll_percentile_with_dice_pool(bonus_dice: int = 0, penalty_dice: int = 0) -
     tens_options = [random.randint(0, 9)]
     for _ in range(abs(net)):
         tens_options.append(random.randint(0, 9))
-    tens = min(tens_options) if net > 0 else max(tens_options) if net < 0 else tens_options[0]
-    value = tens * 10 + ones
-    return 100 if value == 0 else value
+    # Compare the rolls the dice make, not the tens digits: with ones 0, tens 0 reads 100, the worst roll, so a
+    # bonus die must not pick it and a penalty die must.
+    values = [100 if tens == 0 and ones == 0 else tens * 10 + ones for tens in tens_options]
+    return min(values) if net > 0 else max(values) if net < 0 else values[0]
 
 
 _VALID_REQUIRED_TIERS = ("regular", "hard", "extreme")

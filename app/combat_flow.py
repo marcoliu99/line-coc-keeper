@@ -10,7 +10,7 @@ import re
 import uuid
 from copy import deepcopy
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from app import (
     check_lifecycle,
@@ -429,6 +429,35 @@ def _reloading_until(state: GroupState, actor: Combatant, weapon: combat_rules.W
     return ready if state.combat.round_number < ready else None
 
 
+def _counter_weapon(state: GroupState, character: Character) -> dict[str, Any]:
+    """What the investigator fights back with: CoC 7e makes the Fight Back with the weapon in hand, at its skill and
+    damage. The weapon of their own last melee attack this fight is in hand; otherwise the carried melee weapon they
+    are best with; otherwise bare hands (1d3 + DB)."""
+    effective = combat_resources.effective_character(state, character)
+    bare = {'label': '反擊', 'skill': '格鬥（鬥毆）', 'skill_value': effective.skills.get('格鬥（鬥毆）', 25),
+            'counter_damage': '1d3', 'db_policy': 'full', 'weapon': ''}
+    def option(name: str, skill: tuple[str, int], damage: str, db_policy: str) -> dict[str, Any]:
+        return {'label': f'反擊（{name}）', 'skill': skill[0], 'skill_value': skill[1], 'counter_damage': damage,
+                'db_policy': db_policy, 'weapon': name}
+    own = [a for a in state.combat.actions.values()
+           if a.get('weapon') and a['weapon'].get('attack_mode') == 'melee' and a['weapon'].get('id') != 'i.weapon.brawl'
+           and (held := _character(state, a.get('actor_id', ''))) is not None and held.character_id == character.character_id]
+    if own:
+        last = max(own, key=lambda a: (a.get('round', 0), a.get('action_id', '')))
+        skill = _skill(effective, last['weapon']['skill_id'])
+        if skill:
+            return option(last['weapon_reference'], skill, last['damage'], last['weapon'].get('db_policy', 'full'))
+    best: dict[str, Any] | None = None
+    for item in [*effective.weapons, *effective.carried_items]:
+        definition = combat_rules.resolve_weapon(item).definition
+        if definition is None or definition.attack_mode != 'melee' or definition.id == 'i.weapon.brawl':
+            continue
+        skill = _skill(effective, definition.skill_id)
+        if skill and (best is None or skill[1] > best['skill_value']):
+            best = option(item, skill, definition.damage, definition.db_policy)
+    return best or bare
+
+
 def _defense_choice(state: GroupState, action: CombatAction, character: Character) -> dict[str, Any]:
     if check_lifecycle.blocker(state, character.owner_id):
         return _error('Defender has an existing check or Luck decision')
@@ -441,8 +470,7 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
                if ranged else
                [{'kind': 'dodge', 'label': '閃避', 'skill': '閃避', 'skill_value': dodge,
                  'bonus_dice': 0, 'penalty_dice': 0},
-                {'kind': 'counter', 'label': '反擊', 'skill': '格鬥（鬥毆）',
-                 'skill_value': character.skills.get('格鬥（鬥毆）', 25), 'bonus_dice': 0, 'penalty_dice': 0}])
+                {'kind': 'counter', 'bonus_dice': 0, 'penalty_dice': 0, **_counter_weapon(state, character)}])
     if not ranged and action['checks'].get('attack', {}).get('tier') == 'critical':
         # No success level beats a Critical attack, so Fight Back could only lose.
         options = [o for o in options if o['kind'] != 'counter']
@@ -488,7 +516,8 @@ def submit_choice(state: GroupState, *, interaction_id: str, owner_id: str, choi
         return _error('Stale or foreign combat choice')
     if wait.get('check_role') != 'defense_choice':
         return _error('This interaction is not a defense choice')
-    option = next((o for o in pending['options'] if choice in (o['kind'], o['label'])), None)
+    # 「反擊」 picks 「反擊（小刀）」: the weapon in the label is information, not part of the answer.
+    option = next((o for o in pending['options'] if choice in (o['kind'], o['label'], o['label'].split('（')[0])), None)
     if option is None:
         return _error('Unsupported defense choice')
     action = state.combat.actions[wait['action_id']]
@@ -498,6 +527,10 @@ def submit_choice(state: GroupState, *, interaction_id: str, owner_id: str, choi
     state.combat.interaction = {}
     action['defense_kind'] = option['kind']
     action['stage'] = 'defense'
+    if option['kind'] == 'counter':
+        action['counter_damage'] = option.get('counter_damage', '1d3')
+        action['counter_db_policy'] = option.get('db_policy', 'full')
+        action['counter_weapon'] = option.get('weapon', '')
     if option['kind'] == 'no_defense':
         action['checks']['defense'] = {'tier': 'fail', 'success': False}
         response = run_action(state, action['action_id'])
@@ -656,7 +689,9 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
         if counter_hit:
             defender_pc = _character(state, target.combatant_id)
             expression = action.get('counter_damage', '1d3')
-            return asdict(dice.roll_weapon_damage(expression, defender_pc.damage_bonus if defender_pc else '0'))
+            policy = cast(dice.DamageBonusPolicy, action.get('counter_db_policy', 'full'))
+            return asdict(dice.roll_weapon_damage(expression, defender_pc.damage_bonus if defender_pc else '0',
+                                                 db_policy=policy))
         weapon = action.get('weapon', {})
         if attack['tier'] in ('extreme', 'critical'):
             return asdict(dice.calculate_impaling_damage(action['damage'], action.get('db', '0'),
@@ -670,6 +705,8 @@ def run_action(state: GroupState, action_id: str, *, transition_budget: int = 16
     if not damage_result['ok']:
         return damage_result
     action['result'] = {'hit': True, 'opposed': opposed, 'damage': damage_result, 'damage_receipt': receipt}
+    if counter_hit and action.get('counter_weapon'):
+        action['result']['counter_weapon'] = action['counter_weapon']
     if not counter_hit and action.get('weapon', {}).get('follow_up'):
         # What the table says a hit with this weapon also does (a torch: the target may catch fire). The engine
         # does not roll it; the receipt hands it to the Keeper, who has the tools for it.
