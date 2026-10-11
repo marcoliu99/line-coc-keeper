@@ -775,6 +775,20 @@ def test_the_status_says_so_when_one_side_is_down_and_stays_quiet_otherwise():
     assert '我方已全數倒下或離場，戰鬥可以結算了。' in combat.status_text(state)
 
 
+def test_the_status_names_the_fallen_enemy_and_who_still_stands():
+    state, _pc, enemy = battle()
+    state.combat.order.append(Combatant(name='Hybrid', dex=10, hp=11, hp_max=11, side='enemy'))
+    assert '已倒下' not in combat.status_text(state)
+    enemy.defeated = True
+    combat.card_for(state, enemy).hp = 0
+    text = combat.status_text(state)
+    assert f'已倒下、不會再行動：{enemy.display_name}。仍在戰鬥的敵人：Hybrid。' in text
+    assert '可以結算' not in text
+    state.combat.order[-1].defeated = True
+    text = combat.status_text(state)
+    assert '已倒下、不會再行動' not in text and '敵方已全數倒下，戰鬥可以結算了。' in text
+
+
 def test_a_standing_npc_ally_keeps_the_party_from_being_called_down():
     state, pc, _enemy = battle()
     pc.away = True

@@ -501,7 +501,11 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
                  'attacker_name': attacker.display_name if attacker else '',
                  'attacker_tier': action['checks'].get('attack', {}).get('tier'),
                  'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
-    registered = check_lifecycle.register(state, character.owner_id, candidate)
+    # The check's own context names the attacker: the narrator reads it with the roll, so the blow is not handed
+    # to another enemy (a 2026-10-11 soak run narrated one enemy's swing as the claws of another already dead).
+    attacker_name = attacker.display_name if attacker else '敵人'
+    registered = check_lifecycle.register(state, character.owner_id, candidate, source={
+        'action_context': f"{attacker_name} {'開槍射向' if ranged else '攻擊'} {character.name}；這是 {character.name} 的防禦"})
     if registered.pending is None:
         return _error('Cannot register defender choice')
     state.combat.interaction = {**candidate['combat_context'], 'owner_id': character.owner_id,

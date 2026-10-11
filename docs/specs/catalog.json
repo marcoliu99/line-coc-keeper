@@ -2883,6 +2883,23 @@
       "path": "docs/specs/bug/settled_attack_tells_the_blow_design_spec.md",
       "zh_path": "docs/specs/bug/settled_attack_tells_the_blow_design_spec_zh.md",
       "source_revision": "c85efbd43529ad9dc8eb8d407dc57bf7f8f53221"
+    },
+    {
+      "title": "The fallen stay down, the past is not replayed, and a wrapper tail is cut",
+      "zh": "倒下的不再逼近、過去的事不重演、包裝尾巴剪掉",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/presentation.py",
+        "app/combat.py",
+        "app/combat_flow.py",
+        "app/services/prompt_config.py",
+        "tests/test_leaked_decision_and_redeclare.py",
+        "tests/test_combat_flow.py"
+      ],
+      "path": "docs/specs/bug/narrator_continuity_and_junk_tail_design_spec.md",
+      "zh_path": "docs/specs/bug/narrator_continuity_and_junk_tail_design_spec_zh.md",
+      "source_revision": "6b59dc516204a16483f4d2f7f48458fe3c3ff3ac"
     }
   ]
 }

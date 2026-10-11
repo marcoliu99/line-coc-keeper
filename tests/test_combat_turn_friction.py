@@ -28,6 +28,7 @@ def test_the_defence_button_chooses_and_rolls_in_one_click():
     _enemy_turn([20])  # claw 50: Hard
     pending = _load().pending_checks["p1"]
     assert pending["attacker_name"] == "Cultist" and pending["attacker_tier"] == "hard"
+    assert pending["action_context"].startswith("Cultist 攻擊 ")  # the narrator reads who struck with the roll
     assert "需要" in controls.defense_choice_hint(pending)  # the buttons can say what each choice needs
     outcome, script = _player("/coc check 閃避", [20])
     assert outcome.should_finalize and script.rolls_taken == 1 and "p1" not in _load().pending_checks

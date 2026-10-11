@@ -1627,6 +1627,12 @@ def status_text(state: GroupState, include_private: bool = False, *, provisional
         lines.append(line)
     enemies = [c for c in combat.order if c.side == "enemy"]
     party = [c for c in combat.order if c.side in ("pc", "ally")]
+    down = [c.display_name for c in enemies if c.defeated]
+    standing = [c.display_name for c in enemies if not c.defeated]
+    if down and standing:
+        # Said in one line as well as per row: a 2026-10-11 soak run kept writing a fallen enemy as closing in for
+        # seventeen turns after its row read （倒下）.
+        lines.append(f"已倒下、不會再行動：{'、'.join(down)}。仍在戰鬥的敵人：{'、'.join(standing)}。")
     if enemies and all(c.defeated for c in enemies):
         lines.append("敵方已全數倒下，戰鬥可以結算了。")
     elif party and all(is_skippable(state, c) for c in party):
