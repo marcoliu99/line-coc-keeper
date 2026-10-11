@@ -59,6 +59,14 @@ def with_codex_turn(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
     return wrapped
 
 
+def _is_lookup(name: str) -> bool:
+    """A call that reads and changes nothing: safe to answer again from the transcript, never a mutation barrier."""
+    from app.keeper_tools import (
+        registry as tool_registry,  # the registry imports modules that import providers
+    )
+    return name in tool_registry.INFORMATION_QUERY_TOOLS
+
+
 def counts_against_tool_budget(name: str) -> bool:
     """Whether a tool call spends one of the turn's ``MAX_TOOLS_PER_TURN`` actions.
 
@@ -66,12 +74,9 @@ def counts_against_tool_budget(name: str) -> bool:
     search has its own per-turn cap, so it does not: a Keeper that searched four times for an enemy's trigger could
     otherwise no longer register the enemy. Dice and every other mutation still count.
     """
-    from app.keeper_tools import (
-        registry as tool_registry,  # the registry imports modules that import providers
-    )
     # A Sanity roll is owed by every witness, not chosen by the Keeper: a party of five seeing a horror took the whole
-    # budget and left the fight unopened. One per investigator bounds it.
-    return name not in tool_registry.INFORMATION_QUERY_TOOLS and name != "sanity_check"
+    # budget and left the fight unopened. One per investigator bounds it. It is still a mutation (``_is_lookup``).
+    return not _is_lookup(name) and name != "sanity_check"
 
 
 def response_schema(tools: list[dict]) -> dict:
@@ -435,9 +440,9 @@ async def run_conversation(
             # A look-up changes nothing, so the turn's retry (a second Executor conversation, run only when the first
             # touched no game state) may read the same thing again; it has not seen the first conversation's results.
             # Inside one conversation the same look-up is still refused, as is any repeated mutation or roll.
-            reread = identity not in asked_here and not counts_against_tool_budget(name)
+            reread = identity not in asked_here and _is_lookup(name)
             rerun = False
-            if identity in asked_here and not counts_against_tool_budget(name):
+            if identity in asked_here and _is_lookup(name):
                 # The same look-up again in this conversation: it changes nothing, so it is not an internal error
                 # that ends the turn (a 2026-10-11 run, turn 76). Answered from the transcript while nothing has
                 # changed since; run again after a mutation, so the model reads the current sheet or battle. The
@@ -446,7 +451,7 @@ async def run_conversation(
                                    and json.dumps([transcript[i].get('name'), transcript[i].get('arguments')],
                                                   sort_keys=True, ensure_ascii=False) == identity), None)
                 changed_since = earlier_at is not None and any(
-                    t.get('role') == 'tool' and counts_against_tool_budget(str(t.get('name', '')))
+                    t.get('role') == 'tool' and not _is_lookup(str(t.get('name', '')))
                     for t in transcript[earlier_at + 1:])
                 if earlier_at is not None and not changed_since:
                     observability.event('codex.tool.lookup_replayed', stage=response_stage, tool=name)

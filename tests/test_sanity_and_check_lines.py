@@ -96,3 +96,9 @@ def test_every_witness_can_roll_sanity_within_one_turn_and_says_what_was_seen():
     assert codex_provider.counts_against_tool_budget("skill_check")
     schema = registry.REGISTRY["sanity_check"].schema["input_schema"]
     assert "action_context" in schema["required"] and "看見了什麼" in schema["properties"]["action_context"]["description"]
+
+
+def test_a_sanity_roll_is_still_a_mutation_for_repeats_and_cached_lookups():
+    from app.providers import codex_provider
+    assert not codex_provider._is_lookup("sanity_check")  # never re-run as a look-up, and it invalidates cached reads
+    assert codex_provider._is_lookup("get_character_sheet")
