@@ -97,6 +97,17 @@ def test_an_enemy_the_index_does_not_name_attacks_as_a_blow_instead_of_pausing_f
     assert action["action_kind"] == "melee" and action["weapon"]["extreme_rule"] == "maximum"
 
 
+def test_an_unsourced_attack_ignores_a_model_supplied_impale_tag():
+    """The impale tag is the scenario's claim about an attack (Corbitt's knife); with no source it is only the model's,
+    and the unsourced blow stays an ordinary one."""
+    _scenario_battle(["別的怪物"])
+    _add("鼠群", [{**BITE, "tags": ["impale"]}])
+    run, _ = _enemy_turn([20])
+    assert run["phase"] == "PLAYER_CHOICE", run
+    action = next(a for a in _load().combat.actions.values() if a.get("npc_attack_id"))
+    assert action["weapon"]["extreme_rule"] == "maximum"
+
+
 def test_what_the_model_gave_wins_over_the_scenarios_defaults():
     _scenario_battle(["鼠群"])
     given = {"url": "u", "revision": "r", "sha256": "s", "extreme_rule": "impale"}
