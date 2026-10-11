@@ -1275,7 +1275,23 @@ def _plan_enemy_turn(state: GroupState, enemy_name: str, ops: ModeOps) -> dict[s
         return existing_plan
 
     target_id = _choose_target(state, card.id)
+    attack = next(
+        (
+            candidate for candidate in card.attacks
+            if candidate.range_band.lower() in ("engaged", "near", "any")
+            and _attack_can_reach_target(state, card.id, target_id, candidate)
+        ),
+        None,
+    )
+    # An ability the engine has no rule for is only narrated and spends no usage, so it matched again every turn and
+    # took the place of the attack: two bosses never struck in six rounds (2026-10-11 soak runs). It is told
+    # once; after that an enemy that can attack, attacks.
+    told = {combat.plans[a["plan_id"]].get("selected_id") for a in combat.actions.values()
+            if a.get("kind") == "skip" and a.get("plan_id") in combat.plans
+            and combat.plans[a["plan_id"]].get("enemy_card_id") == card.id}
     for ability in sorted(card.abilities, key=lambda a: -a.priority):
+        if attack and ability.id in told:
+            continue
         if _trigger_matches(ability, card, state, target_id):
             plan_id = f"plan-{uuid.uuid4().hex[:8]}"
             plan = {
@@ -1297,14 +1313,6 @@ def _plan_enemy_turn(state: GroupState, enemy_name: str, ops: ModeOps) -> dict[s
             combat.plans[plan_id] = plan
             return plan
 
-    attack = next(
-        (
-            candidate for candidate in card.attacks
-            if candidate.range_band.lower() in ("engaged", "near", "any")
-            and _attack_can_reach_target(state, card.id, target_id, candidate)
-        ),
-        None,
-    )
     if attack:
         plan_id = f"plan-{uuid.uuid4().hex[:8]}"
         plan = {

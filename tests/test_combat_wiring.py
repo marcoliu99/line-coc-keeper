@@ -254,7 +254,7 @@ def test_sheet_is_provisional_and_character_replacement_is_guarded(store):
 def test_provisional_delivery_and_canonical_projection_remain_distinct(store):
     observation = turn_delivery.observe_tool('adjust_character', {'ok': True, 'investigator': 'Ada',
         'field': 'hp', 'value': 8, 'provisional': True}, 1)
-    assert '暫定' in observation.public_text
+    assert observation.public_text == 'Ada 的 hp 已更新為 8。'  # the player is not told the battle's bookkeeping
     event = {'event_id': 'check:1', 'timeline_id': store['state'].timeline_id,
              'provisional': True, 'combat_id': 'combat:wiring', 'outcome': '成功'}
     store['state'].resolved_check_events.append(event)
