@@ -385,8 +385,11 @@ async def _narrate(turn: _Turn) -> TurnReply | None:
     elif (not turn.autoroll_followups and turn.turn_kind == "player_action"
           and prompt_config.narration_replaced(turn.mechanic_result)):
         # The reply is fixed text whatever the Narrator would say (the action could not finish): the consistency
-        # step writes it, and the Narrator's round trip is not spent to be thrown away.
-        reply_text, private_messages, image_requests = "", [], []
+        # step writes it, and the Narrator's round trip is not spent to be thrown away. What the Executor's tools
+        # already produced for players (a private clue, an image) is still delivered, as the Narrator would have.
+        reply_text = ""
+        private_messages = list(message.payload.get("private_messages", []))
+        image_requests = list(message.payload.get("image_requests", []))
         observability.event('narrator.skipped', status='fixed_reply')
     else:
         if turn.autoroll_followups:

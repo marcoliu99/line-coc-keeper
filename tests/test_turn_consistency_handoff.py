@@ -696,7 +696,8 @@ def test_supervisor_preserves_failed_executor_private_outputs(state):
             state, 'a', 'Marco', '我調查房間', None, 'player', state.group_id))
     assert '尚未完整處理' in reply and 'private clue' not in reply
     assert private == [('b', 'private clue')] and images == [('b', 2)]
-    assert executor_call.await_count == narration_call.await_count == 1
+    # The reply to an unfinished turn is fixed text: the Narrator's round trip is not spent on it.
+    assert executor_call.await_count == 1 and narration_call.await_count == 0
 
 
 @pytest.mark.parametrize('failure', ['malformed', 'exception', 'iteration_cap'])
