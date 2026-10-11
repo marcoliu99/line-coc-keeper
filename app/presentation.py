@@ -10,6 +10,7 @@ has kept the registered name.
 from __future__ import annotations
 
 import functools
+import json
 import re
 from collections.abc import Collection
 
@@ -123,6 +124,39 @@ def leading_name(args: list[str], known: Collection[str], *, after: int) -> tupl
         if candidate in known:
             return candidate, args[count:]
     return args[0], args[1:]
+
+
+_EMPTY_FENCE = re.compile(r"```(?:json)?\s*```")
+
+
+def strip_leaked_decision(text: str) -> str:
+    """``text`` without any JSON object that is the Executor's decision (it has a ``disposition``).
+
+    A Narrator that answers with the decision it was handed put ``{"disposition":"await_luck",…}`` in front of a
+    player (Scritch Scratch rerun3, turn 91). The object is found by parsing, not by a pattern, so a decision with
+    nested values goes whole, and braces in ordinary narration are left alone.
+    """
+    if '"disposition"' not in text:
+        return text
+    decoder = json.JSONDecoder()
+    kept: list[str] = []
+    position, start = 0, text.find("{")
+    while start != -1:
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except ValueError:
+            start = text.find("{", start + 1)
+            continue
+        if isinstance(value, dict) and "disposition" in value:
+            kept.append(text[position:start])
+            position = end
+            start = text.find("{", end)
+        else:
+            start = text.find("{", start + 1)
+    if not position:
+        return text
+    kept.append(text[position:])
+    return re.sub(r"\n{3,}", "\n\n", _EMPTY_FENCE.sub("", "".join(kept))).strip()
 
 
 def player_text(text: str) -> str:

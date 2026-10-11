@@ -79,6 +79,10 @@ def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str, *, trailin
     return candidate
 
 
+def _scrub_leaks(ctx: ReplyContext, draft: ReplyDraft) -> None:
+    draft.text = presentation.strip_leaked_decision(draft.text)
+
+
 def _repair_consistency(ctx: ReplyContext, draft: ReplyDraft) -> None:
     draft.text = _consistent(ctx, draft, draft.text)
 
@@ -125,6 +129,7 @@ def _player_text(ctx: ReplyContext, draft: ReplyDraft) -> None:
 
 
 STEPS: tuple[Step, ...] = (
+    Step("scrub_leaks", _scrub_leaks),
     Step("consistency", _repair_consistency),
     Step("guard", _guard),
     Step("consistency_after_guard", _repair_consistency),
@@ -139,6 +144,7 @@ STEPS: tuple[Step, ...] = (
 
 # (earlier, later, why). The reasons are the ones the inline code carried as comments.
 ORDER_RULES: tuple[tuple[str, str, str], ...] = (
+    ("scrub_leaks", "consistency", "an internal decision object is removed before anything repairs or validates the text"),
     ("consistency", "guard", "consistency repair precedes the Guard"),
     ("guard", "consistency_after_guard", "any Guard rewrite is checked for consistency again"),
     ("consistency_after_guard", "obligations",

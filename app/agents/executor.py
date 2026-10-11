@@ -79,6 +79,13 @@ def _gave_up_with_evidence(tool_events: list[dict]) -> bool:
                         for e in tool_events))
 
 
+def _passed_the_turn(tool_events: list[dict]) -> bool:
+    """A call this turn really ended a combat turn (``advance_combat_turn`` changed the battle), which is a committed
+    change a deferral cannot cover. An advance held at a pending check (``pending``) did not move the turn on."""
+    return any(e["name"] == "advance_combat_turn" and e["result"].get("ok") and not e["result"].get("pending")
+               and e.get("gameplay_before") != e.get("gameplay_after") for e in tool_events)
+
+
 def _combat_opened(state, tool_events: list[dict]) -> bool:
     """A call this turn took the battle from inactive to active (whichever tool did it), and it is still active."""
     return bool(state.combat.active) and any(
@@ -288,6 +295,13 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             'instruction': '剛才的劇本查詢已有結果，而且沒有改動任何狀態。依查到的內容處理玩家這次的行動：'
                                 '需要機制就呼叫對應的工具；不需要機制就交回 no_mechanics 並引用查到的段落。'
                                 '只有查到的內容確實與這次行動無關時才保留 incomplete，並說明缺的是什麼。',
+                        }
+                    if verified.validation_code == 'deferral_not_verified' and _passed_the_turn(tool_events):
+                        return {
+                            'validation_code': 'turn_passed_not_deferred', 'reason': verified.reason,
+                            'instruction': '你已經推進了戰鬥回合，那是已提交的變更，不能再交回 deferred。改交 '
+                                'resolved_without_check 並引用 advance_combat_turn 的工具證據；敘事說清楚這位玩家這一輪'
+                                '已經行動完畢（不重複他的攻擊），以及接著輪到誰、有什麼結果。',
                         }
                     if verified.disposition != 'incomplete' or verified.validation_code == 'model_incomplete':
                         return None
