@@ -127,8 +127,8 @@ def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:
 
 def _finalize(ctx: ReplyContext, draft: ReplyDraft) -> None:
     draft.text, draft.private_controls = turn_delivery.finalize(ctx.message, draft.text)
-    if not draft.text.strip():
-        # Nothing at all to send: say so, never a blank, and through delivery like any reply.
+    if not draft.text.strip() and not draft.private_controls:
+        # Nothing at all to send, public or private: say so, never a blank, and through delivery like any reply.
         draft.text, draft.private_controls = turn_delivery.finalize(ctx.message, turn_fallback.guidance("narration_failure"))
 
 

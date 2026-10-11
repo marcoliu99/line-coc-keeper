@@ -110,6 +110,10 @@ class JunkTailTests(unittest.TestCase):
         failure = turn_fallback.guidance("narration_failure")
         self.assertEqual(draft.text, failure)
         self.assertEqual(delivered, ["", failure])  # the failure text goes through delivery too
+        private = SimpleNamespace(text="", private_controls=None)
+        with patch.object(reply_pipeline.turn_delivery, "finalize", return_value=("", [("p1", "請擲你的檢定。")])):
+            reply_pipeline._finalize(SimpleNamespace(message=None), private)
+        self.assertEqual(private.text, "")  # a private instruction is the reply; no public failure text
 
 
 def _event(name: str, ok: bool = True, *, changed: bool = True) -> dict:
