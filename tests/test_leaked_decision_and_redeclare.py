@@ -100,9 +100,16 @@ class JunkTailTests(unittest.TestCase):
         with patch.object(reply_pipeline.turn_delivery, "finalize", return_value=("骰值 63 還在等 Luck 決定。", [])):
             reply_pipeline._finalize(SimpleNamespace(message=None), draft)
         self.assertEqual(draft.text, "骰值 63 還在等 Luck 決定。")
-        with patch.object(reply_pipeline.turn_delivery, "finalize", return_value=("", [])):
+        delivered = []
+        def finalize(_message, text):
+            delivered.append(text)
+            return text, []
+        draft.text = ""
+        with patch.object(reply_pipeline.turn_delivery, "finalize", side_effect=finalize):
             reply_pipeline._finalize(SimpleNamespace(message=None), draft)
-        self.assertEqual(draft.text, turn_fallback.guidance("narration_failure"))
+        failure = turn_fallback.guidance("narration_failure")
+        self.assertEqual(draft.text, failure)
+        self.assertEqual(delivered, ["", failure])  # the failure text goes through delivery too
 
 
 def _event(name: str, ok: bool = True, *, changed: bool = True) -> dict:
