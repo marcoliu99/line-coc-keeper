@@ -283,6 +283,8 @@ def test_a_settled_attack_that_drops_the_last_enemy_settles_the_fight_by_itself(
     assert not state.combat.active and state.combat.phase == "CLOSED"
     assert state.active and not receipt.get("scenario_ended"), "the fight is closed; the scenario goes on"
     assert state.closed_combat_receipts[state.combat.combat_id]["status"] == "committed"
+    stored = state.combat.actions["swing"]["receipt"]  # what a second click on the same roll replays
+    assert stored["settled"] is True and stored["settlement_ready"] is False
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
         "combat_id": state.combat.combat_id, "completed": True, "settled": True}})
     assert "已自動結算" in block and "不要再呼叫任何戰鬥工具" in block

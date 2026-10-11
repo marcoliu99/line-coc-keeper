@@ -443,6 +443,19 @@ def _settle(state: GroupState, reason: str) -> dict[str, Any] | None:
         return None
 
 
+def _mark_replay_receipts(state: GroupState, action_id: Any, outcome: dict[str, Any]) -> None:
+    """The handler stored the action's receipt (and a choice's) before the settlement decorated its answer; a
+    retry of the same check or button replays that stored receipt, so it says the fight is settled too."""
+    action = state.combat.actions.get(str(action_id or ""))
+    if not action:
+        return
+    if isinstance(action.get("receipt"), dict):
+        action["receipt"].update(outcome)
+    for choice in action.get("choice_receipts", {}).values():
+        if isinstance(choice.get("result"), dict):
+            choice["result"].update(outcome)
+
+
 class CombatEngine:
     """Stateless; every call works on the state it is given, inside the caller's transaction."""
 
@@ -457,8 +470,10 @@ class CombatEngine:
         result = handler(state, action, mode)
         if (watch and isinstance(result, dict) and result.get("ok", True) is not False
                 and (reason := _auto_settle_reason(state)) and (settled := _settle(state, reason)) is not None):
-            result = {**result, "settled": True, "settlement_ready": False, "settled_reason": reason,
-                      **({"scenario_ended": settled["scenario_ended"]} if settled.get("scenario_ended") else {})}
+            outcome = {"settled": True, "settlement_ready": False, "settled_reason": reason,
+                       **({"scenario_ended": settled["scenario_ended"]} if settled.get("scenario_ended") else {})}
+            result = {**result, **outcome}
+            _mark_replay_receipts(state, result.get("action_id"), outcome)
         return cast(R, result)
 
 
