@@ -2782,6 +2782,24 @@
       "path": "docs/specs/bug/luck_instruction_once_design_spec.md",
       "zh_path": "docs/specs/bug/luck_instruction_once_design_spec_zh.md",
       "source_revision": "e4a9a1f196be92e9a6ea6ba5b3ff8bc40fc464fa"
+    },
+    {
+      "title": "A leaked decision object reached players, and a finished turn was reported as deferred",
+      "zh": "內部決策 JSON 洩漏給玩家，以及已行動完的回合被回報成 deferred",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/presentation.py",
+        "app/agents/reply_pipeline.py",
+        "app/agents/executor.py",
+        "app/combat_flow.py",
+        "tests/test_leaked_decision_and_redeclare.py",
+        "tests/test_reply_pipeline.py",
+        "tests/test_combat_flow.py"
+      ],
+      "path": "docs/specs/bug/leaked_decision_json_and_redeclared_turn_design_spec.md",
+      "zh_path": "docs/specs/bug/leaked_decision_json_and_redeclared_turn_design_spec_zh.md",
+      "source_revision": "0908a16c60551baa6d7f4e632c2aae4dbc827e12"
     }
   ]
 }

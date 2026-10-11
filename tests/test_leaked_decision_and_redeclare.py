@@ -1,0 +1,61 @@
+"""Two replies from the 2026-10-11 soak runs: an Executor decision shown to a player, and a turn already ended that
+the Keeper declared again."""
+from __future__ import annotations
+
+import json
+import unittest
+from types import SimpleNamespace
+
+from app import presentation
+from app.agents import executor, reply_pipeline
+
+LEAK = ('{"disposition":"await_luck","actor_character_id":"legacy-user:player-1","waiting_for":"legacy-user:player-1",'
+        '"check_id":"","evidence_refs":["state"]}')
+
+
+class LeakedDecisionTests(unittest.TestCase):
+    def test_the_decision_object_in_front_of_a_reply_is_removed(self):
+        reply = f"{LEAK}\n\nAlan Mercer 的 偵查與聆聽 已擲出 23，目前仍等待 Luck 決定。"
+        self.assertEqual(presentation.strip_leaked_decision(reply), "Alan Mercer 的 偵查與聆聽 已擲出 23，目前仍等待 Luck 決定。")
+
+    def test_a_decision_with_nested_values_or_a_code_fence_goes_whole(self):
+        nested = json.dumps({"disposition": "deferred", "waiting_for": "x", "detail": {"a": [1, {"b": 2}]}})
+        self.assertEqual(presentation.strip_leaked_decision(f"{nested}\n\n他停下腳步。"), "他停下腳步。")
+        fenced = f"```json\n{LEAK}\n```\n\n雨還在下。"
+        self.assertEqual(presentation.strip_leaked_decision(fenced), "雨還在下。")
+
+    def test_a_decision_after_or_between_narration_is_removed_and_the_narration_kept(self):
+        self.assertEqual(presentation.strip_leaked_decision(f"雨聲漸大。\n\n{LEAK}"), "雨聲漸大。")
+        self.assertEqual(presentation.strip_leaked_decision(f"前面。 {LEAK} 後面。"), "前面。  後面。")
+
+    def test_other_braces_and_json_are_left_alone(self):
+        for text in ("他寫下 {not json} 在牆上。", '{"name":"Alan","hp":13}', "沒有任何大括號。",
+                     'a "disposition" is a mood {x}'):
+            self.assertEqual(presentation.strip_leaked_decision(text), text)
+
+    def test_the_reply_pipeline_scrubs_before_anything_else(self):
+        draft = SimpleNamespace(text=f"{LEAK}\n\n林間靜了下來。")
+        reply_pipeline._scrub_leaks(SimpleNamespace(), draft)
+        self.assertEqual(draft.text, "林間靜了下來。")
+        self.assertEqual(reply_pipeline.STEPS[0].name, "scrub_leaks")
+
+
+def _event(name: str, ok: bool = True, *, changed: bool = True) -> dict:
+    return {"name": name, "arguments": {}, "result": {"ok": ok},
+            "gameplay_before": {"round": 1}, "gameplay_after": {"round": 2 if changed else 1}}
+
+
+class PassedTheTurnTests(unittest.TestCase):
+    def test_an_advance_that_changed_the_battle_is_a_passed_turn(self):
+        self.assertTrue(executor._passed_the_turn([_event("declare_combat_action", ok=False, changed=False),
+                                                   _event("advance_combat_turn")]))
+
+    def test_a_refused_or_unchanged_advance_and_other_tools_are_not(self):
+        self.assertFalse(executor._passed_the_turn([_event("advance_combat_turn", ok=False)]))
+        self.assertFalse(executor._passed_the_turn([_event("advance_combat_turn", changed=False)]))
+        self.assertFalse(executor._passed_the_turn([_event("skill_check")]))
+        self.assertFalse(executor._passed_the_turn([]))
+
+
+if __name__ == "__main__":
+    unittest.main()

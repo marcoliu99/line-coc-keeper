@@ -279,6 +279,18 @@ def test_source_ruling_resumes_unknown_weapon_without_arbitrary_damage():
     assert state.pending_checks['player']['skill'] == '格鬥（鬥毆）'
 
 
+def test_declaring_again_after_the_turn_was_taken_says_how_to_report_it():
+    """Camp Sunny rerun2: the Keeper advanced the turn as told and then answered 'deferred', which a committed advance
+    cannot be, so the player read a warning. The refusal now names the answer."""
+    state, _pc, _ = battle()
+    current = state.combat.order[state.combat.current_index]
+    state.combat.actions['done'] = {'action_id': 'done', 'actor_id': current.combatant_id, 'completed': True,
+                                    'round': state.combat.round_number}
+    result = combat_flow.declare_action(state, action_id='again', actor_id=current.combatant_id,
+        target_id=next(c.combatant_id for c in state.combat.order if c.side == 'enemy'), weapon_reference='unarmed')
+    assert not result['ok'] and 'advance_combat_turn' in result['error'] and 'resolved_without_check' in result['error']
+
+
 def test_an_unsupported_special_is_given_up_and_keeps_its_usage():
     state, _, enemy = battle(npc_first=True)
     card = state.combat.enemy_cards[enemy.enemy_card_id]

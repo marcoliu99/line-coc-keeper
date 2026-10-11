@@ -365,7 +365,8 @@ def declare_action(
         return _error('Only the current capable actor can declare an action')
     if combat.completed_actions_this_round(state, actor.combatant_id):
         return _error(f'{actor.display_name or actor.name} already completed this turn. Do not declare again: '
-                      f'call advance_combat_turn with actor_id "{actor.combatant_id}" and a new event_id')
+                      f'call advance_combat_turn with actor_id "{actor.combatant_id}" and a new event_id, then answer '
+                      'resolved_without_check citing that advance (not deferred: the advance is a committed change)')
     if target is None or target.defeated or actor is target:
         return _error('Invalid attack target')
     action = {'action_id': action_id, 'actor_id': actor.combatant_id, 'target_id': target.combatant_id,
