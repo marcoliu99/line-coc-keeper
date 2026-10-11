@@ -223,7 +223,8 @@ def _settled_without_roll(
             ),
             "no_roll": True, "provisional": not outcome.get("settled"),
             "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
-            "combat_receipt": {**_combat_receipt(outcome), "blow": blow},
+            # The blow was told with the choice that took it; the follow-up's fixed line does not repeat it.
+            "combat_receipt": {**_combat_receipt(outcome), "blow": blow, "blow_already_told": True},
             "luck_spent": 0,
         },
     )
