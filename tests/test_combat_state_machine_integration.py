@@ -944,7 +944,8 @@ def test_stat_block_attacks_read_the_common_layouts():
     assert support.attacks_from_stat_block(state, 'Nobody') == []
     gunman = GroupState('g', scenario_text="### Gunman\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\n"
                                          ".38 Revolver 50%, damage 1D10\nMusket 45%, damage 1D10+4\n"
-                                         "Brawl 40%, damage 1D3\nElbow 30%, damage 1D4\n長槍 35%，傷害 1D8\n")
+                                         "Brawl 40%, damage 1D3\nElbow 30%, damage 1D4\n長槍 35%，傷害 1D8\n"
+                                         "Javelin 40%, damage 1D8\n石頭 30%，傷害 1D4\n")
     assert [a['skill_value'] for a in support.attacks_from_stat_block(gunman, 'Gunman')] == [40, 30, 35], \
         "a shot is not a blow; 「Elbow」 and 「長槍」 are"
     beast = GroupState('g', scenario_text="### Beast\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10 DB: +1D4\n"

@@ -4,6 +4,7 @@ Split out of app/keeper.py unchanged so that app/keeper_tools no longer imports 
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -18,6 +19,7 @@ from app import (
     check_lifecycle,
     combat,
     combat_resources,
+    combat_rules,
     dice,
     observability,
     spoiler_policy,
@@ -361,6 +363,13 @@ _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*(
                                re.IGNORECASE)
 
 
+@functools.cache
+def _catalog_ranged_names() -> frozenset[str]:
+    """The catalog's shot and thrown weapons by exact name or alias; a contained word would make 「Elbow」 a bow."""
+    return frozenset(name.casefold() for weapon in combat_rules.weapon_catalog() if weapon.attack_mode != 'melee'
+                     for name in (weapon.name, *weapon.aliases))
+
+
 def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]]:
     """The melee attacks this enemy's stat block writes out as a skill value and damage, ready to register; [] when the
     scenario gives it no block or the block states no such attack.
@@ -380,6 +389,8 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
         label = match.group("label").strip()
         if _NOT_AN_ATTACK.match(label) or combat.SHOOTING_NAME.search(label) or _THROWN.search(label):
             continue
+        if label.casefold() in _catalog_ranged_names():
+            continue  # a catalog weapon that is shot or thrown (Shuriken, Javelin, 石頭)
         if block[match.end():match.end() + 4].lstrip().startswith("/"):
             continue  # 「1D6 + 1/2 DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」
         damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
