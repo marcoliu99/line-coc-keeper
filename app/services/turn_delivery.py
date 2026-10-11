@@ -297,11 +297,15 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         who = str(resolved.get("investigator") or "").strip()
         skill = str(resolved.get("skill") or "").strip()
         subject = f"{who} 的{skill}" if who and skill else (who or skill)
+        if resolved.get("no_roll"):
+            # A choice that settled the attack by itself (不閃躲): no die was rolled, so no 「骰值 0」.
+            line = f"已結算：{who or '調查員'} 選擇「{skill or '不防禦'}」，未擲骰。"
+        else:
+            line = (f"已結算檢定：{subject + '，' if subject else ''}骰值 {resolved.get('roll', '未知')}，"
+                    f"結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。")
         outcomes.append(ObservedOutcome(
             f"resolved-check:{resolved.get('check_id', 'current')}", "resolved_check", True,
-            f"已結算檢定：{subject + '，' if subject else ''}骰值 {resolved.get('roll', '未知')}，"
-            f"結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。"
-            + (f"⚔️ {blow}" if blow else ""),
+            line + (f"⚔️ {blow}" if blow else ""),
             "player_private" if private_result else "public",
             message.payload.get("user_id", "") if private_result else "",
         ))

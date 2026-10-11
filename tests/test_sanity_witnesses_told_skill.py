@@ -79,3 +79,11 @@ def test_a_refused_primary_does_not_hide_the_witnesses_who_rolled():
                                                       "loss_success": "0", "loss_failure": "1"}))
     assert result["ok"] and result["investigator"] == "Ken"
     assert [w.get("error") for w in result["witnesses"]] == ["Marco 已有待處理的檢定"]
+
+
+def test_a_choice_settled_without_a_roll_does_not_read_as_a_zero_roll():
+    msg = AgentMessage({"state": _state(), "user_id": "a", "resolved_check_context": {
+        "investigator": "Marco", "skill": "不閃躲", "roll": 0, "outcome": "不閃躲，攻擊已結算", "no_roll": True,
+        "check_id": "c2"}})
+    reply, _ = turn_delivery.finalize(msg, "爪子落下。")
+    assert "已結算：Marco 選擇「不閃躲」，未擲骰。" in reply and "骰值 0" not in reply, reply

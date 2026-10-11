@@ -2956,6 +2956,21 @@
       "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
     },
     {
+      "title": "The unconscious stay down, a kill is said, a settled counter is shown, and defence Luck only when it matters",
+      "zh": "昏迷就是倒下、擊殺要說出來、引擎結算的反擊要顯示、防禦的 Luck 只在有用時提供",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "app/dice.py",
+        "app/services/managed_checks.py",
+        "tests/test_combat_down_death_counter_luck.py"
+      ],
+      "path": "docs/specs/bug/combat_down_death_counter_luck_design_spec.md",
+      "zh_path": "docs/specs/bug/combat_down_death_counter_luck_design_spec_zh.md",
+      "source_revision": "707ad2670ce8661628e6fd4bc2b2b39ab110e702"
+    },
+    {
       "title": "Sanity for every witness in one call, a backticked roll command counts, and the settled line names the roll",
       "zh": "一次呼叫替每位目擊者擲理智、反引號裡的擲骰指令也算數、已結算那行說出擲了什麼",
       "category": "bug",
