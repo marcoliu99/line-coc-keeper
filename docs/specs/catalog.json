@@ -3003,6 +3003,21 @@
       "path": "docs/specs/bug/executor_retry_opening_npc_design_spec.md",
       "zh_path": "docs/specs/bug/executor_retry_opening_npc_design_spec_zh.md",
       "source_revision": "707ad2670ce8661628e6fd4bc2b2b39ab110e702"
+    },
+    {
+      "title": "HP 0 is down after a fight, and an unconscious investigator is not locked out",
+      "zh": "戰後 HP 0 就是倒下、昏迷的調查員不會被一直擋在遊戲外",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/unconscious_wake.py",
+        "app/agents/supervisor.py",
+        "app/keeper_tools/inventory.py",
+        "tests/test_unconscious_wake.py"
+      ],
+      "path": "docs/specs/bug/down_investigators_wake_design_spec.md",
+      "zh_path": "docs/specs/bug/down_investigators_wake_design_spec_zh.md",
+      "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
     }
   ]
 }
