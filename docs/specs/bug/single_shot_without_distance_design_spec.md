@@ -1,4 +1,4 @@
-# A player's shot with no stated distance paused the whole fight, and the log did not say why a combat tool failed
+# A shot with no stated distance paused the whole fight, a creature named in the players' words found no stat block, and the log did not say why a combat tool failed
 
 [繁體中文](single_shot_without_distance_design_spec_zh.md)
 
@@ -6,26 +6,27 @@ Status: **implemented**. Base: `main_v2` at `e4a9a1f`.
 
 ## Problem
 
-In the 2026-10-11 soak runs on `d18fffd` (Camp Sunny rerun2, The Lightless Beacon rerun3) a fight stopped moving for several turns while every player read 「戰鬥暫停中，要等守密人裁定後才能繼續」 or 「處理這個行動的工具失敗了」.
+In the 2026-10-11 soak runs on `d18fffd` (Camp Sunny rerun2, The Lightless Beacon rerun3) a fight stopped moving for several turns while every player read 「戰鬥暫停中，要等守密人裁定後才能繼續」 or 「處理這個行動的工具失敗了」. The reasons were in the text log, in the line each turn writes for its tool calls.
 
-- **Camp Sunny turns 77 to 99.** Reidel's first shot was declared as a single shot with no distance. The engine answers that with a ruling (`Single shot requires trusted physical distance and reviewed base range`), which sets the phase to `NEEDS_RULING` for the whole table. Five of his next lines were then refused, and so was Phil's. Only the Keeper can clear a ruling, and it took many turns.
-- **Lightless turns 38 to 42.** The fight began with an enemy's opening attack, a poison needle the engine does not support, which paused the fight the same way. Every player's shot was refused with 「Resolve the current action before declaring another」 until the Keeper cancelled the ruling at turn 43. Why the Keeper's two rulings before that failed is not in the log.
-- **The log.** The structured `turn.observed` event carried only the tool name, so it could not show that a call failed. The reason was in the text log, in the line the turn writes when it finishes, but a turn that timed out never wrote it.
+- **Camp Sunny turns 77 to 99.** Reidel's first shot was declared as a single shot with no distance. The engine answered with a ruling (`Single shot requires trusted physical distance and reviewed base range`), which sets the phase to `NEEDS_RULING` for the whole table. His next lines and Phil's were refused until the Keeper cleared it.
+- **Lightless turns 31 to 43.** The Keeper asked for the stat block of 「幼體（深海夢魘）」. The scenario writes it as `Youngling, deep-sea nightmare`, the lookup found nothing, and the Keeper found the block only by asking again with the English heading. The fight that followed began with an enemy attack that lacked a scenario source, paused for a ruling, and every player's shot was refused (`Resolve the current action before declaring another`) until the Keeper cancelled it. Its two rulings before that failed on `Unknown weapon; explicit definition required`.
+- **The log.** The structured `turn.observed` event carried only the tool name, so it could not show that a call failed. The reason was in the text log only in the line a turn writes when it finishes, and a turn that timed out never wrote it.
 
 ## Change
 
-- **A player's single shot with no stated distance is a regular roll.** `combat_flow` takes the shot as inside the weapon's base range when the actor is a player character and no distance was given, and the fight goes on. A stated distance is used as before, and a distance past the weapon's extreme range still needs a ruling. The Keeper may still pass `distance_yards` when the scene makes the target far. The same rule applies when a paused shot is resumed.
-- **A failed tool call says so when it fails.** `turn.observed` now carries `ok`, and for a failed call the phase it left the fight in. The reason (first 300 characters of the tool's error) goes to the text log as one warning line, `tool <name> failed: <error>`, because the structured events carry no free-form text. The Camp Sunny causes read this way: 「Single shot requires trusted physical distance…」 twice, 「Reidel Gray already completed this turn」 three times.
+- **A shot with no stated distance is taken at the nearest range, and the fight goes on.** The hit roll is regular, whoever shoots and whatever the weapon's base range. The damage of a weapon with distance bands (a shotgun) is the nearest band. A stated distance is used as before; a distance past the weapon's extreme range, a distance with no base range to judge it by, and an invalid one still need a ruling. An enemy's shot with no distance is no longer a ruling either, but one with no ammunition still is. The rule lives in `combat_rules` (`resolve_range_difficulty`, `resolve_weapon_damage`), so the player's declaration, a resumed ruling and an enemy's planned shot share it.
+- **A creature named in the players' words finds its stat block.** `get_enemy_stat_block` matched the scenario's NPC index by exact name or alias only. It now falls back to the closest index entry, the lookup `add_npc_to_combat` already uses, so 「幼體（深海夢魘）」 reaches an entry 「深海夢魘（幼體）」 that lists the English heading as an alias. The result names the heading it found, so a wrong guess shows; a name matching nothing still fails and lists the headings.
+- **A failed tool call says so when it fails.** `turn.observed` now carries `ok`, and for a failed call the phase it left the fight in. The reason (first 300 characters of the tool's error) goes to the text log as one warning line, `tool <name> failed: <error>`, because the structured events carry no free-form text.
 
 ## Not changing
 
-- **An enemy's single shot with no distance still asks for a ruling.** The Keeper plays the enemy and knows the scene; the existing test for it stands.
-- **A weapon whose damage depends on distance** (a shotgun) still needs the distance, as before: that is the damage rule, not the range band.
-- **The opening attack of an enemy the engine cannot play** (the Lightless poison needle) still pauses the fight and still waits for the Keeper. This spec only makes the next run's log show what the Keeper's rulings fail on; whether the engine should skip such an action by itself is a separate decision.
+- **The opening attack of an enemy the engine cannot play** (the Lightless poison needle, which also lacked a scenario source) still pauses the fight and waits for the Keeper. Whether the engine should skip such an action by itself is a separate decision.
+- **The Keeper declaring a second attack for an actor who has already acted** (Camp Sunny, three times) is the Keeper's error and is unchanged.
 
 ## Verification
 
-- A player's single shot with no distance is declared and rolls at `regular`; one with `distance_yards=60` does not roll at `regular`; one with `distance_yards=1000` still needs a ruling and spends no ammunition (`tests/test_combat_state_machine_integration.py`, `tests/test_combat_mechanics_coverage.py`).
+- A shot with no distance is a regular roll at any base range, including none; a shotgun with no distance uses its nearest band; an invalid or conflicting distance, and a distance with no base range, still need a ruling (`tests/test_combat_rules.py`).
+- A player's single shot with no distance is declared and rolls at `regular`; one with `distance_yards=60` does not; one with `distance_yards=1000` still needs a ruling and spends no ammunition (`tests/test_combat_state_machine_integration.py`, `tests/test_combat_mechanics_coverage.py`). An enemy's single shot with no distance is declared and waits for the player's defence (`tests/test_combat_flow.py`).
 - The ruling test that relied on a missing distance now uses a distance past extreme range and still checks that the owned weapon key survives a reload.
-- An enemy's single shot with no distance still returns `NEEDS_RULING` (`tests/test_combat_flow.py`, unchanged).
-- A failed tool call logs `ok` and `phase` in the structured event, with no error text, and one text-log warning with the reason; a successful one logs `ok` only (`tests/test_turn_phases.py`).
+- 「幼體（深海夢魘）」, 「深海夢魘（幼體）」 and the English heading all return the Youngling block; an unrelated name still fails (`tests/test_combat_turn_friction.py`).
+- A failed tool call logs `ok` and `phase` in the structured event, with no error text, and one text-log warning with the reason (`tests/test_turn_phases.py`).

@@ -1067,3 +1067,21 @@ def test_each_hit_the_armor_stops_is_logged_for_the_keeper_not_shown(caplog):
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("combat.armor")]
     assert "blocked=5 left=3" in lines[0] and "blocked=3 left=0" in lines[1], lines
     assert "Flesh Ward" not in first["public_summary"] and "3" not in first["public_summary"]
+
+
+def test_a_creature_named_in_the_players_words_finds_its_stat_block_through_the_index():
+    # Lightless rerun3 (2026-10-11): the Keeper asked for 「幼體（深海夢魘）」, the scenario's heading is English, and
+    # the first lookup failed; the Keeper found the block only by asking again with the English heading.
+    youngling = ("### Youngling, deep-sea nightmare\n\nSTR 100  CON 40  SIZ 25  DEX 80\nINT 10  POW 40\nHP: 6\n"
+                 "Fighting 40%, damage 1D3 + damage bonus\n")
+    from app.models import GroupState
+    state = GroupState(GROUP, active=True, active_scenario_source_hash="abc123", scenario_library_id="the-lightless-beacon",
+                       scenario_text=STAT_BLOCK + "\n" + youngling,
+                       scenario_npc_index=[{"name": "深海夢魘（幼體）", "aliases": ["Youngling, deep-sea nightmare"], "hp": 6},
+                                           {"name": "Walter Corbitt", "aliases": ["柯比特"], "hp": 16}])
+    _save(state)
+    for name in ("幼體（深海夢魘）", "深海夢魘（幼體）", "Youngling, deep-sea nightmare"):
+        found = _tool("get_enemy_stat_block", {"name": name})
+        assert found["ok"] and found["heading"] == "Youngling, deep-sea nightmare", (name, found)
+    assert not _tool("get_enemy_stat_block", {"name": "完全無關的東西"})["ok"]
+

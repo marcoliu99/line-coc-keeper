@@ -2748,15 +2748,20 @@
       "source_revision": "0c53dcb95c2c5fd81a91815eb70336f9c80049ae"
     },
     {
-      "title": "A player's shot with no stated distance paused the whole fight, and the log did not say why a combat tool failed",
-      "zh": "玩家單發射擊沒說距離就暫停整場戰鬥，而且 log 看不出戰鬥工具為什麼失敗",
+      "title": "A shot with no stated distance paused the whole fight, a creature named in the players' words found no stat block, and the log did not say why a combat tool failed",
+      "zh": "射擊沒說距離就暫停整場戰鬥、用玩家的說法叫生物卻找不到數值表、log 看不出戰鬥工具為什麼失敗",
       "category": "bug",
       "status": "implemented",
       "evidence": [
+        "app/combat_rules.py",
         "app/combat_flow.py",
+        "app/keeper_tools/support.py",
         "app/agents/tool_gateway.py",
+        "tests/test_combat_rules.py",
+        "tests/test_combat_flow.py",
         "tests/test_combat_state_machine_integration.py",
         "tests/test_combat_mechanics_coverage.py",
+        "tests/test_combat_turn_friction.py",
         "tests/test_turn_phases.py"
       ],
       "path": "docs/specs/bug/single_shot_without_distance_design_spec.md",

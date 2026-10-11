@@ -666,7 +666,7 @@ def test_verified_npc_ruling_resumes_missing_damage_bonus_from_card():
     assert state.combat.actions['npc:club']['db'] == '1d4'
 
 
-def test_verified_npc_single_shot_ruling_resumes_missing_distance():
+def test_an_npc_single_shot_with_no_stated_distance_is_not_a_ruling():
     from app import combat_rules
     weapon = next(w for w in combat_rules.weapon_catalog() if w.attack_mode == 'single_shot'
                   and w.db_policy == 'none' and not w.ruling_reason and not w.distance_bands)
@@ -674,16 +674,12 @@ def test_verified_npc_single_shot_ruling_resumes_missing_distance():
     card = state.combat.enemy_cards[enemy.enemy_card_id]
     card.attacks[0].id = weapon.id
     card.attacks[0].ammo_or_uses = 3
-    result = combat_flow.declare_action(state, action_id='npc:shot', actor_id=enemy.combatant_id,
-        target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
-    assert result['phase'] == 'NEEDS_RULING'
     with patch('app.dice.skill_check') as rng:
-        result = combat_flow.resolve_ruling(state, action_id='npc:shot', event_id='ruling:shot',
-            reason='Verified distance', decision='resume', distance_yards=1)
+        result = combat_flow.declare_action(state, action_id='npc:shot', actor_id=enemy.combatant_id,
+            target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
     rng.assert_not_called()  # Player first chooses whether to dive.
     assert result['phase'] == 'PLAYER_CHOICE'
-    assert state.combat.actions['npc:shot']['npc_attack_id'] == weapon.id
-    assert card.attacks[0].ammo_or_uses == 3
+    assert state.combat.actions['npc:shot']['difficulty'] == 'regular'
 
 
 def test_unknown_effect_stop_rejected_and_recorded_stop_replayed_after_reload():
