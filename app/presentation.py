@@ -160,8 +160,8 @@ def strip_leaked_decision(text: str) -> str:
 
 
 # A reply that ends in closers that never opened: the model wrapped its narration as a JSON string and the tail of
-# the wrapper, sometimes with a stray token after it, survived the parse (2026-10-11 soak runs: an opening that ended
-# 「…又為何前往羅克波特？」}} bheidh」, a scene reply that ended 「…你要怎麼查看？」}}」).
+# the wrapper, sometimes with a stray token after it, survived the parse (2026-10-11 soak runs: an opening whose raw
+# text ended `…又為何前往羅克波特？」}} bheidh`, a scene reply that ended `…你要怎麼查看？」}}`).
 _STRAY_WORD = re.compile(r"[}\]]\s+[A-Za-z]{1,12}\s*$")
 
 

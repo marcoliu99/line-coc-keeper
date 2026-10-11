@@ -11,7 +11,7 @@ Three slips from the 2026-10-11 soak runs, all in what the player reads:
 - **A fallen enemy kept coming.** Lightless Beacon fresh5: Thomas's shot dropped the youngling at turn 39; at turns 44 and 56 the player still read 「幼體與深潛者混血仍在雨幕中逼近」. The status block the Narrator sees lists the youngling's row as 「HP 未公開（倒下）」, which was not enough.
 - **The blow was handed to the wrong enemy.** Turn 39: the hybrid's swing at Mei Lin was narrated as 「幼體的利爪撕向 Dr. Mei Lin」. A defence check was registered without an `action_context`, so the resolved-check block read 「行動情境：未提供」 and the Narrator guessed the attacker.
 - **The landing was narrated again, and the opening once more.** Turns 60 and 61 (「我們登上 Beacon Island」, said twice after the fight on the island) each got a fresh landing; turn 93 (the opening premise restated) got the opening narration from the top, date and all.
-- **A wrapper tail reached the player.** Fresh5 turn 1 ended 「…又為何前往羅克波特？」}} bheidh」 and Camp Sunny rerun3 turn 57 ended 「…你要怎麼查看？」}}」: the model wrapped its narration as a JSON string and the closers survived. `strip_leaked_decision` only removes a decision object, which this is not.
+- **A wrapper tail reached the player.** Fresh5 turn 1 ended with the raw text `…又為何前往羅克波特？」}} bheidh` and Camp Sunny rerun3 turn 57 with `…你要怎麼查看？」}}`: the model wrapped its narration as a JSON string and the closers survived. `strip_leaked_decision` only removes a decision object, which this is not.
 
 ## Change
 
