@@ -6,7 +6,7 @@ from app.checks.skills import resolve_skill_value
 from app.keeper_tools import registry
 from app.models import Character, GroupState
 from app.prompt_builder import build_static_prompt
-from app.services import turn_delivery
+from app.services import prompt_config, turn_delivery
 
 
 def test_a_sanity_roll_says_it_was_sanity_and_what_was_lost():
@@ -41,3 +41,10 @@ def test_the_keeper_is_told_sanity_per_witness_on_first_sight_and_no_second_roll
 def test_the_skill_field_says_one_skill_and_drive_is_not_pilot():
     schema = registry.REGISTRY["skill_check"].schema["input_schema"]["properties"]["skill"]["description"]
     assert "一次只擲一個技能" in schema and "開車是「汽車駕駛」" in schema
+
+
+def test_the_recent_checks_say_what_each_roll_was_for():
+    block = prompt_config.build_resolved_check_history_block(
+        [{"investigator": "Daniel", "skill": "化學", "skill_value": 40, "roll": 12, "difficulty": "regular",
+          "outcome": "hard 成功", "player_declaration": "我辨認架上那些容器的成分。"}], {"HP": "12/12"})
+    assert "（當時的行動：我辨認架上那些容器的成分。）" in block

@@ -2902,6 +2902,25 @@
       "source_revision": "6b59dc516204a16483f4d2f7f48458fe3c3ff3ac"
     },
     {
+      "title": "Enemies attack, the narrator is told the blow, and players read no bookkeeping",
+      "zh": "敵人會出手、Narrator 知道這一擊、玩家不再看到結算用語",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat.py",
+        "app/combat_flow.py",
+        "app/services/prompt_config.py",
+        "app/services/turn_delivery.py",
+        "app/services/managed_checks.py",
+        "app/services/turn_fallback.py",
+        "app/services/turn_resolution.py",
+        "tests/test_enemies_attack_and_combat_wording.py"
+      ],
+      "path": "docs/specs/bug/enemies_attack_and_combat_wording_design_spec.md",
+      "zh_path": "docs/specs/bug/enemies_attack_and_combat_wording_design_spec_zh.md",
+      "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
+    },
+    {
       "title": "Sanity on first sight, rolls the player can read, and no second roll for a settled goal",
       "zh": "第一次看見就擲理智、玩家看得懂擲了什麼、已定的事不再重擲",
       "category": "bug",
