@@ -463,10 +463,12 @@ def _carried_definition(effective: Character, item: str) -> combat_rules.WeaponD
     scenario definitions stored with it, else the catalog by its text. Nothing when it cannot be read."""
     metadata = effective.weapon_instances.get(item) or {}
     try:
-        if metadata.get('pinned_definition'):
-            return combat_rules.parse_weapon_definition(metadata['pinned_definition'])
+        pin = (combat_rules.parse_weapon_definition(metadata['pinned_definition'])
+               if metadata.get('pinned_definition') else None)
         scenario = tuple(combat_rules.parse_weapon_definition(row) for row in metadata.get('scenario_definitions', ()))
-        instance = combat_rules.WeaponInstance(item, metadata.get('definition_id')) if metadata else None
+        instance = (combat_rules.WeaponInstance(item, metadata.get('definition_id') or (pin.id if pin else None), pin)
+                    if metadata else None)
+        # The same precedence as a declaration: scenario definition, then the pin, then the catalog.
         return combat_rules.resolve_weapon(item, scenario_definitions=scenario, instance=instance).definition
     except (ValueError, TypeError, KeyError):
         return None

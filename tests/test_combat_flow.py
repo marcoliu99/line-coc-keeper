@@ -872,3 +872,8 @@ def test_fight_back_honours_a_pinned_weapon_definition():
     })
     option = combat_flow._counter_weapon(state, pc)
     assert option['label'] == '反擊（獵刀）' and option['counter_damage'] == '1d4'
+    # A scenario definition stored with the entry outranks the pin, as it does for a declaration.
+    override = replace(pin, damage='1d3', catalog_version='scenario-v1')
+    state, pc, _enemy = battle(weapon_instances={'獵刀': {
+        'definition_id': pin.id, 'pinned_definition': asdict(pin), 'scenario_definitions': [asdict(override)]}})
+    assert combat_flow._counter_weapon(state, pc)['counter_damage'] == '1d3'
