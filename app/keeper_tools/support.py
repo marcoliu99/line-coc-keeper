@@ -267,13 +267,32 @@ def _stat_blocks_as_written(text: str) -> list[tuple[str, str]]:
     return blocks
 
 
+_NAME_SPLIT = re.compile(r"[（）()\[\]【】,，、;；/／\s]+")
+_NAME_COUNTER = re.compile(r"(?<=[）)\u4e00-\u9fff])\s*(?:#?\d+|[A-Z])$")  # 「…（深海夢魘）A」: the table's A, B or 2
+
+
+def _name_words(name: str) -> frozenset[str]:
+    return frozenset(w.casefold() for w in _NAME_SPLIT.split(_NAME_COUNTER.sub("", (name or "").strip())) if w)
+
+
+def _index_entry_by_same_words(state: GroupState, name: str) -> dict | None:
+    """The one NPC index entry whose name or an alias is ``name``'s words in another order or bracketing; none when
+    no entry is, or when two are (a wrong sibling would hand the Keeper another creature's HP and attacks)."""
+    wanted = _name_words(name)
+    if not wanted:
+        return None
+    matches = [entry for entry in state.scenario_npc_index
+               if any(_name_words(str(n)) == wanted for n in (entry.get("name"), *(entry.get("aliases") or [])) if n)]
+    return matches[0] if len(matches) == 1 else None
+
+
 def stat_block_for(state: GroupState, name: str) -> tuple[str, str] | None:
     """The stat block the loaded scenario gives this enemy, as (heading, block text) the way the scenario writes them,
     found by its heading or, through the scenario's NPC index, by an alias of it (柯比特 for Walter Corbitt). The index
-    is matched by name or alias first and then closely (幼體（深海夢魘） for an entry 深海夢魘（幼體）): the Keeper writes
-    the creature in the players' words, the heading is the scenario's English, and the result names the heading it
-    found so a wrong guess shows."""
-    indexed = find_npc_index_entry(state, name) or {}
+    is matched by name or alias first, then by the same words in another order or bracketing (幼體（深海夢魘） for an
+    entry 深海夢魘（幼體）): the Keeper writes the creature in the players' words and the heading is the scenario's
+    English. Never by similarity: 深潛者 is close to 深潛者（幼體） and is a different creature."""
+    indexed = combat.find_npc_index_entry_exact(state, name) or _index_entry_by_same_words(state, name) or {}
     names = [str(n) for n in (name, indexed.get("name"), *(indexed.get("aliases") or [])) if n]
     for heading, block in _stat_blocks_as_written(state.scenario_text or ""):
         if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names):

@@ -1083,5 +1083,24 @@ def test_a_creature_named_in_the_players_words_finds_its_stat_block_through_the_
     for name in ("幼體（深海夢魘）", "深海夢魘（幼體）", "Youngling, deep-sea nightmare"):
         found = _tool("get_enemy_stat_block", {"name": name})
         assert found["ok"] and found["heading"] == "Youngling, deep-sea nightmare", (name, found)
+    assert _tool("get_enemy_stat_block", {"name": "幼體（深海夢魘）A"})["ok"], "the table's letter after the name"
     assert not _tool("get_enemy_stat_block", {"name": "完全無關的東西"})["ok"]
 
+
+def test_a_close_but_different_creature_does_not_get_another_creatures_stat_block():
+    # 深潛者 scores 0.6 against 深潛者（幼體） by similarity; the adult is not the youngling, and handing the Keeper the
+    # youngling's HP and attacks for it would register the wrong creature.
+    from app.models import GroupState
+    youngling = ("### Youngling, deep-sea nightmare\n\nSTR 100  CON 40  SIZ 25  DEX 80\nINT 10  POW 40\nHP: 6\n"
+                 "Fighting 40%, damage 1D3 + damage bonus\n")
+    state = GroupState(GROUP, active=True, active_scenario_source_hash="abc123", scenario_library_id="the-lightless-beacon",
+                       scenario_text=youngling,
+                       scenario_npc_index=[{"name": "深潛者（幼體）", "aliases": ["Youngling, deep-sea nightmare"], "hp": 6},
+                                           {"name": "深潛者（成年頭目）", "aliases": [], "hp": 20}])
+    _save(state)
+    assert not _tool("get_enemy_stat_block", {"name": "深潛者"})["ok"]
+    assert not _tool("get_enemy_stat_block", {"name": "深潛者頭目"})["ok"]
+    state.scenario_npc_index = [{"name": "深海夢魘（幼體）", "aliases": ["Youngling, deep-sea nightmare"]},
+                                {"name": "幼體，深海夢魘", "aliases": []}]
+    _save(state)
+    assert not _tool("get_enemy_stat_block", {"name": "幼體（深海夢魘）"})["ok"], "two entries have these words: ambiguous"
