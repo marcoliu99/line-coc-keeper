@@ -75,6 +75,9 @@ class LuckPromptTests(unittest.TestCase):
         self.assertIn("骰值 6 還在等", wrong.projected_text())
         points = turn_delivery.DeliveryEnvelope("o", "public", "", "骰值為 60 點，可用 /coc luck skip。", interactions=[six])
         self.assertIn("骰值 6 還在等", points.projected_text(), "a claim may end in 點")
+        for echoed in ("原始骰值：60，可用 /coc luck skip", "骰值是 60，可用 /coc luck skip", "原始骰值: 60 /coc luck skip"):
+            self.assertIn("骰值 6 還在等", turn_delivery.DeliveryEnvelope(
+                "o", "public", "", echoed, interactions=[six]).projected_text(), echoed)
         right = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 6，可用 /coc luck skip。", interactions=[six])
         self.assertEqual(right.projected_text(), "")
         cost = turn_delivery.DeliveryEnvelope("o", "public", "", "/coc luck extreme（花費 6 點）或 /coc luck skip", interactions=[six])

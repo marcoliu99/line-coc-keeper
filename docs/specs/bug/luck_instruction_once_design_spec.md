@@ -15,7 +15,7 @@ The narration gives the command almost every time and the roll almost never. In 
 
 ## Change
 
-- **A reply that gives the way to keep the roll is told.** `InteractionRef.told_in` is true when the narration contains `/coc luck skip`, or the Luck button (「Luck 按鈕」, 「幸運按鈕」). The roll's number is not needed: what the player needs is the way to decide, and the narration seldom repeats the number. A narration that states a roll other than the real one (「擲出 60」 for a roll of 6) keeps the line, since it is the only text carrying the engine's number; a cost (「花費 6 點」) is not a claimed roll.
+- **A reply that gives the way to keep the roll is told.** `InteractionRef.told_in` is true when the narration contains `/coc luck skip`, or the Luck button (「Luck 按鈕」, 「幸運按鈕」). The roll's number is not needed: what the player needs is the way to decide, and the narration seldom repeats the number. A narration that states a roll other than the real one (「擲出 60」 for a roll of 6) keeps the line, since it is the only text carrying the engine's number; a cost (「花費 6 點」) is not a claimed roll. The claim test looks at the number right after a roll label (擲出, 擲得, 骰出, 骰值, 原始骰值, with 是, 為 or a colon allowed) and is best effort: a narration that states the roll in other words is not caught.
 - **A reply that does not give it still gets the line.** A narration that lists only costs (`/coc luck regular（26 點）`) or only talks about Luck leaves the player without the plain option, so the line is added.
 
 ## Not changing

@@ -98,7 +98,10 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                            "public" if text else "internal", fact_ref=fact_ref)
 
 
-_ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|骰值(?:是|為)?)\s*(\d{1,3})(?!\d)")  # the number right after the verb
+_ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|(?:原始)?骰值)\s*(?:是|為|[:：])?\s*(\d{1,3})(?!\d)")
+# The number right after a roll label, in the forms a narrator writes or echoes from the Luck context (「原始骰值：60」).
+# Best effort: a narration that states the roll in other words is not caught, and costs the player nothing worse than
+# a wrong number they could already see in the narration.
 
 
 @dataclass(frozen=True)
