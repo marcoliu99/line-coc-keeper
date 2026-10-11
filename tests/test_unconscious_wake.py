@@ -47,13 +47,41 @@ def test_a_standing_companion_means_waiting_for_first_aid_not_waking():
     assert unconscious_wake.decide(state, "p2") is None
 
 
-def test_hp_zero_or_a_running_fight_is_not_this_rule():
-    state = _party("p1")
-    state.characters["p1"].hp = 0
-    assert unconscious_wake.decide(state, "p1") is None
+def test_a_running_fight_or_death_is_not_this_rule():
     state = _party("p1")
     state.combat.active = True
     assert unconscious_wake.decide(state, "p1") is None
+    state = _party("p1")
+    state.characters["p1"].injury = {"dead": True}
+    assert unconscious_wake.decide(state, "p1") is None
+
+
+def test_hp_zero_after_a_fight_is_down_not_playing_on():
+    """Haunting 2026-10-12: Edith, at HP 0 when the fight ended, acted for 11 turns and rolled three checks."""
+    state = _party("p1")
+    edith = state.characters["p1"]
+    edith.hp, edith.status_tags, edith.injury = 0, [], {}
+    assert unconscious_wake.knocked_out(edith) and unconscious_wake.decide(state, "p1") == "wake"
+    _save(state)
+    unconscious_wake.wake(GROUP, "char:p1", timeline_id="timeline-wake")
+    assert _load().characters["p1"].hp == 1 and unconscious_wake.decide(_load(), "p1") is None
+
+
+def test_a_dying_investigator_waits_for_first_aid_every_time():
+    state = _party("p1")
+    state.characters["p1"].hp, state.characters["p1"].injury = 0, {"major_wound": True, "dying": True}
+    assert unconscious_wake.decide(state, "p1") == "wait"
+    assert "瀕死" in unconscious_wake.wait_reply(state.characters["p1"])
+
+
+def test_told_once_that_first_aid_can_help_the_next_line_wakes_them():
+    """Haunting 2026-10-12: James, unconscious with companions standing, got the same refusal on 11 lines (44 turns)."""
+    state = _party("p1", "p2")
+    assert unconscious_wake.decide(state, "p1") == "wait"
+    unconscious_wake.offer_first_aid(GROUP, "char:p1", timeline_id="timeline-wake")
+    assert unconscious_wake.decide(_load(), "p1") == "wake"
+    unconscious_wake.wake(GROUP, "char:p1", timeline_id="timeline-wake")
+    assert unconscious_wake.decide(_load(), "p1") is None and "first-aid-offered:char:p1" not in _load().check_consequence_receipts
 
 
 def test_the_waiting_investigators_line_is_answered_without_the_executor():
@@ -65,7 +93,9 @@ def test_the_waiting_investigators_line_is_answered_without_the_executor():
         expected_opening_participants=None, turn_timeline_id="timeline-wake", turn_id="turn-wait",
     )
     reply, private, images = asyncio.run(supervisor._prepare(turn))
-    assert reply == unconscious_wake.wait_reply("調查員p1") and private == [] and images == []
+    assert reply == unconscious_wake.wait_reply(state.characters["p1"]) and private == [] and images == []
+    assert "下一次行動時會在一段時間後自己醒來" in reply
+    assert unconscious_wake.decide(_load(), "p1") == "wake", "the next line wakes them"
 
 
 def test_the_lone_investigators_line_wakes_them_and_tells_the_keeper_about_the_time_skip():
@@ -142,3 +172,46 @@ def test_a_knocked_out_investigators_line_is_not_searched_ahead_of_the_lock():
     with patch.object(context_builder, "prefetch_retrieval") as prefetch:
         assert asyncio.run(supervisor.prefetch_retrieval(state, "p1", "我掙扎著爬起來。", "player", GROUP)) is None
         prefetch.assert_not_called()
+
+
+def test_a_stabilized_investigator_at_hp_zero_is_not_dying_and_can_wake():
+    """First Aid's stabilization leaves HP 0, the major wound and dying=False: not dying, so the wake stays reachable."""
+    state = _party("p1", "p2")
+    state.characters["p1"].hp, state.characters["p1"].injury = 0, {"major_wound": True, "unconscious": True, "dying": False}
+    assert not unconscious_wake.dying(state.characters["p1"]) and unconscious_wake.decide(state, "p1") == "wait"
+
+
+def test_an_offer_made_for_an_earlier_knockout_does_not_wake_them_now():
+    """Woken by First Aid (HP up a point), then down again: they are told about First Aid again first."""
+    _party("p1", "p2")
+    unconscious_wake.offer_first_aid(GROUP, "char:p1", timeline_id="timeline-wake")
+    state = _load()
+    state.characters["p1"].hp = 3  # a different knockout
+    assert unconscious_wake.decide(state, "p1") == "wait"
+
+
+def test_the_offer_leaves_the_injury_record_to_the_combat_engine():
+    from app import combat_resources
+    _party("p1", "p2")
+    unconscious_wake.offer_first_aid(GROUP, "char:p1", timeline_id="timeline-wake")
+    combat_resources._validate_injury(_load().characters["p1"].injury)  # no unknown key
+
+
+def test_first_aid_wakes_an_investigator_at_hp_zero_and_spends_the_offer():
+    """At HP 0 without a major wound, a companion's First Aid (removing 昏迷) brings them round at HP 1; the offer made
+    for that knockout is spent, so a later knockout at the same HP is offered First Aid again."""
+    from app.keeper_tools import registry
+
+    state = _party("p1", "p2")
+    edith = state.characters["p1"]
+    edith.hp, edith.status_tags, edith.injury = 0, [], {}
+    _save(state)
+    unconscious_wake.offer_first_aid(GROUP, "char:p1", timeline_id="timeline-wake")
+    call = registry.ToolCall(_load(), {"investigator": "調查員p1", "tag": "昏迷", "reason": "First Aid succeeded"},
+                             [], [], "player", "remove_status_tag", actor_id="p2")
+    assert registry.REGISTRY["remove_status_tag"].handler(call)["ok"]
+    woken = _load()
+    assert woken.characters["p1"].hp == 1 and unconscious_wake.decide(woken, "p1") is None
+    assert "first-aid-offered:char:p1" not in woken.check_consequence_receipts
+    woken.characters["p1"].hp = 0  # down again
+    assert unconscious_wake.decide(woken, "p1") == "wait"

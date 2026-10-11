@@ -220,8 +220,8 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
         _logger.info("Supervisor answered %s from state: Luck decision outstanding", turn.display_name)
         return prompt_config.pending_luck_reply(
             held_luck, actor.name if actor else ""), [], []
-    # An investigator knocked out outside combat: wait for a standing companion, or wake after a time skip when
-    # nobody is left to help, rather than refusing every line forever.
+    # An investigator down outside combat: told once that a companion's First Aid can help, then woken after a time
+    # skip (at once when nobody is left to help); a dying one waits for First Aid. Never refused forever.
     knocked_out = (unconscious_wake.decide(turn.state, turn.user_id)
                    if turn.turn_kind == "player_action" and turn.speaker_role == "player" else None)
     if knocked_out is not None:
@@ -231,7 +231,9 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
                             reason="knocked_out", model_requests_avoided=knocked_out == "wait")
         if knocked_out == "wait":
             turn_phases.note(route="gameplay_action", short_circuit="knocked_out")
-            return unconscious_wake.wait_reply(actor.name), [], []
+            await asyncio.to_thread(unconscious_wake.offer_first_aid, turn.conversation_id, actor.character_id,
+                                    timeline_id=turn.turn_timeline_id)
+            return unconscious_wake.wait_reply(actor), [], []
         await asyncio.to_thread(unconscious_wake.wake, turn.conversation_id, actor.character_id,
                                 timeline_id=turn.turn_timeline_id)
         turn.state = await asyncio.to_thread(state_transaction.refresh_snapshot, turn.state)
