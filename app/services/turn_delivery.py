@@ -151,7 +151,7 @@ class InteractionRef:
         if self.kind != "luck":
             # The roll command itself, which the reply's own check line always carries: the generic 「請使用檢定按鈕」
             # line repeated it on 79 of 100 replies (a 2026-10-11 run, three times in one).
-            return "/coc check" in narrative
+            return re.search(r"/coc check(?![A-Za-z])", narrative) is not None  # not /coc checkpoint
         if not any(marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
             return False
         # Only the number right after the verb is a claim (「擲出 60」, 「骰值為 60 點」); 「花費 6 點」 names a cost.

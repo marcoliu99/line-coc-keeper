@@ -531,3 +531,4 @@ def test_the_generic_roll_line_is_not_repeated_after_a_reply_that_gives_the_comm
     ref = turn_delivery.InteractionRef("check", "p1", "check-1", "t")
     assert ref.told_in("請按檢定按鈕或輸入 /coc check，擲 Mark 的偵查 檢定。")
     assert not ref.told_in("你俯身細看泥地上的痕跡。")
+    assert not ref.told_in("想回到上個存檔點，用 /coc checkpoint。")  # another command, not the roll
