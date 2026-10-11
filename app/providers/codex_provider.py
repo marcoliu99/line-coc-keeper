@@ -434,7 +434,25 @@ async def run_conversation(
             # touched no game state) may read the same thing again; it has not seen the first conversation's results.
             # Inside one conversation the same look-up is still refused, as is any repeated mutation or roll.
             reread = identity not in asked_here and not counts_against_tool_budget(name)
-            if identity in budget.attempted and not reread:
+            rerun = False
+            if identity in asked_here and not counts_against_tool_budget(name):
+                # The same look-up again in this conversation: it changes nothing, so it is not an internal error
+                # that ends the turn (a 2026-10-11 run, turn 76). Answered from the transcript while nothing has
+                # changed since; run again after a mutation, so the model reads the current sheet or battle. The
+                # iteration limit still bounds a model that keeps asking.
+                earlier_at = next((i for i in range(len(transcript) - 1, -1, -1) if transcript[i].get('role') == 'tool'
+                                   and json.dumps([transcript[i].get('name'), transcript[i].get('arguments')],
+                                                  sort_keys=True, ensure_ascii=False) == identity), None)
+                changed_since = earlier_at is not None and any(
+                    t.get('role') == 'tool' and counts_against_tool_budget(str(t.get('name', '')))
+                    for t in transcript[earlier_at + 1:])
+                if earlier_at is not None and not changed_since:
+                    observability.event('codex.tool.lookup_replayed', stage=response_stage, tool=name)
+                    transcript.append({'role': 'tool', 'name': name, 'arguments': arguments,
+                                       'result': transcript[earlier_at]['result'], 'replayed': True})
+                    continue
+                rerun = True
+            if identity in budget.attempted and not reread and not rerun:
                 # Same-state retries are unsafe even after a tool exception. The
                 # caller may have committed before raising; require a new action.
                 raise CodexError('codex_duplicate_tool_attempt')

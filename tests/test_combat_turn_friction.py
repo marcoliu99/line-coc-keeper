@@ -1129,3 +1129,40 @@ def test_a_close_but_different_creature_does_not_get_another_creatures_stat_bloc
                                 {"name": "幼體，深海夢魘", "aliases": []}]
     _save(state)
     assert not _tool("get_enemy_stat_block", {"name": "幼體（深海夢魘）"})["ok"], "two entries have these words: ambiguous"
+
+
+def test_the_defence_roll_tells_the_player_the_hit_the_damage_and_the_wound():
+    """Haunting 2026-10-11 rerun2 turn 41: Clara lost 9 of 12 HP to the dagger and read only that her counter had
+    missed. The blow, its damage and the major wound ride the line the player always reads."""
+    from app.domain.models import AgentMessage
+    _battle(claw_damage="8")  # 8 of 10 HP: a major wound
+    _enemy_turn([20])  # claw 50: Hard
+    outcome, _ = _player("/coc check 閃避", [95])  # the dodge fails; the blow lands
+    blow = outcome.resolved_event["combat_receipt"]["blow"]
+    assert "命中，調查員p1 受到 8 點傷害——重傷，還要過 CON 檢定" in blow, blow
+    assert blow in outcome.roll_line
+    msg = AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": outcome.resolved_event})
+    reply, _ = turn_delivery.finalize(msg, "你踉蹌後退。")
+    assert "已結算檢定：骰值 95，結果為「失敗」。⚔️ " + blow + "（戰鬥尚未結算）" in reply, reply
+    # The CON roll after a no-defence hit was shown the blow with the choice; its follow-up does not repeat it.
+    con_event = {**outcome.resolved_event, "combat_receipt": {**outcome.resolved_event["combat_receipt"], "blow_already_told": True}}
+    reply, _ = turn_delivery.finalize(AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": con_event}), "你撐住了。")
+    assert "⚔️" not in reply
+
+
+def test_the_wound_tail_says_what_a_heavy_blow_did():
+    from app.models import GroupState
+    from app.services import managed_checks
+    state = GroupState(group_id="g")
+    swing = {"action_id": "swing"}
+    assert managed_checks._wound_tail(state, swing, {"injury": {"dead": True, "unconscious": True}}) == "，當場死亡"
+    assert managed_checks._wound_tail(state, swing, {"injury": {"dying": True}}) == "，倒地瀕死"
+    assert managed_checks._wound_tail(state, swing, {"injury": {"unconscious": True}}) == "，倒地昏迷"
+    assert managed_checks._wound_tail(state, swing, {"injury": {}}) == ""
+    heavy = {"injury": {}, "major_wound_triggered": True}
+    assert managed_checks._wound_tail(state, swing, heavy) == "——重傷，還要過 CON 檢定"
+    # The autorolled CON check is stored under the blow's damage event; its result is told with the blow.
+    state.combat.actions["swing:damage:char:p1:injury-check"] = {"kind": "injury", "checks": {"injury": {"success": True}}}
+    assert managed_checks._wound_tail(state, swing, heavy) == "——重傷，CON 檢定過了，仍站得住"
+    state.combat.actions["swing:damage:char:p1:injury-check"]["checks"]["injury"]["success"] = False
+    assert managed_checks._wound_tail(state, swing, heavy) == "——重傷，CON 檢定失敗，昏迷倒地"
