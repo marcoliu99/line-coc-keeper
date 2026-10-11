@@ -480,7 +480,6 @@ def test_single_shot_uses_owned_ammo_once_and_preserves_persistent_weapon_mappin
 
 @pytest.mark.parametrize(('weapon', 'action_kind', 'distance'), [
     ('unknown alien weapon', 'melee', None),
-    ('.45 Automatic', 'single_shot', None),
     ('.45 Automatic', 'burst', 5),
 ])
 def test_unsupported_or_unsourced_action_needs_ruling_before_rng_or_ammo(battle, weapon, action_kind, distance):
@@ -492,6 +491,23 @@ def test_unsupported_or_unsourced_action_needs_ruling_before_rng_or_ammo(battle,
     assert battle.effective().weapons['.45 Automatic']['ammo'] == 7
     assert battle.load().characters_by_id['char:ada'].weapons['.45 Automatic']['ammo'] == 7
     assert not battle.load().pending_checks
+
+
+def test_a_players_shot_with_no_stated_distance_is_a_regular_roll_not_a_paused_fight(battle):
+    """A player who says only 「我開槍」 shoots inside the base range; the fight is not paused for a number
+    (Camp Sunny rerun2: five shots in a row stalled the table in NEEDS_RULING)."""
+    battle.start()
+    declared = battle.declare('shot:nodistance', weapon='.45 Automatic', action_kind='single_shot')
+    assert declared['ok'], declared
+    assert declared['phase'] != 'NEEDS_RULING'
+    assert battle.load().combat.actions['shot:nodistance']['difficulty'] == 'regular'
+
+
+def test_a_players_shot_still_uses_a_stated_distance(battle):
+    battle.start()
+    far = battle.declare('shot:far', weapon='.45 Automatic', action_kind='single_shot', distance_yards=60)
+    assert far['ok'], far
+    assert battle.load().combat.actions['shot:far']['difficulty'] != 'regular'
 
 
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
@@ -830,7 +846,8 @@ def test_source_ruling_keeps_owned_instance_key_through_real_tool_reload(battle)
     character.weapon_instances = {'owned:gun': {'definition_id': weapon.id}}
     group_state.save_state(state)
     battle.start()
-    assert battle.declare(weapon='owned:gun', action_kind='single_shot')['phase'] == 'NEEDS_RULING'
+    # A distance past the weapon's extreme range still needs the Keeper's ruling (a missing one no longer does).
+    assert battle.declare(weapon='owned:gun', action_kind='single_shot', distance_yards=1000)['phase'] == 'NEEDS_RULING'
     current = battle.load()
     action_id = next(k for k, a in current.combat.actions.items() if not a.get('completed'))
     resumed = battle.tool('resolve_combat_ruling', {

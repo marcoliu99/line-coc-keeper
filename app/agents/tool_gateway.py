@@ -102,7 +102,7 @@ def make_tool_executor(
         result = {"ok": False, "error": error, "message": message}
         facts.append(_describe_tool_call(tool_name, result))
         observability.event("llm.tool.rejected", tool_name=observability.tool_name(tool_name),
-                            status="blocked", error_type=error)
+                            status="blocked", error_type=error, message=message[:300])
         if check_status is not None and error == "required_scenario_evidence_missing":
             check_status["scenario_evidence_blocked"] = True
         return result
@@ -159,7 +159,12 @@ def make_tool_executor(
                             result = tool_dispatch.execute_tool(
                                 state, tool_name, tool_input, private_messages, image_requests, speaker_role
                             )
-                        observability.event("turn.observed", tool_name=tool_name,
+                        failed = not result.get("ok")
+                        # A failed call says why, so a soak log shows what stalled a fight (the rerun3 runs recorded
+                        # only that a tool "succeeded" as a call). Rule text, never a player's words.
+                        observability.event("turn.observed", tool_name=tool_name, ok=not failed,
+                                            error=str(result.get("error") or "")[:300] if failed else None,
+                                            phase=result.get("phase") if failed else None,
                                             dice_rolled=bool(result.get("ok") and (result.get("resolved") or result.get("pending_luck") or tool_name in {"roll_dice", "roll_weapon_damage", "roll_impaling_damage"})))
                         # Record before settlement, including late/cancelled awaiters.
                         facts.append(_describe_tool_call(tool_name, result))

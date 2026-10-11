@@ -252,6 +252,15 @@ def _base_range(state: GroupState, actor: combat.Combatant, weapon: combat_rules
     return combat_rules.base_range_for(weapon, character.str_ if character else None)
 
 
+def _shot_range(actor: combat.Combatant, distance: float | None, base_range: float | None) -> combat_rules.RangeResolution:
+    """The difficulty of a single shot. A player who did not say how far the target is shoots inside the base range
+    (a regular roll) rather than pausing the whole fight for a number only the Keeper could add; the Keeper may still
+    pass a distance when the scene makes the target far. An enemy's shot keeps the ruling: the Keeper runs it."""
+    if distance is None and actor.is_pc and base_range is not None and base_range > 0:
+        return combat_rules.RangeResolution('regular')
+    return combat_rules.resolve_range_difficulty(distance, base_range)
+
+
 _SAME_OBJECT = {'i.weapon.spear-thrown': 'i.weapon.spear'}  # two attack profiles of one physical weapon
 
 
@@ -400,7 +409,7 @@ def declare_action(
         return _ruling(state, action, damage.reason)
     difficulty = 'regular'
     if action_kind == 'single_shot':
-        range_result = combat_rules.resolve_range_difficulty(distance_yards, _base_range(state, actor, weapon))
+        range_result = _shot_range(actor, distance_yards, _base_range(state, actor, weapon))
         if range_result.difficulty is None:
             return _ruling(state, action, range_result.reason)
         difficulty = range_result.difficulty
@@ -1393,7 +1402,7 @@ def resolve_ruling(
         if action.get('checks') and action.get('skill') != evidence['skill']:
             return _ruling(state, action, 'Changed skill invalidates retained player result; explicit cancellation required')
         if weapon.attack_mode == 'single_shot':
-            range_result = combat_rules.resolve_range_difficulty(distance, _base_range(state, actor, weapon))
+            range_result = _shot_range(actor, distance, _base_range(state, actor, weapon))
             if range_result.difficulty is None:
                 return _ruling(state, action, range_result.reason)
             action['difficulty'] = range_result.difficulty

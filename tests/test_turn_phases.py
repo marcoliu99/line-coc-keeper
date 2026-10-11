@@ -427,3 +427,29 @@ async def test_a_supervised_turn_names_its_route_in_the_summary_line(events, cap
     await _supervised(make_state(), "player_action")
     lines = [r.getMessage() for r in caplog.records if r.name == "app.turn"]
     assert len(lines) == 1 and " route=gameplay_action " in lines[0] and lines[0].startswith("turn.summary ")
+
+
+@aio
+async def test_a_failed_tool_call_logs_why_it_failed(events) -> None:
+    """The rerun3 soak logs said only that a combat tool had run; the error that stalled the fight was not in them."""
+    reason = "Resolve the current action before declaring another"
+    results = iter([{"ok": False, "error": reason, "phase": "NEEDS_RULING"}, {"ok": True, "results": "x"}])
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: next(results)):
+        execute = tool_gateway.make_tool_executor(make_state(), [], [], "player", [], actor_id="a")
+        await execute("declare_combat_action", {"action_id": "a1"})
+        await execute("search_scenario", {"query": "q"})
+    failed, fine = named(events, "turn.observed")
+    assert (failed["ok"], failed["error"], failed["phase"]) == (False, reason, "NEEDS_RULING")
+    assert fine["ok"] is True and fine["error"] is None and fine["phase"] is None
+
+
+@aio
+async def test_a_gateway_rejection_logs_its_message(events) -> None:
+    state = make_state()
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):
+        execute = tool_gateway.make_tool_executor(state, [], [], "player", [], scenario_search_limit=1, actor_id="a")
+        await execute("search_scenario", {"query": "one"})
+        await execute("search_scenario", {"query": "two"})
+    [rejected] = named(events, "llm.tool.rejected")
+    assert rejected["error_type"] == "scenario_search_limit_reached" and "上限" in rejected["message"]
+

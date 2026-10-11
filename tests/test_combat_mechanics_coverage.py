@@ -187,11 +187,17 @@ def test_an_ordinary_hit_does_not_impale(battle):
     assert not receipt.get('impaling') and receipt['total'] == 4  # 1d10+2 with every die scripted to 2
 
 
-def test_a_shot_with_no_range_needs_a_ruling_before_any_ammo_is_spent(battle):
+def test_a_shot_beyond_any_range_needs_a_ruling_before_any_ammo_is_spent(battle):
     battle.start()
     with patch.object(dice, 'skill_check') as rng:
-        rejected = battle.declare('shot:3', weapon='.45 Automatic', action_kind='single_shot')
+        rejected = battle.declare('shot:3', weapon='.45 Automatic', action_kind='single_shot', distance_yards=1000)
     assert not rejected['ok'] and rng.call_count == 0 and battle.effective().weapons['.45 Automatic']['ammo'] == 7
+
+
+def test_a_shot_with_no_stated_range_is_not_a_ruling(battle):
+    battle.start()
+    declared = battle.declare('shot:4', weapon='.45 Automatic', action_kind='single_shot')
+    assert declared['ok'] and declared['phase'] != 'NEEDS_RULING'
 
 
 # --- 8 major wound ---------------------------------------------------------------------------------------
