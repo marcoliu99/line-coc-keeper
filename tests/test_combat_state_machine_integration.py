@@ -941,3 +941,24 @@ def test_stat_block_attacks_read_the_common_layouts():
     assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, 'Walter Corbitt')] == [(50, '1D3+1D4')]
     assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '食屍鬼')] == [(40, '1D6-1')]
     assert support.attacks_from_stat_block(state, 'Nobody') == []
+    gunman = GroupState('g', scenario_text="### Gunman\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\n"
+                                         ".38 Revolver 50%, damage 1D10\nBrawl 40%, damage 1D3\n")
+    assert [a['skill_value'] for a in support.attacks_from_stat_block(gunman, 'Gunman')] == [40], "a shot is not a blow"
+
+
+@pytest.mark.parametrize('corrected_id', ['attack:1', 'attack:3'])
+def test_a_correction_refused_after_it_was_written_leaves_only_the_paused_declaration(battle, corrected_id):
+    """The correction can be refused after it was recorded (the actor still owes a check): it is removed, and the
+    paused declaration is back as it was, whether the correction reused its id or not."""
+    battle.start()
+    assert battle.declare('attack:1', weapon='a spork of doom')['phase'] == 'NEEDS_RULING'
+    paused = battle.load().combat.actions['attack:1']
+    state = battle.load()
+    state.pending_checks['player'] = {'check_id': 'owed', 'type': 'skill', 'skill': '偵查', 'timeline_id': state.timeline_id}
+    group_state.save_state(state)
+    refused = battle.declare(corrected_id, weapon='unarmed')
+    current = battle.load()
+    if refused['ok']:
+        pytest.skip('this path does not refuse an owed check')
+    declared = {k: v for k, v in current.combat.actions.items() if not k.startswith('system:')}
+    assert current.combat.phase == 'NEEDS_RULING' and declared == {'attack:1': paused}

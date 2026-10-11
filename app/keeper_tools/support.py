@@ -351,14 +351,17 @@ _BLOCK_ATTACK = re.compile(
 )
 _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
+# Read as a blow, a shot would be fought back against and spend no ammunition: only melee attacks are taken this way.
+_RANGED = re.compile(r"pistol|revolver|rifle|shotgun|handgun|carbine|smg|gun|firearm|bow|throw|"
+                     r"手槍|步槍|霰彈|左輪|衝鋒槍|槍|射擊|弓|弩|投擲", re.IGNORECASE)
 # 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
 _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
                                re.IGNORECASE)
 
 
 def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]]:
-    """The attacks this enemy's stat block writes out as a skill value and damage, ready to register; [] when the
-    scenario gives it no block or the block states no attack that way.
+    """The melee attacks this enemy's stat block writes out as a skill value and damage, ready to register; [] when the
+    scenario gives it no block or the block states no such attack.
 
     An enemy registered without them can only give up its turns: Billy (Fighting 70%, damage 8D6) never struck in a
     2026-10-12 soak run. The values are the scenario's own, so nothing is guessed: a damage bonus written as DB is
@@ -373,7 +376,7 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     attacks: list[dict[str, Any]] = []
     for match in _BLOCK_ATTACK.finditer(block):
         label = match.group("label").strip()
-        if _NOT_AN_ATTACK.match(label):
+        if _NOT_AN_ATTACK.match(label) or _RANGED.search(label):
             continue
         damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
         if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
