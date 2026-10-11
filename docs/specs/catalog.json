@@ -2834,6 +2834,20 @@
       "path": "docs/specs/enhancement/enemy_down_auto_settle_and_fixed_reply_design_spec.md",
       "zh_path": "docs/specs/enhancement/enemy_down_auto_settle_and_fixed_reply_design_spec_zh.md",
       "source_revision": "25b6d13fce478ec6b31e0a01be28f54ce5613658"
+    },
+    {
+      "title": "An attack the engine settles on the spot is told in one line",
+      "zh": "引擎當場結算的攻擊，一行固定句說出結果",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_delivery.py",
+        "app/agents/executor.py",
+        "tests/test_settled_attack_tells_the_blow.py"
+      ],
+      "path": "docs/specs/bug/settled_attack_tells_the_blow_design_spec.md",
+      "zh_path": "docs/specs/bug/settled_attack_tells_the_blow_design_spec_zh.md",
+      "source_revision": "c85efbd43529ad9dc8eb8d407dc57bf7f8f53221"
     }
   ]
 }

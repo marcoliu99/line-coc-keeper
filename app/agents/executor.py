@@ -86,6 +86,13 @@ def _passed_the_turn(tool_events: list[dict]) -> bool:
                and e.get("gameplay_before") != e.get("gameplay_after") for e in tool_events)
 
 
+def _attack_settled(tool_events: list[dict]) -> bool:
+    """An attack this turn was settled by the engine in the call that declared it (its receipt carries the result),
+    which a deferral cannot cover: the blow landed or missed, and the player is owed that, not 「尚未揮出」."""
+    return any(e["name"] in {"declare_combat_action", "run_combat_action"} and e["result"].get("ok")
+               and e["result"].get("completed") and "hit" in (e["result"].get("result") or {}) for e in tool_events)
+
+
 def _combat_opened(state, tool_events: list[dict]) -> bool:
     """A call this turn took the battle from inactive to active (whichever tool did it), and it is still active."""
     return bool(state.combat.active) and any(
@@ -295,6 +302,13 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             'instruction': '剛才的劇本查詢已有結果，而且沒有改動任何狀態。依查到的內容處理玩家這次的行動：'
                                 '需要機制就呼叫對應的工具；不需要機制就交回 no_mechanics 並引用查到的段落。'
                                 '只有查到的內容確實與這次行動無關時才保留 incomplete，並說明缺的是什麼。',
+                        }
+                    if verified.validation_code == 'deferral_not_verified' and _attack_settled(tool_events):
+                        return {
+                            'validation_code': 'attack_settled_not_deferred', 'reason': verified.reason,
+                            'instruction': '你這回合宣告的攻擊已經由引擎結算了（工具結果裡有命中與傷害），那是已提交的變更，'
+                                '不能再交回 deferred。改交 resolved 並引用那次 declare_combat_action；敘事先說這一擊的結果'
+                                '（命中或落空、造成多少傷害），再說接著輪到誰。',
                         }
                     if verified.validation_code == 'deferral_not_verified' and _passed_the_turn(tool_events):
                         return {

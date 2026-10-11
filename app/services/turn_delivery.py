@@ -79,6 +79,11 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                     else f"{result.get('investigator')} 不再{result['tag']}。")
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
+        elif (name in {"declare_combat_action", "run_combat_action"} and result.get("completed")
+                and isinstance(result.get("result"), dict) and "hit" in result["result"]):
+            # The attack the engine settled in this call (autoroll, or a defence the engine rolled): one line the
+            # player always reads. A 2026-10-11 run told a player 「你的回合尚未到來」 on the shot that killed the enemy.
+            text = _attack_line(result["result"])
         elif name in {"start_combat", "initialize_combat", "end_combat", "advance_combat_turn", "add_npc_to_combat", "declare_combat_action", "run_combat_action", "run_enemy_combat_plan", "submit_combat_choice", "preview_combat_settlement", "confirm_combat_settlement", "rollback_combat", "correct_combat_event", "reconcile_combat_baseline", "change_combat_initiative", "declare_combat_effect", "run_combat_effect", "stop_combat_effect", "resolve_combat_ruling", "reconcile_combat_correction", "process_postcombat_obligations", "stabilize_investigator", "request_stabilization_check"}:
             # Nothing public: the narration tells the fight, and a fixed 「戰鬥機制操作已記錄」 line read as engine noise
             # after every combat turn (the Haunting runs, 2026-10-09). Enemy sheets stay out of a generic dump too.
@@ -96,6 +101,20 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                 and record.get("verification_status") == "verified" else "")
     return ObservedOutcome(f"tool:{number}", name, bool(result.get("ok")), text,
                            "public" if text else "internal", fact_ref=fact_ref)
+
+
+def _attack_line(outcome: dict[str, Any]) -> str:
+    """What a settled attack did, in the table's words: whether it landed, on whom, for how much, and whether they fell."""
+    if outcome.get("malfunction"):
+        return "⚔️ 武器故障，這一擊沒有打出去。"
+    if not outcome.get("hit"):
+        return "⚔️ 這一擊沒有命中。"
+    damage = outcome.get("damage") or {}
+    target, final = damage.get("target", "目標"), damage.get("final_damage", 0)
+    if damage.get("armor_label") and not final:
+        return f"⚔️ 命中，但傷害全被 {target} 的護甲擋下。"
+    landed = "對方反擊得手" if outcome.get("opposed") == "defender_wins" else "命中"
+    return f"⚔️ {landed}，{target} 受到 {final} 點傷害{'，倒下了' if damage.get('defeated') else ''}。"
 
 
 _ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|(?:原始)?骰值)\s*(?:是|為|[:：])?\s*(\d{1,3})(?!\d)")
