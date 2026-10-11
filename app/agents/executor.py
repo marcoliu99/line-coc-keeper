@@ -89,7 +89,7 @@ def _passed_the_turn(tool_events: list[dict]) -> bool:
 def _attack_settled(tool_events: list[dict]) -> bool:
     """An attack this turn was settled by the engine in the call that declared it (its receipt carries the result),
     which a deferral cannot cover: the blow landed or missed, and the player is owed that, not 「尚未揮出」."""
-    return any(e["name"] in {"declare_combat_action", "run_combat_action"} and e["result"].get("ok")
+    return any(e["name"] in {"declare_combat_action", "run_combat_action", "submit_combat_choice"} and e["result"].get("ok")
                and e["result"].get("completed") and "hit" in (e["result"].get("result") or {}) for e in tool_events)
 
 

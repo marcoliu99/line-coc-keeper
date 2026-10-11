@@ -12,7 +12,7 @@ The Lightless Beacon 2026-10-11 fresh5（autoroll 開）：第 39 回合 Thomas 
 
 ## 變更
 
-- **結算的攻擊有一行固定句。** `declare_combat_action` 或 `run_combat_action` 回傳 `completed` 且 `result` 帶 `hit` 時，觀察到的結果是公開的：「⚔️ 命中，幼體（深海夢魘） 受到 9 點傷害，倒下了。」、「⚔️ 這一擊沒有命中。」、「⚔️ 命中，但傷害全被 … 的護甲擋下。」、「⚔️ 對方反擊得手，Celia 受到 2 點傷害。」或「⚔️ 武器故障，這一擊沒有打出去。」；暫定標記跟其他戰鬥結果一樣接在後面。還在等玩家擲骰的攻擊照舊不說，擲骰回覆會講。
+- **結算的攻擊有一行固定句。** `declare_combat_action`、`run_combat_action` 或 `submit_combat_choice` 回傳 `completed` 且 `result` 帶 `hit` 時，觀察到的結果是公開的：「⚔️ 命中，幼體（深海夢魘） 受到 9 點傷害，倒下了。」、「⚔️ 這一擊沒有命中。」、「⚔️ 命中，但傷害全被 … 的護甲擋下。」（命中但 0 傷害；敵人的護甲欄位是私密的）、「⚔️ 對方反擊得手，Celia 受到 2 點傷害。」或「⚔️ 武器故障，這一擊沒有打出去。」；暫定標記跟其他戰鬥結果一樣接在後面。還在等玩家擲骰的攻擊照舊不說，擲骰回覆會講。
 - **攻擊已結算還交 deferral，重試直接給答案。** `final_feedback` 新增 `attack_settled_not_deferred`：攻擊是已提交的變更，改交 `resolved` 並引用那次宣告，敘事先說這一擊再說輪到誰。
 
 ## 不變更

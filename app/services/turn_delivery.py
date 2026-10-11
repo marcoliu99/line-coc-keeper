@@ -79,7 +79,7 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                     else f"{result.get('investigator')} 不再{result['tag']}。")
         elif name == "clear_pending_check" and result.get("cleared"):
             text = f"{result.get('investigator', '調查員')} 尚未擲骰的檢定已取消。"
-        elif (name in {"declare_combat_action", "run_combat_action"} and result.get("completed")
+        elif (name in {"declare_combat_action", "run_combat_action", "submit_combat_choice"} and result.get("completed")
                 and isinstance(result.get("result"), dict) and "hit" in result["result"]):
             # The attack the engine settled in this call (autoroll, or a defence the engine rolled): one line the
             # player always reads. A 2026-10-11 run told a player 「你的回合尚未到來」 on the shot that killed the enemy.
@@ -111,7 +111,8 @@ def _attack_line(outcome: dict[str, Any]) -> str:
         return "⚔️ 這一擊沒有命中。"
     damage = outcome.get("damage") or {}
     target, final = damage.get("target", "目標"), damage.get("final_damage", 0)
-    if damage.get("armor_label") and not final:
+    if not final:
+        # A hit that did nothing was absorbed: the enemy's armour fields are kept private, so the zero says it.
         return f"⚔️ 命中，但傷害全被 {target} 的護甲擋下。"
     landed = "對方反擊得手" if outcome.get("opposed") == "defender_wins" else "命中"
     return f"⚔️ {landed}，{target} 受到 {final} 點傷害{'，倒下了' if damage.get('defeated') else ''}。"

@@ -26,9 +26,12 @@ class SettledAttackLineTests(unittest.TestCase):
 
     def test_a_miss_armor_counter_and_malfunction_are_said_as_such(self):
         self.assertIn("沒有命中", turn_delivery.observe_tool("declare_combat_action", _receipt(hit=False, opposed="both_miss"), 1).public_text)
-        armored = turn_delivery.observe_tool("run_combat_action", _receipt(
-            hit=True, damage={"target": "幼體", "final_damage": 0, "armor_label": "鱗片", "armor_reduction": 3}), 1)
+        # An enemy's armour fields are private and stripped before delivery: the zero damage alone says it was absorbed.
+        armored = turn_delivery.observe_tool("run_combat_action", _receipt(hit=True, damage={"target": "幼體", "final_damage": 0}), 1)
         self.assertIn("全被 幼體 的護甲擋下", armored.public_text)
+        chosen = turn_delivery.observe_tool("submit_combat_choice", _receipt(
+            hit=True, opposed="attacker_wins", damage={"target": "Celia", "final_damage": 2}), 1)
+        self.assertIn("Celia 受到 2 點傷害", chosen.public_text, "a choice that settled the attack tells it too")
         counter = turn_delivery.observe_tool("declare_combat_action", _receipt(
             hit=True, opposed="defender_wins", damage={"target": "Celia", "final_damage": 2}), 1)
         self.assertIn("對方反擊得手，Celia 受到 2 點傷害", counter.public_text)
@@ -46,6 +49,8 @@ class DeferralOverASettledAttackTests(unittest.TestCase):
         self.assertTrue(executor._attack_settled([settled]))
         self.assertFalse(executor._attack_settled([{"name": "declare_combat_action", "result": {"ok": True, "completed": False}}]))
         self.assertFalse(executor._attack_settled([{"name": "search_scenario", "result": {"ok": True}}]))
+        chosen = {"name": "submit_combat_choice", "result": _receipt(hit=False, opposed="both_miss")}
+        self.assertTrue(executor._attack_settled([chosen]))
 
 
 if __name__ == "__main__":
