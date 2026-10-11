@@ -40,6 +40,10 @@ from app.models import (
     SpecialAbility,
 )
 
+# A gun or a bow named in a skill or an attack, Chinese or English; whole words, so 「Elbow」 and 「長槍」 stay blows.
+SHOOTING_NAME = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|火槍|槍械|左輪|弓|弩|\b(?:firearms?|guns?|handgun|pistol|revolver|'
+                           r'rifle|carbine|musket|shotgun|smg|submachine|machine gun|(?:long|short|cross)?bow)\b', re.IGNORECASE)
+
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()

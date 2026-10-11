@@ -352,9 +352,9 @@ _BLOCK_ATTACK = re.compile(
 )
 _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
-# Read as a blow, a shot would be fought back against and spend no ammunition: only melee attacks are taken this way.
-_RANGED = re.compile(r"pistol|revolver|rifle|shotgun|musket|handgun|carbine|smg|gun|firearm|bow|throw|"
-                     r"手槍|步槍|霰彈|左輪|衝鋒槍|槍|射擊|弓|弩|投擲", re.IGNORECASE)
+# Read as a blow, a shot or a throw would be fought back against and spend no ammunition: only melee attacks are taken
+# this way (guns and bows are combat.SHOOTING_NAME).
+_THROWN = re.compile(r"投擲|\bthrow(?:n|ing)?\b", re.IGNORECASE)
 # 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
 _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
                                re.IGNORECASE)
@@ -377,7 +377,7 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     attacks: list[dict[str, Any]] = []
     for match in _BLOCK_ATTACK.finditer(block):
         label = match.group("label").strip()
-        if _NOT_AN_ATTACK.match(label) or _RANGED.search(label):
+        if _NOT_AN_ATTACK.match(label) or combat.SHOOTING_NAME.search(label) or _THROWN.search(label):
             continue
         if block[match.end():match.end() + 4].lstrip().startswith("/"):
             continue  # 「1D6 + 1/2 DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -943,8 +944,9 @@ def test_stat_block_attacks_read_the_common_layouts():
     assert support.attacks_from_stat_block(state, 'Nobody') == []
     gunman = GroupState('g', scenario_text="### Gunman\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\n"
                                          ".38 Revolver 50%, damage 1D10\nMusket 45%, damage 1D10+4\n"
-                                         "Brawl 40%, damage 1D3\n")
-    assert [a['skill_value'] for a in support.attacks_from_stat_block(gunman, 'Gunman')] == [40], "a shot is not a blow"
+                                         "Brawl 40%, damage 1D3\nElbow 30%, damage 1D4\n長槍 35%，傷害 1D8\n")
+    assert [a['skill_value'] for a in support.attacks_from_stat_block(gunman, 'Gunman')] == [40, 30, 35], \
+        "a shot is not a blow; 「Elbow」 and 「長槍」 are"
     beast = GroupState('g', scenario_text="### Beast\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10 DB: +1D4\n"
                                         "Fighting (Brawl) 50% (25/10), damage 1D3\nBite 40%, damage 1D6 + 1/2 DB\n")
     assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(beast, 'Beast')] == [(50, '1D3')], \
@@ -969,3 +971,18 @@ def test_a_correction_refused_after_it_was_written_leaves_only_the_paused_declar
     declared = {k: v for k, v in current.combat.actions.items() if not k.startswith('system:')}
     assert current.combat.phase == 'NEEDS_RULING' and declared == {'attack:1': paused}
     assert current.combat.events == before.combat.events and current.combat.roll_receipts == before.combat.roll_receipts
+
+
+def test_a_correction_that_only_replays_a_finished_action_keeps_the_ruling(battle):
+    """A correction reusing an earlier finished action's id only replays that receipt; it did not take the paused
+    declaration's place, so the ruling stands."""
+    battle.start()
+    assert battle.declare('attack:1', weapon='a spork of doom')['phase'] == 'NEEDS_RULING'
+    state = battle.load()
+    paused = deepcopy(state.combat.actions['attack:1'])
+    state.combat.actions['attack:0'] = {**paused, 'action_id': 'attack:0', 'weapon_reference': 'unarmed',
+                                        'needs_ruling': False, 'completed': True, 'receipt': {'ok': True}}
+    group_state.save_state(state)
+    assert battle.declare('attack:0', weapon='unarmed')['ok']
+    current = battle.load()
+    assert current.combat.phase == 'NEEDS_RULING' and current.combat.actions['attack:1'] == paused

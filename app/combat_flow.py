@@ -382,9 +382,12 @@ def declare_action(
         state, action_id=action_id, actor_id=actor_id, target_id=target_id, weapon_reference=weapon_reference,
         action_kind=action_kind, distance_yards=distance_yards, scenario_definitions=scenario_definitions,
         weapon_instance=weapon_instance)
-    if withdrawn is not None and before is not None and not result.get('ok') and state.combat.phase != 'NEEDS_RULING':
-        # The correction was itself refused before it took the paused one's place (a bad target, a check someone
-        # still owes): the whole battle goes back as it was, events and rolls included, and the ruling stands.
+    if withdrawn is not None and before is not None and not (
+            state.combat.phase == 'NEEDS_RULING'
+            or (result.get('ok') and (action_id == withdrawn['action_id'] or action_id not in before.actions))):
+        # The correction did not take the paused one's place: it was refused (a bad target, a check someone still
+        # owes), or its id was an earlier finished action's and only replayed that receipt. The whole battle goes
+        # back as it was, events and rolls included, and the ruling stands.
         for item in fields(before):
             setattr(state.combat, item.name, getattr(before, item.name))
     return result
@@ -1038,10 +1041,6 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     return run_action(state, identity)
 
 
-_SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|火槍|槍械|左輪|弓|弩|\b(?:firearms?|guns?|handgun|pistol|revolver|'
-                       r'rifle|carbine|musket|shotgun|smg|submachine|machine gun|(?:long|short|cross)?bow)\b', re.IGNORECASE)
-
-
 _FIGHTING = re.compile(r'格鬥|鬥毆|\b(?:fighting|brawl)\b', re.IGNORECASE)
 
 
@@ -1052,7 +1051,7 @@ def _shoots(attack: AttackRule) -> bool:
         return True
     if _FIGHTING.search(attack.skill_name or ''):
         return False
-    return bool(_SHOOTING.search(f'{attack.skill_name} {attack.label}'))
+    return bool(combat.SHOOTING_NAME.search(f'{attack.skill_name} {attack.label}'))
 
 
 def _give_up_unplayable_enemy_turns(
