@@ -54,6 +54,9 @@ class PassedTheTurnTests(unittest.TestCase):
         self.assertFalse(executor._passed_the_turn([_event("advance_combat_turn", ok=False)]))
         self.assertFalse(executor._passed_the_turn([_event("advance_combat_turn", changed=False)]))
         self.assertFalse(executor._passed_the_turn([_event("skill_check")]))
+        held = _event("advance_combat_turn")
+        held["result"]["pending"] = True  # held at a due check: the turn did not move on
+        self.assertFalse(executor._passed_the_turn([held]))
         self.assertFalse(executor._passed_the_turn([]))
 
 

@@ -81,8 +81,8 @@ def _gave_up_with_evidence(tool_events: list[dict]) -> bool:
 
 def _passed_the_turn(tool_events: list[dict]) -> bool:
     """A call this turn really ended a combat turn (``advance_combat_turn`` changed the battle), which is a committed
-    change a deferral cannot cover."""
-    return any(e["name"] == "advance_combat_turn" and e["result"].get("ok")
+    change a deferral cannot cover. An advance held at a pending check (``pending``) did not move the turn on."""
+    return any(e["name"] == "advance_combat_turn" and e["result"].get("ok") and not e["result"].get("pending")
                and e.get("gameplay_before") != e.get("gameplay_after") for e in tool_events)
 
 

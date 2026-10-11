@@ -15,7 +15,7 @@ Two things from the 2026-10-11 soak runs were still reaching players.
 ## Change
 
 - **The decision object is removed from the reply before anything else reads it.** A new first reply step, `scrub_leaks`, drops any JSON object that contains a `"disposition"` key from the draft text, together with a code fence it leaves empty, and tidies the blank lines. Only objects with that key are removed, found anywhere in the text (before, between or after the narration); other braces, code and JSON are untouched. It runs before the consistency repair so no later step has to see it, and it is registered in the pipeline's order rules.
-- **The retry says what to do.** When the Keeper has passed the turn (an `advance_combat_turn` that changed the game) and then answers `deferred`, the one final retry says: the advance is committed, answer `resolved_without_check` citing it, and narrate that this player has finished the round (not repeating their attack) and who is up next.
+- **The retry says what to do.** When the Keeper has passed the turn (an `advance_combat_turn` that changed the game and is not held at a pending check) and then answers `deferred`, the one final retry says: the advance is committed, answer `resolved_without_check` citing it, and narrate that this player has finished the round (not repeating their attack) and who is up next.
 - **The refusal says it too.** The message returned when a declaration is refused for an already-completed turn now names the next step (advance with a new event id) and how to report it (`resolved_without_check`, not `deferred`).
 
 ## Not changing
