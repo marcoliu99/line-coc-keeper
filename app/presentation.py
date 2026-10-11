@@ -194,14 +194,21 @@ def strip_junk_tail(text: str) -> str:
     if (stray := _STRAY_WORD.search(kept)) and stray.start() in unmatched:
         kept = kept[:stray.start() + 1]
     cut = False
-    while kept and (kept[-1] in "\"”" or kept[-1].isspace() or len(kept) - 1 in unmatched):
+    while kept and (kept[-1].isspace() or len(kept) - 1 in unmatched or _dangling_quote(kept)):
         cut = cut or len(kept) - 1 in unmatched
         kept = kept[:-1]
     if not cut:
         return text
-    if kept.endswith("」") and kept.count("」") > kept.count("「"):
-        kept = kept[:-1].rstrip()
-    return kept
+    return kept.rstrip()
+
+
+def _dangling_quote(text: str) -> bool:
+    """``text`` ends in a closing quote that nothing in it opened (the wrapper's, not the narration's)."""
+    last = text[-1]
+    if last == '"':
+        return text.count('"') % 2 == 1
+    pairs = {"”": "“", "」": "「"}
+    return last in pairs and text.count(last) > text.count(pairs[last])
 
 
 def player_text(text: str) -> str:

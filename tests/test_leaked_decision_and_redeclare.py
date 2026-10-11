@@ -61,6 +61,8 @@ class JunkTailTests(unittest.TestCase):
 
     def test_a_quote_the_narration_opened_stays_with_its_text(self):
         self.assertEqual(presentation.strip_junk_tail("他低聲說：「走吧。」}}"), "他低聲說：「走吧。」")
+        self.assertEqual(presentation.strip_junk_tail("He said, “Go.”}}"), "He said, “Go.”")
+        self.assertEqual(presentation.strip_junk_tail('He said, "Go."}}'), 'He said, "Go."')
 
     def test_balanced_braces_and_ordinary_endings_are_left_alone(self):
         for text in ("他寫下 {not json} 在牆上。", '{"name":"Alan","hp":13}', "沒有任何大括號。", "她說：「跟我來。」",
