@@ -69,6 +69,15 @@ class LuckPromptTests(unittest.TestCase):
         button = turn_delivery.DeliveryEnvelope("o", "public", "", "請按 Luck 按鈕決定是否花費 Luck。", interactions=[ref])
         self.assertEqual(button.projected_text(), "")
 
+    def test_a_narration_that_states_another_roll_keeps_the_line_with_the_real_one(self):
+        six = turn_delivery.InteractionRef("luck", "p1", "d1", "t1", roll=6)
+        wrong = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 60，可用 /coc luck skip。", interactions=[six])
+        self.assertIn("骰值 6 還在等", wrong.projected_text())
+        right = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 6，可用 /coc luck skip。", interactions=[six])
+        self.assertEqual(right.projected_text(), "")
+        cost = turn_delivery.DeliveryEnvelope("o", "public", "", "/coc luck extreme（花費 6 點）或 /coc luck skip", interactions=[six])
+        self.assertEqual(cost.projected_text(), "", "a cost is not a claimed roll")
+
     def test_a_reply_that_lists_only_costs_still_gets_the_line(self):
         """Costs without the way to keep the roll leave the player without the plain option, so the line stays."""
         six = turn_delivery.InteractionRef("luck", "p1", "d1", "t1", roll=6)

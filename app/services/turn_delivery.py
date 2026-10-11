@@ -98,6 +98,9 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                            "public" if text else "internal", fact_ref=fact_ref)
 
 
+_ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|骰值(?:是|為)?)\s*(\d{1,3})(?!\d)(?!\s*點)")
+
+
 @dataclass(frozen=True)
 class InteractionRef:
     kind: str
@@ -120,10 +123,14 @@ class InteractionRef:
 
         What a player needs is the way to decide: the keep command or the button. The narration seldom repeats the
         roll itself, and a test for it left this line on 82 of 400 replies in the 2026-10-11 runs, each already
-        carrying the command (the rerun8 run read the same offer three times in one reply).
+        carrying the command (the rerun8 run read the same offer three times in one reply). A narration that states a
+        roll other than the real one keeps the line, which is the only text here that carries the engine's number.
         """
-        return self.kind == "luck" and any(
-            marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕"))
+        if self.kind != "luck" or not any(
+                marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
+            return False
+        # A cost is not a roll: 「擲出 60，可用…」 claims a roll, 「花費 6 點」 does not.
+        return self.roll is None or all(int(n) == self.roll for n in _ROLL_CLAIM.findall(narrative))
 
 
 @dataclass
