@@ -388,10 +388,11 @@ _HANDLERS: dict[type, Handler] = {
 }
 
 
-# The fight's own steps that can leave the last investigator down: an attack, a defence, a turn moving, an effect.
-# A Keeper's direct HP adjustment or damage is not among them: it may still be reviewed or corrected before settling.
+# The fight's own steps that can leave a side down: an attack, a defence, a turn moving, an effect (an incident
+# effect runs as it is declared). A Keeper's direct HP adjustment or damage is not among them: it settles nothing by
+# itself and may be reviewed or corrected; the fight's next completed step settles what it then finds.
 _CAN_END_THE_FIGHT = (act.CheckResult, act.Choose, act.Advance, act.Run, act.RunEnemyPlan, act.ResolveEnemy,
-                      act.Declare, act.Rule, act.RunEffect)
+                      act.Declare, act.Rule, act.RunEffect, act.DeclareEffect)
 PARTY_DOWN_REASON = "所有調查員都已倒下，戰鬥自動結算"
 ENEMY_DOWN_REASON = "敵方已全數倒下，戰鬥自動結算"
 
