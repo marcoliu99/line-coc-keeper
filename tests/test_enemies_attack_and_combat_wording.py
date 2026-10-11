@@ -3,6 +3,7 @@ settled, the battle's bookkeeping shown to players, and an empty gun refused wit
 from __future__ import annotations
 
 from app import combat
+from app.agents import executor
 from app.domain.models import MechanicResult, ObservedOutcome, StateDelta
 from app.models import Character, Combatant, CombatState, GroupState
 from app.services import prompt_config, turn_delivery, turn_fallback
@@ -89,3 +90,19 @@ def test_the_actor_is_told_which_gun_is_empty():
     text = turn_fallback.combat_guidance(_empty_gun_battle(0), "unsupported_action", "legacy-user:p2")
     assert ".38 Revolver 已經沒有子彈" in text and "「深潛者混血」" in text
     assert "沒有子彈" not in turn_fallback.combat_guidance(_empty_gun_battle(3), "unsupported_action", "legacy-user:p2")
+
+
+def test_a_replayed_attack_never_reaches_the_attack_fact_block():
+    """The Executor silences an attack call that changed nothing (a stored receipt replayed for a reused id) before
+    the narrator's facts are built from the same outcomes."""
+    receipt = {"ok": True, "completed": True, "result": {"hit": True, "damage": {"target": "Corbitt", "final_damage": 3}}}
+    observed = [turn_delivery.observe_tool("run_combat_action", receipt, 1)]
+    executor._silence_replayed_attack(observed, "run_combat_action", {"v": 1}, {"v": 1})
+    assert "本回合已結算的攻擊" not in _facts(*observed)
+
+
+def test_the_resolved_roll_follow_up_tells_an_enemy_turn_spent_on_a_told_ability():
+    step = prompt_config._combat_turn_step({"combat_id": "c", "auto_advanced": {
+        "next_actor": "Mark", "round_now": 2, "phase": "READY",
+        "enemy_turns": [{"ok": True, "phase": "READY", "narration": "Corbitt 的目光鎖住了你。"}]}})
+    assert "敵人這一輪沒有攻擊，而是：Corbitt 的目光鎖住了你。" in step

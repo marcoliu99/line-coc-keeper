@@ -402,8 +402,10 @@ def _combat_turn_step(receipt: dict) -> str:
         names = "、".join(str(g.get("name")) for g in advanced.get("skipped_enemy_turns") or ())
         given_up = (f"；{names} 沒有可用的攻擊，引擎已讓出它的回合（不要敘事它出手）：劇本若寫了它的攻擊，"
                     "用 initialize_combat 以同一個名字附上攻擊再登記一次，它下一輪就會出手" if names else "")
+        told = "".join(f"；敵人這一輪沒有攻擊，而是：{t['narration']}（照這個敘事，不要寫成出手攻擊）"
+                       for t in advanced.get("enemy_turns") or () if isinstance(t, dict) and t.get("narration"))
         return (f"\n【戰鬥下一步】這個行動結束後引擎已自動推進：現在輪到 {advanced.get('next_actor', '下一位')}"
-                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}{given_up}。剛結束的行動不要再呼叫 advance_combat_turn；"
+                f"（第 {advanced.get('round_now')} 輪）{waiting}{stuck}{given_up}{told}。剛結束的行動不要再呼叫 advance_combat_turn；"
                 "敘事要包含剛結算的結果，以及（若有）敵人接著的攻擊。")
     if receipt.get("auto_advance_error"):
         return (f"\n【戰鬥下一步】這個行動已結束，但引擎無法自動推進（{receipt['auto_advance_error']}）："

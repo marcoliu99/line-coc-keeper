@@ -16,7 +16,7 @@ From the 2026-10-11 soak runs:
 
 ## Change
 
-- **An ability the engine only tells is told once.** When planning, an ability already given up this combat by the same enemy is passed over if the enemy has an attack that can reach; the enemy attacks. An enemy with no attack still uses it. The auto-advance summary of an enemy turn carries the given-up ability's narration.
+- **An ability the engine only tells is told once.** When planning, an ability already given up this combat by the same enemy is passed over if the enemy has an attack that can reach; the enemy attacks. An enemy with no attack still uses it. The auto-advance summary of an enemy turn carries the given-up ability's narration, and the resolved-roll follow-up tells the narrator that the enemy did that instead of attacking.
 - **The narrator gets the blow as a fact.** `build_mechanic_facts_block` adds 「【本回合已結算的攻擊：已經發生】」 with each public settled-attack line from `declare_combat_action` / `run_combat_action` / `submit_combat_choice` this turn (a replay is already silenced to internal) and: write the blow first, then who is next; never write it as not yet struck.
 - **No bookkeeping in player text.** `observe_tool` no longer appends the provisional mark; `finalize` no longer adds 「（戰鬥尚未結算）」 to the blow; combat roll lines drop the status suffix (the Keeper message keeps it). Status sheets still show provisional HP.
 - **The empty gun is named.** When the asking player is the current actor, the combat guidance adds 「.38 Revolver 已經沒有子彈，可以改用徒手或其他武器。」 for each of their guns at 0 rounds in the battle's working resources.
