@@ -37,6 +37,7 @@ def match_choice_option(options: list[dict], wanted: str | None) -> dict | None:
 # dice.TIER_ZH, and had silently drifted from app/discord_bot.py's copy on
 # "regular" ("成功" vs "一般成功"). Now a plain alias to the single source.
 CHECK_TIER_ZH = dice.TIER_ZH
+_DIFFICULTY_ZH = {"regular": "一般", "hard": "困難", "extreme": "極難"}
 
 NATURAL_1_BONUS_PROMPT = (
     "【大成功額外獎勵】\n"
@@ -68,6 +69,20 @@ def tier_zh_for_tier(tier: str, required: str) -> str:
 
 def tier_zh_for_result(r) -> str:
     return tier_zh_for_tier(r.tier, getattr(r, "required_tier", "regular"))
+
+
+def settled_outcome_zh(result: dict) -> str:
+    """A settled check's result as it counts: the roll's own tier, or a failure that says why a success-tier roll
+    failed — an opponent beat it, or it fell short of the difficulty (a Regular success against a Hard check read
+    「一般成功」 while the check had failed)."""
+    tier = str(result.get("tier"))
+    label = CHECK_TIER_ZH.get(tier, tier)
+    if result.get("success") is False and dice.TIER_RANK.get(tier, -1) >= dice.TIER_RANK["regular"]:
+        required = str(result.get("required_tier") or result.get("difficulty") or "regular")
+        if result.get("opposed_outcome") or dice.TIER_RANK.get(required, 0) <= dice.TIER_RANK[tier]:
+            return f"失敗（擲出{label}，對抗落敗）"
+        return f"失敗（擲出{label}，未達{_DIFFICULTY_ZH.get(required, required)}）"
+    return label
 
 
 def natural_1_bonus_prompt_for_result(r: dice.SkillCheckResult) -> str:
