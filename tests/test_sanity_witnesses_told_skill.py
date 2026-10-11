@@ -65,6 +65,9 @@ def test_the_settled_line_names_whose_roll_and_which_skill():
         "investigator": "Marco", "skill": "偵查", "roll": 52, "outcome": "regular 成功", "check_id": "c1"}})
     reply, _ = turn_delivery.finalize(msg, "你看見了。")
     assert "已結算檢定：Marco 的偵查，骰值 52，結果為「一般成功」。" in reply, reply
+    msg = AgentMessage({"state": _state(), "user_id": "a", "resolved_check_context": {
+        "investigator": "Marco", "skill": "SAN", "roll": 40, "outcome": "fail 失敗", "check_id": "c3"}})
+    assert "已結算檢定：Marco 的理智，骰值 40" in turn_delivery.finalize(msg, "你顫抖著。")[0]
 
 
 def test_a_refused_primary_does_not_hide_the_witnesses_who_rolled():
@@ -87,3 +90,14 @@ def test_a_choice_settled_without_a_roll_does_not_read_as_a_zero_roll():
         "check_id": "c2"}})
     reply, _ = turn_delivery.finalize(msg, "爪子落下。")
     assert "已結算：Marco 選擇「不閃躲」，未擲骰。" in reply and "骰值 0" not in reply, reply
+
+
+def test_a_followup_can_roll_sanity_for_what_the_roll_revealed():
+    """Scritch Scratch 2026-10-12: a Spot Hidden revealed the hanging rat corpses; Sanity came 12 turns later."""
+    assert "sanity_check" in registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+
+
+def test_research_ends_in_a_result_and_no_blocker_is_invented():
+    from app.prompt_builder import build_static_prompt
+    prompt = build_static_prompt(GroupState(group_id="g"))
+    assert "不要停在「你開始尋找」就結束" in prompt and "劇本沒寫的限制就不存在" in prompt

@@ -112,7 +112,9 @@ def _normalize(term: str) -> str:
 
 def _load() -> dict:
     data = db.get_json(_TABLE, _KEY)
-    if data is None:
+    if not isinstance(data, dict):
+        # Missing, or not the mapping this module writes: the built-in table still answers, since roll lines on
+        # every reply look skill names up here.
         # Lookups must stay read-only: character matching also runs inside
         # state transactions, where a second connection cannot initialize
         # this table without contending for the writer lock. _learn persists

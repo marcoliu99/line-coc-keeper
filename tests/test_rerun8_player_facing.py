@@ -59,15 +59,17 @@ class LuckPromptTests(unittest.TestCase):
         self.assertIn("骰值 86 還在等 Luck 決定", untold.projected_text())
         self.assertNotIn("不要重擲", untold.projected_text())
 
-    def test_a_reply_that_gives_the_keep_command_is_told_without_repeating_the_roll(self):
-        """2026-10-11 runs: the narration named the command and the costs but not the roll, and the line was added anyway
-        on 82 of 400 replies."""
+    def test_a_reply_that_gives_the_keep_command_but_not_the_roll_keeps_the_line(self):
+        """2026-10-12 runs: 11 of 17 Luck prompts named the command and the costs but never the roll, and the player
+        chose blind. The line carries the engine's number."""
         ref = turn_delivery.InteractionRef("luck", "p1", "d1", "t1", roll=93)
         said = ("Helen 沿著步道查看；骰子已落下，卻仍停在命運的岔口。請使用 `/coc luck regular` 花費 28 點 Luck，"
                 "或輸入 `/coc luck skip` 保留原骰結果。")
-        self.assertEqual(turn_delivery.DeliveryEnvelope("o", "public", "", said, interactions=[ref]).projected_text(), "")
+        self.assertIn("骰值 93", turn_delivery.DeliveryEnvelope("o", "public", "", said, interactions=[ref]).projected_text())
         button = turn_delivery.DeliveryEnvelope("o", "public", "", "請按 Luck 按鈕決定是否花費 Luck。", interactions=[ref])
-        self.assertEqual(button.projected_text(), "")
+        self.assertIn("骰值 93", button.projected_text())
+        stated = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 93，請按 Luck 按鈕決定。", interactions=[ref])
+        self.assertEqual(stated.projected_text(), "")
 
     def test_a_narration_that_states_another_roll_keeps_the_line_with_the_real_one(self):
         six = turn_delivery.InteractionRef("luck", "p1", "d1", "t1", roll=6)
@@ -80,8 +82,12 @@ class LuckPromptTests(unittest.TestCase):
                 "o", "public", "", echoed, interactions=[six]).projected_text(), echoed)
         right = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 6，可用 /coc luck skip。", interactions=[six])
         self.assertEqual(right.projected_text(), "")
-        cost = turn_delivery.DeliveryEnvelope("o", "public", "", "/coc luck extreme（花費 6 點）或 /coc luck skip", interactions=[six])
+        cost = turn_delivery.DeliveryEnvelope("o", "public", "", "擲出 6；/coc luck extreme（花費 6 點）或 /coc luck skip",
+                                              interactions=[six])
         self.assertEqual(cost.projected_text(), "", "a cost is not a claimed roll")
+        no_roll = turn_delivery.DeliveryEnvelope("o", "public", "", "/coc luck extreme（花費 60 點）或 /coc luck skip",
+                                                 interactions=[six])
+        self.assertIn("骰值 6 還在等", no_roll.projected_text(), "a cost is not the roll either")
 
     def test_a_reply_that_lists_only_costs_still_gets_the_line(self):
         """Costs without the way to keep the roll leave the player without the plain option, so the line stays."""

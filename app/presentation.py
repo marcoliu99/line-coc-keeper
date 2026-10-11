@@ -14,7 +14,7 @@ import json
 import re
 from collections.abc import Collection
 
-from app import config, dice
+from app import config, dice, skill_aliases
 
 DIFFICULTY_ZH = {"regular": "一般", "hard": "困難", "extreme": "極難"}
 _ASCII_WORD = "A-Za-z0-9"
@@ -35,6 +35,17 @@ _ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?!
 def tier_label(value: str) -> str:
     """The table's name for a result tier; an unknown value is returned as it came."""
     return dice.TIER_ZH.get(value, value)
+
+
+_CHARACTERISTIC_ZH = {"SAN": "理智", "INT": "智力", "POW": "意志", "CON": "體質", "STR": "力量", "DEX": "敏捷",
+                      "APP": "外貌", "EDU": "教育", "SIZ": "體型", "LUCK": "幸運"}
+
+
+def skill_label(name: str) -> str:
+    """The skill or characteristic as the Chinese sheet names it (Mechanical Repair → 機械維修, SAN → 理智): a roll
+    line read 「的Mechanical Repair」 beside 「機械維修」 in the same run (2026-10-12)."""
+    text = str(name or "").strip()
+    return _CHARACTERISTIC_ZH.get(text.upper(), "") or skill_aliases.canonical_skill_name(text) or text
 
 
 def difficulty_label(value: str) -> str:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app import presentation
@@ -105,9 +105,13 @@ async def _obligations(ctx: ReplyContext, draft: ReplyDraft) -> None:
     """
     if not ctx.obligation_candidates:
         return
+    # What this turn's tools already did, the Executor's and a follow-up Narrator's alike (it may roll Sanity for what
+    # the settled roll revealed): the gate does not apply that a second time.
+    seen = draft.mechanic_result or no_mechanics()
+    told = [o for o in ctx.message.payload.get("observed_outcomes", []) if o not in seen.observed_outcomes]
     owed = await obligation_gate.enforce(
         ctx.state, ctx.user_id, draft.text, ctx.obligation_evidence,
-        draft.mechanic_result or no_mechanics(),
+        replace(seen, observed_outcomes=[*seen.observed_outcomes, *told]),
         turn_id=ctx.turn_id, speaker_role=ctx.speaker_role, private_messages=draft.private_messages,
         image_requests=draft.image_requests, observed_outcomes=ctx.message.payload.get("observed_outcomes", []),
     )
