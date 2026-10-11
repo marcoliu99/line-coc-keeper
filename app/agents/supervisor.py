@@ -382,6 +382,12 @@ async def _narrate(turn: _Turn) -> TurnReply | None:
         private_messages: list[tuple[str, str]] = []
         image_requests: list[tuple[str | None, int]] = []
         observability.event('narrator.pending_reused', status='skipped')
+    elif (not turn.autoroll_followups and turn.turn_kind == "player_action"
+          and prompt_config.narration_replaced(turn.mechanic_result)):
+        # The reply is fixed text whatever the Narrator would say (the action could not finish): the consistency
+        # step writes it, and the Narrator's round trip is not spent to be thrown away.
+        reply_text, private_messages, image_requests = "", [], []
+        observability.event('narrator.skipped', status='fixed_reply')
     else:
         if turn.autoroll_followups:
             replies = []

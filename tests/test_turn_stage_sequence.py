@@ -20,7 +20,7 @@ from app.agents import (
     obligation_gate,
     supervisor,
 )
-from app.domain.models import AgentMessage, MechanicResult, StateDelta
+from app.domain.models import AgentMessage, MechanicResult, StateDelta, TurnResolution
 from app.models import Character, GroupState
 from app.services import prompt_config, turn_delivery
 
@@ -43,7 +43,7 @@ def make_state():
 
 
 async def run(state, *, turn_kind="player_action", text="我推開門", commit=True, owed=None, candidates=False,
-              narration_failed=False, extra=None):
+              narration_failed=False, extra=None, mechanic=None):
     """Run one turn with every collaborator replaced by a recorder; return (events, result)."""
     events: list[str] = []
 
@@ -54,7 +54,7 @@ async def run(state, *, turn_kind="player_action", text="我推開門", commit=T
 
     async def run_executor(message):
         events.append("executor")
-        return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
+        return mechanic or MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta())
 
     async def run_narrator(message):
         events.append("narrator")
@@ -129,6 +129,19 @@ class RunTurnSequenceTests(unittest.IsolatedAsyncioTestCase):
             "consistent.mechanic", "guard", "consistent.mechanic", "party_size", "finalize", "commit",
         ])
         self.assertEqual(result[0], "敘事")
+
+    async def test_a_turn_the_executor_could_not_finish_skips_the_narrator(self):
+        """The reply to a blocked or incomplete turn is fixed text; the Narrator's ~5 s round trip was spent and thrown
+        away on every one of them (main_v2 review, 2026-10-11). A fight that opened keeps its scene, so it narrates."""
+        def result(**status):
+            return MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
+                                  check_status={"pending": None, "pending_luck": None, **status},
+                                  turn_resolution=TurnResolution(disposition="blocked", validation_code="validated"))
+        events, _ = await run(make_state(), mechanic=result())
+        self.assertNotIn("narrator", events)
+        self.assertIn("consistent.mechanic", events)
+        events, _ = await run(make_state(), mechanic=result(combat_opened=True))
+        self.assertIn("narrator", events)
 
     async def test_a_turn_with_an_obligation_candidate_keeps_the_mutation_lock(self):
         events, result = await run(make_state(), candidates=True)

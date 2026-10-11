@@ -267,22 +267,37 @@ def test_a_settled_attack_ends_the_turn_and_plays_the_enemy_to_the_defence_choic
     assert not again["ok"], "the turn already moved; a second advance is refused, not applied"
 
 
-def test_a_settled_attack_does_not_advance_once_every_enemy_is_down():
+def test_a_settled_attack_that_drops_the_last_enemy_settles_the_fight_by_itself():
+    """The 2026-10-11 runs waited a turn or two after the last enemy fell while the Keeper previewed and confirmed.
+    Settling only writes the fight's provisional HP, ammunition and obligations back; the scenario goes on."""
     _battle(first_enemy=False, enemy_hp=1)
     enemy = next(c for c in _load().combat.order if c.side == "enemy")
     _tool("declare_combat_action", {"action_id": "swing", "actor_id": "調查員p1",
                                     "target_id": enemy.combatant_id, "weapon_reference": "unarmed"})
     outcome, _ = _player("/coc check", [10, 90])  # the hit lands; the enemy's dodge fails
-    assert outcome.resolved_event["combat_receipt"]["settlement_ready"] is True
+    receipt = outcome.resolved_event["combat_receipt"]
+    assert receipt["settled"] is True and receipt["settlement_ready"] is False
+    assert receipt["settled_reason"] == combat_engine.ENEMY_DOWN_REASON
     state = _load()
     assert next(c for c in state.combat.order if c.side == "enemy").defeated
-    receipt = state.combat.actions["swing"]["receipt"]
-    assert "auto_advanced" not in receipt and receipt["settlement_ready"] is True
-    assert state.combat.order[state.combat.current_index].name == "調查員p1" and state.combat.phase == "READY"
-    assert "戰鬥可以結算" in combat.status_text(state)
+    assert not state.combat.active and state.combat.phase == "CLOSED"
+    assert state.active and not receipt.get("scenario_ended"), "the fight is closed; the scenario goes on"
+    assert state.closed_combat_receipts[state.combat.combat_id]["status"] == "committed"
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
-        "combat_id": state.combat.combat_id, "completed": True, "settlement_ready": True}})
-    assert "結算" in block and "先呼叫 advance_combat_turn" not in block
+        "combat_id": state.combat.combat_id, "completed": True, "settled": True}})
+    assert "已自動結算" in block and "不要再呼叫任何戰鬥工具" in block
+
+
+def test_an_enemy_down_by_the_keepers_own_hand_is_left_to_the_keeper():
+    """A direct HP change is not a step of the fight: it may still be reviewed or corrected before settling."""
+    _battle(first_enemy=False, enemy_hp=1)
+    state = _load()
+    enemy = next(c for c in state.combat.order if c.side == "enemy")
+    assert not combat_engine._ready_to_settle_enemy_down(state)
+    enemy.defeated = True
+    assert combat_engine._ready_to_settle_enemy_down(state)
+    state.combat.actions["open"] = {"action_id": "open", "completed": False}
+    assert not combat_engine._ready_to_settle_enemy_down(state), "an unfinished action keeps the fight open"
 
 
 def test_a_settled_enemy_attack_ends_the_enemys_turn():
@@ -683,7 +698,7 @@ def test_a_firearm_registered_under_one_spelling_is_fired_by_its_chinese_alias()
     assert state.combat.actions["bolt"]["ammo_key"] == "Crossbow"
 
 
-def test_a_side_that_falls_during_the_auto_advance_makes_the_receipt_settlement_ready():
+def test_a_side_that_falls_during_the_auto_advance_settles_the_fight():
     from app import combat_flow
     _battle(first_enemy=False)
     enemy = next(c for c in _load().combat.order if c.side == "enemy")
@@ -700,9 +715,10 @@ def test_a_side_that_falls_during_the_auto_advance_makes_the_receipt_settlement_
     with patch.object(combat_flow, "advance_combat", side_effect=effect_kills_the_last_enemy):
         outcome, _ = _player("/coc check", [10, 90])  # the swing misses: the enemy's dodge beats it
     receipt = outcome.resolved_event["combat_receipt"]
-    assert receipt["settlement_ready"] is True
+    assert receipt["settled"] is True and receipt["settlement_ready"] is False
+    assert not _load().combat.active
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
-    assert "結算" in block and "現在輪到" not in block
+    assert "已自動結算" in block and "現在輪到" not in block
 
 
 def test_a_specialisation_written_the_way_players_write_it_is_the_investigators_own_value():
