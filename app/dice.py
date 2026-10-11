@@ -8,7 +8,7 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 _TERM_RE = re.compile(r"([+-]?)(?:(\d*)[dD](\d+)|(\d+))")
 DamageBonusPolicy = Literal["none", "full", "half"]
@@ -290,6 +290,23 @@ def defence_tier_needed(attacker_tier: str, is_counter: bool) -> str | None:
         if resolve_opposed(tier, attacker_tier, is_counter) in ("defender_wins", "tie_defender_wins"):
             return tier
     return None
+
+
+def useful_defence_luck(defense_kind: Any, attacker_tier: Any, tier: str, options: list) -> list:
+    """The Luck tiers that would change what a melee defence does to the blow already rolled.
+
+    None when the attack already misses a Dodge, when no tier beats it (a Fight Back against a Critical), or when the
+    roll already does what it must; otherwise only the tiers that reach the one needed. Other rolls keep every
+    option. Six of 100 turns in a 2026-10-12 run asked for Luck that could change nothing.
+    """
+    if defense_kind not in ("dodge", "counter") or attacker_tier not in TIER_RANK or tier not in TIER_RANK:
+        return options
+    if defense_kind == "dodge" and TIER_RANK[attacker_tier] <= TIER_RANK["fail"]:
+        return []
+    needed = defence_tier_needed(attacker_tier, defense_kind == "counter")
+    if needed is None or TIER_RANK[tier] >= TIER_RANK[needed]:
+        return []
+    return [o for o in options if TIER_RANK[o.tier] >= TIER_RANK[needed]]
 
 
 @dataclass

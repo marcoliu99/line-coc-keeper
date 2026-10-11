@@ -44,8 +44,9 @@ def test_a_near_miss_defence_offers_luck_in_chinese():
     combat_resources.adjust_resource(state, state.characters["p1"], "luck", 50, event_id="test:luck", reason="test")
     _save(state)
     _enemy_turn([20])
-    outcome, _ = _player("/coc check 閃避", [45])  # Dodge 40: a miss that 5 Luck turns into a success
-    assert outcome.reply_text.startswith("已選擇「閃避」。🎲") and "一般成功（5 點）" in outcome.reply_text
+    outcome, _ = _player("/coc check 閃避", [45])  # Dodge 40 against a Hard claw: only Hard or better keeps it off
+    assert outcome.reply_text.startswith("已選擇「閃避」。🎲") and "困難成功（25 點）" in outcome.reply_text
+    assert "一般成功（5 點）" not in outcome.reply_text  # a Regular dodge cannot stop a Hard attack
     assert "regular" not in outcome.reply_text and "p1" in _load().pending_luck_decisions
 
 
