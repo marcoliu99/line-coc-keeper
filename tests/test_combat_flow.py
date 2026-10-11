@@ -682,6 +682,24 @@ def test_an_npc_single_shot_with_no_stated_distance_is_not_a_ruling():
     assert state.combat.actions['npc:shot']['difficulty'] == 'regular'
 
 
+def test_an_enemy_shot_with_no_ammunition_waits_for_a_ruling_the_keeper_can_read():
+    """The rulings that remain are the Keeper's to make, so the Keeper's context must say what each one is about."""
+    from app import combat_rules
+    from app.services import turn_context
+    weapon = next(w for w in combat_rules.weapon_catalog() if w.attack_mode == 'single_shot'
+                  and w.db_policy == 'none' and not w.ruling_reason and not w.distance_bands)
+    state, _, enemy = battle(npc_first=True)
+    card = state.combat.enemy_cards[enemy.enemy_card_id]
+    card.attacks[0].id = weapon.id
+    card.attacks[0].ammo_or_uses = 0
+    result = combat_flow.declare_action(state, action_id='npc:empty', actor_id=enemy.combatant_id,
+        target_id='pc:pc1', weapon_reference=weapon.id, action_kind='single_shot')
+    assert result['phase'] == 'NEEDS_RULING' and 'ammunition' in result['error']
+    shown = turn_context.combat_projection(state)
+    assert shown['phase'] == 'NEEDS_RULING'
+    assert 'ammunition' in shown['actions']['npc:empty']['needs_ruling']
+
+
 def test_unknown_effect_stop_rejected_and_recorded_stop_replayed_after_reload():
     state, _, _ = battle()
     assert combat_flow.declare_effect(state, effect_id='hazard', target_id='pc:pc1', severity_id='minor',

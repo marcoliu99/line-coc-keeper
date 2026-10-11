@@ -20,6 +20,7 @@ In the 2026-10-11 soak runs on `d18fffd` (Camp Sunny rerun2, The Lightless Beaco
 
 ## Not changing
 
+- **The rulings that remain are the Keeper's to make.** A distance past extreme range, a distance with no base range, an invalid distance, and an enemy shot with no ammunition each still pause the fight for the Keeper's judgement. The Keeper's context carries every unfinished action with the reason it waits (`needs_ruling` in `keeper_only_combat.actions`), so the Keeper reads what it is being asked to rule on; a test pins that for an enemy with no ammunition.
 - **The opening attack of an enemy the engine cannot play** (the Lightless poison needle, which also lacked a scenario source) still pauses the fight and waits for the Keeper. Whether the engine should skip such an action by itself is a separate decision.
 - **The Keeper declaring a second attack for an actor who has already acted** (Camp Sunny, three times) is the Keeper's error and is unchanged.
 
