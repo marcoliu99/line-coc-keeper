@@ -52,12 +52,15 @@ class SettledAttackLineTests(unittest.TestCase):
 
 class DeferralOverASettledAttackTests(unittest.TestCase):
     def test_a_settled_attack_is_recognised(self):
-        settled = {"name": "declare_combat_action", "result": _receipt(hit=True, damage={"target": "x", "final_damage": 1})}
+        changed = {"gameplay_before": {"r": 1}, "gameplay_after": {"r": 2}}
+        settled = {"name": "declare_combat_action", "result": _receipt(hit=True, damage={"target": "x", "final_damage": 1}), **changed}
         self.assertTrue(executor._attack_settled([settled]))
-        self.assertFalse(executor._attack_settled([{"name": "declare_combat_action", "result": {"ok": True, "completed": False}}]))
-        self.assertFalse(executor._attack_settled([{"name": "search_scenario", "result": {"ok": True}}]))
-        chosen = {"name": "submit_combat_choice", "result": _receipt(hit=False, opposed="both_miss")}
+        self.assertFalse(executor._attack_settled([{"name": "declare_combat_action", "result": {"ok": True, "completed": False}, **changed}]))
+        self.assertFalse(executor._attack_settled([{"name": "search_scenario", "result": {"ok": True}, **changed}]))
+        chosen = {"name": "submit_combat_choice", "result": _receipt(hit=False, opposed="both_miss"), **changed}
         self.assertTrue(executor._attack_settled([chosen]))
+        replayed = {**settled, "gameplay_after": {"r": 1}}  # a stored receipt for a reused id: nothing settled now
+        self.assertFalse(executor._attack_settled([replayed]))
 
 
 if __name__ == "__main__":

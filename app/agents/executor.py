@@ -88,14 +88,16 @@ def _passed_the_turn(tool_events: list[dict]) -> bool:
                and e.get("gameplay_before") != e.get("gameplay_after") for e in tool_events)
 
 
+_ATTACK_TOOLS = frozenset({"declare_combat_action", "run_combat_action", "submit_combat_choice"})
+
+
 def _attack_settled(tool_events: list[dict]) -> bool:
     """An attack this turn was settled by the engine in the call that declared it (its receipt carries the result),
     which a deferral cannot cover: the blow landed or missed, and the player is owed that, not 「尚未揮出」."""
-    return any(e["name"] in {"declare_combat_action", "run_combat_action", "submit_combat_choice"} and e["result"].get("ok")
-               and e["result"].get("completed") and "hit" in (e["result"].get("result") or {}) for e in tool_events)
-
-
-_ATTACK_TOOLS = frozenset({"declare_combat_action", "run_combat_action", "submit_combat_choice"})
+    return any(e["name"] in _ATTACK_TOOLS and e["result"].get("ok") and e["result"].get("completed")
+               and "hit" in (e["result"].get("result") or {})
+               and e.get("gameplay_before") != e.get("gameplay_after")  # a replayed receipt settled nothing now
+               for e in tool_events)
 
 
 def _silence_replayed_attack(observed: list, name: str, before: dict, after: dict) -> None:

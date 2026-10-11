@@ -980,6 +980,10 @@ def test_a_choice_that_settled_the_attack_is_the_turns_effect(state):
         state=state, user_id="a", before_pending={}, before_luck={}, tool_events=settled, has_scenario=False, before_actor={})
     # The validator files a completion with a mutation and no roll as resolved_without_check; the point is that it passed.
     assert result.validation_code == "validated" and result.disposition == "resolved_without_check", result
+    replayed = [{**settled[0], "gameplay_before": {"r": 1}, "gameplay_after": {"r": 1}}]  # the same id resent later
+    result = turn_resolution.validate_resolution(decision(state, "resolved", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=replayed, has_scenario=False, before_actor={})
+    assert result.disposition == "incomplete", "a replayed receipt is not this turn's effect"
 
 
 def test_a_roll_or_a_record_made_this_turn_is_evidence_enough_for_a_no_check_completion(state):
