@@ -857,6 +857,10 @@ def test_fight_back_prefers_the_weapon_of_the_defenders_last_attack():
     pc.carried_items.clear()
     bare = combat_flow._counter_weapon(state, pc)
     assert bare['label'] == '反擊' and bare['counter_damage'] == '1d3'
+    pc.carried_items.append('投矛')  # carried under its thrown name: the same spear, fought back with in melee
+    pc.skills['格鬥（矛）'] = 35
+    spear = combat_flow._counter_weapon(state, pc)
+    assert spear['label'] == '反擊（投矛）' and spear['skill'] == '格鬥（矛）' and spear['counter_damage'] == '1d8+1'
 
 
 def test_fight_back_honours_a_pinned_weapon_definition():

@@ -450,6 +450,10 @@ def _counter_weapon(state: GroupState, character: Character) -> dict[str, Any]:
     best: dict[str, Any] | None = None
     for item in dict.fromkeys([*effective.weapon_instances, *effective.weapons, *effective.carried_items]):
         definition = _carried_definition(effective, item)
+        if definition is not None and definition.attack_mode != 'melee':
+            # A spear carried under its thrown name is the same object as the melee spear, as for a declaration.
+            definition = next((d for d in combat_rules.weapon_catalog() if d.attack_mode == 'melee'
+                               and _same_object(d.id) == _same_object(definition.id)), None)
         if definition is None or definition.attack_mode != 'melee' or definition.id == 'i.weapon.brawl':
             continue
         skill = _skill(effective, definition.skill_id)
