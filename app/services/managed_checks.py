@@ -205,7 +205,7 @@ def _settled_without_roll(
     header = f"{character.name} 選擇「{option['label']}」"
     status = "戰鬥已結算" if outcome.get("settled") else "戰鬥機械結果暫定；尚未結算"
     blow = _blow(state, pending, outcome)
-    feedback = f"{header}，攻擊已由系統結算。" + ("\n⚔️ " + blow if blow else "") + f"\n【{status}】"
+    feedback = f"{header}。" + ("\n⚔️ " + blow if blow else "")
     return outcome_for(
         user_id, pending,
         roll_line=feedback, keeper_message=f"（{header}；{status}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",
@@ -263,7 +263,8 @@ def _feedback(
     )
     blow = _blow(state, pending, outcome)
     shown = blow if blow and not _is_injury_roll(pending) else ""  # the blow was shown with the roll that took it
-    feedback += ("\n⚔️ " + shown if shown else "") + "\n" + suffix
+    # The battle's bookkeeping state (provisional, settled) is for the Keeper; the player reads the roll and the blow.
+    feedback += "\n⚔️ " + shown if shown else ""
     settled = outcome_for(
         user_id, pending,
         roll_line=feedback, keeper_message=f"（{header}；{suffix}。僅依已儲存的戰鬥結果敘事，不要另外擲攻擊或傷害骰。）",

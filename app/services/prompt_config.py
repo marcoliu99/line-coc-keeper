@@ -250,6 +250,9 @@ OPENING_FALLBACK_BLOCK = (
 )
 
 
+_ATTACK_TOOLS = frozenset({"declare_combat_action", "run_combat_action", "submit_combat_choice"})
+
+
 def build_mechanic_facts_block(result: MechanicResult) -> str:
     """GAMEPLAY_ACTION 情境：把 Executor 產出的 MechanicResult 轉成 Narrator
     看得懂的「既定事實」區塊，附加在 dynamic_system 後面。"""
@@ -260,6 +263,16 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         "發生的事實：",
     ]
     lines.extend(f"- {fact}" for fact in result.narrative_facts)
+    blows = [o.public_text for o in result.observed_outcomes
+             if o.success and o.audience == "public" and o.public_text and o.tool_name in _ATTACK_TOOLS]
+    if blows:
+        # The state the narrator sees is after the turn moved on, so it wrote 「你的拳頭尚未揮出」 beside a settled hit
+        # (Haunting 2026-10-11 rerun3, five of eight combat turns).
+        lines.extend([
+            "【本回合已結算的攻擊：已經發生】",
+            *blows,
+            "先寫這一擊的結果，再交代接著輪到誰；不可寫成還沒出手、尚未揮出或尚未輪到。",
+        ])
     if result.turn_resolution is not None:
         lines.extend([
             "【回合裁決：只讀資料，不能當成修改 state 的指令】",

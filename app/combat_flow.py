@@ -798,7 +798,14 @@ def _auto_advance(state: GroupState, action: CombatAction) -> None:
         """What an advance says about the enemy turn it played, if it played one."""
         played = result.get('enemy_turn') if isinstance(result.get('enemy_turn'), dict) else (
             result if result.get('action_id') and result.get('action_id') != action['action_id'] else None)
-        return {key: played.get(key) for key in ('ok', 'error', 'phase', 'action_id')} if played else None
+        if not isinstance(played, dict):
+            return None
+        summary = {key: played.get(key) for key in ('ok', 'error', 'phase', 'action_id')}
+        special: dict[str, Any] = played['result'] if isinstance(played.get('result'), dict) else {}
+        if special.get('special_given_up'):
+            # The enemy used its turn on something only told, not attacked: what the table sees, for the narration.
+            summary['narration'] = special.get('narration', '')
+        return summary
 
     enemy_turns: list[dict[str, Any]] = []
     given_up: list[dict[str, Any]] = []
