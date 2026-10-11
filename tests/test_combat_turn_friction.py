@@ -1142,6 +1142,10 @@ def test_the_defence_roll_tells_the_player_the_hit_the_damage_and_the_wound():
     msg = AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": outcome.resolved_event})
     reply, _ = turn_delivery.finalize(msg, "你踉蹌後退。")
     assert "已結算檢定：骰值 95，結果為「失敗」。⚔️ " + blow in reply, reply
+    # The CON roll after a no-defence hit was shown the blow with the choice; its follow-up does not repeat it.
+    con_event = {**outcome.resolved_event, "combat_receipt": {**outcome.resolved_event["combat_receipt"], "blow_already_told": True}}
+    reply, _ = turn_delivery.finalize(AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": con_event}), "你撐住了。")
+    assert "⚔️" not in reply
 
 
 def test_the_wound_tail_says_what_a_heavy_blow_did():
@@ -1149,6 +1153,7 @@ def test_the_wound_tail_says_what_a_heavy_blow_did():
     from app.services import managed_checks
     state = GroupState(group_id="g")
     swing = {"action_id": "swing"}
+    assert managed_checks._wound_tail(state, swing, {"injury": {"dead": True, "unconscious": True}}) == "，當場死亡"
     assert managed_checks._wound_tail(state, swing, {"injury": {"dying": True}}) == "，倒地瀕死"
     assert managed_checks._wound_tail(state, swing, {"injury": {"unconscious": True}}) == "，倒地昏迷"
     assert managed_checks._wound_tail(state, swing, {"injury": {}}) == ""

@@ -280,7 +280,8 @@ def _feedback(
                 tracked_roll_fields=(), check_context=pending, success=result.success,
             ),
             "provisional": provisional, "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
-            "combat_receipt": {**_combat_receipt(outcome), "blow": blow},
+            # The blow stays for the narrator; after a CON roll it was already told with the choice that took it.
+            "combat_receipt": {**_combat_receipt(outcome), "blow": blow, "blow_already_told": _is_injury_roll(pending)},
             "luck_spent": luck_spent,
         },
     )
@@ -372,6 +373,8 @@ def _wound_tail(state: GroupState, action: CombatAction, damage: dict) -> str:
     the line the player always reads (Haunting 2026-10-11 rerun2 turn 41: Clara lost 9 of 12 HP and read only
     that her counter had missed)."""
     injury = damage.get("injury") or {}
+    if injury.get("dead"):
+        return "，當場死亡"
     if injury.get("dying"):
         return "，倒地瀕死"
     if not damage.get("major_wound_triggered"):
