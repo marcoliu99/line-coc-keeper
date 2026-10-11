@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections import Counter
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from app import (
@@ -85,6 +86,32 @@ def _passed_the_turn(tool_events: list[dict]) -> bool:
     change a deferral cannot cover. An advance held at a pending check (``pending``) did not move the turn on."""
     return any(e["name"] == "advance_combat_turn" and e["result"].get("ok") and not e["result"].get("pending")
                and e.get("gameplay_before") != e.get("gameplay_after") for e in tool_events)
+
+
+_ATTACK_TOOLS = frozenset({"declare_combat_action", "run_combat_action", "submit_combat_choice"})
+
+
+def _attack_settled(tool_events: list[dict]) -> bool:
+    """An attack this turn was settled by the engine in the call that declared it (its receipt carries the result),
+    which a deferral cannot cover: the blow landed or missed, and the player is owed that, not 「尚未揮出」."""
+    return any(e["name"] in _ATTACK_TOOLS and e["result"].get("ok") and e["result"].get("completed")
+               and "hit" in (e["result"].get("result") or {})
+               and e.get("gameplay_before") != e.get("gameplay_after")  # a replayed receipt settled nothing now
+               for e in tool_events)
+
+
+def _silence_replayed_attack(observed: list, name: str, before: dict, after: dict) -> None:
+    """An attack call that changed nothing replayed a stored receipt (the same action id sent again, rerun8 turn
+    54): its line would tell an old blow as this turn's, so it is kept internal."""
+    if (name in _ATTACK_TOOLS and before == after and observed and observed[-1].tool_name == name
+            and observed[-1].success and observed[-1].public_text.startswith("⚔️")):
+        # Only the settled-attack line: a refusal the player can act on (an empty gun) changed nothing either and stays.
+        observed[-1] = replace(observed[-1], public_text="", audience="internal")
+
+
+def _opened_check(state, before_pending: dict) -> tuple[str, dict] | None:
+    """The check this turn's tools created (an engine-played enemy attack asking its target to defend), if any."""
+    return next(((owner, check) for owner, check in state.pending_checks.items() if before_pending.get(owner) != check), None)
 
 
 def _combat_opened(state, tool_events: list[dict]) -> bool:
@@ -262,6 +289,7 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                                     "gameplay_before": gameplay_before_tool,
                                     "gameplay_after": turn_resolution.gameplay_snapshot(state),
                                     "actor_changed": actor_before_tool != turn_resolution.actor_snapshot(state, user_id)})
+                _silence_replayed_attack(observed, name, gameplay_before_tool, tool_events[-1]["gameplay_after"])
                 receipt = {**result, "evidence_ref": f"tool:{len(tool_events)}",
                            "current_turn_state": turn_context.current_state(state)}
                 tool_context.append({"name": name, "arguments": deepcopy(tool_input), "result": deepcopy(receipt)})
@@ -296,6 +324,23 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             'instruction': '剛才的劇本查詢已有結果，而且沒有改動任何狀態。依查到的內容處理玩家這次的行動：'
                                 '需要機制就呼叫對應的工具；不需要機制就交回 no_mechanics 並引用查到的段落。'
                                 '只有查到的內容確實與這次行動無關時才保留 incomplete，並說明缺的是什麼。',
+                        }
+                    if verified.validation_code == 'deferral_not_verified' and _attack_settled(tool_events):
+                        opened = _opened_check(state, before_pending)
+                        if opened:
+                            # The engine played the next enemy attack and its target now owes a defence choice.
+                            owner, check = opened
+                            waiting = turn_context.character_id(state, owner)
+                            follow = (f'引擎接著開了下一個防禦選擇（check_id {check.get("check_id")}，由 {waiting} 處理）：'
+                                      f'改交 await_check，check_id 填它、waiting_for 填 {waiting}')
+                        else:
+                            follow = ('改交 resolved 並引用結算它的那次工具（declare_combat_action、run_combat_action 或 '
+                                      'submit_combat_choice）')
+                        return {
+                            'validation_code': 'attack_settled_not_deferred', 'reason': verified.reason,
+                            'instruction': '你這回合宣告的攻擊已經由引擎結算了（工具結果裡有命中與傷害），那是已提交的變更，'
+                                f'不能再交回 deferred。{follow}；敘事先說這一擊的結果（命中或落空、造成多少傷害），'
+                                '再說接著輪到誰。',
                         }
                     if verified.validation_code == 'deferral_not_verified' and _passed_the_turn(tool_events):
                         return {

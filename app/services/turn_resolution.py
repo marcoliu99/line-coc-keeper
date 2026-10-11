@@ -151,11 +151,14 @@ def _mutation_evidence(state: GroupState, events: list[dict[str, Any]], refs: li
                 named = [c for c in state.active_characters() if c.name == owner]
                 if len(named) == 1:  # legacy receipt: only an unambiguous name identifies the character
                     final_by_id.pop(named[0].character_id or named[0].owner_id, None)
-        if result.get('ok') and f'tool:{i}' in refs and name in {'declare_combat_action', 'run_combat_action'}:
+        if result.get('ok') and f'tool:{i}' in refs and name in {'declare_combat_action', 'run_combat_action', 'submit_combat_choice'}:
+            # A choice (no defence, or an autorolled dodge) can settle the attack in the same call. A stored receipt
+            # replayed for a reused id changed nothing now and is not this turn's effect.
             action = state.combat.actions.get(result.get('action_id', ''), {})
+            replayed = 'gameplay_after' in event and event.get('gameplay_before') == event.get('gameplay_after')
             combat_completed = combat_completed or bool(
                 result.get('combat_id') == state.combat.combat_id and action.get('completed')
-                and result.get('completed')
+                and result.get('completed') and not replayed
             )
         if result.get('ok') and f'tool:{i}' in refs and name in {'initialize_combat', 'add_npc_to_combat'}:
             # Waking or starting a fight is itself the turn's effect, even though no check was rolled.
