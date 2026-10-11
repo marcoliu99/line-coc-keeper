@@ -47,13 +47,42 @@ def test_a_standing_companion_means_waiting_for_first_aid_not_waking():
     assert unconscious_wake.decide(state, "p2") is None
 
 
-def test_hp_zero_or_a_running_fight_is_not_this_rule():
-    state = _party("p1")
-    state.characters["p1"].hp = 0
-    assert unconscious_wake.decide(state, "p1") is None
+def test_a_running_fight_or_death_is_not_this_rule():
     state = _party("p1")
     state.combat.active = True
     assert unconscious_wake.decide(state, "p1") is None
+    state = _party("p1")
+    state.characters["p1"].injury = {"dead": True}
+    assert unconscious_wake.decide(state, "p1") is None
+
+
+def test_hp_zero_after_a_fight_is_down_not_playing_on():
+    """Haunting 2026-10-12: Edith, at HP 0 when the fight ended, acted for 11 turns and rolled three checks."""
+    state = _party("p1")
+    edith = state.characters["p1"]
+    edith.hp, edith.status_tags, edith.injury = 0, [], {}
+    assert unconscious_wake.knocked_out(edith) and unconscious_wake.decide(state, "p1") == "wake"
+    _save(state)
+    unconscious_wake.wake(GROUP, "char:p1", timeline_id="timeline-wake")
+    assert _load().characters["p1"].hp == 1 and unconscious_wake.decide(_load(), "p1") is None
+
+
+def test_a_dying_investigator_waits_for_first_aid_every_time():
+    state = _party("p1")
+    state.characters["p1"].hp, state.characters["p1"].injury = 0, {"major_wound": True, "dying": True}
+    assert unconscious_wake.decide(state, "p1") == "wait"
+    assert "瀕死" in unconscious_wake.wait_reply(state.characters["p1"])
+
+
+def test_told_once_that_first_aid_can_help_the_next_line_wakes_them():
+    """Haunting 2026-10-12: James, unconscious with companions standing, got the same refusal on 11 lines (44 turns)."""
+    state = _party("p1", "p2")
+    assert unconscious_wake.decide(state, "p1") == "wait"
+    unconscious_wake.offer_first_aid(GROUP, "char:p1", timeline_id="timeline-wake")
+    assert unconscious_wake.decide(_load(), "p1") == "wake"
+    unconscious_wake.wake(GROUP, "char:p1", timeline_id="timeline-wake")
+    james = _load().characters["p1"]
+    assert "first_aid_offered" not in james.injury and unconscious_wake.decide(_load(), "p1") is None
 
 
 def test_the_waiting_investigators_line_is_answered_without_the_executor():
@@ -65,7 +94,9 @@ def test_the_waiting_investigators_line_is_answered_without_the_executor():
         expected_opening_participants=None, turn_timeline_id="timeline-wake", turn_id="turn-wait",
     )
     reply, private, images = asyncio.run(supervisor._prepare(turn))
-    assert reply == unconscious_wake.wait_reply("調查員p1") and private == [] and images == []
+    assert reply == unconscious_wake.wait_reply(state.characters["p1"]) and private == [] and images == []
+    assert "下一次行動時會在一段時間後自己醒來" in reply
+    assert _load().characters["p1"].injury.get("first_aid_offered"), "the next line wakes them"
 
 
 def test_the_lone_investigators_line_wakes_them_and_tells_the_keeper_about_the_time_skip():
