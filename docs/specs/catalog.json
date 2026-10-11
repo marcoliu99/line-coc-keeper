@@ -2722,6 +2722,16 @@
       "source_revision": "f2d04462287a685fd6ef2608efefbc7363455d29"
     },
     {
+      "title": "Solo gamebook mode: numbered entries, one reader, jumps only where the book allows",
+      "zh": "單人段落模式：編號段落、一位讀者、只能照書跳轉",
+      "category": "feature",
+      "status": "backlog",
+      "evidence": [],
+      "path": "docs/specs/feature/solo_gamebook_mode_design_spec.md",
+      "zh_path": "docs/specs/feature/solo_gamebook_mode_design_spec_zh.md",
+      "source_revision": "0c53dcb95c2c5fd81a91815eb70336f9c80049ae"
+    },
+    {
       "title": "Four replies from the 2026-10-10 soak runs: giving up with evidence, waiting on nobody, a combat prompt to the wrong player, a lost fight opening",
       "zh": "2026-10-10 四場 soak run 的四種回覆：有證據卻放棄、在等不存在的人、戰鬥提示對錯人、開戰敘事被蓋掉",
       "category": "bug",
