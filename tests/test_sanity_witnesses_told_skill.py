@@ -65,3 +65,17 @@ def test_the_settled_line_names_whose_roll_and_which_skill():
         "investigator": "Marco", "skill": "偵查", "roll": 52, "outcome": "regular 成功", "check_id": "c1"}})
     reply, _ = turn_delivery.finalize(msg, "你看見了。")
     assert "已結算檢定：Marco 的偵查，骰值 52，結果為「一般成功」。" in reply, reply
+
+
+def test_a_refused_primary_does_not_hide_the_witnesses_who_rolled():
+    def fake_tool(_state, name, args, *_rest, **_kw):
+        if args["investigator"] == "Marco":
+            return {"ok": False, "error": "Marco 已有待處理的檢定"}
+        return {"ok": True, "resolved": True, "investigator": args["investigator"], "roll": 40}
+
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", fake_tool):
+        execute = tool_gateway.make_tool_executor(_state(), [], [], "player", [], actor_id="a")
+        result = asyncio.run(execute("sanity_check", {"investigator": "Marco", "witnesses": ["Ken"],
+                                                      "loss_success": "0", "loss_failure": "1"}))
+    assert result["ok"] and result["investigator"] == "Ken"
+    assert [w.get("error") for w in result["witnesses"]] == ["Marco 已有待處理的檢定"]

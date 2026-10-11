@@ -127,7 +127,13 @@ def make_tool_executor(
                 continue
             rolled.add(_who(name))
             others.append(await _execute_one("sanity_check", {**single, "investigator": str(name).strip()}))
-        return {**first, "witnesses": others} if others else first
+        if not others:
+            return first
+        # Led by a roll that happened: a primary refused (a check already waiting) must not hide the witnesses who
+        # rolled. A witness refused beside a roll rides in the list with its own error, as its own call would.
+        results = [first, *others]
+        lead = next((result for result in results if result.get("ok")), first)
+        return {**lead, "witnesses": [result for result in results if result is not lead]}
 
     def _who(name: Any) -> str:
         character = support.find_character(state, str(name or ""))
