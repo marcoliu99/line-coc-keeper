@@ -162,18 +162,29 @@ def strip_leaked_decision(text: str) -> str:
 # A reply that ends in closers that never opened: the model wrapped its narration as a JSON string and the tail of
 # the wrapper, sometimes with a stray token after it, survived the parse (2026-10-11 soak runs: an opening that ended
 # 「…又為何前往羅克波特？」}} bheidh」, a scene reply that ended 「…你要怎麼查看？」}}」).
-_JUNK_TAIL = re.compile(r"[\s\"”]*[}\]]+(?:\s+[A-Za-z]{1,12})?\s*$")
+_STRAY_WORD = re.compile(r"[}\]]\s+[A-Za-z]{1,12}\s*$")
 
 
 def strip_junk_tail(text: str) -> str:
-    """``text`` without a trailing run of ``}``/``]`` that nothing in the text opened, and the stray word after it.
+    """``text`` without the closing ``}``/``]`` at its end that nothing in the text opened, and the stray word after.
 
-    Balanced braces are narration and stay. A closing 」 left dangling by the cut goes with the tail.
+    Only the unmatched closers go: a balanced ``{hp: 13}`` before them stays. A closing 」 left dangling by the cut
+    goes with the tail.
     """
-    match = _JUNK_TAIL.search(text)
-    if not match or (text.count("}") <= text.count("{") and text.count("]") <= text.count("[")):
+    excess = {"}": text.count("}") - text.count("{"), "]": text.count("]") - text.count("[")}
+    if max(excess.values()) <= 0:
         return text
-    kept = text[:match.start()].rstrip()
+    kept = text.rstrip()
+    if stray := _STRAY_WORD.search(kept):
+        kept = kept[:stray.start() + 1]
+    cut = False
+    while kept and (kept[-1] in "\"”" or kept[-1].isspace() or excess.get(kept[-1], 0) > 0):
+        if kept[-1] in excess:
+            excess[kept[-1]] -= 1
+            cut = True
+        kept = kept[:-1]
+    if not cut:
+        return text
     if kept.endswith("」") and kept.count("」") > kept.count("「"):
         kept = kept[:-1].rstrip()
     return kept

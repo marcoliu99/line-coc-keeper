@@ -51,6 +51,10 @@ class JunkTailTests(unittest.TestCase):
         self.assertEqual(presentation.strip_junk_tail('雨還在下。"}'), "雨還在下。")
         self.assertEqual(presentation.strip_junk_tail("雨還在下。]}\n"), "雨還在下。")
 
+    def test_only_the_unmatched_closer_goes_when_balanced_braces_come_before_it(self):
+        self.assertEqual(presentation.strip_junk_tail("資料是 {hp: 13}}"), "資料是 {hp: 13}")
+        self.assertEqual(presentation.strip_junk_tail("名單 [Alan]]} bheidh"), "名單 [Alan]")
+
     def test_a_quote_the_narration_opened_stays_with_its_text(self):
         self.assertEqual(presentation.strip_junk_tail("他低聲說：「走吧。」}}"), "他低聲說：「走吧。」")
 

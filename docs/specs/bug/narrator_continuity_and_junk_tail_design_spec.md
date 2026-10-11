@@ -16,9 +16,9 @@ Three slips from the 2026-10-11 soak runs, all in what the player reads:
 ## Change
 
 - **The status block says it in one line.** When some enemies are down and others stand, `combat.status_text` adds 「已倒下、不會再行動：幼體（深海夢魘）。仍在戰鬥的敵人：深潛者混血。」 after the rows. All down or all standing: unchanged.
-- **A defence check names its attacker.** `_defense_choice` registers the choice with `action_context` 「深潛者混血 攻擊 Dr. Mei Lin；這是 Dr. Mei Lin 的防禦」 (「開槍射向」 for a shot), so the resolved-check block carries it with the roll.
+- **A defence check names its attacker.** The defender's choice and the Dodge / Fight Back roll that replaces it are both registered with `action_context` 「深潛者混血 攻擊 Dr. Mei Lin；這是 Dr. Mei Lin 的防禦」 (「開槍射向」 for a shot); the resolved event is built from the roll, so the resolved-check block carries it.
 - **Two Narrator rules.** An enemy marked （倒下） or listed as 已倒下 does not close in, attack or act; the attacker of a blow is the one the resolved-check block names. A player restating something already past (landing again after the fight on the island, the opening voyage) is not replayed or re-opened: one sentence that it is behind them, then the present place, time and what just happened.
-- **The wrapper tail is cut.** `presentation.strip_junk_tail`, run with `strip_leaked_decision` at the start of the reply pipeline, removes a trailing run of `}`/`]` that nothing in the text opened, a stray short Latin word after it, and a closing 」 left dangling by the cut. Balanced braces and a quote the narration opened stay.
+- **The wrapper tail is cut.** `presentation.strip_junk_tail`, run with `strip_leaked_decision` at the start of the reply pipeline, removes the closing `}`/`]` at the end that nothing in the text opened (only as many as are unmatched), a stray short Latin word after them, and a closing 」 left dangling by the cut. Balanced braces before them and a quote the narration opened stay.
 
 ## Not changing
 
