@@ -34,7 +34,7 @@ def test_a_name_that_covers_two_skills_uses_the_better_one():
 
 def test_the_keeper_is_told_sanity_per_witness_on_first_sight_and_no_second_roll():
     prompt = build_static_prompt(GroupState(group_id="g"))
-    assert "在場目擊的每一位調查員各擲一次" in prompt and "不用再擲" in prompt
+    assert "在場目擊的每一位調查員各擲一次" in prompt and "witnesses" in prompt and "不用再擲" in prompt
     assert "就沿用那次的結果" in prompt and "不要再建立一次新的檢定" in prompt
 
 

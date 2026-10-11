@@ -160,8 +160,9 @@ class InteractionRef:
         if self.kind != "luck":
             # The roll command itself, which the reply's own check line always carries: the generic 「請使用檢定按鈕」
             # line repeated it on 79 of 100 replies (a 2026-10-11 run, three times in one).
-            # The command as the router reads it: a whole token, so neither /coc checkpoint nor 「/coc check偵查」.
-            return re.search(r"/coc check(?=$|[\s，。、；：！？,.;:!?）)」』])", narrative) is not None
+            # The command as the router reads it: a whole token, so neither /coc checkpoint nor 「/coc check偵查」. A code
+            # span `/coc check` counts too: missing it put the line back on 33 replies (2026-10-12 soak runs).
+            return re.search(r"/coc check(?=$|[\s，。、；：！？,.;:!?）)」』`])", narrative) is not None
         if not any(marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
             return False
         # Only the number right after the verb is a claim (「擲出 60」, 「骰值為 60 點」); 「花費 6 點」 names a cost.
@@ -291,10 +292,20 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         # narration may skip it, as it did when Clara lost 9 HP (Haunting 2026-10-11 rerun2 turn 41).
         receipt = resolved.get("combat_receipt") or {}
         blow = "" if receipt.get("blow_already_told") else str(receipt.get("blow") or "").strip()
+        # Whose roll and which skill: after a Luck decision the line stood alone, and 「骰值 52」 did not say what was
+        # rolled (2026-10-11 soak runs).
+        who = str(resolved.get("investigator") or "").strip()
+        skill = str(resolved.get("skill") or "").strip()
+        subject = f"{who} 的{skill}" if who and skill else (who or skill)
+        if resolved.get("no_roll"):
+            # A choice that settled the attack by itself (不閃躲): no die was rolled, so no 「骰值 0」.
+            line = f"已結算：{who or '調查員'} 選擇「{skill or '不防禦'}」，未擲骰。"
+        else:
+            line = (f"已結算檢定：{subject + '，' if subject else ''}骰值 {resolved.get('roll', '未知')}，"
+                    f"結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。")
         outcomes.append(ObservedOutcome(
             f"resolved-check:{resolved.get('check_id', 'current')}", "resolved_check", True,
-            f"已結算檢定：骰值 {resolved.get('roll', '未知')}，結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。"
-            + (f"⚔️ {blow}" if blow else ""),
+            line + (f"⚔️ {blow}" if blow else ""),
             "player_private" if private_result else "public",
             message.payload.get("user_id", "") if private_result else "",
         ))

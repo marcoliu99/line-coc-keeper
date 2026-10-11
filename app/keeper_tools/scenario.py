@@ -303,5 +303,5 @@ def get_enemy_stat_block(call: ToolCall) -> dict[str, Any]:
     return {
         "ok": True, "heading": heading, "stat_block": block,
         "hint": ("登記時照這張表寫的攻擊填 attacks（技能值、傷害）；劇本另外寫明的攻擊方式（例如操縱物品出手）以內文為準。"
-                 "表上若寫了看見它的理智損失，調查員第一次看見它時，替每位在場的調查員各呼叫一次 sanity_check（用表上的損失）。"),
+                 "表上若寫了看見它的理智損失，調查員第一次看見它時，呼叫一次 sanity_check（用表上的損失），其他在場看見的調查員填進 witnesses，每人各擲一次。"),
     }
