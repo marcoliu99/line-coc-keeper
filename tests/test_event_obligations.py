@@ -125,6 +125,9 @@ async def test_a_rule_the_executor_already_applied_this_turn_is_not_applied_agai
     result.observed_outcomes = [ObservedOutcome("tool:1", "sanity_check", True)]
     applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], result=result)
     assert applied == [] and "a" not in group_state.load_state(state.group_id).pending_checks
+    # Recorded as applied: a later turn that shows the hand again does not owe it either.
+    applied, _ = await _enforce(state, REVEAL, [BUCKET_RULE], turn_id="turn-2")
+    assert applied == [] and "a" not in group_state.load_state(state.group_id).pending_checks
 
 
 @aio
@@ -207,6 +210,23 @@ async def test_an_event_that_costs_hit_points_goes_through_the_same_mechanism(st
     assert [item.kind for item in applied] == ["damage"] and not applied[0].pending and again == []
     stored = group_state.load_state(state.group_id)
     assert stored.characters["a"].hp == 7 and "4" in applied[0].summary
+
+
+@aio
+async def test_a_forced_check_is_owed_unless_the_executor_made_that_same_roll(state) -> None:
+    """A Spot Hidden the player asked for does not stand in for the Listen the cellar demands."""
+    from app.domain.models import ObservedOutcome
+    rule = ["走進地下室的人須通過 聆聽 檢定，否則聽不見腳步聲。"]
+    other = _result()
+    other.observed_outcomes = [ObservedOutcome("tool:1", "skill_check", True)]
+    other.check_status["resolved"] = {"investigator": "Marco", "skill": "偵查"}
+    applied, _ = await _enforce(state, "你走進地下室，腳下的木板吱嘎作響。", rule, result=other)
+    assert [item.kind for item in applied] == ["forced_check"]
+    same = _result()
+    same.check_status["resolved"] = {"investigator": "Ken", "skill": "聆聽"}  # the Executor rolled Ken's Listen
+    applied, _ = await _enforce(group_state.load_state(state.group_id), "你走進地下室，腳下的木板吱嘎作響。", rule,
+                                result=same, turn_id="turn-2", user_id="b")
+    assert applied == [] and "b" not in group_state.load_state(state.group_id).pending_checks
 
 
 @aio
