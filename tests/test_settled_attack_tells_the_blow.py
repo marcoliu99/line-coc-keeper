@@ -6,6 +6,8 @@ from __future__ import annotations
 import unittest
 
 from app.agents import executor
+from app.domain.models import ObservedOutcome
+from app.models import GroupState
 from app.services import turn_delivery
 
 
@@ -60,3 +62,21 @@ class DeferralOverASettledAttackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplayAndNextDefenceTests(unittest.TestCase):
+    def test_a_replayed_receipt_that_changed_nothing_is_kept_internal(self):
+        line = ObservedOutcome("tool:1", "declare_combat_action", True, "⚔️ 命中，幼體 受到 9 點傷害。", "public")
+        observed = [line]
+        executor._silence_replayed_attack(observed, "declare_combat_action", {"round": 2}, {"round": 2})
+        self.assertEqual((observed[0].public_text, observed[0].audience), ("", "internal"))
+        fresh = [line]
+        executor._silence_replayed_attack(fresh, "declare_combat_action", {"round": 2}, {"round": 3})
+        self.assertEqual(fresh[0].public_text, line.public_text, "a call that changed the game keeps its line")
+
+    def test_the_check_the_turn_opened_is_found(self):
+        state = GroupState(group_id="g")
+        self.assertIsNone(executor._opened_check(state, {}))
+        state.pending_checks["p2"] = {"check_id": "c2", "type": "choice"}
+        self.assertEqual(executor._opened_check(state, {}), ("p2", {"check_id": "c2", "type": "choice"}))
+        self.assertIsNone(executor._opened_check(state, {"p2": {"check_id": "c2", "type": "choice"}}), "an old one is not new")
