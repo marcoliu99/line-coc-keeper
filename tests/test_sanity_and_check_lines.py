@@ -48,3 +48,31 @@ def test_the_recent_checks_say_what_each_roll_was_for():
         [{"investigator": "Daniel", "skill": "化學", "skill_value": 40, "roll": 12, "difficulty": "regular",
           "outcome": "hard 成功", "player_declaration": "我辨認架上那些容器的成分。"}], {"HP": "12/12"})
     assert "（當時的行動：我辨認架上那些容器的成分。）" in block
+
+
+def test_a_sanity_roll_in_the_history_says_what_was_seen():
+    block = prompt_config.build_resolved_check_history_block(
+        [{"investigator": "Edith", "skill": "SAN", "skill_value": 50, "roll": 30, "outcome": "regular 成功",
+          "action_context": "看見 Corbitt 的屍體動起來", "player_declaration": ""}], {"HP": "12/12"})
+    assert "（當時的行動：看見 Corbitt 的屍體動起來）" in block
+
+
+def test_the_autorolled_sanity_event_keeps_its_context():
+    from app.checks import service
+    from app.models import Character, GroupState
+    state = GroupState(group_id="g", autoroll_checks=True)
+    edith = Character(name="Edith", owner_id="p1", character_id="c1", san=50)
+    state.characters, state.characters_by_id, state.active_character_id_by_user = {"p1": edith}, {"c1": edith}, {"p1": "c1"}
+    outcome = service.autoroll_sanity(state, edith, tool_input={"action_context": "看見屍體動起來"},
+                                      loss_success="0", loss_failure="1d3")
+    assert outcome.event_seed["action_context"] == "看見屍體動起來"
+
+
+def test_an_investigators_own_rolls_survive_the_rest_of_the_table():
+    from app.agents import context_builder
+    from app.models import GroupState
+    state = GroupState(group_id="g", timeline_id="t")
+    mine = {"owner_id": "p1", "character_id": "c1", "timeline_id": "t", "skill": "化學"}
+    others = [{"owner_id": "p2", "character_id": "c2", "timeline_id": "t", "skill": "偵查"}] * 30
+    state.resolved_check_events = [mine, *others]
+    assert context_builder._resolved_events_for_character(state, "p1", "c1", "g") == [mine]

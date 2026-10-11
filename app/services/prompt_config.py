@@ -152,7 +152,7 @@ def build_resolved_check_history_block(
     for event in events[-8:]:
         # What the roll was for, so the same task is answered from it instead of rolled again (a hard success at
         # turn 18 rolled again at turn 78 and failed, 2026-10-11).
-        purpose = " ".join(str(event.get("player_declaration") or "").split())[:80]
+        purpose = " ".join(str(event.get("action_context") or event.get("player_declaration") or "").split())[:80]
         lines.append(
             f"- {event.get('investigator', '調查員')}：{event.get('skill', '檢定')} "
             f"{event.get('skill_value', '?')}%，擲出 {event.get('roll', '?')}，"

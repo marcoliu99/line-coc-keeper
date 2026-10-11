@@ -348,7 +348,8 @@ def _settle_sanity(roll: _PlayerRoll, pending: dict) -> CheckOutcome:
             character_id=char.character_id, investigator=char.name, skill="SAN", skill_value=san_before,
             roll=sanity_result.check.roll, difficulty="regular", outcome=outcome,
             before=roll.attributes_before, tracked_roll_fields=("san",),
-        ),
+            check_context={"player_declaration": pending.get("player_declaration", "")},
+        ) | {"action_context": pending.get("action_context", "")},
     )
 
 
@@ -838,4 +839,6 @@ def autoroll_sanity(
         outcome=f"{sanity_result.check.tier} {'成功' if sanity_result.check.success else '失敗'}",
         before=state_before, include_medical_context=False, detail=False,
     )
+    # What was seen, so a later sight of the same horror is known to have been rolled for.
+    seed.update(action_context=metadata["action_context"], player_declaration=metadata["player_declaration"])
     return AutorollOutcome(result, seed)
