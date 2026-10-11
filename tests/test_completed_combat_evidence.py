@@ -32,6 +32,8 @@ def _reviewed_lethal_hit(state):
 
 
 def _settle(state):
+    if not state.combat.active:  # a lethal incident on the last enemy settles the fight by itself
+        return {'ok': True}
     preview = _tool(state, 'end_combat', {})
     assert state.combat.active  # The historical end tool now requests only a preview.
     return _tool(state, 'confirm_combat_settlement', {
@@ -98,12 +100,12 @@ def test_end_combat_does_not_relabel_damage_from_another_scenario() -> None:
     ):
         _tool(state, "start_combat", {})
         _tool(state, "add_npc_to_combat", {"name": "Corbitt", "dex": 50, "hp": 8})
-        _reviewed_lethal_hit(state)
+        _reviewed_lethal_hit(state)  # the lethal incident settles the fight, under "Old"
         state.scenario_title = "New"
         _settle(state)
         status = _tool(state, "get_combat_status", {})
 
-    assert status["last_ended_combat"]["last_damage"] == {}
+    assert "last_ended_combat" not in status, "a fight settled under another title is not relabelled as this one's"
 
 
 def test_completed_combat_receipt_survives_real_state_save() -> None:

@@ -2817,6 +2817,23 @@
       "path": "docs/specs/bug/fight_back_weapon_dice_pool_and_creation_points_design_spec.md",
       "zh_path": "docs/specs/bug/fight_back_weapon_dice_pool_and_creation_points_design_spec_zh.md",
       "source_revision": "25b6d13fce478ec6b31e0a01be28f54ce5613658"
+    },
+    {
+      "title": "The fight settles itself when the last enemy falls, and a fixed reply does not wait for the Narrator",
+      "zh": "最後一個敵人倒下時戰鬥自動結算；固定回覆不再等 Narrator",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/combat_engine.py",
+        "app/services/managed_checks.py",
+        "app/services/prompt_config.py",
+        "app/agents/supervisor.py",
+        "tests/test_combat_turn_friction.py",
+        "tests/test_turn_stage_sequence.py"
+      ],
+      "path": "docs/specs/enhancement/enemy_down_auto_settle_and_fixed_reply_design_spec.md",
+      "zh_path": "docs/specs/enhancement/enemy_down_auto_settle_and_fixed_reply_design_spec_zh.md",
+      "source_revision": "25b6d13fce478ec6b31e0a01be28f54ce5613658"
     }
   ]
 }

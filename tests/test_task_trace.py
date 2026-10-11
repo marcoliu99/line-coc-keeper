@@ -37,7 +37,7 @@ def test_real_adapter_request_baseline(tmp_path, monkeypatch, route, expected_re
         outputs.extend([
             response(calls=[SimpleNamespace(type="function_call", name="add_carried_item",
                      arguments=json.dumps({"investigator": "Ada", "item": "手電筒"}), call_id="call-1")]),
-            response(json.dumps({"disposition": "completed", "actor_character_id": turn_context.character_id(state, "u"),
+            response(json.dumps({"disposition": "resolved_without_check", "actor_character_id": turn_context.character_id(state, "u"),
                                  "evidence_refs": ["tool:1"]})),
         ])
     outputs.append(response("你把筆記收好，安靜地等待。"))

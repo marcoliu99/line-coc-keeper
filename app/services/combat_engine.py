@@ -388,41 +388,73 @@ _HANDLERS: dict[type, Handler] = {
 }
 
 
-# The fight's own steps that can leave the last investigator down: an attack, a defence, a turn moving, an effect.
-# A Keeper's direct HP adjustment or damage is not among them: it may still be reviewed or corrected before settling.
-_CAN_DOWN_THE_PARTY = (act.CheckResult, act.Choose, act.Advance, act.Run, act.RunEnemyPlan, act.ResolveEnemy,
-                       act.Declare, act.Rule, act.RunEffect)
+# The fight's own steps that can leave a side down: an attack, a defence, a turn moving, an effect (an incident
+# effect runs as it is declared). A Keeper's direct HP adjustment or damage is not among them: it settles nothing by
+# itself and may be reviewed or corrected; the fight's next completed step settles what it then finds.
+_CAN_END_THE_FIGHT = (act.CheckResult, act.Choose, act.Advance, act.Run, act.RunEnemyPlan, act.ResolveEnemy,
+                      act.Declare, act.Rule, act.RunEffect, act.DeclareEffect)
 PARTY_DOWN_REASON = "所有調查員都已倒下，戰鬥自動結算"
+ENEMY_DOWN_REASON = "敵方已全數倒下，戰鬥自動結算"
+
+
+def _nothing_open(state: GroupState) -> bool:
+    battle = state.combat
+    return bool(battle.active) and not battle.interaction and battle.phase == "READY" and all(
+        a.get("completed") for a in battle.actions.values())
 
 
 def _ready_to_settle_party_down(state: GroupState) -> bool:
     """Every investigator present in the fight at 0 HP and nothing left open: nobody is left to play it on, and the
     settlement ends the scenario. An investigator away or retired is not counted; one unconscious with HP left is not
     down (the Keeper rules what the enemy does with them)."""
-    battle = state.combat
-    if not battle.active or battle.interaction or battle.phase != "READY" or any(
-            not a.get("completed") for a in battle.actions.values()):
+    if not _nothing_open(state):
         return False
-    present = [character for c in battle.order if c.is_pc
+    present = [character for c in state.combat.order if c.is_pc
                if (character := combat.character_for_combatant(state, c)) is not None
                and character.active and not character.away]
     return bool(present) and all(combat_resources.effective_character(state, c).hp <= 0 for c in present)
 
 
-def _settle_party_down(state: GroupState) -> dict[str, Any] | None:
-    """Settle the fight a step of its own has just left with every investigator down and nothing open.
+def _ready_to_settle_enemy_down(state: GroupState) -> bool:
+    """Every enemy in the fight defeated and nothing left open: the fight is won. Settling it only writes the
+    provisional HP, ammunition and obligations back to the sheets; the scenario goes on."""
+    enemies = [c for c in state.combat.order if c.side == "enemy"]
+    return _nothing_open(state) and bool(enemies) and all(c.defeated for c in enemies)
 
-    Nobody is left to play, and the scenario ends at settlement (house rule), so the Keeper is not asked to preview
-    and confirm it on later lines: the Haunting soak (2026-10-09) spent five player lines there after Evelyn fell.
-    A settlement the engine refuses is left to the Keeper as before.
+
+def _auto_settle_reason(state: GroupState) -> str | None:
+    if _ready_to_settle_party_down(state):
+        return PARTY_DOWN_REASON
+    if _ready_to_settle_enemy_down(state):
+        return ENEMY_DOWN_REASON
+    return None
+
+
+def _settle(state: GroupState, reason: str) -> dict[str, Any] | None:
+    """Settle the fight a step of its own has just ended, so the Keeper is not asked to preview and confirm it on
+    later lines: the Haunting soak (2026-10-09) spent five player lines there after Evelyn fell, and the 2026-10-11
+    runs waited a turn or two after the last enemy dropped. A settlement the engine refuses is left to the Keeper.
     """
     try:
         preview = ENGINE.handle(state, act.PreviewSettlement())["preview"]
         return ENGINE.handle(state, act.ConfirmSettlement(
-            combat_id=preview["combat_id"], settlement_id=preview["settlement_id"], reason=PARTY_DOWN_REASON))
+            combat_id=preview["combat_id"], settlement_id=preview["settlement_id"], reason=reason))
     except (combat_resources.CombatAdmissionError, ValueError) as exc:
-        _logger.info("party-down settlement left to the Keeper: %s", exc)
+        _logger.info("automatic settlement left to the Keeper: %s", exc)
         return None
+
+
+def _mark_replay_receipts(state: GroupState, action_id: Any, outcome: dict[str, Any]) -> None:
+    """The handler stored the action's receipt (and a choice's) before the settlement decorated its answer; a
+    retry of the same check or button replays that stored receipt, so it says the fight is settled too."""
+    action = state.combat.actions.get(str(action_id or ""))
+    if not action:
+        return
+    if isinstance(action.get("receipt"), dict):
+        action["receipt"].update(outcome)
+    for choice in action.get("choice_receipts", {}).values():
+        if isinstance(choice.get("result"), dict):
+            choice["result"].update(outcome)
 
 
 class CombatEngine:
@@ -434,13 +466,15 @@ class CombatEngine:
             raise TypeError(f"unknown combat action {type(action).__name__}")
         mode = mode_of(state)
         # Only the step that makes it so settles: not a rejected call, nor one made after the Keeper's own HP change
-        # already left the party down (that stays the Keeper's to review).
-        watch = isinstance(action, _CAN_DOWN_THE_PARTY) and not _ready_to_settle_party_down(state)
+        # already left a side down (that stays the Keeper's to review).
+        watch = isinstance(action, _CAN_END_THE_FIGHT) and _auto_settle_reason(state) is None
         result = handler(state, action, mode)
         if (watch and isinstance(result, dict) and result.get("ok", True) is not False
-                and _ready_to_settle_party_down(state) and (settled := _settle_party_down(state)) is not None):
-            result = {**result, "settled": True, "settlement_ready": False,
-                      **({"scenario_ended": settled["scenario_ended"]} if settled.get("scenario_ended") else {})}
+                and (reason := _auto_settle_reason(state)) and (settled := _settle(state, reason)) is not None):
+            outcome = {"settled": True, "settlement_ready": False, "settled_reason": reason,
+                       **({"scenario_ended": settled["scenario_ended"]} if settled.get("scenario_ended") else {})}
+            result = {**result, **outcome}
+            _mark_replay_receipts(state, result.get("action_id"), outcome)
         return cast(R, result)
 
 
