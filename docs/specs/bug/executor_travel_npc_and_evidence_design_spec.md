@@ -16,11 +16,11 @@ The 2026-10-11 Scritch Scratch rerun4 (27 fallbacks, 6 error replies) and Camp S
 
 ## Change
 
-- **The Executor's rules say it, and the retry says it again.** `EXECUTOR_INSTRUCTION`: going to a place the scenario has shown, speaking to an NPC, waiting for an NPC or for the scene to move on are narration (`no_mechanics`), not `blocked` or `deferred`; `deferred` is for a combat turn not yet one's own or another's check in the way; a 「如果／若…」 line is judged against the current state and answered. `final_feedback` adds `nobody_waiting`: when a deferral is refused with no fight, no pending check and no Luck decision, the retry is told nobody is waiting and to answer with `no_mechanics`.
-- **A roll or a write this turn is evidence.** `validate_resolution` accepts `resolved_without_check` when a referenced tool rolled (`resolved`) or wrote (an ok call to a tool that is not read-only and did not no-op), not only when the scenario was quoted.
+- **The Executor's rules say it, and the retry says it again.** `EXECUTOR_INSTRUCTION`: going to a place the scenario has shown, speaking to an NPC, waiting for an NPC or for the scene to move on are narration (`no_mechanics`), not `blocked` or `deferred`; `deferred` is for a combat turn not yet one's own or another's check in the way; a 「如果／若…」 line is judged against the current state and answered. `final_feedback` adds `nobody_waiting`: when a deferral is refused with no fight, no pending check and no Luck decision, and the turn's tools were all successful look-ups or the game changed, the retry is told nobody is waiting and to answer with `no_mechanics` (nothing changed) or `resolved_without_check` citing the change. A turn that only rolled, or whose tool failed, keeps the generic feedback.
+- **A roll or a write this turn is evidence.** `validate_resolution` accepts `resolved_without_check` when a referenced tool rolled (`resolved`) or wrote (an ok call to a tool that is not read-only whose own before/after snapshots differ), not only when the scenario was quoted. A cited no-op beside another call's change is still a no-op.
 - **No search is `disabled`, not `error`.** `build_context` reports `rag_status` `"disabled"` when no scenario search task ran, so classification says `unsupported_action` and recovery does not search.
-- **A deferral is no action when only look-ups ran.** `classify` tests the tool calls against `READ_ONLY_TOOL_NAMES` instead of their presence.
-- **A repeated look-up is answered from the transcript.** The Codex provider, on the same read-only `(name, arguments)` again in one conversation, appends the earlier result as a replayed tool entry and continues; the iteration limit still bounds a model that keeps asking. Logged as `codex.tool.lookup_replayed`.
+- **A deferral is no action when only look-ups ran.** `classify` tests the tool calls against `INFORMATION_QUERY_TOOL_NAMES` (the `get_*` and `search_*` tools; dice are not look-ups) instead of their presence.
+- **A repeated look-up is answered from the transcript.** The Codex provider, on the same read-only `(name, arguments)` again in one conversation, appends the earlier result as a replayed tool entry and continues while no mutating or rolling tool ran since; after one it runs the look-up again, so the model reads the current sheet or battle. The iteration limit still bounds a model that keeps asking. Logged as `codex.tool.lookup_replayed`.
 
 ## Not changing
 
@@ -29,7 +29,7 @@ The 2026-10-11 Scritch Scratch rerun4 (27 fallbacks, 6 error replies) and Camp S
 
 ## Verification
 
-- `tests/test_turn_consistency_handoff.py`: a refused deferral with nobody waiting gets the `nobody_waiting` feedback and the turn completes as `no_mechanics`; a Sanity roll or a `record_clue` referenced by the decision validates `resolved_without_check`, a look-up that found nothing does not.
-- `tests/test_turn_fallback.py`: a refused deferral after `search_scenario` is `executor_no_action`; after `add_carried_item` it is `unresolved_pending_state`.
+- `tests/test_turn_consistency_handoff.py`: a refused deferral with nobody waiting gets the `nobody_waiting` feedback and the turn completes as `no_mechanics`; after a committed change it is told to complete with it; after only a roll it keeps the generic feedback. A Sanity roll or a `record_clue` referenced by the decision validates `resolved_without_check`; a look-up that found nothing, a no-op clue, or a no-op cited beside another call's change does not.
+- `tests/test_turn_fallback.py`: a refused deferral after `search_scenario` is `executor_no_action`; after `add_carried_item` or `roll_dice` it is `unresolved_pending_state`.
 - `tests/test_retrieval_prefetch.py`: with the scenario search off, `rag_status` is `"disabled"`.
-- `tests/test_codex_decision_context.py`: the same `search_scenario` twice runs the host tool once and the second is answered from the transcript.
+- `tests/test_codex_decision_context.py`: the same `search_scenario` twice runs the host tool once and the second is answered from the transcript; `get_character_sheet` after `adjust_character` runs again and reads the adjusted sheet.
