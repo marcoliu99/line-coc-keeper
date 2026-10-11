@@ -35,6 +35,12 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
                 self.assertPolicy(prompt, "劇本、KP Assistant 明確建立的主持事實")
                 self.assertEqual(prompt.count("**Scenario Canon Boundary**"), 1)
 
+    def test_the_narrator_is_told_the_fallen_stay_down_and_the_past_is_not_replayed(self):
+        narrator = self._prompts()["narrator"]
+        self.assertPolicy(narrator, "不會再逼近、攻擊或行動")
+        self.assertPolicy(narrator, "照【已結算檢定】寫的攻擊者寫")
+        self.assertPolicy(narrator, "不要重演、也不要重新開場")
+
     def test_equipment_policy_has_no_purchase_instructions_on_any_keeper_path(self):
         for path, prompt in self._prompts().items():
             with self.subTest(path=path):

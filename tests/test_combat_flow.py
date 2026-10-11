@@ -229,6 +229,17 @@ def test_autoroll_major_wound_retains_unrelated_pending_control():
     assert not pc.injury
 
 
+def test_the_defence_roll_itself_names_who_strikes():
+    state, _pc, _enemy = battle(npc_first=True)
+    plan = calls.plan_enemy_turn(state)
+    calls.resolve_enemy_action(state, plan['plan_id'])
+    assert state.pending_checks['player']['action_context'] == 'Cultist 攻擊 Investigator；這是 Investigator 的防禦'
+    combat_flow.submit_choice(state, interaction_id=state.combat.interaction['interaction_id'], owner_id='player',
+                              choice='dodge')
+    # The roll that replaces the choice is what the resolved event is built from.
+    assert state.pending_checks['player']['action_context'] == 'Cultist 攻擊 Investigator；這是 Investigator 的防禦'
+
+
 def test_ranged_successful_dive_applies_penalty_instead_of_automatic_miss():
     state, pc, enemy = battle(npc_first=True)
     card = state.combat.enemy_cards[enemy.enemy_card_id]
@@ -773,6 +784,20 @@ def test_the_status_says_so_when_one_side_is_down_and_stays_quiet_otherwise():
     combat.card_for(state, enemy).hp = 20
     pc.away = True
     assert '我方已全數倒下或離場，戰鬥可以結算了。' in combat.status_text(state)
+
+
+def test_the_status_names_the_fallen_enemy_and_who_still_stands():
+    state, _pc, enemy = battle()
+    state.combat.order.append(Combatant(name='Hybrid', dex=10, hp=11, hp_max=11, side='enemy'))
+    assert '已倒下' not in combat.status_text(state)
+    enemy.defeated = True
+    combat.card_for(state, enemy).hp = 0
+    text = combat.status_text(state)
+    assert f'已倒下、不會再行動：{enemy.display_name}。仍在戰鬥的敵人：Hybrid。' in text
+    assert '可以結算' not in text
+    state.combat.order[-1].defeated = True
+    text = combat.status_text(state)
+    assert '已倒下、不會再行動' not in text and '敵方已全數倒下，戰鬥可以結算了。' in text
 
 
 def test_a_standing_npc_ally_keeps_the_party_from_being_called_down():

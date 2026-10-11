@@ -212,6 +212,15 @@ def roll_pending_check(state: GroupState, pending: dict[str, Any], owner_id: str
     return dice.SkillCheckResult(**result)
 
 
+def _defence_context(state: GroupState, action: CombatAction, character: Character) -> str:
+    """Who strikes whom, for the defender's choice and roll: the narrator reads it with the result, so the blow is
+    not handed to another enemy (a 2026-10-11 soak run narrated one enemy's swing as the claws of another already
+    dead)."""
+    attacker = combat.find_combatant(state, action['actor_id'])
+    verb = '開槍射向' if action['action_kind'] == 'single_shot' else '攻擊'
+    return f"{attacker.display_name if attacker else '敵人'} {verb} {character.name}；這是 {character.name} 的防禦"
+
+
 def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRole, character: Character,
                    skill: str, value: int, *, penalty: int = 0, injury: bool = False) -> dict[str, Any]:
     candidate: dict[str, Any] = {'type': 'skill', 'skill': skill, 'skill_value': value, 'bonus_dice': 0,
@@ -220,7 +229,8 @@ def _request_check(state: GroupState, action: CombatAction, role: CombatCheckRol
                  'major_wound_trigger': injury, 'allow_luck': not injury}
     if action.get('medical_context'):
         candidate['medical_context'] = deepcopy(action['medical_context'])
-    registration = check_lifecycle.register(state, character.owner_id, candidate)
+    source = {'action_context': _defence_context(state, action, character)} if role == 'defense' else None
+    registration = check_lifecycle.register(state, character.owner_id, candidate, source=source)
     if registration.status != 'admitted':
         return _error(f'Required check ownership blocked: {registration.blocker}')
     assert registration.pending is not None
@@ -501,7 +511,8 @@ def _defense_choice(state: GroupState, action: CombatAction, character: Characte
                  'attacker_name': attacker.display_name if attacker else '',
                  'attacker_tier': action['checks'].get('attack', {}).get('tier'),
                  'combat_context': _context(state, action['action_id'], 'defense_choice').to_dict()}
-    registered = check_lifecycle.register(state, character.owner_id, candidate)
+    registered = check_lifecycle.register(state, character.owner_id, candidate,
+                                          source={'action_context': _defence_context(state, action, character)})
     if registered.pending is None:
         return _error('Cannot register defender choice')
     state.combat.interaction = {**candidate['combat_context'], 'owner_id': character.owner_id,

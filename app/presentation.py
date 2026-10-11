@@ -159,6 +159,58 @@ def strip_leaked_decision(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", _EMPTY_FENCE.sub("", "".join(kept))).strip()
 
 
+# A reply that ends in closers that never opened: the model wrapped its narration as a JSON string and the tail of
+# the wrapper, sometimes with a stray token after it, survived the parse (2026-10-11 soak runs: an opening whose raw
+# text ended `…又為何前往羅克波特？」}} bheidh`, a scene reply that ended `…你要怎麼查看？」}}`).
+_STRAY_WORD = re.compile(r"[}\]]\s+[A-Za-z]{1,12}\s*$")
+_OPENER = {"{": "}", "[": "]"}
+
+
+def _unmatched_closers(text: str) -> set[int]:
+    """Positions of the ``}``/``]`` in ``text`` that no earlier opener of their kind is waiting for."""
+    depth = {"}": 0, "]": 0}
+    unmatched: set[int] = set()
+    for index, char in enumerate(text):
+        if char in _OPENER:
+            depth[_OPENER[char]] += 1
+        elif char in depth:
+            if depth[char]:
+                depth[char] -= 1
+            else:
+                unmatched.add(index)
+    return unmatched
+
+
+def strip_junk_tail(text: str) -> str:
+    """``text`` without the closing ``}``/``]`` at its end that nothing opened, and the stray word after them.
+
+    Only a closer with no opener waiting for it goes: a balanced ``{hp: 13}`` at the end stays. A closing 」 left
+    dangling by the cut goes with the tail.
+    """
+    unmatched = _unmatched_closers(text)
+    if not unmatched:
+        return text
+    kept = text.rstrip()
+    if (stray := _STRAY_WORD.search(kept)) and stray.start() in unmatched:
+        kept = kept[:stray.start() + 1]
+    cut = False
+    while kept and (kept[-1].isspace() or len(kept) - 1 in unmatched or _dangling_quote(kept)):
+        cut = cut or len(kept) - 1 in unmatched
+        kept = kept[:-1]
+    if not cut:
+        return text
+    return kept.rstrip()
+
+
+def _dangling_quote(text: str) -> bool:
+    """``text`` ends in a closing quote that nothing in it opened (the wrapper's, not the narration's)."""
+    last = text[-1]
+    if last == '"':
+        return text.count('"') % 2 == 1
+    pairs = {"”": "“", "」": "「"}
+    return last in pairs and text.count(last) > text.count(pairs[last])
+
+
 def player_text(text: str) -> str:
     """``text`` with raw tier names mapped and internal ids removed, unless debugging asks to see them.
 

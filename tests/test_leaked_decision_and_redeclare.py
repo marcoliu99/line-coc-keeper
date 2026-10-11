@@ -38,6 +38,41 @@ class LeakedDecisionTests(unittest.TestCase):
         draft = SimpleNamespace(text=f"{LEAK}\n\n林間靜了下來。")
         reply_pipeline._scrub_leaks(SimpleNamespace(), draft)
         self.assertEqual(draft.text, "林間靜了下來。")
+
+
+class JunkTailTests(unittest.TestCase):
+    """The tail of a JSON wrapper the model put around its narration (two 2026-10-11 soak replies)."""
+
+    def test_the_wrapper_tail_and_the_stray_word_after_it_are_removed(self):
+        opening = "Amelia Ward，你是古董商。浪聲幾乎吞沒一切——你打算如何向他們介紹自己，又為何前往羅克波特？」}} bheidh"
+        self.assertEqual(presentation.strip_junk_tail(opening),
+                         "Amelia Ward，你是古董商。浪聲幾乎吞沒一切——你打算如何向他們介紹自己，又為何前往羅克波特？")
+        self.assertEqual(presentation.strip_junk_tail("你們已抵達海灘，Reidel，你要怎麼查看？」}}"), "你們已抵達海灘，Reidel，你要怎麼查看？")
+        self.assertEqual(presentation.strip_junk_tail('雨還在下。"}'), "雨還在下。")
+        self.assertEqual(presentation.strip_junk_tail("雨還在下。]}\n"), "雨還在下。")
+
+    def test_only_the_unmatched_closer_goes_when_balanced_braces_come_before_it(self):
+        self.assertEqual(presentation.strip_junk_tail("資料是 {hp: 13}}"), "資料是 {hp: 13}")
+        self.assertEqual(presentation.strip_junk_tail("名單 [Alan]]} bheidh"), "名單 [Alan]")
+
+    def test_an_unmatched_closer_earlier_does_not_cost_a_balanced_ending_its_brace(self):
+        text = "先前多了一個 }，但資料是 {hp: 13}"
+        self.assertEqual(presentation.strip_junk_tail(text), text)
+
+    def test_a_quote_the_narration_opened_stays_with_its_text(self):
+        self.assertEqual(presentation.strip_junk_tail("他低聲說：「走吧。」}}"), "他低聲說：「走吧。」")
+        self.assertEqual(presentation.strip_junk_tail("He said, “Go.”}}"), "He said, “Go.”")
+        self.assertEqual(presentation.strip_junk_tail('He said, "Go."}}'), 'He said, "Go."')
+
+    def test_balanced_braces_and_ordinary_endings_are_left_alone(self):
+        for text in ("他寫下 {not json} 在牆上。", '{"name":"Alan","hp":13}', "沒有任何大括號。", "她說：「跟我來。」",
+                     "名單上寫著 [Alan, Mercer]。", "雨還在下。 bheidh"):
+            self.assertEqual(presentation.strip_junk_tail(text), text)
+
+    def test_the_reply_pipeline_removes_the_tail_too(self):
+        draft = SimpleNamespace(text="林間靜了下來。」}} bheidh")
+        reply_pipeline._scrub_leaks(SimpleNamespace(), draft)
+        self.assertEqual(draft.text, "林間靜了下來。")
         self.assertEqual(reply_pipeline.STEPS[0].name, "scrub_leaks")
 
     def test_a_reply_that_was_only_the_decision_tells_the_player_instead_of_a_blank(self):
