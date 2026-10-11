@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app import combat, combat_flow, combat_resources, config, dice
+from app import combat, combat_flow, combat_resources, combat_rules, config, dice
 from app.models import Character, Combatant, GroupState
 from tests import combat_calls as calls
 
@@ -819,3 +819,65 @@ def test_an_npc_ally_without_a_card_takes_the_blow_instead_of_pausing_on_a_rulin
         done = finish(state, check('regular', roll=30))
     assert done['completed'] and not state.combat.actions['swing'].get('needs_ruling')
     assert state.combat.actions['swing']['defense_kind'] == 'no_defense' and ally.hp == 3
+
+
+def test_fight_back_uses_the_carried_melee_weapon_at_its_skill_and_damage():
+    """CoC 7e: a Fight Back is made with the weapon in hand. The defender carries a knife, so the option names it and
+    the counter does the knife's 1d4, not bare-handed 1d3."""
+    state, pc, enemy = battle(npc_first=True)
+    pc.carried_items.append('小刀')
+    plan = calls.plan_enemy_turn(state, enemy.display_name)
+    with patch('app.dice.skill_check', return_value=check('fail', roll=90)):
+        calls.resolve_enemy_action(state, plan['plan_id'])
+    counter = next(o for o in state.combat.interaction['options'] if o['kind'] == 'counter')
+    assert counter['label'] == '反擊（小刀）' and counter['skill'] == '格鬥（鬥毆）' and counter['skill_value'] == 60
+    choice = state.combat.interaction['interaction_id']
+    combat_flow.submit_choice(state, interaction_id=choice, owner_id='player', choice='反擊')
+    with patch('app.dice.random.randint', return_value=4):
+        result = finish(state, check('hard', roll=5))
+    assert result['result']['counter_weapon'] == '小刀'
+    assert result['result']['damage_receipt']['weapon_damage_expr'] == '1d4' and enemy.hp == 16
+
+
+def test_fight_back_prefers_the_weapon_of_the_defenders_last_attack():
+    """An axe swung last round is the weapon in hand, even though the knife in the bag uses a higher skill."""
+    state, pc, enemy = battle(npc_first=True)
+    pc.carried_items.extend(['小刀', '斧頭'])
+    pc.skills['格鬥（斧）'] = 45
+    state.combat.actions['swing'] = {'action_id': 'swing', 'actor_id': 'pc:pc1', 'target_id': enemy.combatant_id,
+                                     'weapon_reference': '斧頭', 'completed': True, 'round': 1, 'damage': '1d8+2',
+                                     'weapon': {'id': 'i.weapon.axe', 'attack_mode': 'melee', 'skill_id': 'fighting-axe',
+                                                'db_policy': 'full'}}
+    option = combat_flow._counter_weapon(state, pc)
+    assert option['label'] == '反擊（斧頭）' and option['skill'] == '格鬥（斧）' and option['skill_value'] == 45
+    assert option['counter_damage'] == '1d8+2'
+    pc.carried_items.remove('斧頭')
+    state.combat.actions.clear()
+    assert combat_flow._counter_weapon(state, pc)['label'] == '反擊（小刀）', 'the best carried melee weapon otherwise'
+    pc.carried_items.clear()
+    bare = combat_flow._counter_weapon(state, pc)
+    assert bare['label'] == '反擊' and bare['counter_damage'] == '1d3'
+    pc.carried_items.append('投矛')  # carried under its thrown name: the same spear, fought back with in melee
+    pc.skills['格鬥（矛）'] = 35
+    spear = combat_flow._counter_weapon(state, pc)
+    assert spear['label'] == '反擊（投矛）' and spear['skill'] == '格鬥（矛）' and spear['counter_damage'] == '1d8+1'
+
+
+def test_fight_back_honours_a_pinned_weapon_definition():
+    """A pregen's hunting knife carries its own reviewed definition (1d4 here, where the catalog says 1d4+2): the
+    counter uses the pinned damage, and an entry whose definition cannot be read is passed over, not guessed."""
+    from dataclasses import asdict, replace
+    knife = combat_rules.resolve_weapon('獵刀').definition
+    assert knife is not None and knife.damage == '1d4+2'
+    pin = replace(knife, damage='1d4', catalog_version='pregen-v1')
+    state, pc, _enemy = battle(weapon_instances={
+        '獵刀': {'definition_id': pin.id, 'catalog_version': pin.catalog_version, 'pinned_definition': asdict(pin)},
+        '怪東西': {'definition_id': 'x', 'pinned_definition': {'id': 'x'}},
+    })
+    option = combat_flow._counter_weapon(state, pc)
+    assert option['label'] == '反擊（獵刀）' and option['counter_damage'] == '1d4'
+    # A scenario definition stored with the entry outranks the pin, as it does for a declaration.
+    override = replace(pin, damage='1d3', catalog_version='scenario-v1')
+    state, pc, _enemy = battle(weapon_instances={'獵刀': {
+        'definition_id': pin.id, 'pinned_definition': asdict(pin), 'scenario_definitions': [asdict(override)]}})
+    assert combat_flow._counter_weapon(state, pc)['counter_damage'] == '1d3'
