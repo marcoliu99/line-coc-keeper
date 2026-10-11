@@ -108,6 +108,40 @@ def make_tool_executor(
         return result
 
     async def execute(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        if tool_name == "sanity_check" and tool_input.get("witnesses"):
+            return await _each_witness(tool_input)
+        return await _execute_one(tool_name, tool_input)
+
+    async def _each_witness(tool_input: dict[str, Any]) -> dict[str, Any]:
+        """One sight, one Sanity roll for every investigator who saw it, each its own call as if the model made it.
+
+        Asked for one call per witness, the model rolled for the actor alone in every 2026-10-12 soak run.
+        """
+        single = {key: value for key, value in tool_input.items() if key != "witnesses"}
+        first = await _execute_one("sanity_check", single)
+        rolled = {_who(single.get("investigator"))}
+        others = []
+        witnesses = tool_input["witnesses"]
+        for name in witnesses if isinstance(witnesses, list) else [witnesses]:
+            if not str(name).strip() or _who(name) in rolled:
+                continue
+            rolled.add(_who(name))
+            others.append(await _execute_one("sanity_check", {**single, "investigator": str(name).strip()}))
+        if not others:
+            return first
+        # Led by a roll that happened: a primary refused (a check already waiting) must not hide the witnesses who
+        # rolled. A witness refused beside a roll rides in the list with its own error, as its own call would.
+        results = [first, *others]
+        lead = next((result for result in results if result.get("ok")), first)
+        return {**lead, "witnesses": [result for result in results if result is not lead]}
+
+    def _who(name: Any) -> str:
+        character = support.find_character(state, str(name or ""))
+        if character is None:
+            return str(name or "").strip()
+        return character.character_id or f"legacy-user:{character.owner_id}"
+
+    async def _execute_one(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         nonlocal evidence_incomplete, scenario_searches
         mutation_admission.assert_admitted(state.group_id)
         if tool_name == "search_scenario" and scenario_search_limit is not None:
