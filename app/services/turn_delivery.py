@@ -98,6 +98,12 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
                            "public" if text else "internal", fact_ref=fact_ref)
 
 
+_ROLL_CLAIM = re.compile(r"(?:擲出了?|擲得|骰出了?|(?:原始)?骰值)\s*(?:是|為|[:：])?\s*(\d{1,3})(?!\d)")
+# The number right after a roll label, in the forms a narrator writes or echoes from the Luck context (「原始骰值：60」).
+# Best effort: a narration that states the roll in other words is not caught, and costs the player nothing worse than
+# a wrong number they could already see in the narration.
+
+
 @dataclass(frozen=True)
 class InteractionRef:
     kind: str
@@ -116,13 +122,18 @@ class InteractionRef:
         return "已有待處理檢定／選擇，請使用檢定按鈕或 /coc check。"
 
     def told_in(self, narrative: str) -> bool:
-        """The reply already gives this Luck decision's roll and command, so the line would only repeat it.
+        """The reply already tells the player how to keep the roll, so the line would only repeat it.
 
-        A Luck offer read three times in one reply (the narration, the command list, this line) in the rerun8 run.
+        What a player needs is the way to decide: the keep command or the button. The narration seldom repeats the
+        roll itself, and a test for it left this line on 82 of 400 replies in the 2026-10-11 runs, each already
+        carrying the command (the rerun8 run read the same offer three times in one reply). A narration that states a
+        roll other than the real one keeps the line, which is the only text here that carries the engine's number.
         """
-        # The roll as a whole number, and not a cost: a roll of 6 is told by neither 「（26 點）」 nor 「（花費 6 點）」.
-        return (self.kind == "luck" and "/coc luck" in narrative
-                and (self.roll is None or re.search(rf"(?<!\d){self.roll}(?!\d)(?!\s*點)", narrative) is not None))
+        if self.kind != "luck" or not any(
+                marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕")):
+            return False
+        # Only the number right after the verb is a claim (「擲出 60」, 「骰值為 60 點」); 「花費 6 點」 names a cost.
+        return self.roll is None or all(int(n) == self.roll for n in _ROLL_CLAIM.findall(narrative))
 
 
 @dataclass
