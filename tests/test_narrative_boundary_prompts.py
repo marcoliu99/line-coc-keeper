@@ -43,12 +43,14 @@ class NarrativeBoundaryPromptTests(unittest.TestCase):
         self.assertPolicy(narrator, "還沒演過的（遊戲第一回合的開場、第一次抵達某地），照常完整演出")
 
     def test_an_addressed_npc_answers_and_a_met_trigger_fires_this_turn(self):
+        prompts = self._prompts()
         for path in ("executor", "narrator"):
             with self.subTest(path=path):
-                prompt = self._prompts()[path]
-                self.assertPolicy(prompt, "這則回覆就讓那位 NPC 回應")
-                self.assertPolicy(prompt, "也可以閃躲、說謊、拒絕或反問")
-                self.assertPolicy(prompt, "已經符合條件時，就在這回合讓它發生")
+                self.assertPolicy(prompts[path], "這則回覆就讓那位 NPC 回應")
+                self.assertPolicy(prompts[path], "也可以閃躲、說謊、拒絕或反問")
+        # A trigger may need combat or a roll: only the Executor, which has the tools, starts it.
+        self.assertPolicy(prompts["executor"], "已經符合條件時，就在這回合讓它發生：需要機制")
+        self.assertNotIn("就在這回合讓它發生", prompts["narrator"])
 
     def test_equipment_policy_has_no_purchase_instructions_on_any_keeper_path(self):
         for path, prompt in self._prompts().items():

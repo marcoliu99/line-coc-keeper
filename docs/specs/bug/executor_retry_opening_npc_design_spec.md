@@ -18,9 +18,9 @@ From the 2026-10-12 soak runs at 707ad26:
 - **Stray citations are dropped.** `validate_resolution` drops evidence refs that are not available when at least one valid ref remains; the dropped refs are logged. A ruling with no valid ref is still refused. The later checks still ask for the evidence each disposition needs.
 - **An autoroll table is told to roll now.** When `await_check` fails `pending_identity_mismatch` with autoroll on, nothing pending and no dice yet this turn, the retry says nothing waits for a roll: call `skill_check` / `sanity_check` now and return `resolved`, or `no_mechanics`.
 - **Only what was told is not replayed.** The narrator rule now covers only what conversation history or past memory already played; what has not been played (the first opening, a first arrival) is played in full.
-- **Two prompt rules** in the shared pacing section, which the Executor and Narrator both read:
-  - An NPC in the scene who is addressed answers in the same reply. They may evade, lie, refuse or ask back, but they are never silent and never answer next turn.
-  - When retrieved scenario text shows the players' situation meets a written trigger, the event starts this turn, not before.
+- **Two prompt rules:**
+  - In the shared pacing section, which the Executor and Narrator both read: an NPC in the scene who is addressed answers in the same reply. They may evade, lie, refuse or ask back, but they are never silent and never answer next turn.
+  - In the Executor instruction only, since a trigger may need combat or a roll and only the Executor has the tools: when retrieved scenario text shows the players' situation meets a written trigger, the event starts this turn through the tools it needs, not before.
 
   There is no scene clock and no phrase matching.
 
@@ -31,4 +31,4 @@ From the 2026-10-12 soak runs at 707ad26:
   - an early `await_check` at an autoroll table gets the roll-now feedback.
 - `tests/test_narrative_boundary_prompts.py`:
   - the first-opening carve-out;
-  - the NPC and trigger rules on both the Executor and Narrator paths.
+  - the NPC rule on both paths, and the trigger rule on the Executor's only.

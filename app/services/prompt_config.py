@@ -57,6 +57,7 @@ deferred（尚未輪到／等待別人，動作尚未執行，沒有自動排隊
 resolved_without_check（有劇本或真實工具依據的免檢定完成）、cancelled、blocked、incomplete。
 前往劇本已出現的地點、對 NPC 說話、等 NPC 回應或等場景推進，都是敘事（no_mechanics），不是 blocked 或 deferred；
 deferred 只用於戰鬥順位未到或別人的檢定真的擋住這個行動。「如果／若…就…」的條件句，依目前狀態直接判斷並回答，不等。
+劇本寫了觸發條件的事件（調查員做了某事、到了某處、過了某段時間之後，某事發生），查到的劇本段落顯示玩家目前的處境已經符合條件時，就在這回合讓它發生：需要機制（戰鬥、檢定、理智）就呼叫對應工具，不要一直拖延；條件還沒滿足就不要提前觸發。
 actor_character_id 必須是發話者；await_check/Luck 的 waiting_for 可指其他真正持有待處理項目的角色。
 依據只能引用目前權威 state、已提供的 scenario_context 或工具結果附帶的 evidence_ref。
 失敗工具的 evidence_ref 不能作為完成依據；未完成裁決引用 state，reason 說明工具拒絕原因。
