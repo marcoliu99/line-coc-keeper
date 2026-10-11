@@ -116,13 +116,14 @@ class InteractionRef:
         return "已有待處理檢定／選擇，請使用檢定按鈕或 /coc check。"
 
     def told_in(self, narrative: str) -> bool:
-        """The reply already gives this Luck decision's roll and command, so the line would only repeat it.
+        """The reply already tells the player how to keep the roll, so the line would only repeat it.
 
-        A Luck offer read three times in one reply (the narration, the command list, this line) in the rerun8 run.
+        What a player needs is the way to decide: the keep command or the button. The narration seldom repeats the
+        roll itself, and a test for it left this line on 82 of 400 replies in the 2026-10-11 runs, each already
+        carrying the command (the rerun8 run read the same offer three times in one reply).
         """
-        # The roll as a whole number, and not a cost: a roll of 6 is told by neither 「（26 點）」 nor 「（花費 6 點）」.
-        return (self.kind == "luck" and "/coc luck" in narrative
-                and (self.roll is None or re.search(rf"(?<!\d){self.roll}(?!\d)(?!\s*點)", narrative) is not None))
+        return self.kind == "luck" and any(
+            marker in narrative for marker in ("/coc luck skip", "Luck 按鈕", "Luck按鈕", "幸運按鈕"))
 
 
 @dataclass

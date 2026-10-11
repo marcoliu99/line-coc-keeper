@@ -2746,6 +2746,19 @@
       "path": "docs/specs/bug/keeper_gives_up_and_combat_guidance_design_spec.md",
       "zh_path": "docs/specs/bug/keeper_gives_up_and_combat_guidance_design_spec_zh.md",
       "source_revision": "0c53dcb95c2c5fd81a91815eb70336f9c80049ae"
+    },
+    {
+      "title": "The Luck instruction was added to replies that already gave it",
+      "zh": "Luck 指示在回覆已經說過時，又被加了一次",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_delivery.py",
+        "tests/test_rerun8_player_facing.py"
+      ],
+      "path": "docs/specs/bug/luck_instruction_once_design_spec.md",
+      "zh_path": "docs/specs/bug/luck_instruction_once_design_spec_zh.md",
+      "source_revision": "e4a9a1f196be92e9a6ea6ba5b3ff8bc40fc464fa"
     }
   ]
 }
