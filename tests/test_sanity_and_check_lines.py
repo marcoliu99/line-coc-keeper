@@ -76,3 +76,15 @@ def test_an_investigators_own_rolls_survive_the_rest_of_the_table():
     others = [{"owner_id": "p2", "character_id": "c2", "timeline_id": "t", "skill": "偵查"}] * 30
     state.resolved_check_events = [mine, *others]
     assert context_builder._resolved_events_for_character(state, "p1", "c1", "g") == [mine]
+
+
+def test_the_stored_history_keeps_enough_for_each_investigator():
+    """The table's history is capped when saved and loaded; an investigator's earlier roll must outlive twenty of the
+    others'."""
+    from app.models import GroupState
+    mine = {"owner_id": "p1", "character_id": "c1", "timeline_id": "t", "skill": "化學"}
+    others = [{"owner_id": "p2", "character_id": "c2", "timeline_id": "t", "skill": "偵查"}] * 40
+    data = GroupState(group_id="g", timeline_id="t").to_dict()
+    data["resolved_check_events"] = [mine, *others]
+    loaded = GroupState.from_dict(data)
+    assert mine in loaded.resolved_check_events

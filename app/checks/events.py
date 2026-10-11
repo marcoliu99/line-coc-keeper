@@ -18,7 +18,7 @@ from app.models import Character, GroupState
 from app.repositories import state_transaction
 
 ATTRIBUTE_NAMES = {"hp": "HP", "san": "SAN", "mp": "MP", "luck": "Luck"}
-_HISTORY_LIMIT = 20
+_HISTORY_LIMIT = 100  # per table; each investigator's own last rolls must survive the others' (see models)
 
 
 def character_attribute_snapshot(char: Character) -> dict[str, int]:
