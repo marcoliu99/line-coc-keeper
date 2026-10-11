@@ -229,7 +229,7 @@ def test_invalid_completion_keeps_real_inventory_mutation(state):
 
 @pytest.mark.parametrize('investigator,refs,expected', [
     ('Marco', ['tool:1'], 'resolved'),
-    ('Ken', ['tool:1'], 'incomplete'),
+    ('Ken', ['tool:1'], 'resolved'),  # a roll made this turn is the turn's effect, whoever's skill it was
     ('Marco', ['state'], 'incomplete'),
 ])
 def test_resolved_requires_referenced_actor_result(state, investigator, refs, expected):

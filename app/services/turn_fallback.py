@@ -100,10 +100,25 @@ def combat_guidance(state: GroupState, reason: str | None, actor_character_id: s
     if actor_character_id and current.character_id == actor_character_id:
         standing = "、".join(f"「{c.display_name}」" for c in enemies if not c.defeated)
         return (f"戰鬥進行中，現在輪到你（{current.display_name}）行動。目前的敵人：{standing or '無'}。"
+                + _empty_weapons(state, current) +
                 "要攻擊的話，請指名上面列出的敵人，並說明用什麼方式；也可以改做其他行動（閃避、逃跑、躲藏、掩護同伴等），"
                 "說清楚就好。")
     return (f"戰鬥進行中，現在輪到「{current.display_name}」行動。輪到你時，請說明要對哪個目標、用什麼方式攻擊或行動；"
             "還沒輪到你時，請稍候。")
+
+
+def _empty_weapons(state: GroupState, current: Any) -> str:
+    """The actor's guns that are out of rounds, as the battle counts them: a player refused for an empty gun read only
+    「請指名上面列出的敵人」 (Lightless Beacon 2026-10-11 rerun3, turn 79)."""
+    from app import combat
+    from app.keeper_tools import resource_bridge
+    character = combat.character_for_combatant(state, current)
+    if character is None:
+        return ""
+    weapons = resource_bridge.effective(state, character).weapons
+    empty = [name for name, weapon in weapons.items()
+             if isinstance(weapon, dict) and weapon.get("ammo_max") and weapon.get("ammo") == 0]
+    return f"{'、'.join(empty)} 已經沒有子彈，可以改用徒手或其他武器。" if empty else ""
 
 
 def _public_narration(state: GroupState) -> list[str]:

@@ -94,8 +94,6 @@ def observe_tool(name: str, result: dict, number: int, arguments: dict | None = 
         # The one refusal the player can act on (reload, or do something else): said as it is, not as a tool failure,
         # and nothing was declared, so nothing is provisional.
         text = str(result["error"])
-    if result.get('provisional') and text and not refused:
-        text += PROVISIONAL_MARK
     record = result.get("record") if name in {"record_clue", "record_established_fact"} else None
     fact_ref = (str(record.get("fact_id", "")) if isinstance(record, dict)
                 and record.get("verification_status") == "verified" else "")
@@ -283,8 +281,6 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
         # narration may skip it, as it did when Clara lost 9 HP (Haunting 2026-10-11 rerun2 turn 41).
         receipt = resolved.get("combat_receipt") or {}
         blow = "" if receipt.get("blow_already_told") else str(receipt.get("blow") or "").strip()
-        if blow and resolved.get("provisional"):
-            blow += "（戰鬥尚未結算）"  # the fight's numbers are provisional until it settles, as the roll reply says
         outcomes.append(ObservedOutcome(
             f"resolved-check:{resolved.get('check_id', 'current')}", "resolved_check", True,
             f"已結算檢定：骰值 {resolved.get('roll', '未知')}，結果為「{presentation.outcome_label(str(resolved.get('outcome', '未知')))}」。"

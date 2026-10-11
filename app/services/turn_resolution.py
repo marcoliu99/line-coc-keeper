@@ -329,9 +329,10 @@ def validate_resolution(
             changed_luck = any(before_luck.get(owner) != record for owner, record in state.pending_luck_decisions.items())
             if changed_wait or changed_luck or ((pending or luck) and not (transfer and not luck)):
                 return incomplete("本次仍有待處理檢定或 Luck；既有檢定只允許獨立且已驗證的物品交接", "unfinished_check_or_luck")
+        # A roll made this turn is what happened, whoever's skill it was: a turn where one player asked another's
+        # investigator to fix the car rolled that repair and was then thrown away as having no effect, dice spent.
         rolled = any(
             f"tool:{i}" in refs and e["result"].get("ok") and e["result"].get("resolved")
-            and e["result"].get("investigator") == actor.name
             and e["result"].get("timeline_id") == state.timeline_id
             for i, e in enumerate(tool_events, 1)
         )
