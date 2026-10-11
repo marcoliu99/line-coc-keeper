@@ -286,8 +286,13 @@ def test_a_settled_attack_that_drops_the_last_enemy_settles_the_fight_by_itself(
     stored = state.combat.actions["swing"]["receipt"]  # what a second click on the same roll replays
     assert stored["settled"] is True and stored["settlement_ready"] is False
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
-        "combat_id": state.combat.combat_id, "completed": True, "settled": True}})
-    assert "已自動結算" in block and "不要再呼叫任何戰鬥工具" in block
+        "combat_id": state.combat.combat_id, "completed": True, "settled": True,
+        "settled_reason": combat_engine.ENEMY_DOWN_REASON}})
+    assert "敵方已全數倒下" in block and "已自動結算" in block and "不要再呼叫任何戰鬥工具" in block
+    party = prompt_config.build_resolved_check_outcome_block({"combat_receipt": {
+        "combat_id": state.combat.combat_id, "completed": True, "settled": True,
+        "settled_reason": combat_engine.PARTY_DOWN_REASON}})
+    assert "所有調查員都已倒下" in party and "敵方" not in party
 
 
 def test_an_enemy_down_by_the_keepers_own_hand_is_left_to_the_keeper():
