@@ -985,6 +985,11 @@ def test_a_roll_or_a_record_made_this_turn_is_evidence_enough_for_a_no_check_com
     result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:1"]),
         state=state, user_id="a", before_pending={}, before_luck={}, tool_events=looked, has_scenario=False, before_actor={})
     assert result.disposition == "incomplete", "a look-up that found nothing is still no evidence"
+    unchanged = [{"name": "record_clue", "result": {"ok": True, "recorded": False}}]
+    result = turn_resolution.validate_resolution(decision(state, "resolved_without_check", evidence_refs=["tool:1"]),
+        state=state, user_id="a", before_pending={}, before_luck={}, tool_events=unchanged, has_scenario=False,
+        before_actor={}, before_gameplay=turn_resolution.gameplay_snapshot(state))
+    assert result.disposition == "incomplete", "a write that changed nothing is no evidence either"
 
 
 def test_a_deferral_with_nobody_waiting_is_told_to_narrate(state):
@@ -1001,3 +1006,17 @@ def test_a_deferral_with_nobody_waiting_is_told_to_narrate(state):
         result = asyncio.run(executor.run_executor(message(state)))
     assert seen[0]["validation_code"] == "nobody_waiting" and "no_mechanics" in seen[0]["instruction"]
     assert result.turn_resolution.disposition == "no_mechanics"
+
+
+def test_a_deferral_after_a_committed_change_is_told_to_complete_with_it(state):
+    seen = []
+    async def provider(*args, **kwargs):
+        assert (await args[5]("add_carried_item", {"investigator": "Marco", "item": "手電筒"}))["ok"]
+        seen.append(kwargs["final_feedback"](decision(state, "deferred", waiting_for=turn_context.character_id(state, "b"),
+                                                      reason="等 Paul 回話", evidence_refs=["tool:1"])))
+        return decision(state, "resolved_without_check", evidence_refs=["tool:1"])
+    stub = SimpleNamespace(run_conversation=AsyncMock(side_effect=provider), SUPPORTS_FINAL_FEEDBACK=True)
+    with patch.object(config, "LLM_PROVIDER", "openai"), patch.dict(registry.CONVERSATION_PROVIDERS, {"openai": stub}):
+        result = asyncio.run(executor.run_executor(message(state)))
+    assert seen[0]["validation_code"] == "nobody_waiting" and "resolved_without_check" in seen[0]["instruction"]
+    assert result.turn_resolution.disposition == "resolved_without_check"

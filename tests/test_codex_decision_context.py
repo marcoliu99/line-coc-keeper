@@ -195,3 +195,22 @@ class RepeatedLookupTests(unittest.IsolatedAsyncioTestCase):
         replayed = [entry for entry in conversation if entry.get('role') == 'tool' and entry.get('replayed')]
         self.assertEqual(len(replayed), 1)
         self.assertEqual(replayed[0]['result'], {'ok': True, 'results': ['page 3']})
+
+    async def test_a_look_up_after_a_mutation_runs_again(self):
+        """get_character_sheet → adjust_character → get_character_sheet must read the adjusted sheet, not the first."""
+        sheet = {'name': 'get_character_sheet', 'input_schema': {'type': 'object', 'properties': {}}}
+        change = {'name': 'adjust_character', 'input_schema': {'type': 'object', 'properties': {}}}
+        look = json.dumps({'decision': {'type': 'tool_call', 'name': 'get_character_sheet', 'arguments_json': '{}'}})
+        transport = AsyncMock()
+        transport.request.side_effect = [look, json.dumps({'decision': {'type': 'tool_call', 'name': 'adjust_character',
+            'arguments_json': '{}'}}), look, json.dumps({'decision': {'type': 'final', 'content': 'done'}})]
+        callback = AsyncMock(side_effect=[{'ok': True, 'hp': 10}, {'ok': True}, {'ok': True, 'hp': 7}])
+        with patch.object(codex_provider.config, 'CODEX_TRANSPORT', 'exec'), \
+             patch.object(codex_provider, 'ExecTransport', return_value=transport):
+            result = await codex_provider.run_conversation('', '', [sheet, change], [], '', callback, 8,
+                                                          response_stage='executor')
+        self.assertEqual(result, 'done')
+        self.assertEqual(callback.await_count, 3)
+        conversation = json.loads(transport.request.call_args_list[-1].args[0])['current_conversation']
+        self.assertEqual([t.get('result') for t in conversation if t.get('role') == 'tool'][-1], {'ok': True, 'hp': 7})
+        self.assertFalse(any(t.get('replayed') for t in conversation))

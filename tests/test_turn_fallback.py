@@ -523,3 +523,5 @@ def test_a_deferral_with_nobody_waiting_is_no_action_even_after_a_look_up() -> N
     assert turn_fallback.classify(looked, _state(), "u1") == "executor_no_action"
     wrote = _result("incomplete", "deferral_not_verified", tool_calls=(("add_carried_item", True),))
     assert turn_fallback.classify(wrote, _state(), "u1") == "unresolved_pending_state"
+    rolled = _result("incomplete", "deferral_not_verified", tool_calls=(("roll_dice", True),))
+    assert turn_fallback.classify(rolled, _state(), "u1") == "unresolved_pending_state", "a die rolled is not a look-up"

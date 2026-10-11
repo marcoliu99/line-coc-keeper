@@ -226,7 +226,7 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
             registry,  # imported here: the tool registry imports modules that import this one
         )
         if (code == "deferral_not_verified" and not state.pending_checks and not state.pending_luck_decisions
-                and all(name in registry.READ_ONLY_TOOL_NAMES for name, _ok in result.tool_calls)):
+                and all(name in registry.INFORMATION_QUERY_TOOL_NAMES for name, _ok in result.tool_calls)):
             return "executor_no_action"
         return "unresolved_pending_state"
     if code in _REJECTED:

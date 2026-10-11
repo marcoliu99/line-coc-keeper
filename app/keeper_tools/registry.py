@@ -1139,6 +1139,7 @@ def names_with(property_name: str) -> frozenset[str]:
 
 
 READ_ONLY_TOOL_NAMES = names_with("read_only")
+INFORMATION_QUERY_TOOL_NAMES = names_with("information_query")  # look-ups only: no dice among them
 RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES = names_with("resolved_check_followup")
 KP_ASSISTANT_ALLOWED_TOOL_NAMES = names_with("kp_assistant")
 KP_ALWAYS_CANONICAL_GAME_TOOL_NAMES = names_with("kp_canonical_game")
