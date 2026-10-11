@@ -2800,6 +2800,23 @@
       "path": "docs/specs/bug/leaked_decision_json_and_redeclared_turn_design_spec.md",
       "zh_path": "docs/specs/bug/leaked_decision_json_and_redeclared_turn_design_spec_zh.md",
       "source_revision": "0908a16c60551baa6d7f4e632c2aae4dbc827e12"
+    },
+    {
+      "title": "Three rule errors: Fight Back ignored the weapon, a bonus die could roll 100, creation gave 5× the skill points",
+      "zh": "三個規則錯誤：反擊不看武器、加骰可能骰出 100、建角技能點是規則的 5 倍",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "app/dice.py",
+        "app/creation.py",
+        "app/models.py",
+        "tests/test_combat_flow.py",
+        "tests/test_dice_pool_and_creation_points.py"
+      ],
+      "path": "docs/specs/bug/fight_back_weapon_dice_pool_and_creation_points_design_spec.md",
+      "zh_path": "docs/specs/bug/fight_back_weapon_dice_pool_and_creation_points_design_spec_zh.md",
+      "source_revision": "25b6d13fce478ec6b31e0a01be28f54ce5613658"
     }
   ]
 }

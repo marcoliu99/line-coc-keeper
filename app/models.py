@@ -190,6 +190,8 @@ class CombatAction(TypedDict, total=False):
     control_delivery_receipts: dict[str, Any]
     correction_acknowledgement: Any
     counter_damage: Any
+    counter_db_policy: Any  # the Fight Back weapon's DB policy
+    counter_weapon: str  # the Fight Back weapon's name, '' for bare hands
     damage: Any
     db: Any
     defense_kind: Any

@@ -42,8 +42,8 @@ def start_creation(state: GroupState, owner_id: str, name: str, occupation: str 
     skills["閃避"] = dex // 2
     skills["母語"] = edu
 
-    occ_points = edu * 20
-    interest_points = int_ * 10
+    occ_points = edu * 4  # CoC 7e: occupation skill points EDU×4 (the simplest of the occupation formulas)
+    interest_points = int_ * 2  # personal interest points INT×2
 
     session = CreationSession(
         name=name,
