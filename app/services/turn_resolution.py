@@ -6,6 +6,7 @@ references establish provenance, not semantic proof of a scenario inference.
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter
 from collections.abc import Sequence
 from copy import deepcopy
@@ -17,6 +18,8 @@ from app.keeper_tools import registry as tool_registry
 from app.models import GroupState
 from app.services.turn_context import character_id
 from app.services.turn_handoff import owner_for_character
+
+_logger = logging.getLogger(__name__)
 
 INFORMATION_QUERY_TOOLS = tool_registry.INFORMATION_QUERY_TOOLS
 
@@ -259,11 +262,17 @@ def validate_resolution(
     if has_scenario:
         valid_refs.add("scenario_context")
     valid_refs.update(f"tool:{i}" for i, e in enumerate(tool_events, 1) if e['result'].get('ok'))
-    if not refs or not set(refs) <= valid_refs:
+    unknown = [ref for ref in refs if ref not in valid_refs]
+    if unknown:
         observability.event("executor.resolution.invalid_evidence", reference_count=len(refs),
-                            invalid_reference_count=len(set(refs) - valid_refs),
+                            invalid_reference_count=len(set(unknown)),
                             available_tool_count=len(tool_events),
                             has_scenario_context=has_scenario)
+        _logger.info("resolution cited unknown evidence %s", [ref[:40] for ref in unknown[:5]])
+        # A stray citation beside a real one (「scenario_context」 with no scenario retrieved) cost a whole retry
+        # (2026-10-12 soak runs); the checks below still ask for the evidence each disposition needs.
+        refs = [ref for ref in refs if ref in valid_refs]
+    if not refs:
         return incomplete("裁決引用了不存在或失敗的依據", "invalid_evidence_reference")
     waiting = data.get("waiting_for", "")
     check_id = data.get("check_id", "")

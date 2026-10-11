@@ -2954,6 +2954,23 @@
       "path": "docs/specs/bug/sanity_and_check_lines_design_spec.md",
       "zh_path": "docs/specs/bug/sanity_and_check_lines_design_spec_zh.md",
       "source_revision": "4e63718c0c18bce5ccd08c8578854215eb31a61f"
+    },
+    {
+      "title": "A stray citation or an early await does not cost a retry, the first opening is played, addressed NPCs answer, and met triggers fire",
+      "zh": "多引用一條依據或太早 await 不再整回合重試、第一次開場照常演出、被搭話的 NPC 會回應、條件達成的觸發會發生",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_resolution.py",
+        "app/agents/executor.py",
+        "app/services/prompt_config.py",
+        "app/prompt_builder.py",
+        "tests/test_turn_consistency_handoff.py",
+        "tests/test_narrative_boundary_prompts.py"
+      ],
+      "path": "docs/specs/bug/executor_retry_opening_npc_design_spec.md",
+      "zh_path": "docs/specs/bug/executor_retry_opening_npc_design_spec_zh.md",
+      "source_revision": "707ad2670ce8661628e6fd4bc2b2b39ab110e702"
     }
   ]
 }
