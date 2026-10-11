@@ -17,7 +17,7 @@ From the 2026-10-11/12 soak runs at 707ad26:
 
 - **Down is down.** The autorolled CON failure sets the combatant's `defeated` as the manual roll does.
 - **A kill is said.** `_wound_tail` adds 「，倒下了」 when the damage receipt says the target was defeated and no investigator injury applies.
-- **A choice the engine settled shows the blow.** Any choice whose outcome is completed with no roll left for the player takes `_settled_without_roll` (the ⚔️ line and the Keeper's narration), not only 不閃躲.
+- **A choice the engine settled shows the blow.** Any choice whose outcome is completed with no roll left for the player takes `_settled_without_roll` (the ⚔️ line and the Keeper's narration), not only 不閃躲. Its event records the defence roll the engine made, so history and narration never claim no roll happened.
 - **Defence Luck only when it changes the blow.** `dice.useful_defence_luck`: for a Dodge or Fight Back, no offer when the attack misses a Dodge anyway, when no tier beats it, or when the roll already does; otherwise only tiers at or above the one needed. Applied on the player-rolled and the autorolled defence. Other rolls keep every offer (Luck stays a product decision).
 
 ## Verification

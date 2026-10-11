@@ -49,3 +49,6 @@ def test_a_choice_the_engine_settled_with_its_own_roll_shows_the_blow():
     outcome, _ = _player("/coc check 反擊", [10], damage=3)  # the engine rolls the counter: Hard, it lands
     assert "已依系統紀錄處理" not in (outcome.reply_text or "")
     assert "⚔️" in outcome.roll_feedback_text and "反擊得手" in outcome.roll_feedback_text, outcome
+    # The event records the counter the engine rolled, not a roll that never happened.
+    event = outcome.resolved_event
+    assert event["roll"] == 10 and not event["no_roll"] and event["outcome"].endswith("成功"), event

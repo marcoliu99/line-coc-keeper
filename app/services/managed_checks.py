@@ -207,8 +207,11 @@ def _is_defence_roll_for(rolled: dict, choice: dict, option: dict) -> bool:
 def _settled_without_roll(
     state: GroupState, character, user_id: str, pending: dict, option: dict, outcome: dict, before: dict,
 ) -> CheckOutcome:
-    """A choice that settled the attack with no roll of the player's (no defence against a shot)."""
+    """A choice that settled the attack with no roll of the player's: no defence, or a defence the engine rolled."""
     header = f"{character.name} 選擇「{option['label']}」"
+    # The engine's own defence roll, when it made one, is the check this event records; only no defence has none.
+    defence = (((_attack_action(state, pending) or {}).get("checks") or {}).get("defense") or {})
+    rolled = isinstance(defence.get("roll"), int)
     status = "戰鬥已結算" if outcome.get("settled") else "戰鬥機械結果暫定；尚未結算"
     blow = _blow(state, pending, outcome)
     feedback = f"{header}。" + ("\n⚔️ " + blow if blow else "")
@@ -224,10 +227,14 @@ def _settled_without_roll(
                 check_id=pending["check_id"],
                 timeline_id=pending.get("timeline_id", state.timeline_id or f"legacy-{state.group_id}"),
                 owner_id=user_id, character_id=character.character_id, investigator=character.name,
-                skill=option["label"], skill_value=0, roll=0, difficulty="regular",
-                outcome=f"{option['label']}，攻擊已結算", before=before, tracked_roll_fields=(), check_context=pending,
+                skill=option["label"], skill_value=defence.get("skill_value", 0) if rolled else 0,
+                roll=defence["roll"] if rolled else 0, difficulty=defence.get("required_tier", "regular"),
+                outcome=(f"{defence.get('tier')} " + ("成功" if defence.get("success") else "失敗") if rolled
+                         else f"{option['label']}，攻擊已結算"),
+                before=before, tracked_roll_fields=(), check_context=pending,
+                success=bool(defence.get("success")) if rolled else None,
             ),
-            "no_roll": True, "provisional": not outcome.get("settled"),
+            "no_roll": not rolled, "provisional": not outcome.get("settled"),
             "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
             # The blow was told with the choice that took it; the follow-up's fixed line does not repeat it.
             "combat_receipt": {**_combat_receipt(outcome), "blow": blow, "blow_already_told": True},
