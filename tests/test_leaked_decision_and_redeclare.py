@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from app import presentation
 from app.agents import executor, reply_pipeline
+from app.services import turn_fallback
 
 LEAK = ('{"disposition":"await_luck","actor_character_id":"legacy-user:player-1","waiting_for":"legacy-user:player-1",'
         '"check_id":"","evidence_refs":["state"]}')
@@ -38,6 +39,15 @@ class LeakedDecisionTests(unittest.TestCase):
         reply_pipeline._scrub_leaks(SimpleNamespace(), draft)
         self.assertEqual(draft.text, "林間靜了下來。")
         self.assertEqual(reply_pipeline.STEPS[0].name, "scrub_leaks")
+
+    def test_a_reply_that_was_only_the_decision_tells_the_player_instead_of_a_blank(self):
+        for text in (LEAK, f"```json\n{LEAK}\n```"):
+            draft = SimpleNamespace(text=text)
+            reply_pipeline._scrub_leaks(SimpleNamespace(), draft)
+            self.assertEqual(draft.text, turn_fallback.guidance("narration_failure"), text)
+        empty = SimpleNamespace(text="")
+        reply_pipeline._scrub_leaks(SimpleNamespace(), empty)
+        self.assertEqual(empty.text, "", "a reply that was empty to begin with is another path's problem")
 
 
 def _event(name: str, ok: bool = True, *, changed: bool = True) -> dict:
