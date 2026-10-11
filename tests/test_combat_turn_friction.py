@@ -992,7 +992,7 @@ def test_a_dodge_that_succeeds_below_the_attacks_tier_is_told_as_the_hit_it_is()
     receipt = outcome.resolved_event["combat_receipt"]
     assert receipt["blow"] == line
     block = prompt_config.build_resolved_check_outcome_block({"combat_receipt": receipt})
-    assert "【這一擊的結果】" + line in block and "不代表躲開" in block
+    assert "【這一擊的結果】" + line in block and "不代表打中或躲開" in block
 
 
 def test_a_dodge_that_keeps_the_blow_off_says_so():
@@ -1135,7 +1135,8 @@ def test_a_close_but_different_creature_does_not_get_another_creatures_stat_bloc
 
 def test_the_defence_roll_tells_the_player_the_hit_the_damage_and_the_wound():
     """Haunting 2026-10-11 rerun2 turn 41: Clara lost 9 of 12 HP to the dagger and read only that her counter had
-    missed. The blow, its damage and the major wound ride the line the player always reads."""
+    missed. The blow, its damage and the major wound ride the roll card the player always reads, once: the settled
+    line after the narration does not repeat it (Lightless 2026-10-12: every combat result read it twice)."""
     from app.domain.models import AgentMessage
     _battle(claw_damage="8")  # 8 of 10 HP: a major wound
     _enemy_turn([20])  # claw 50: Hard
@@ -1145,7 +1146,8 @@ def test_the_defence_roll_tells_the_player_the_hit_the_damage_and_the_wound():
     assert blow in outcome.roll_line
     msg = AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": outcome.resolved_event})
     reply, _ = turn_delivery.finalize(msg, "你踉蹌後退。")
-    assert "已結算檢定：調查員p1 的閃避，骰值 95，結果為「失敗」。⚔️ " + blow + "\n" in reply and "尚未結算" not in reply, reply
+    assert "已結算檢定：調查員p1 的閃避，骰值 95，結果為「失敗」。" in reply and "⚔️" not in reply, reply
+    assert outcome.resolved_event["combat_receipt"]["blow"] == blow, "the narrator is still given the blow"
     # The CON roll after a no-defence hit was shown the blow with the choice; its follow-up does not repeat it.
     con_event = {**outcome.resolved_event, "combat_receipt": {**outcome.resolved_event["combat_receipt"], "blow_already_told": True}}
     reply, _ = turn_delivery.finalize(AgentMessage({"state": _load(), "user_id": "p1", "resolved_check_context": con_event}), "你撐住了。")

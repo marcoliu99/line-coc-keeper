@@ -295,8 +295,10 @@ def _feedback(
                 tracked_roll_fields=(), check_context=pending, success=result.success,
             ),
             "provisional": provisional, "combat_id": pending.get("combat_context", {}).get("combat_id", ""),
-            # The blow stays for the narrator; after a CON roll it was already told with the choice that took it.
-            "combat_receipt": {**_combat_receipt(outcome), "blow": blow, "blow_already_told": _is_injury_roll(pending)},
+            # The blow stays for the narrator. Told with the roll that took it: the roll card above carries it (shown), and after a CON roll the choice
+            # did. Repeated on the settled line, every combat result read it twice (Lightless 2026-10-12, 25 of 25).
+            "combat_receipt": {**_combat_receipt(outcome), "blow": blow,
+                               "blow_already_told": bool(shown) or _is_injury_roll(pending)},
             "luck_spent": luck_spent,
         },
     )

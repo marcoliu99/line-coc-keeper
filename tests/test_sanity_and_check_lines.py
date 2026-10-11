@@ -23,7 +23,11 @@ def test_a_sanity_roll_says_it_was_sanity_and_what_was_lost():
 def test_a_skill_roll_names_the_skill():
     line = turn_delivery.observe_tool("skill_check", {"ok": True, "resolved": True, "investigator": "Alan",
                                                       "roll": 30, "tier": "hard"}, 1, {"skill": "偵查"}).public_text
-    assert line.startswith("Alan 的偵查已結算：骰值 30")
+    assert line == "已結算檢定：Alan 的偵查，骰值 30，結果為「困難成功」。"
+    # One format with the follow-up's settled line, and the sheet's Chinese name (2026-10-12: 「的Mechanical Repair」).
+    english = turn_delivery.observe_tool("skill_check", {"ok": True, "resolved": True, "investigator": "Alan",
+                                                         "roll": 6, "tier": "extreme"}, 1, {"skill": "INT"}).public_text
+    assert english == "已結算檢定：Alan 的智力，骰值 6，結果為「極難成功」。"
 
 
 def test_a_name_that_covers_two_skills_uses_the_better_one():

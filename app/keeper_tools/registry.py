@@ -397,6 +397,9 @@ _SPECS: tuple[ToolSpec, ...] = (
         kp_assistant=True,
         kp_canonical_game=True,
         creates_check=True,
+        # What a settled roll reveals can be a horror (the rat corpses a Spot Hidden found): its Sanity is owed in that
+        # reply, not 12 turns later (Scritch Scratch 2026-10-12).
+        resolved_check_followup=True,
     ),
     ToolSpec(
         schema={
