@@ -85,12 +85,14 @@ def _executing(state: GroupState, identity: str) -> None:
 
 
 def _applied_by_executor(obligation: event_obligations.Obligation, mechanic_result: MechanicResult, actor: str) -> bool:
-    if obligation.kind == "forced_check":
-        # Only the same roll: a Spot Hidden the player asked for does not stand in for the Dodge a trap demands.
-        status = mechanic_result.check_status
-        return any(entry.get("investigator") == actor and entry.get("skill") == obligation.arg("skill")
-                   for entry in (status.get("resolved") or {}, status.get("pending") or {}))
     done = {outcome.tool_name for outcome in mechanic_result.observed_outcomes if outcome.success}
+    if obligation.kind == "forced_check":
+        # Only the same roll, made this turn: a Spot Hidden the player asked for does not stand in for the Dodge a trap
+        # demands, nor does a check still waiting from an earlier turn (the handoff carries it forward).
+        status = mechanic_result.check_status
+        return "skill_check" in done and any(
+            entry.get("investigator") == actor and entry.get("skill") == obligation.arg("skill")
+            for entry in (status.get("resolved") or {}, status.get("pending") or {}))
     return bool(_EXECUTOR_TOOLS[obligation.kind] & done)
 
 

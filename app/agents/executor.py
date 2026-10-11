@@ -375,7 +375,8 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
                             'validation_code': 'autoroll_rolls_now', 'reason': verified.reason,
                             'instruction': '這個群組是自動擲骰：檢定不會等玩家擲，也就沒有可以 await_check 的檢定。'
                                 '需要檢定就現在呼叫 skill_check（理智用 sanity_check），系統會立刻擲出結果；'
-                                '拿到結果後交回 resolved 並引用那次工具。'
+                                '拿到結果後交回 resolved 並引用那次工具。要玩家在互斥選項中選一個時，仍用 offer_check_choice '
+                                '建立選擇（它會等玩家選），再交回 await_check 並填它的 check_id。'
                                 + ('不需要檢定就交回 resolved_without_check，引用這回合已改動狀態的工具。'
                                    if turn_resolution.gameplay_snapshot(state) != before_gameplay
                                    else '不需要檢定就交回 no_mechanics。'),

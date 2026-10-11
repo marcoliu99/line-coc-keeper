@@ -1092,6 +1092,7 @@ def test_await_check_before_any_dice_at_an_autoroll_table_is_told_to_roll_now(st
         asyncio.run(executor.run_executor(message(state)))
     assert seen[0]["validation_code"] == "autoroll_rolls_now" and "skill_check" in seen[0]["instruction"]
     assert "no_mechanics" in seen[0]["instruction"]
+    assert "offer_check_choice" in seen[0]["instruction"]  # a player's choice still waits for the player
 
 
 def test_await_check_after_a_committed_change_at_an_autoroll_table_keeps_that_change(state):
