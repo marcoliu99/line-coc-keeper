@@ -21,7 +21,7 @@ From the 2026-10-12 soak runs at b0c11f3:
 - **Luck line kept unless the roll is stated.** `InteractionRef.told_in` for a Luck decision drops the line only when the narration gives the keep command or button and also states the engine's roll.
 - **Hit or miss is the engine's.** The narrator's 【這一擊的結果】 rule now says that a success on an attack, dodge or counter does not by itself mean a hit or a dodge. When it reads 「沒有命中」, the narration writes a miss, not a landed blow.
 - **One settled-line format, Chinese names.** The skill-check observation now uses the follow-up's format, 「已結算檢定：X 的Y，骰值 N，結果為「…」。」. `presentation.skill_label` maps skills and characteristics to the sheet's Chinese names (Mechanical Repair → 機械維修, SAN → 理智, INT → 智力), on both lines.
-- **Sanity in a follow-up.** `sanity_check` is offered to resolved-check follow-ups.
+- **Sanity in a follow-up.** `sanity_check` is offered to resolved-check follow-ups. The obligation gate reads that turn's observed outcomes (the follow-up Narrator's calls with the Executor's), so a SAN rule the Narrator already rolled is not applied again.
 - **Two prompt rules (shared).**
   - A research action ends in a result this turn: a roll, or what was or wasn't found.
   - A limit the scenario doesn't write doesn't exist, so the Keeper doesn't invent blockers.

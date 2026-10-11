@@ -415,3 +415,34 @@ async def test_an_application_cannot_be_cancelled_between_reserving_and_starting
     source = inspect.getsource(obligation_gate.enforce)
     reserve, mark, execute = source.index("_reserve(state"), source.index("_executing(state"), source.index("await execute(")
     assert "await" not in source[reserve:mark] and reserve < mark < execute
+
+
+@aio
+async def test_a_sanity_roll_the_narrator_made_is_not_owed_again(state) -> None:
+    """A follow-up Narrator may roll Sanity for what a settled roll revealed; the gate reads that call as applied."""
+    from app.domain.models import ObservedOutcome
+
+    message = AgentMessage(payload={
+        "conversation_id": state.group_id, "user_id": "a", "display_name": "Marco", "text": "我掀開水桶",
+        "resolved_location": None, "speaker_role": "player", "state": state, "character": None,
+        "rag_context": f"--- 第 12 頁 ---\n{BUCKET_RULE}", "memory_context": "", "rag_status": "success",
+    })
+
+    async def narrate(msg, *args, **kwargs):
+        msg.payload.setdefault("observed_outcomes", []).append(ObservedOutcome("tool:1", "sanity_check", True))
+        return REVEAL, [], []
+
+    executed = MechanicResult(success=True, action_type="none", narrative_facts=[], state_delta=StateDelta(),
+                              turn_resolution=TurnResolution(disposition="no_mechanics", validation_code="validated"))
+    with patch.object(supervisor.context_builder, "build_context", AsyncMock(return_value=message)), \
+            patch.object(supervisor.turn_commit, "ensure_turn_timeline", return_value="timeline-a"), \
+            patch.object(supervisor.intent_router, "classify_intent", return_value="GAMEPLAY_ACTION"), \
+            patch.object(supervisor.executor, "run_executor", AsyncMock(return_value=executed)), \
+            patch.object(supervisor.state_reducer, "apply_mechanic_result", lambda *a, **k: None), \
+            patch.object(supervisor.narrator, "run_narrator", AsyncMock(side_effect=narrate)), \
+            patch.object(reply_pipeline.guard, "enforce_narrative_safety", AsyncMock(side_effect=lambda _m, t: t)):
+        await supervisor.run_turn(
+            state=state, user_id="a", display_name="Marco", text="我掀開水桶", resolved_location=None,
+            speaker_role="player", conversation_id=state.group_id,
+        )
+    assert "a" not in group_state.load_state(state.group_id).pending_checks
