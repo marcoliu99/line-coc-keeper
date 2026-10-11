@@ -296,10 +296,11 @@ def stat_block_for(state: GroupState, name: str) -> tuple[str, str] | None:
     English. Never by similarity: 深潛者 is close to 深潛者（幼體） and is a different creature."""
     indexed = combat.find_npc_index_entry_exact(state, name) or _index_entry_by_same_words(state, name) or {}
     names = [str(n) for n in (name, indexed.get("name"), *(indexed.get("aliases") or [])) if n]
-    for heading, block in _stat_blocks_as_written(state.scenario_text or ""):
-        if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names):
-            return heading, block
-    return None
+    found = [(heading, block) for heading, block in _stat_blocks_as_written(state.scenario_text or "")
+             if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names)]
+    wanted = {n.strip().casefold() for n in names}
+    # A heading that is the name itself comes before one that only contains it (深潛者 before 深潛者（幼體）).
+    return next((f for f in found if f[0].strip().casefold() in wanted), found[0] if found else None)
 
 
 def stat_block_headings(state: GroupState) -> list[str]:

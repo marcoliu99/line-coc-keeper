@@ -989,3 +989,12 @@ def test_a_correction_that_only_replays_a_finished_action_keeps_the_ruling(battl
     assert battle.declare('attack:0', weapon='unarmed')['ok']
     current = battle.load()
     assert current.combat.phase == 'NEEDS_RULING' and current.combat.actions['attack:1'] == paused
+
+
+def test_the_creature_s_own_stat_block_comes_before_a_variant_of_it():
+    from app.keeper_tools import support
+    text = ("### 深潛者（幼體）\n\n力量 40 體質 40 體型 40 敏捷 40 意志 40 HP 8\n爪擊 25%，傷害 1D3\n\n"
+            + "\n".join(f"段落 {n}。" for n in range(14))
+            + "\n\n### 深潛者\n\n力量 80 體質 65 體型 80 敏捷 50 意志 50 HP 14\n爪擊 50%，傷害 1D6\n")
+    state = GroupState('g', scenario_text=text)
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者')] == [(50, '1D6')]
