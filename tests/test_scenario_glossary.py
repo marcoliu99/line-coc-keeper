@@ -114,3 +114,8 @@ def test_a_rebuild_from_the_active_chapters_keeps_the_other_names():
     merged = scenario_index.merge_glossary(old, new)
     assert [t["name"] for t in merged] == ["死靈之書", "銀色暮光", "黃衣之王"]
     assert merged[0]["aliases"] == ["Necronomicon", "Al Azif"]
+
+
+def test_a_term_found_again_under_another_translation_keeps_its_first_name():
+    merged = scenario_index.merge_glossary([TOME], [{"name": "亡靈之書", "aliases": ["Necronomicon"]}])
+    assert merged == [{"name": "死靈之書", "aliases": ["Necronomicon", "亡靈之書"], "kind": "書籍"}]

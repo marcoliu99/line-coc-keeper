@@ -214,12 +214,27 @@ GLOSSARY_PROMPT_LIMIT = 80
 
 
 def merge_glossary(kept: list[dict[str, Any]], found: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """``kept`` with ``found`` laid over it by name: a rebuild from part of a scenario adds and updates names, and
-    never drops the ones it did not see."""
-    merged = {str(t.get("name") or "").strip(): t for t in kept if isinstance(t, dict) and str(t.get("name") or "").strip()}
-    merged.update({str(t.get("name") or "").strip(): t for t in found
-                   if isinstance(t, dict) and str(t.get("name") or "").strip()})
-    return list(merged.values())
+    """``kept`` with what a rebuild ``found`` added: a rebuild from part of a scenario never drops the names it did not
+    see, and a term it found again, by its name or any original spelling, keeps the Chinese name it already had (the
+    point is that a name reads the same every time) and gains the new spellings."""
+    def key(text: Any) -> str:
+        return str(text or "").strip().casefold()
+
+    merged = [dict(t) for t in kept if isinstance(t, dict) and key(t.get("name"))]
+    for term in found:
+        if not isinstance(term, dict) or not key(term.get("name")):
+            continue
+        spellings = {key(term.get("name")), *(key(a) for a in term.get("aliases") or [] if key(a))}
+        same = next((t for t in merged if spellings & {key(t.get("name")), *(key(a) for a in t.get("aliases") or [])}),
+                    None)
+        if same is None:
+            merged.append(dict(term))
+            continue
+        aliases = [str(a) for a in same.get("aliases") or []]
+        aliases += [str(a) for a in (term.get("name"), *(term.get("aliases") or []))
+                    if key(a) and key(a) != key(same.get("name")) and key(a) not in {key(b) for b in aliases}]
+        same["aliases"] = aliases
+    return merged
 
 
 def format_glossary_block(terms: list[dict[str, Any]]) -> str:
