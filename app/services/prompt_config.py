@@ -509,7 +509,7 @@ def explains_in_story(result: MechanicResult | None, state: GroupState | None = 
     """Whether a blocked turn is answered by the Narrator instead of the fixed 「目前無法繼續」.
 
     The action cannot be done in this scenario (a library the village does not have), the Executor searched the
-    scenario and found nothing it could rule on, and the turn changed nothing: no dice, no state, no pending check or
+    scenario, found a passage but nothing it could rule on, and the turn changed nothing: no dice, no state, no pending check or
     Luck decision, no fight, no refusal text of its own. A Keeper says why and points to the nearest option from the
     scenario; the same request had been answered that way four times before it ended in the fixed text (Scritch-Scratch
     rerun3, turns 57, 69, 81 and 93). In a running battle the table is told whose turn it is instead."""
@@ -519,6 +519,7 @@ def explains_in_story(result: MechanicResult | None, state: GroupState | None = 
     status = result.check_status
     return bool(
         result.fallback_reason == "unsupported_action"
+        and turn_fallback.found_scenario_text(result)
         and not (status.get("pending") or status.get("pending_luck") or status.get("state_changed")
                  or status.get("dice_rolled") or status.get("resolved") or status.get("combat_opened")
                  or status.get("scenario_evidence_blocked"))

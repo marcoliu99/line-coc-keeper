@@ -159,6 +159,7 @@ async def _recover_blocked_turn(
     carried = [text for text in result.scenario_evidence if text not in retry.scenario_evidence]
     if carried:
         message.payload["first_attempt_evidence"] = "\n\n".join(carried)
+        retry.scenario_evidence = (*carried, *retry.scenario_evidence)
     if turn_fallback.classify(retry, state, user_id, rag_status=_evidence_status(message)) is None:
         return retry, reason, "recovered"
     return retry, reason, "unresolved"

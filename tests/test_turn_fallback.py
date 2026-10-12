@@ -458,7 +458,7 @@ def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_abo
         active=True, round_number=2, current_index=1, phase="READY",
         order=[Combatant(name="鼠群", side="enemy", hp=5, hp_max=5), Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)],
     )
-    result = _result("blocked", fallback_reason="unsupported_action")
+    result = _result("blocked", fallback_reason="unsupported_action", scenario_evidence=PASSAGE)
     reply = prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
     assert "現在輪到「小雨」行動" in reply and "劇本" not in reply and "鼠群" not in reply
     state.combat.phase = "SETTLEMENT"
@@ -540,8 +540,11 @@ def test_the_generic_roll_line_is_not_repeated_after_a_reply_that_gives_the_comm
 
 # --- an action the scenario cannot do is explained in the story ---------------------------------------------------
 
+PASSAGE = ("--- 原稿補查 · 第 4 頁 ---\n穆斯科比沒有圖書館；最近的在二十英里外的 Appleford。",)
+
+
 def _cannot_be_done(**status: Any) -> MechanicResult:
-    return _result("blocked", "validated", fallback_reason="unsupported_action",
+    return _result("blocked", "validated", fallback_reason="unsupported_action", scenario_evidence=PASSAGE,
                    check_status={"tool_called": True, "pending": None, **status})
 
 
@@ -599,3 +602,21 @@ def test_what_the_first_attempt_found_counts_as_evidence_for_the_status_and_the_
     assert supervisor._evidence_status(bare) == "empty" and supervisor._evidence_text(bare) == ""
     carried = AgentMessage(payload={"rag_status": "empty", "rag_context": "", "first_attempt_evidence": "門是鎖著的。"})
     assert supervisor._evidence_status(carried) == "success" and "門是鎖著的。" in supervisor._evidence_text(carried)
+
+
+def test_an_empty_search_is_not_evidence_that_an_action_cannot_be_done() -> None:
+    # scenario_rag answers an empty search with 「（沒有找到相關內容）」, a successful call with a non-empty result.
+    empty = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    scenario_evidence=("（沒有找到相關內容）",), check_status={"tool_called": True, "pending": None})
+    assert not prompt_config.explains_in_story(empty) and turn_fallback.found_scenario_text(_cannot_be_done())
+    assert not turn_fallback.found_scenario_text(empty)
+    assert "目前無法繼續" in prompt_config.enforce_mechanic_check_consistency("故事", empty)
+
+
+@aio
+async def test_the_first_attempts_passage_counts_for_the_retry_that_found_nothing() -> None:
+    first = _result("blocked", "validated", scenario_evidence=PASSAGE, check_status={"tool_called": True, "pending": None})
+    retry = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [first, retry])
+    assert retry.scenario_evidence == PASSAGE
