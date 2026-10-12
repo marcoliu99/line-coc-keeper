@@ -362,6 +362,7 @@ _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
 # Read as a blow, a shot or a throw would be fought back against and spend no ammunition: only melee attacks are taken
 # this way (guns and bows are combat.SHOOTING_NAME).
+_CALIBRE = re.compile(r"(?<![\w.])\.\d{2,3}\b|\d+\s*-?\s*gauge|\d+(?:\.\d+)?\s*mm\b|口徑|號霰彈", re.IGNORECASE)
 _IMPALE = re.compile(r"(?<!non-)(?<!non)(?<!not )impal|(?<![不無非])(?:穿刺|貫穿)", re.IGNORECASE)
 _THROWN = re.compile(r"投擲|\bthrow(?:n|ing)?\b", re.IGNORECASE)
 # 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
@@ -399,7 +400,11 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     matches = list(_BLOCK_ATTACK.finditer(block))
     for index, match in enumerate(matches):
         label = match.group("label").strip()
-        if _NOT_AN_ATTACK.match(label) or combat.SHOOTING_NAME.search(label) or _THROWN.search(label):
+        # The name as the line writes it, a calibre included (「.38 Automatic」, 「12-gauge」), up to the percentage.
+        start = max(block.rfind("\n", 0, match.start()) + 1, matches[index - 1].end() if index else 0)
+        written = block[start:match.start("value")]
+        if (_NOT_AN_ATTACK.match(label) or combat.SHOOTING_NAME.search(written) or _THROWN.search(written)
+                or _CALIBRE.search(written)):
             continue
         if label.casefold() in _catalog_ranged_names():
             continue  # a catalog weapon that is shot or thrown (Shuriken, Javelin, 石頭)
