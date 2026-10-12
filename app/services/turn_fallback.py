@@ -121,9 +121,11 @@ def _empty_weapons(state: GroupState, current: Any) -> str:
     return f"{'、'.join(empty)} 已經沒有子彈，可以改用徒手或其他武器。" if empty else ""
 
 
-def told_names(state: GroupState, entries: list[dict[str, Any]], also: list[str] | None = None) -> set[str]:
+def told_names(state: GroupState, entries: list[dict[str, Any]], also: list[str] | None = None,
+               known: list[str] | None = None) -> set[str]:
     """The index names the table has been told: those used in this timeline's public narration or in ``also`` (the
-    reply being sent), as a name of their own rather than inside a longer index name (see ``_occurs``)."""
+    reply being sent), as a name of their own rather than inside a longer index name or a longer ``known`` name (the
+    investigators': narration about 約翰·史密斯 does not tell an NPC 約翰; see ``_occurs``)."""
     texts = [*(also or []), *_public_narration(state)]
     every_name = [n for entry in entries for n in _names(entry)]
     # A one-character Chinese name (井) is too short to find a character by, but it is still the name to disclose.
@@ -133,7 +135,7 @@ def told_names(state: GroupState, entries: list[dict[str, Any]], also: list[str]
               if len(n) == 1 and not n.isascii()]
     told: set[str] = set()
     for name in [*every_name, *single]:
-        longer = [other for other in every_name if len(other) > len(name) and name in other]
+        longer = [other for other in (*every_name, *(known or [])) if len(other) > len(name) and name in other]
         if any(_occurs(name, text, longer) for text in texts):
             told.add(name)
     return told
