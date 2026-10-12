@@ -53,8 +53,34 @@ def _spellings(entry: dict) -> list[str]:
                              *(entry.get("alt_zh_tw") or []), *(entry.get("alt_zh_cn") or [])) if s]
 
 
+_WEAPONS = Path(__file__).with_name("data") / "combat_weapons.json"
+
+
+def _weapon_entries() -> list[dict]:
+    """The combat catalog's weapons as glossary entries: the catalog's English name, and the same name turned around
+    ("Knife, Large" is also "Large Knife"), for the Chinese name the rulebook gives it. A row the rulebook names only
+    as a class of weapons (name_zh_generic: 小型刀具) is left out: a text's "small knife" is better as 小刀."""
+    try:
+        weapons = json.loads(_WEAPONS.read_text(encoding="utf-8"))["weapons"]
+    except (OSError, ValueError, KeyError):
+        return []
+    entries: list[dict] = []
+    for weapon in weapons:
+        if not isinstance(weapon, dict) or not weapon.get("name_zh") or weapon.get("name_zh_generic"):
+            continue
+        english = str(weapon["name"])
+        head, _, rest = english.partition(", ")
+        entry = {"category": "weapon", "en": english, "zh_tw": weapon["name_zh"], "zh_cn": weapon.get("name_zh_cn") or "",
+                 "canonical": weapon["name_zh"], "sources": weapon.get("name_sources", [])}
+        if rest and "(" not in english:
+            entry["alt_en"] = [f"{rest} {head}"]
+        entries.append(entry)
+    return entries
+
+
 def glossary_entries() -> list[dict]:
-    """Every entry of the built-in glossary, the category files in name order; a file that cannot be read is skipped."""
+    """Every entry of the built-in glossary, the category files in name order, then the combat catalog's weapons; a
+    file that cannot be read is skipped."""
     entries: list[dict] = []
     for path in sorted(_GLOSSARY.glob("*.json")):
         if path.name == "sources.json":
@@ -65,7 +91,7 @@ def glossary_entries() -> list[dict]:
             continue
         if isinstance(data, list):
             entries.extend(e for e in data if isinstance(e, dict))
-    return entries
+    return [*entries, *_weapon_entries()]
 
 
 def _table_of(category: object) -> str:

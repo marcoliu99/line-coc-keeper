@@ -3135,6 +3135,22 @@
       "path": "docs/specs/feature/coc7_glossary_expansion_design_spec.md",
       "zh_path": "docs/specs/feature/coc7_glossary_expansion_design_spec_zh.md",
       "source_revision": "a2bd9e987115424c0692bf88a464f9d88d07be43"
+    },
+    {
+      "title": "Chinese names for the combat catalog's weapons",
+      "zh": "戰鬥武器目錄的中文名稱",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/data/combat_weapons.json",
+        "app/combat_rules.py",
+        "app/dictionary.py",
+        "app/data/coc7_glossary/sources.json",
+        "tests/test_coc7_glossary.py"
+      ],
+      "path": "docs/specs/feature/weapon_chinese_names_design_spec.md",
+      "zh_path": "docs/specs/feature/weapon_chinese_names_design_spec_zh.md",
+      "source_revision": "30d80945a5fdc23c37832f857d8a9ae96c102188"
     }
   ]
 }

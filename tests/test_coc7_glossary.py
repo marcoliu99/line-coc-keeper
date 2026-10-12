@@ -149,3 +149,42 @@ def test_a_converted_name_says_so_and_every_source_is_recorded_with_what_was_fet
             assert source["retrieved"] and len(source["sha256"]) == 64 and source["url"].startswith("https://github.com/"), source
     converted = [e for e in _entries() if e.get("zh_tw_converted")]
     assert converted and all(e["zh_tw"] for e in converted)
+
+
+def _weapons() -> list[dict]:
+    import json
+    from pathlib import Path
+    return json.loads((Path(dictionary.__file__).parent / "data" / "combat_weapons.json").read_text(encoding="utf-8"))["weapons"]
+
+
+def test_the_combat_catalog_carries_the_rulebook_name_of_each_weapon_it_has_one_for():
+    named = [w for w in _weapons() if w.get("name_zh")]
+    assert len(named) >= 45
+    assert [w["name"] for w in _weapons() if not w.get("name_zh")] == ["Unarmed (human)"]  # fists are a skill, not a table row
+    sources = {s["id"] for s in json.loads((dictionary._GLOSSARY / "sources.json").read_text(encoding="utf-8"))["sources"]}
+    assert all(w["name_sources"] and set(w["name_sources"]) <= sources for w in named)
+
+
+def test_a_player_can_still_name_a_weapon_by_the_rulebook_name():
+    from app import combat_rules
+    for weapon in _weapons():
+        if weapon.get("name_zh"):
+            found = combat_rules.resolve_weapon(weapon["name_zh"])
+            named = [found.definition] if found.definition else list(found.candidates)  # an automatic weapon still needs a ruling
+            assert [d.id for d in named] == [weapon["id"]], weapon["name"]
+
+
+def test_the_combat_catalog_loads_without_the_name_fields():
+    from app import combat_rules
+    assert len(combat_rules.weapon_catalog()) == len(_weapons())
+
+
+def test_a_weapon_reads_the_same_in_english_and_in_either_script():
+    assert dictionary.lookup_term("Thompson") == dictionary.lookup_term("汤普森冲锋枪") == "湯普森衝鋒槍"
+    assert dictionary.lookup_term("Brass Knuckles") == "黃銅指虎"
+    assert dictionary.lookup_term("Thrown Spear") == dictionary.lookup_term("Spear, Thrown") == "投矛"
+
+
+def test_a_weapon_the_rulebook_names_only_as_a_class_is_not_forced_on_a_text():
+    assert dictionary.lookup_term("small knife") is None and dictionary.lookup_term("Sword") is None
+    assert dictionary.glossary_hits("He drew a sword and a small knife.") == []

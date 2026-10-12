@@ -172,11 +172,17 @@ def parse_weapon_definition(payload: dict) -> WeaponDefinition:
     return WeaponDefinition(**row)
 
 
+# Fields of combat_weapons.json that name a weapon in Chinese; app/dictionary.py reads them.
+_NAME_FIELDS = ('name_zh', 'name_zh_cn', 'name_zh_converted', 'name_zh_generic', 'name_sources')
+
+
 @lru_cache(maxsize=1)
 def weapon_catalog() -> tuple[WeaponDefinition, ...]:
     payload = json.loads((_DATA / 'combat_weapons.json').read_text())
     definitions = []
     for row in payload['weapons']:
+        for name_field in _NAME_FIELDS:  # the rulebook's Chinese names belong to the dictionary, not to a combat rule
+            row.pop(name_field, None)
         row['aliases'] = tuple(row['aliases'])
         row['distance_bands'] = tuple(DistanceBand(**band) for band in row['distance_bands'])
         row['source'] = RuleSource(**row['source'])
