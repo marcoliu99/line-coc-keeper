@@ -66,8 +66,10 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         if not name or name.casefold() in kept:
             continue
         for alias in written:
-            # A name that is also game text (an NPC nicknamed 「Dex」) would rewrite 「DEX 檢定」: never used.
-            if len(alias) >= 3 and _LATIN_NAME.fullmatch(alias) and alias.casefold() not in config.GAME_TEXT_NAMES and not any(
+            # A name that is also game text or a skill (an NPC nicknamed 「Dex」 or surnamed 「Dodge」) would rewrite
+            # 「DEX 檢定」 or 「Dodge 檢定」: never used.
+            if len(alias) >= 3 and _LATIN_NAME.fullmatch(alias) and alias.casefold() not in config.GAME_TEXT_NAMES \
+                    and skill_aliases.canonical_skill_name(alias) == alias and not any(
                     re.search(rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])", k) for k in kept):
                 targets.setdefault(alias.casefold(), set()).add(name)
     # An alias two entries share names neither; told or not, it is decided before the disclosure gate, or 「Guard」 for

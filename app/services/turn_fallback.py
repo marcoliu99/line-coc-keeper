@@ -128,13 +128,10 @@ def told_names(state: GroupState, entries: list[dict[str, Any]], also: list[str]
     investigators': narration about 約翰·史密斯 does not tell an NPC 約翰; see ``_occurs``)."""
     texts = [*(also or []), *_public_narration(state)]
     every_name = [n for entry in entries for n in _names(entry)]
-    # A one-character Chinese name (井) is too short to find a character by, but it is still the name to disclose.
-    # An older entry may keep it among the aliases under an English heading.
-    single = [n for entry in entries for n in (str(entry.get("name") or "").strip(),
-                                                *(str(a).strip() for a in entry.get("aliases") or []))
-              if len(n) == 1 and not n.isascii()]
+    # A one-character name (井, 王) is never counted: it cannot be told apart from the words that contain it (水井,
+    # 國王), and counting it would let a disguise be rewritten into a secret. Its alias is then left as written.
     told: set[str] = set()
-    for name in [*every_name, *single]:
+    for name in every_name:
         longer = [other for other in (*every_name, *(known or [])) if len(other) > len(name) and name in other]
         if any(_occurs(name, text, longer) for text in texts):
             told.add(name)
