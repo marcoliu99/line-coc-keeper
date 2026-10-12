@@ -424,9 +424,10 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
     observability.event("executor.resolution", disposition=resolution.disposition,
                         evidence_count=len(resolution.evidence_refs),
                         validation_code=resolution.validation_code, tool_event_count=len(tool_events))
-    if resolution.disposition in {"incomplete", "blocked"} and resolution.reason:
+    if config.LOG_TEXT_ENABLED and resolution.disposition in {"incomplete", "blocked"} and resolution.reason:
         # The model's own reason for a turn it could not finish: the soak logs showed 「incomplete」 and 「blocked」
-        # with no way to tell why. Free text, so it goes to the text log (LOG_TEXT_ENABLED), not to the event.
+        # with no way to tell why. Free text, so it goes to the text log and is checked at the call site, as delivery.py does,
+        # because a host that supplies its own logging handler is not filtered downstream.
         _logger.info("Executor left the turn %s: %s", resolution.disposition, resolution.reason[:240])
     state_changed = turn_resolution.gameplay_snapshot(state) != before_gameplay
     execution_health = "completed"
