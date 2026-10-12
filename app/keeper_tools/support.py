@@ -298,9 +298,13 @@ def stat_block_for(state: GroupState, name: str) -> tuple[str, str] | None:
     names = [str(n) for n in (name, indexed.get("name"), *(indexed.get("aliases") or [])) if n]
     found = [(heading, block) for heading, block in _stat_blocks_as_written(state.scenario_text or "")
              if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names)]
-    wanted = {n.strip().casefold() for n in names}
-    # A heading that is the name itself comes before one that only contains it (深潛者 before 深潛者（幼體）).
-    return next((f for f in found if f[0].strip().casefold() in wanted), found[0] if found else None)
+    # A heading that is the name itself comes before one that only contains it (深潛者 before 深潛者（幼體）), and the
+    # name as written before it without an instance suffix (深潛者（左）, Cultist 2).
+    for wanted in ({n.strip().casefold() for n in names}, {_without_instance_suffix(n) for n in names}):
+        exact = next((f for f in found if f[0].strip().casefold() in wanted), None)
+        if exact:
+            return exact
+    return found[0] if found else None
 
 
 def stat_block_headings(state: GroupState) -> list[str]:
@@ -387,7 +391,7 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     found = stat_block_for(state, name)
     if found is None:
         return []
-    raw = found[1].translate(str.maketrans("＋－−–⁄∕", "+---//"))  # full-width and typographic signs from PDF text
+    raw = found[1].translate(str.maketrans("＋－−–—⁄∕", "+----//"))  # full-width and typographic signs from PDF text
     db_match = _BLOCK_DB.search(raw) or _BLOCK_DB_WRAPPED.search(raw)  # 「DB: +1D4」 or 「DB (+1D4)」
     bonus = re.sub(r"\s+", "", db_match.group(db_match.lastindex or 0)) if db_match else ""
     block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), raw))
@@ -444,8 +448,12 @@ def stat_block_named(state: GroupState, name: str) -> bool:
     return _named_by_a_heading(_stat_blocks(state.scenario_text or ""), name)
 
 
+def _without_instance_suffix(name: str) -> str:
+    return re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
+
+
 def _named_by_a_heading(blocks: list[tuple[str, str]], name: str) -> bool:
-    wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
+    wanted = _without_instance_suffix(name)
     if len(wanted) < 2:
         return False
     # Word-bounded for letters and digits; CJK characters have no word boundary, so a Chinese name is contained.

@@ -952,8 +952,8 @@ def test_stat_block_attacks_read_the_common_layouts():
                                         "Fighting (Brawl) 50% (25/10), damage 1D3\nBite 40%, damage 1D6 + 1/2 DB\n"
                                         "Gore 30%, damage 1D6 + 1／2 DB\nKick 20%, damage 1D6 + 1     / 2 DB\n"
                                         "Butt 25%, damage 1D6 + ½ DB\n咬 35%，傷害 1D6 + 半DB\n撕咬 45%，傷害 1D4＋DB\n"
-                                        "Rake 15%, damage 1D6−1\n")
-    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(beast, 'Beast')] == [(50, '1D3'), (45, '1D4+1D4'), (15, '1D6-1')], \
+                                        "Rake 15%, damage 1D6−1\nSlam 14%, damage 1D6—1\n")
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(beast, 'Beast')] == [(50, '1D3'), (45, '1D4+1D4'), (15, '1D6-1'), (14, '1D6-1')], \
         "a specialised Fighting line is read; half a bonus is not truncated to +1"
     plain = GroupState('g', scenario_text="### Thug\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\nFighting 50%, Damage 1D3\n"
                                         "Spear 40%, damage 1D8+1 (impale)\nClub 30%, damage 1D6; Pike 20%, damage 1D10 (impale)\n"
@@ -1007,3 +1007,5 @@ def test_the_creature_s_own_stat_block_comes_before_a_variant_of_it():
             + "\n\n### 深潛者\n\n力量 80 體質 65 體型 80 敏捷 50 意志 50 HP 14\n爪擊 50%，傷害 1D6\n")
     state = GroupState('g', scenario_text=text)
     assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者')] == [(50, '1D6')]
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者（左）')] == [(50, '1D6')]
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者（幼體）')] == [(25, '1D3')]
