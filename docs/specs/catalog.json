@@ -3236,6 +3236,19 @@
       "path": "docs/specs/enhancement/fight_started_state_conflict_design_spec.md",
       "zh_path": "docs/specs/enhancement/fight_started_state_conflict_design_spec_zh.md",
       "source_revision": "112a22a5a1fc606a011c50ce9a546733c767053a"
+    },
+    {
+      "title": "A shot declared without an attack kind is a shot",
+      "zh": "沒指定攻擊類型的射擊，就是射擊",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper_tools/managed_combat.py",
+        "tests/test_combat_state_machine_integration.py"
+      ],
+      "path": "docs/specs/bug/declare_action_kind_default_design_spec.md",
+      "zh_path": "docs/specs/bug/declare_action_kind_default_design_spec_zh.md",
+      "source_revision": "d16bb75f6c1b7ddcb66698286ebac3668572fca3"
     }
   ]
 }

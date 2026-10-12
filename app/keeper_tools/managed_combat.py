@@ -89,6 +89,17 @@ def _owned_weapon_evidence(state, character, reference):
     return instance, scenario_definitions
 
 
+def _weapon_attack_mode(reference: str, scenario_definitions: tuple[combat_rules.WeaponDefinition, ...],
+                        instance: combat_rules.WeaponInstance | None) -> combat_rules.AttackMode:
+    """The attack kind of a declaration that names none: the weapon's own (a revolver shoots), else melee.
+
+    The kind is optional in the tool schema, and defaulting it to melee made a revolver shot "Unsupported attack mode"
+    and stalled the fight for seven turns (soak rerun8 2026-10-12, turns 77-83)."""
+    definition = combat_rules.resolve_weapon(reference, scenario_definitions=scenario_definitions,
+                                             instance=instance).definition
+    return definition.attack_mode if definition is not None else 'melee'
+
+
 def declare_combat_action(call: ToolCall) -> dict[str, Any]:
     from app import combat
 
@@ -111,7 +122,8 @@ def declare_combat_action(call: ToolCall) -> dict[str, Any]:
         result = combat_engine.handle(state, act.Declare(
             action_id=call.input['action_id'], actor_id=actor.combatant_id,
             target_id=call.input['target_id'], weapon_reference=call.input['weapon_reference'],
-            action_kind=call.input.get('action_kind', 'melee'),
+            action_kind=call.input.get('action_kind') or _weapon_attack_mode(
+                call.input['weapon_reference'], scenario_definitions, instance),
             distance_yards=call.input.get('distance_yards'), weapon_instance=instance,
             scenario_definitions=scenario_definitions,
         ))

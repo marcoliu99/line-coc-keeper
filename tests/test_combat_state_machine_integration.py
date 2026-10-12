@@ -511,6 +511,26 @@ def test_a_players_shot_still_uses_a_stated_distance(battle):
     assert battle.load().combat.actions['shot:far']['difficulty'] != 'regular'
 
 
+def test_a_declaration_without_an_attack_kind_uses_the_weapons_own(battle):
+    """Camp Sunny rerun8, turns 77-83: the kind is optional in the tool schema and defaulted to melee, so a revolver
+    shot was 「Unsupported attack mode」 and the fight sat in NEEDS_RULING."""
+    battle.start()
+    target = next(p for p in battle.load().combat.order if p.side == 'enemy')
+    shot = battle.tool('declare_combat_action', {'action_id': 'shot:nokind', 'actor_id': 'pc:char:ada',
+                                                 'target_id': target.combatant_id, 'weapon_reference': '.45 Automatic'})
+    assert shot['ok'] and shot['phase'] != 'NEEDS_RULING', shot
+    assert battle.load().combat.actions['shot:nokind']['action_kind'] == 'single_shot'
+
+
+def test_a_declaration_without_an_attack_kind_is_melee_for_a_fist(battle):
+    battle.start()
+    target = next(p for p in battle.load().combat.order if p.side == 'enemy')
+    punch = battle.tool('declare_combat_action', {'action_id': 'punch:nokind', 'actor_id': 'pc:char:ada',
+                                                  'target_id': target.combatant_id, 'weapon_reference': 'unarmed'})
+    assert punch['ok'], punch
+    assert battle.load().combat.actions['punch:nokind']['action_kind'] == 'melee'
+
+
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     battle.start()
     for resource_field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
