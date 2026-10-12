@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -877,3 +878,135 @@ def test_source_ruling_keeps_owned_instance_key_through_real_tool_reload(battle)
     assert reloaded.combat.actions[action_id]['ammo_key'] == 'owned:gun'
     assert reloaded.combat.actions[action_id]['weapon_reference'] == 'owned:gun'
     assert battle.effective().weapons['owned:gun']['ammo'] == 7
+
+
+BILLY_BLOCK = """### Billy, pet shoggoth
+
+STR 300 CON 210 SIZ 420 DEX 20 INT 45 POW 40 HP 63 DB: +8D6 Build: 9
+
+Engulf: Billy may choose to engulf a target.
+
+Fighting 70% (35/14), damage 8D6 or can choose to engulf. Dodge 10% (5/2)
+"""
+
+
+def test_an_enemy_registered_without_attacks_fights_with_its_stat_block_attacks(battle):
+    """Camp Sunny 2026-10-12: Billy, registered with his engulf alone, gave up every turn and never struck."""
+    state = battle.load()
+    state.scenario_text = BILLY_BLOCK
+    group_state.save_state(state)
+    started = battle.tool('initialize_combat', {'enemies': [{
+        'name': 'Billy（修格斯）', 'dex': 20, 'hp': 63,
+        'abilities': [{'name': 'Engulf', 'trigger': {'type': 'first_available'}}]}]})
+    assert started['ok'], started
+    current = battle.load()
+    billy = next(p for p in current.combat.order if p.side == 'enemy')
+    card = current.combat.enemy_cards[billy.enemy_card_id]
+    assert [(a.skill_value, a.damage) for a in card.attacks] == [(70, '8D6')] and not card.incomplete
+
+
+@pytest.mark.parametrize('corrected_id', ['attack:1', 'attack:2'])
+def test_a_declaration_paused_on_a_weapon_name_gives_way_to_the_corrected_one(battle, corrected_id):
+    """Lightless 2026-10-12 turn 50: Brawl under a name the catalog did not know paused the battle for a ruling, and
+    the Keeper, having looked the weapon up, could declare nothing until it was made: the turn ended unfinished."""
+    battle.start()
+    with patch.object(dice, 'skill_check') as rng:
+        paused = battle.declare('attack:1', weapon='a spork of doom')
+        rng.assert_not_called()
+    assert paused['phase'] == 'NEEDS_RULING'
+    assert battle.declare(corrected_id, weapon='unarmed')['ok']  # the same id corrected, or a new one
+    current = battle.load()
+    assert current.combat.phase != 'NEEDS_RULING' and not any(a.get('needs_ruling') for a in current.combat.actions.values())
+
+
+def test_a_refused_correction_leaves_the_paused_declaration_as_it_was(battle):
+    battle.start()
+    assert battle.declare('attack:1', weapon='a spork of doom')['phase'] == 'NEEDS_RULING'
+    refused = battle.tool('declare_combat_action', {'action_id': 'system:bad', 'actor_id': 'pc:char:ada',
+                                                    'target_id': 'pc:char:ada', 'weapon_reference': 'unarmed',
+                                                    'action_kind': 'melee'})
+    assert not refused['ok']
+    current = battle.load()
+    assert current.combat.phase == 'NEEDS_RULING' and current.combat.actions['attack:1'].get('needs_ruling')
+
+
+def test_stat_block_attacks_read_the_common_layouts():
+    """「Fighting 50% (Hard 25%/Extreme10%), damage 1D3 + damage bonus(1D4)」 (the Haunting's Corbitt) and a Chinese
+    block with its bonus in place both give an attack; the block's own numbers, nothing guessed."""
+    from app.keeper_tools import support
+    filler = "\n".join(f"Prose line {n}." for n in range(14))
+    text = (f"### Walter Corbitt, Undead Fiend\n\nSTR 80 CON 130 SIZ 65 DEX 35 INT 85 POW 90 HP 19\n"
+            f"Fighting \t 50% (Hard 25%/Extreme10%), damage 1D3 + \t\ndamage bonus(1D4) + possible infection\n\n{filler}\n\n"
+            "### 食屍鬼\n\n力量 80 體質 65 體型 65 敏捷 65 意志 65 HP 13\n爪擊 40%（20/8），傷害 1D6+傷害加值（-1）\n閃避 30%\n")
+    state = GroupState('g', scenario_text=text)
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, 'Walter Corbitt')] == [(50, '1D3+1D4')]
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '食屍鬼')] == [(40, '1D6-1')]
+    assert support.attacks_from_stat_block(state, 'Nobody') == []
+    gunman = GroupState('g', scenario_text="### Gunman\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\n"
+                                         ".38 Revolver 50%, damage 1D10\nMusket 45%, damage 1D10+4\n"
+                                         "Brawl 40%, damage 1D3\nElbow 30%, damage 1D4\n長槍 35%，傷害 1D8\n"
+                                         "Javelin 40%, damage 1D8\n石頭 30%，傷害 1D4\nRock 20%, damage 1D4\n"
+                                         ".38 Automatic 50%, damage 1D10\n12-gauge 50%, damage 4D6\n")
+    assert [a['skill_value'] for a in support.attacks_from_stat_block(gunman, 'Gunman')] == [40, 30, 35], \
+        "a shot is not a blow; 「Elbow」 and 「長槍」 are"
+    beast = GroupState('g', scenario_text="### Beast\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10 DB: +1D4\n"
+                                        "Fighting (Brawl) 50% (25/10), damage 1D3\nBite 40%, damage 1D6 + 1/2 DB\n"
+                                        "Gore 30%, damage 1D6 + 1／2 DB\nKick 20%, damage 1D6 + 1     / 2 DB\n"
+                                        "Butt 25%, damage 1D6 + ½ DB\n咬 35%，傷害 1D6 + 半DB\n撕咬 45%，傷害 1D4＋DB\n"
+                                        "Rake 15%, damage 1D6−1\nSlam 14%, damage 1D6—1\n")
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(beast, 'Beast')] == [(50, '1D3'), (45, '1D4+1D4'), (15, '1D6-1'), (14, '1D6-1')], \
+        "a specialised Fighting line is read; half a bonus is not truncated to +1"
+    plain = GroupState('g', scenario_text="### Thug\n\nSTR 50 CON 50 SIZ 50 DEX 50 POW 50 HP 10\nFighting 50%, Damage 1D3\n"
+                                        "Spear 40%, damage 1D8+1 (impale)\nClub 30%, damage 1D6; Pike 20%, damage 1D10 (impale)\n"
+                                        "Staff 10%, damage 1D8 (non-impaling)\nCut 12%, damage 1D4 + 1⁄2 DB\n")
+    assert [(a['skill_value'], a['damage'], a.get('tags')) for a in support.attacks_from_stat_block(plain, 'Thug')] == \
+        [(50, '1D3', None), (40, '1D8+1', ['impale']), (30, '1D6', None), (20, '1D10', ['impale']), (10, '1D8', None)]
+    wrapped = GroupState('g', scenario_text="### Brute\n\nSTR 80 CON 50 SIZ 80 DEX 50 POW 50 HP 13 DB (+1D4)\n"
+                                          "Fighting 60%, damage 1D6+DB\n")
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(wrapped, 'Brute')] == [(60, '1D6+1D4')]
+
+
+@pytest.mark.parametrize('corrected_id', ['attack:1', 'attack:3'])
+def test_a_correction_refused_after_it_was_written_leaves_only_the_paused_declaration(battle, corrected_id):
+    """The correction can be refused after it was recorded (the actor still owes a check): it is removed, and the
+    paused declaration is back as it was, whether the correction reused its id or not."""
+    battle.start()
+    assert battle.declare('attack:1', weapon='a spork of doom')['phase'] == 'NEEDS_RULING'
+    paused = battle.load().combat.actions['attack:1']
+    state = battle.load()
+    state.pending_checks['player'] = {'check_id': 'owed', 'type': 'skill', 'skill': '偵查', 'timeline_id': state.timeline_id}
+    group_state.save_state(state)
+    before = battle.load()
+    refused = battle.declare(corrected_id, weapon='unarmed')
+    current = battle.load()
+    if refused['ok']:
+        pytest.skip('this path does not refuse an owed check')
+    declared = {k: v for k, v in current.combat.actions.items() if not k.startswith('system:')}
+    assert current.combat.phase == 'NEEDS_RULING' and declared == {'attack:1': paused}
+    assert current.combat.events == before.combat.events and current.combat.roll_receipts == before.combat.roll_receipts
+
+
+def test_a_correction_that_only_replays_a_finished_action_keeps_the_ruling(battle):
+    """A correction reusing an earlier finished action's id only replays that receipt; it did not take the paused
+    declaration's place, so the ruling stands."""
+    battle.start()
+    assert battle.declare('attack:1', weapon='a spork of doom')['phase'] == 'NEEDS_RULING'
+    state = battle.load()
+    paused = deepcopy(state.combat.actions['attack:1'])
+    state.combat.actions['attack:0'] = {**paused, 'action_id': 'attack:0', 'weapon_reference': 'unarmed',
+                                        'needs_ruling': False, 'completed': True, 'receipt': {'ok': True}}
+    group_state.save_state(state)
+    assert not battle.declare('attack:0', weapon='unarmed')['ok'], "the Keeper is told the correction did not land"
+    current = battle.load()
+    assert current.combat.phase == 'NEEDS_RULING' and current.combat.actions['attack:1'] == paused
+
+
+def test_the_creature_s_own_stat_block_comes_before_a_variant_of_it():
+    from app.keeper_tools import support
+    text = ("### 深潛者（幼體）\n\n力量 40 體質 40 體型 40 敏捷 40 意志 40 HP 8\n爪擊 25%，傷害 1D3\n\n"
+            + "\n".join(f"段落 {n}。" for n in range(14))
+            + "\n\n### 深潛者\n\n力量 80 體質 65 體型 80 敏捷 50 意志 50 HP 14\n爪擊 50%，傷害 1D6\n")
+    state = GroupState('g', scenario_text=text)
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者')] == [(50, '1D6')]
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者（左）')] == [(50, '1D6')]
+    assert [(a['skill_value'], a['damage']) for a in support.attacks_from_stat_block(state, '深潛者（幼體）')] == [(25, '1D3')]

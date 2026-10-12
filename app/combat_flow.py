@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Any, Literal, cast
 
 from app import (
@@ -65,6 +65,24 @@ def _settlement_pending(state: GroupState) -> dict[str, Any] | None:
     return {'ok': False, 'settlement_id': settlement_id, 'error': (
         'A settlement preview is pending; the battle is over. Call confirm_combat_settlement with this '
         f'settlement_id ({settlement_id}), or rollback_combat. Advancing, declaring or running an NPC turn would make the preview stale.')}
+
+
+def _withdraw_unrolled_ruling(state: GroupState, actor_id: str) -> CombatAction | None:
+    """A declaration paused for a ruling before any die (a weapon name that matched nothing, a mode the weapon has
+    not) gives way to the same actor's new declaration: the Keeper looked the weapon up and declares it properly.
+    Kept, nothing could be declared until the ruling was made, and the turn ended unfinished (Lightless 2026-10-12
+    turn 50: Brawl under another name). A ruling the Keeper still wants to make is made with resolve_combat_ruling."""
+    if state.combat.phase != 'NEEDS_RULING' or state.combat.interaction:
+        return None
+    actor = combat.find_combatant(state, actor_id)
+    open_actions = [a for a in state.combat.actions.values() if not a.get('completed')]
+    if (actor is not None and len(open_actions) == 1 and open_actions[0].get('needs_ruling')
+            and open_actions[0].get('stage') == 'attack' and open_actions[0].get('actor_id') == actor.combatant_id
+            and not open_actions[0].get('checks')):
+        del state.combat.actions[open_actions[0]['action_id']]
+        state.combat.phase = 'READY'
+        return open_actions[0]
+    return None
 
 
 def _ruling(state: GroupState, action: CombatAction, reason: str) -> dict[str, Any]:
@@ -358,6 +376,31 @@ def declare_action(
     weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     combat_resources.initialize_working_state(state)
+    before = deepcopy(state.combat) if state.combat.phase == 'NEEDS_RULING' else None
+    withdrawn = _withdraw_unrolled_ruling(state, actor_id)
+    result = _declare_action(
+        state, action_id=action_id, actor_id=actor_id, target_id=target_id, weapon_reference=weapon_reference,
+        action_kind=action_kind, distance_yards=distance_yards, scenario_definitions=scenario_definitions,
+        weapon_instance=weapon_instance)
+    if withdrawn is not None and before is not None and not (
+            state.combat.phase == 'NEEDS_RULING'
+            or (result.get('ok') and (action_id == withdrawn['action_id'] or action_id not in before.actions))):
+        # The correction did not take the paused one's place: it was refused (a bad target, a check someone still
+        # owes), or its id was an earlier finished action's and only replayed that receipt. The whole battle goes
+        # back as it was, events and rolls included, and the ruling stands.
+        for item in fields(before):
+            setattr(state.combat, item.name, getattr(before, item.name))
+        if result.get('ok'):
+            return _error('That action ID is an earlier finished action; declare the correction with a new action ID')
+    return result
+
+
+def _declare_action(
+    state: GroupState, *, action_id: str, actor_id: str, target_id: str,
+    weapon_reference: str, action_kind: ActionKind, distance_yards: float | None,
+    scenario_definitions: tuple[combat_rules.WeaponDefinition, ...],
+    weapon_instance: combat_rules.WeaponInstance | None,
+) -> dict[str, Any]:
     if action_id in state.combat.actions:
         action = state.combat.actions[action_id]
         if any(action.get(k) != v for k, v in {'actor_id': actor_id, 'target_id': target_id,
@@ -1000,10 +1043,6 @@ def run_enemy_plan(state: GroupState, plan_id: str) -> dict[str, Any]:
     return run_action(state, identity)
 
 
-_SHOOTING = re.compile(r'射擊|手槍|步槍|霰彈槍|獵槍|衝鋒槍|機槍|火槍|槍械|左輪|弓|弩|\b(?:firearms?|guns?|handgun|pistol|revolver|'
-                       r'rifle|carbine|musket|shotgun|smg|submachine|machine gun|(?:long|short|cross)?bow)\b', re.IGNORECASE)
-
-
 _FIGHTING = re.compile(r'格鬥|鬥毆|\b(?:fighting|brawl)\b', re.IGNORECASE)
 
 
@@ -1014,7 +1053,7 @@ def _shoots(attack: AttackRule) -> bool:
         return True
     if _FIGHTING.search(attack.skill_name or ''):
         return False
-    return bool(_SHOOTING.search(f'{attack.skill_name} {attack.label}'))
+    return bool(combat.SHOOTING_NAME.search(f'{attack.skill_name} {attack.label}'))
 
 
 def _give_up_unplayable_enemy_turns(

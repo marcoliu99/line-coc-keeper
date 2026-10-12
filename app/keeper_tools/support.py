@@ -4,6 +4,7 @@ Split out of app/keeper.py unchanged so that app/keeper_tools no longer imports 
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -18,6 +19,7 @@ from app import (
     check_lifecycle,
     combat,
     combat_resources,
+    combat_rules,
     dice,
     observability,
     spoiler_policy,
@@ -294,10 +296,15 @@ def stat_block_for(state: GroupState, name: str) -> tuple[str, str] | None:
     English. Never by similarity: 深潛者 is close to 深潛者（幼體） and is a different creature."""
     indexed = combat.find_npc_index_entry_exact(state, name) or _index_entry_by_same_words(state, name) or {}
     names = [str(n) for n in (name, indexed.get("name"), *(indexed.get("aliases") or [])) if n]
-    for heading, block in _stat_blocks_as_written(state.scenario_text or ""):
-        if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names):
-            return heading, block
-    return None
+    found = [(heading, block) for heading, block in _stat_blocks_as_written(state.scenario_text or "")
+             if any(_named_by_a_heading([(heading.casefold(), "")], n) for n in names)]
+    # A heading that is the name itself comes before one that only contains it (深潛者 before 深潛者（幼體）), and the
+    # name as written before it without an instance suffix (深潛者（左）, Cultist 2).
+    for wanted in ({n.strip().casefold() for n in names}, {_without_instance_suffix(n) for n in names}):
+        exact = next((f for f in found if f[0].strip().casefold() in wanted), None)
+        if exact:
+            return exact
+    return found[0] if found else None
 
 
 def stat_block_headings(state: GroupState) -> list[str]:
@@ -343,6 +350,84 @@ def _attacks_in_block(attacks: Sequence[Mapping[str, Any]], block: str) -> bool:
     return True
 
 
+# 「Fighting 70% (35/14), damage 8D6」, 「Claw 50% (25/10), damage 1D6+DB」, 「爪擊 50%（25/10），傷害 1D6+DB」.
+_BLOCK_ATTACK = re.compile(
+    r"(?P<label>(?:[A-Za-z][A-Za-z' -]{1,30}?|[\u4e00-\u9fff]{1,10})(?:\s*[（(][^）)\d]{1,20}[）)])?)\s*"
+    r"(?P<value>\d{1,3})\s*[%％]\s*"
+    r"(?:[（(][^）)]{0,40}[）)])?\s*[,，、]?\s*(?:damage|傷害)\s*[:：]?\s*"
+    r"(?P<damage>\d*\s*[dD]\s*\d+(?:\s*[+-]\s*(?:\d*\s*[dD]\s*\d+|\d+|DB|db|damage bonus|傷害加值))*)",
+    re.IGNORECASE,
+)
+_BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+-]?\s*(?:\d*\s*[dD]\s*\d+|\d+))", re.IGNORECASE)
+_NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
+# Read as a blow, a shot or a throw would be fought back against and spend no ammunition: only melee attacks are taken
+# this way (guns and bows are combat.SHOOTING_NAME).
+_CALIBRE = re.compile(r"(?<![\w.])\.\d{2,3}\b|\d+\s*-?\s*gauge|\d+(?:\.\d+)?\s*mm\b|口徑|號霰彈", re.IGNORECASE)
+_IMPALE = re.compile(r"(?<!non-)(?<!non)(?<!not )impal|(?<![不無非])(?:穿刺|貫穿)", re.IGNORECASE)
+_THROWN = re.compile(r"投擲|\bthrow(?:n|ing)?\b", re.IGNORECASE)
+# 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
+_BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
+                               re.IGNORECASE)
+
+
+@functools.cache
+def _catalog_ranged_names() -> frozenset[str]:
+    """The catalog's shot and thrown weapons by exact name or alias ; a contained word would make 「Elbow」 a bow."""
+    def names(melee: bool) -> set[str]:
+        return {name.casefold() for weapon in combat_rules.weapon_catalog() if (weapon.attack_mode == 'melee') == melee
+                for name in (weapon.name, *weapon.aliases)}
+    ranged = names(False)
+    # 「Rock, Thrown」 is also Rock; 「Spear, Thrown」 is not Spear, which is held to thrust as well.
+    return frozenset(ranged | {re.sub(r",\s*thrown$", "", name) for name in ranged} - names(True))
+
+
+def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]]:
+    """The melee attacks this enemy's stat block writes out as a skill value and damage, ready to register; [] when the
+    scenario gives it no block or the block states no such attack.
+
+    An enemy registered without them can only give up its turns: Billy (Fighting 70%, damage 8D6) never struck in a
+    2026-10-12 soak run. The values are the scenario's own, so nothing is guessed: a damage bonus written as DB is
+    the block's own DB line, and an attack whose bonus the block does not give is left out.
+    """
+    found = stat_block_for(state, name)
+    if found is None:
+        return []
+    raw = found[1].translate(str.maketrans("＋－−–—⁄∕", "+----//"))  # full-width and typographic signs from PDF text
+    db_match = _BLOCK_DB.search(raw) or _BLOCK_DB_WRAPPED.search(raw)  # 「DB: +1D4」 or 「DB (+1D4)」
+    bonus = re.sub(r"\s+", "", db_match.group(db_match.lastindex or 0)) if db_match else ""
+    block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), raw))
+    attacks: list[dict[str, Any]] = []
+    matches = list(_BLOCK_ATTACK.finditer(block))
+    for index, match in enumerate(matches):
+        label = match.group("label").strip()
+        # The name as the line writes it, a calibre included (「.38 Automatic」, 「12-gauge」), up to the percentage.
+        start = max(block.rfind("\n", 0, match.start()) + 1, matches[index - 1].end() if index else 0)
+        written = block[start:match.start("value")]
+        if (_NOT_AN_ATTACK.match(label) or combat.SHOOTING_NAME.search(written) or _THROWN.search(written)
+                or _CALIBRE.search(written)):
+            continue
+        if label.casefold() in _catalog_ranged_names():
+            continue  # a catalog weapon that is shot or thrown (Shuriken, Javelin, 石頭)
+        if re.match(r"\s*(?:[/／]|[+-]?\s*[½半]|[+-]\s*\d)", block[match.end():]):
+            continue  # 「1D6 + 1/2 DB」, 「1D6 + ½ DB」, 「1D6 + 半DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」
+        damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
+        if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
+            if not bonus:
+                continue
+            damage = re.sub(r"[+-]?(?:db|damagebonus|傷害加值)", "" if bonus in {"0", "+0", "-0"} else
+                            ("+" + bonus.lstrip("+") if not bonus.startswith("-") else bonus), damage, flags=re.IGNORECASE)
+        try:
+            dice.max_expression_value(damage)
+        except ValueError:
+            continue
+        attack = {"label": label, "skill_name": "格鬥", "skill_value": int(match.group("value")), "damage": damage.upper()}
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(block)
+        if _IMPALE.search(re.split(r"[\n;；。]", block[match.end():end], maxsplit=1)[0]):
+            attack["tags"] = ["impale"]  # 「damage 1D8+1 (impale)」: an Extreme success impales, as the block says
+        attacks.append(attack)
+    return attacks
+
+
 def scenario_stat_block(state: GroupState, name: str, attacks: Sequence[Mapping[str, Any]] = ()) -> bool:
     """Whether the loaded scenario text carries a stat block for this enemy, found either way:
 
@@ -368,8 +453,12 @@ def stat_block_named(state: GroupState, name: str) -> bool:
     return _named_by_a_heading(_stat_blocks(state.scenario_text or ""), name)
 
 
+def _without_instance_suffix(name: str) -> str:
+    return re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
+
+
 def _named_by_a_heading(blocks: list[tuple[str, str]], name: str) -> bool:
-    wanted = re.sub(r"[（(].*?[）)]\s*$|\s*#?\d+$", "", (name or "").strip()).strip().casefold()
+    wanted = _without_instance_suffix(name)
     if len(wanted) < 2:
         return False
     # Word-bounded for letters and digits; CJK characters have no word boundary, so a Chinese name is contained.

@@ -3039,6 +3039,21 @@
       "path": "docs/specs/bug/delivery_lines_followup_sanity_design_spec.md",
       "zh_path": "docs/specs/bug/delivery_lines_followup_sanity_design_spec_zh.md",
       "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
+    },
+    {
+      "title": "An enemy fights with its stat block's attacks, and a declaration paused on a weapon name can be corrected",
+      "zh": "敵人照數值表上的攻擊出手、因武器名稱暫停的宣告可以更正重來",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/keeper_tools/support.py",
+        "app/keeper_tools/combat.py",
+        "app/combat_flow.py",
+        "tests/test_combat_state_machine_integration.py"
+      ],
+      "path": "docs/specs/bug/enemy_block_attacks_weapon_retry_design_spec.md",
+      "zh_path": "docs/specs/bug/enemy_block_attacks_weapon_retry_design_spec_zh.md",
+      "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
     }
   ]
 }

@@ -73,6 +73,23 @@ def _attackless_scenario_enemy(state: GroupState, name: str, entry: dict[str, An
             'tags: ["impale"]。')
 
 
+def _with_block_attacks(state: GroupState, name: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """The entry with the attacks its scenario stat block writes out, when it brings abilities but no attack.
+
+    Such an entry passes the attackless refusal, yet an ability the engine has no rule for is only narrated, so the
+    enemy gave up every turn: one registered with its engulf alone never struck (2026-10-12 soak runs). An entry
+    with nothing is still refused, so the Keeper registers how the scenario says it attacks (Corbitt's floating
+    knife, not his fists); one that brings its own attacks, or an ally, keeps them as given.
+    """
+    attacks, abilities = entry.get("attacks"), entry.get("abilities")
+    named_ability = isinstance(abilities, list) and any(isinstance(a, dict) and a.get("name") for a in abilities)
+    if (entry.get("is_ally") or not named_ability
+            or (isinstance(attacks, list) and any(support.well_formed_attack(a) for a in attacks))):
+        return entry
+    filled = support.attacks_from_stat_block(state, name)
+    return {**entry, "attacks": filled} if filled else entry
+
+
 def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
 
     state = call.state
@@ -83,6 +100,7 @@ def add_npc_to_combat(call: ToolCall) -> dict[str, Any]:
         return refusal
 
     def mutate(target_state: GroupState) -> Any:
+        tool_input = _with_block_attacks(target_state, npc_name, call.input)
         if missing := _attackless_scenario_enemy(target_state, npc_name, tool_input):
             return support.ToolStateMutation({"ok": False, "error": missing}, should_save=False)
         hp = requested_hp
@@ -195,6 +213,7 @@ def initialize_combat(call: ToolCall) -> dict[str, Any]:
 
                 hp = int(entry["hp"])
                 dex = int(entry["dex"])
+                entry = _with_block_attacks(target_state, requested_name, entry)
                 for field, rule_type in (
                     ("armor", ArmorRule), ("attacks", AttackRule), ("abilities", SpecialAbility),
                 ):
