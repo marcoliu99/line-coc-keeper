@@ -3211,6 +3211,20 @@
       "source_revision": "c46e34105088177c817b21ea386c47989cd7fcfa"
     },
     {
+      "title": "A dead investigator's line is answered as dead",
+      "zh": "已死亡調查員的發言，回覆「已死亡」",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/unconscious_wake.py",
+        "app/agents/supervisor.py",
+        "tests/test_unconscious_wake.py"
+      ],
+      "path": "docs/specs/enhancement/dead_investigator_reply_design_spec.md",
+      "zh_path": "docs/specs/enhancement/dead_investigator_reply_design_spec_zh.md",
+      "source_revision": "112a22a5a1fc606a011c50ce9a546733c767053a"
+    },
+    {
       "title": "A fight that began cleanly is not followed by a request to start over",
       "zh": "戰鬥已正常開始，就不再要求重來",
       "category": "enhancement",
