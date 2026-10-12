@@ -390,6 +390,8 @@ def declare_action(
         # back as it was, events and rolls included, and the ruling stands.
         for item in fields(before):
             setattr(state.combat, item.name, getattr(before, item.name))
+        if result.get('ok'):
+            return _error('That action ID is an earlier finished action; declare the correction with a new action ID')
     return result
 
 

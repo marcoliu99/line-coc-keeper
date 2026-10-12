@@ -995,7 +995,7 @@ def test_a_correction_that_only_replays_a_finished_action_keeps_the_ruling(battl
     state.combat.actions['attack:0'] = {**paused, 'action_id': 'attack:0', 'weapon_reference': 'unarmed',
                                         'needs_ruling': False, 'completed': True, 'receipt': {'ok': True}}
     group_state.save_state(state)
-    assert battle.declare('attack:0', weapon='unarmed')['ok']
+    assert not battle.declare('attack:0', weapon='unarmed')['ok'], "the Keeper is told the correction did not land"
     current = battle.load()
     assert current.combat.phase == 'NEEDS_RULING' and current.combat.actions['attack:1'] == paused
 
