@@ -157,11 +157,12 @@ def resolve_player_check(
                 user_id, audience_entry,
                 reply_text=f"這是需要選擇的檢定，請輸入「/coc check <選項名稱>」，可選：{options_text}",
             )
-        matched = narration.match_choice_option(pending["options"], skill_arg)
+        matched = narration.match_typed_choice(pending["options"], parts[2:])
         if not matched:
             state.pending_checks[user_id] = pending
             options_text = "、".join(o["label"] for o in pending["options"])
-            return outcome_for(user_id, audience_entry, reply_text=f"沒有「{skill_arg}」這個選項，可選：{options_text}")
+            return outcome_for(user_id, audience_entry,
+                               reply_text=f"沒有「{' '.join(parts[2:])}」這個選項，可選：{options_text}")
         choice = _Choice.from_option(matched, pending)
         pending = None
     elif skill_arg is None:

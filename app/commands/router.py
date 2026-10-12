@@ -68,7 +68,7 @@ def _sudo_check_matches_pending(pending: dict | None, args: tuple[str, ...]) -> 
     an exact match so delegation cannot consume another subject's pending
     request or bypass the player-choice boundary.
     """
-    if not isinstance(pending, dict) or len(args) > 1:
+    if not isinstance(pending, dict) or (len(args) > 1 and pending.get("type") != "choice"):
         return False
     skill_arg = args[0] if args else None
     pending_type = pending.get("type")
@@ -82,9 +82,11 @@ def _sudo_check_matches_pending(pending: dict | None, args: tuple[str, ...]) -> 
         options = pending.get("options")
         if not isinstance(options, list):
             return False
+        # A label may hold spaces (「以 STR 抓住」): the whole phrase names an option as well as its first word.
         return any(
-            skill_names_match(str(option.get("label", "")), skill_arg)
-            or skill_names_match(str(option.get("skill", "")), skill_arg)
+            skill_names_match(str(option.get("label", "")), typed)
+            or skill_names_match(str(option.get("skill", "")), typed)
+            for typed in {skill_arg, " ".join(args)}
             for option in options
             if isinstance(option, dict)
         )
