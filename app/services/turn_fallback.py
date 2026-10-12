@@ -126,8 +126,10 @@ def told_names(state: GroupState, entries: list[dict[str, Any]], also: list[str]
     reply being sent), as a name of their own rather than inside a longer index name (see ``_occurs``)."""
     texts = [*(also or []), *_public_narration(state)]
     every_name = [n for entry in entries for n in _names(entry)]
+    # A one-character Chinese name (井) is too short to find a character by, but it is still the name to disclose.
+    single = [n for entry in entries for n in (str(entry.get("name") or "").strip(),) if len(n) == 1 and not n.isascii()]
     told: set[str] = set()
-    for name in every_name:
+    for name in [*every_name, *single]:
         longer = [other for other in every_name if len(other) > len(name) and name in other]
         if any(_occurs(name, text, longer) for text in texts):
             told.add(name)

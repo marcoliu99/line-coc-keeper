@@ -138,3 +138,12 @@ def test_a_name_inside_a_longer_index_name_is_not_a_disclosure():
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "Masked Man 站在門口。"
     assert draft.private_messages == [("p1", "只有你知道 約翰 是誰；約翰 在看你。")]  # told to that reader only
+
+
+def test_a_one_character_name_is_used_once_told():
+    from app.services import turn_fallback
+    well = {"name": "井", "aliases": ["Well"]}
+    state = _told(GroupState(group_id="g", scenario_location_index=[well]), "院子中央有一口井。")
+    told = turn_fallback.told_names(state, [well])
+    assert "井" in told
+    assert presentation.use_scenario_names("你走向 Well。", [well], told=told) == "你走向 井。"
