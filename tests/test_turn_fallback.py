@@ -620,3 +620,12 @@ async def test_the_first_attempts_passage_counts_for_the_retry_that_found_nothin
                     check_status={"tool_called": False, "pending": None})
     await _turn(_state(), [first, retry])
     assert retry.scenario_evidence == PASSAGE
+
+
+@aio
+async def test_the_passage_the_recovery_search_found_counts_for_a_retry_that_searched_nothing() -> None:
+    first = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    retry = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [first, retry], rag_status="empty", search=("--- 第 4 頁 ---\n門是鎖著的。", "success"))
+    assert turn_fallback.found_scenario_text(retry) and prompt_config.explains_in_story(retry)
