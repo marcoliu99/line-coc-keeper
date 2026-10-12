@@ -95,3 +95,11 @@ def test_names_found_without_stats_still_update_a_republished_entry():
         publish({"npcs": [], "locations": places})
         kept = publish({"npcs": [], "locations": [], "terms": [TOME]})
         assert kept["locations"] == places and kept["terms"] == [TOME]
+
+
+def test_a_repair_of_the_same_scenario_keeps_a_rebuilt_glossary():
+    from app.services import scenario_lifecycle
+    state = GroupState(group_id="g", scenario_glossary=[TOME])
+    context = {"manifest": {"title": "t"}, "text": "x", "indexes": {"npcs": [], "locations": []}, "pregens": []}
+    scenario_lifecycle._repair(state, context)
+    assert state.scenario_glossary == [TOME]
