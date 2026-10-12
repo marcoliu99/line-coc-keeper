@@ -63,3 +63,13 @@ def test_an_alias_with_digits_or_a_comma_is_used_too():
     entries = [{"name": "三號房", "aliases": ["Room 3"]}, {"name": "幼體（深海夢魘）", "aliases": ["Youngling, deep-sea nightmare"]}]
     assert presentation.use_scenario_names("他走進 Room 3。", entries) == "他走進 三號房。"
     assert presentation.use_scenario_names("那是 Youngling, deep-sea nightmare。", entries) == "那是 幼體（深海夢魘）。"
+
+
+def test_a_numbered_alias_does_not_match_a_longer_number():
+    room = {"name": "三號房", "aliases": ["Room 3"]}
+    assert presentation.use_scenario_names("他走進 Room 30。", [room]) == "他走進 Room 30。"
+
+
+def test_an_older_index_with_the_english_heading_as_its_name_still_works():
+    entry = {"name": "Walter Corbitt", "aliases": ["柯比特", "Corbitt"]}
+    assert presentation.use_scenario_names("Walter Corbitt 與 Corbitt 都是他。", [entry]) == "柯比特 與 柯比特 都是他。"

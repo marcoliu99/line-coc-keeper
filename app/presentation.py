@@ -52,19 +52,22 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
     kept = [k.casefold() for k in keep if k]
     targets: dict[str, set[str]] = {}
     for entry in entries:
-        name = str(entry.get("name") or "").strip() if isinstance(entry, dict) else ""
-        if not _HAS_CJK.search(name):
+        if not isinstance(entry, dict):
             continue
-        for alias in entry.get("aliases") or []:
-            alias = str(alias).strip()
+        written = [str(n).strip() for n in (entry.get("name"), *(entry.get("aliases") or [])) if str(n or "").strip()]
+        # The Chinese name, which an older index may keep among the aliases under an English heading.
+        name = next((n for n in written if _HAS_CJK.search(n)), "")
+        if not name:
+            continue
+        for alias in written:
             if len(alias) >= 3 and _LATIN_NAME.fullmatch(alias) and not any(
                     re.search(rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])", k) for k in kept):
                 targets.setdefault(alias.casefold(), set()).add(name)
     names = {alias: next(iter(found)) for alias, found in targets.items() if len(found) == 1}
     if not names:
         return text
-    pattern = re.compile(r"(?<![A-Za-z])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
-                         + r")(?:['’]s)?(?![A-Za-z])", re.IGNORECASE)
+    pattern = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
+                         + r")(?:['’]s)?(?![A-Za-z0-9])", re.IGNORECASE)
 
     def chinese(match: re.Match[str]) -> str:
         before, after = text[:match.start()].rstrip()[-1:], text[match.end():].lstrip()[:1]
