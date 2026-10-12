@@ -147,3 +147,11 @@ def test_a_one_character_name_is_used_once_told():
     told = turn_fallback.told_names(state, [well])
     assert "井" in told
     assert presentation.use_scenario_names("你走向 Well。", [well], told=told) == "你走向 井。"
+
+
+def test_a_one_character_name_under_an_english_heading_is_used_once_told():
+    from app.services import turn_fallback
+    well = {"name": "Well", "aliases": ["井"]}
+    state = _told(GroupState(group_id="g", scenario_location_index=[well]), "院子中央有一口井。")
+    told = turn_fallback.told_names(state, [well])
+    assert presentation.use_scenario_names("你走向 Well。", [well], told=told) == "你走向 井。"
