@@ -10,7 +10,7 @@ The party opened the wall and Corbitt rose. The Executor called `get_enemy_stat_
 
 ## Change
 
-`prompt_config.fight_started_cleanly(result)` is true when the fight was opened this turn (`combat_opened`), the fallback reason is `state_conflict` with validation code `pending_identity_mismatch` (the named check does not exist; an unverified cancellation, `cancellation_not_verified`, is also a `state_conflict` but keeps the notice), and the turn left nothing pending and rolled nothing (no pending check or Luck decision, no dice, no resolved check). The consistency step then returns the Narrator's text as it is, without the unfinished-turn notice. Any other incomplete turn keeps the notice, as does one that rolled dice or left a check waiting.
+`prompt_config.fight_started_cleanly(result)` is true when the fight was opened this turn (`combat_opened`), the fallback reason is `state_conflict` with validation code `pending_identity_mismatch` (the named check does not exist; an unverified cancellation, `cancellation_not_verified`, is also a `state_conflict` but keeps the notice), every tool call succeeded, no check or Luck decision is still waiting in the game state (the public result hides a private one), and the turn left nothing pending and rolled nothing (no pending check or Luck decision, no dice, no resolved check). The consistency step then returns the Narrator's text as it is, without the unfinished-turn notice. Any other incomplete turn keeps the notice, as does one that rolled dice or left a check waiting.
 
 The fallback is still recorded as `state_conflict`, so the soak reports keep counting it.
 
