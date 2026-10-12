@@ -133,11 +133,19 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     state = ctx.state
     keep = [c.name for c in (*state.characters_by_id.values(), *state.characters.values())]
     keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
-    indexed = [*state.scenario_npc_index, *state.scenario_location_index]
-    # A glossary term the index already lists under the same name is that entry, not a second one with its name.
-    names = {str(e.get("name") or "").strip() for e in indexed if isinstance(e, dict)}
-    entries = [*indexed, *(t for t in state.scenario_glossary
-                           if isinstance(t, dict) and str(t.get("name") or "").strip() not in names)]
+    indexed = [dict(e) for e in (*state.scenario_npc_index, *state.scenario_location_index) if isinstance(e, dict)]
+    # A glossary term the index already lists under the same name is that entry, not a second one with its name: its
+    # spellings join the entry's.
+    by_name = {str(e.get("name") or "").strip(): e for e in indexed}
+    entries: list[dict] = list(indexed)
+    for term in state.scenario_glossary:
+        if not isinstance(term, dict):
+            continue
+        same = by_name.get(str(term.get("name") or "").strip())
+        if same is None:
+            entries.append(term)
+        else:
+            same["aliases"] = [*(same.get("aliases") or []), *(term.get("aliases") or [])]
     # Only names the table has already been told: an index name may be the identity a disguise hides. One this reply
     # tells is used only after the reply tells it.
     before = turn_fallback.told_names(state, entries, [], keep)

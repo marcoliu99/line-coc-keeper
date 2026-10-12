@@ -72,14 +72,16 @@ def test_a_glossary_original_in_the_narration_reads_in_chinese():
 
 def test_a_glossary_term_the_index_also_lists_still_reads_in_chinese():
     corbitt = {"name": "柯比特", "aliases": ["Corbitt"]}
-    state = GroupState(group_id="g", scenario_npc_index=[corbitt], scenario_glossary=[dict(corbitt)])
+    state = GroupState(group_id="g", scenario_npc_index=[corbitt],
+                       scenario_glossary=[{"name": "柯比特", "aliases": ["Corbitt", "Walter Corbitt"]}])
     state.log.append({"role": "assistant", "content": "柯比特的日記。", "audience": "public", "timeline_id": "",
                       "record_kind": "narrative"})
     ctx = MagicMock(state=state)
     ctx.message.payload = {"state": state}
-    draft = MagicMock(text="Corbitt 在看你。", private_messages=[], private_controls=[])
+    draft = MagicMock(text="Corbitt 在看你。Walter Corbitt 的日記。", private_messages=[], private_controls=[])
     reply_pipeline._scenario_names(ctx, draft)
-    assert draft.text == "柯比特 在看你。"
+    assert draft.text == "柯比特 在看你。柯比特 的日記。"
+    assert state.scenario_npc_index == [corbitt]  # the index itself is not changed
 
 
 def _install(state: GroupState, scenario_id: str, terms: list | None) -> None:
