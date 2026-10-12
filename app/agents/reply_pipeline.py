@@ -133,7 +133,7 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     keep = [c.name for c in (*state.characters_by_id.values(), *state.characters.values())]
     keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
     draft.text = presentation.use_scenario_names(
-        draft.text, [*state.scenario_npc_index, *state.scenario_location_index], keep)
+        draft.text, [*state.scenario_npc_index, *state.scenario_location_index, *state.scenario_glossary], keep)
 
 
 def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:

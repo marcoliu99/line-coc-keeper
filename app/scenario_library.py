@@ -551,7 +551,9 @@ def load_context(scenario_id: str, active_chapter_id: str = "") -> dict[str, Any
     page_set = {p for c in window for p in range(c["start_page"], c["end_page"] + 1)}
     maps = {str(k): v for k, v in _read_json(root / "scene_maps.json", {}).items() if str(k).isdigit() and int(k) in page_set}
     all_indexes = _read_json(root / "indexes.json", {"npcs": [], "locations": []})
-    indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set)}
+    # Names are fixed for the whole scenario, so the glossary is not narrowed to the chapter like the stat index.
+    indexes = {"npcs": _filter_index(all_indexes.get("npcs", []), page_set), "locations": _filter_index(all_indexes.get("locations", []), page_set),
+               **({"terms": list(all_indexes["terms"])} if all_indexes.get("terms") else {})}
     return {"manifest": manifest, "active_chapter_id": chapters[current_index]["id"], "context_chapter_ids": [c["id"] for c in window], "text": context_text, "indexes": indexes, "pregens": _read_json(root / "pregens.json", []), "scene_maps": maps, "images_dir": root / "images", "page_numbers": page_set}
 
 

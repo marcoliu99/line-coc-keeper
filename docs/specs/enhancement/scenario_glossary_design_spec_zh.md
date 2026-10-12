@@ -1,0 +1,30 @@
+# 劇本的其他專有名詞固定用同一個中文名
+
+[English](scenario_glossary_design_spec.md)
+
+狀態：**已實作**。基準：`main_v2` 的 `7dc932c`，建立在 `scenario_names_consistent_design_spec.md` 之上。
+
+## 問題
+
+數值索引只固定了「有數值的 NPC／怪物」和主要地點的中文名。其他有名字的東西都沒有固定譯名：沒數值的人物（店老闆、證人）、物品、書、法術、組織、神話存在。模型每回合都可能翻得不一樣。
+
+## 改動
+
+- **抽取。** `report_scenario_index` 多一個 `terms` 清單，列出 `npcs`／`locations` 以外每個有名字的東西，格式是 `{"name": 中文, "aliases": [原文, …], "kind"}`。`extract_scenario_index` 會回傳 `terms`，沒有名字的條目會被丟掉。
+- **和數值索引分開存。** 名詞存在 `indexes.json` 和 `GroupState.scenario_glossary`，不放進 `scenario_npc_index`。戰鬥登記敵人時比對的是 NPC 索引，所以不會配到沒數值的人。
+  - `scenario_library.load_context` 傳的是整份劇本的名詞，不只目前章節的，因為譯名要跨章節固定。
+  - 上傳、啟用、修正和 `/coc index` 都會設定這個欄位。
+- **提示。** 索引區塊多一段「其他專有名詞（只固定譯名；列在這裡不代表調查員已經知道）」，格式是「・中文名（原文：…）」，最多 `GLOSSARY_PROMPT_LIMIT`（80）條。「譯名」規則改為涵蓋人物、地點和名詞。
+- **敘事。** 回覆流程的 `scenario_names` 步驟也會讀名詞表，表上列的英文原名（例如「Necronomicon」）會寫成中文名。
+- **對現有遊戲。** 這次改動前建的索引沒有名詞表，行為跟以前一樣；下次上傳或執行 `/coc index` 後才會有。
+- **文件更正。** 角色／字典規格書寫有 `dict_` 上傳，但程式裡沒有這條分流；字典只從抽取與比對學到的內容增長。`scenario_templates` 產生的模板版本 `glossary.json` 是翻譯模板的校閱檔，和這個欄位無關。
+
+## 驗證
+
+`tests/test_scenario_glossary.py`：
+
+- 抽取時只保留有名字的名詞。
+- 劇本庫回傳整份劇本的名詞，NPC 索引仍限於章節。
+- 這個欄位會跟著存檔與讀檔保留。
+- 提示會列出名詞並附「不代表調查員已經知道」的說明，且有上限。
+- 敘事裡出現名詞表上的英文原名時，會寫成中文。

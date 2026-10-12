@@ -204,7 +204,8 @@ def build_static_prompt(state: GroupState) -> str:
     index_block = ""
     npc_index_text = scenario_index.format_npc_index_block(state.scenario_npc_index)
     location_index_text = scenario_index.format_location_index_block(state.scenario_location_index)
-    if npc_index_text or location_index_text:
+    glossary_text = scenario_index.format_glossary_block(state.scenario_glossary)
+    if npc_index_text or location_index_text or glossary_text:
         index_block = "\n\n# 劇本索引（由 /coc index 抽取，僅列出劇本明確寫出的數值——這是唯一正確來源）"
         if npc_index_text:
             index_block += f"""
@@ -214,9 +215,13 @@ def build_static_prompt(state: GroupState) -> str:
             index_block += f"""
 ## 主要地點
 {location_index_text}"""
+        if glossary_text:
+            index_block += f"""
+## 其他專有名詞（只固定譯名；列在這裡不代表調查員已經知道）
+{glossary_text}"""
         index_block += """
 ## 譯名
-提到上面的人物或地點時，一律照「・」後面那個中文名寫，每次都一樣；別名和英文原名只用來認出是誰，不要寫進敘事，也不要自己另取譯名。"""
+提到上面的人物、地點或名詞時，一律照「・」後面那個中文名寫，每次都一樣；別名和英文原名只用來認出是誰，不要寫進敘事，也不要自己另取譯名。"""
     summary_block = ""
     if state.campaign_summary:
         summary_block = f"""

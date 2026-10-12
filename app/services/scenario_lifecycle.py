@@ -116,6 +116,7 @@ def _new_upload(state: GroupState, context: dict[str, Any]) -> None:
     state.kp_ooc_log = []
     state.scenario_npc_index = context["indexes"]["npcs"]
     state.scenario_location_index = context["indexes"]["locations"]
+    state.scenario_glossary = context["indexes"].get("terms", [])
     state.scene_maps = {str(k): v for k, v in context["scene_maps"].items()}
     state.current_map_page = {}
     state.current_room_id = {}
@@ -128,6 +129,7 @@ def _repair(state: GroupState, context: dict[str, Any]) -> None:
     state.scenario_text = context["text"]
     state.scenario_npc_index = context["indexes"]["npcs"]
     state.scenario_location_index = context["indexes"]["locations"]
+    state.scenario_glossary = context["indexes"].get("terms", [])
     scenario_index.report_location_index(
         state.scenario_location_index, source="correction", scenario_title=state.scenario_title,
     )

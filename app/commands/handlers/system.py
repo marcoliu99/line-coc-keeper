@@ -832,6 +832,7 @@ async def _index_command(call: _Call) -> None:
     index_data["locations"] = scenario_index.merge_scene_map_locations(index_data["locations"], state.scene_maps)
     state.scenario_npc_index = index_data["npcs"]
     state.scenario_location_index = index_data["locations"]
+    state.scenario_glossary = index_data.get("terms", [])
     state_transaction.commit_snapshot(state)
     if not index_data["npcs"] and not index_data["locations"]:
         await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")

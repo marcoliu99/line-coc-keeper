@@ -34,6 +34,7 @@ def install_context_fields(
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
+    state.scenario_glossary = context["indexes"].get("terms", [])
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
     # The maps this conversation uploaded for the scenario come back with it, as its role cards do.

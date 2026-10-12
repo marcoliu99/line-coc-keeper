@@ -1057,6 +1057,10 @@ class GroupState:
     # locations entry {"name", "aliases": [...], "summary", "page"}.
     scenario_npc_index: list[dict[str, Any]] = field(default_factory=list)
     scenario_location_index: list[dict[str, Any]] = field(default_factory=list)
+    # The scenario's other proper names — people without stats, items, books, spells, groups, Mythos beings — each
+    # {"name": Chinese, "aliases": [original, ...], "kind"}. It fixes their Chinese names only; it is not a stat index,
+    # so nothing in combat reads it.
+    scenario_glossary: list[dict[str, Any]] = field(default_factory=list)
 
     # Per-group override of the Keeper's tone/persona (see app/keeper.py's
     # DEFAULT_PERSONA and build_static_prompt) — empty string means "use the
@@ -1323,6 +1327,7 @@ class GroupState:
             "pregens": self.pregens,
             "scenario_npc_index": self.scenario_npc_index,
             "scenario_location_index": self.scenario_location_index,
+            "scenario_glossary": self.scenario_glossary,
             "keeper_persona": self.keeper_persona,
             "combat": self.combat.to_dict(),
             "mechanical_round": self.mechanical_round,
@@ -1417,6 +1422,7 @@ class GroupState:
             pregens=data.get("pregens", []),
             scenario_npc_index=data.get("scenario_npc_index", []),
             scenario_location_index=data.get("scenario_location_index", []),
+            scenario_glossary=data.get("scenario_glossary", []),
             keeper_persona=data.get("keeper_persona", ""),
             combat=CombatState.from_dict(data.get("combat", {})) if data.get("combat") else CombatState(),
             mechanical_round=data.get('mechanical_round', 0),
