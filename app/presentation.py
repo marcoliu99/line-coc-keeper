@@ -96,7 +96,9 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
                          + rf")(?:['’]s|(?<=s)['’])?(?![{_L}0-9])", re.IGNORECASE)
 
     def chinese(match: re.Match[str]) -> str:
-        before, after = text[:match.start()].rstrip()[-1:], text[match.end():].lstrip()[:1]
+        # Past spaces and English punctuation (「May, I enter?」 is still English).
+        before = text[:match.start()].rstrip(" \t,.;:!?'\"’“”")[-1:]
+        after = text[match.end():].lstrip(" \t,.;:!?'\"’“”")[:1]
         if _LATIN_LETTER.match(before) or _LATIN_LETTER.match(after):
             return match.group(0)
         # The pattern matches case-insensitively, which casefold() does not always mirror (「IŞIK」 for 「Işık」).
