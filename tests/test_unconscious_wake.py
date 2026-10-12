@@ -215,3 +215,50 @@ def test_first_aid_wakes_an_investigator_at_hp_zero_and_spends_the_offer():
     assert "first-aid-offered:char:p1" not in woken.check_consequence_receipts
     woken.characters["p1"].hp = 0  # down again
     assert unconscious_wake.decide(woken, "p1") == "wait"
+
+
+def test_a_dead_investigators_line_is_answered_as_dead_not_as_unconscious_or_refused():
+    # Haunting rerun3: a 12-point blow killed a 10-point investigator; the injury kept 'unconscious' beside 'dead'.
+    state = _party("p1", "p2")
+    state.characters["p1"].injury = {"dead": True, "unconscious": True, "dying": False}
+    state.characters["p1"].hp = 0
+    turn = supervisor._Turn(
+        state=state, user_id="p1", display_name="調查員p1", text="我詢問附近居民。", resolved_location=None,
+        speaker_role="player", conversation_id=GROUP, turn_kind="player_action", resolved_check_context=None,
+        prefetched_retrieval=None, handoff=None, expected_opening_source_hash=None, expected_opening_context=None,
+        expected_opening_participants=None, turn_timeline_id="timeline-wake", turn_id="turn-dead",
+    )
+    reply, private, images = asyncio.run(supervisor._prepare(turn))
+    assert reply == unconscious_wake.dead_reply(state.characters["p1"]) and private == [] and images == []
+    assert "已經死亡" in reply and "昏迷" not in reply
+    assert unconscious_wake.decide(state, "p1") is None  # dead is not the knocked-out rule
+
+
+def test_only_an_investigator_whose_injury_says_dead_is_dead() -> None:
+    state = _party("p1", "p2")
+    state.characters["p1"].injury = {"dead": True}
+    assert unconscious_wake.dead(state.characters["p1"]) and not unconscious_wake.dead(state.characters["p2"])
+    state.characters["p2"].injury = {"unconscious": True, "dying": True}
+    assert not unconscious_wake.dead(state.characters["p2"])  # dying waits for First Aid; it is not dead
+
+
+def test_a_dead_investigators_line_neither_searches_nor_moves_them(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.agents import context_builder
+    from app.commands import router
+
+    state = _party("p1", "p2")
+    state.characters["p1"].injury = {"dead": True}
+    searched = AsyncMock()
+    monkeypatch.setattr(context_builder, "prefetch_retrieval", searched)
+    assert asyncio.run(supervisor.prefetch_retrieval(state, "p1", "我走進廚房", "player", GROUP)) is None
+    searched.assert_not_awaited()
+    asyncio.run(supervisor.prefetch_retrieval(state, "p2", "我走進廚房", "player", GROUP))
+    searched.assert_awaited_once()
+
+    _save(state)
+    moved = []
+    monkeypatch.setattr(router, "resolve_map_action", lambda *args: moved.append(args) or {"room": "kitchen"})
+    assert router._resolve_player_location(GROUP, "p1", "走進廚房") is None and not moved
+    assert router._resolve_player_location(GROUP, "p2", "走進廚房") == {"room": "kitchen"}
