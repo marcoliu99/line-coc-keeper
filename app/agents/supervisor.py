@@ -232,6 +232,15 @@ async def _prepare(turn: _Turn) -> TurnReply | None:
         _logger.info("Supervisor answered %s from state: Luck decision outstanding", turn.display_name)
         return prompt_config.pending_luck_reply(
             held_luck, actor.name if actor else ""), [], []
+    # A dead investigator's line is answered as such: the Keeper had them 「仍昏迷倒地」 for fifty turns after a blow of
+    # twelve points killed a ten-point investigator (Haunting rerun3), and the player was refused without a reason.
+    dead_actor = (turn.state.get_active_character(turn.user_id)
+                  if turn.turn_kind == "player_action" and turn.speaker_role == "player" and not turn.state.combat.active
+                  else None)
+    if dead_actor is not None and unconscious_wake.dead(dead_actor):
+        turn_phases.note(route="gameplay_action", short_circuit="dead")
+        observability.event("turn.short_circuit", reason="dead", model_requests_avoided=True)
+        return unconscious_wake.dead_reply(dead_actor), [], []
     # An investigator down outside combat: told once that a companion's First Aid can help, then woken after a time
     # skip (at once when nobody is left to help); a dying one waits for First Aid. Never refused forever.
     knocked_out = (unconscious_wake.decide(turn.state, turn.user_id)

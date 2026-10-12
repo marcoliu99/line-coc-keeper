@@ -27,6 +27,17 @@ def knocked_out(character: Character) -> bool:
             or "昏迷" in character.status_tags)
 
 
+def dead(character: Character) -> bool:
+    """Dead as the injury says (damage of the investigator's whole HP in one blow). Not woken, not nursed: out of the game."""
+    return bool((character.injury or {}).get("dead"))
+
+
+def dead_reply(character: Character) -> str:
+    name = character.name
+    return (f"{name} 已經死亡，不能再行動了。想繼續參與的話，請告訴守密人，由他安排新的調查員；"
+            "其他調查員可以繼續。")
+
+
 def dying(character: Character) -> bool:
     """Dying as the injury says; HP 0 with a major wound only when nothing says otherwise (stabilized is dying=False)."""
     injury = character.injury or {}
