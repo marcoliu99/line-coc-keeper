@@ -61,14 +61,17 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         written = [str(n).strip() for n in (entry.get("name"), *(entry.get("aliases") or [])) if str(n or "").strip()]
         # The Chinese name, which an older index may keep among the aliases under an English heading.
         name = next((n for n in written if _HAS_CJK.search(n)), "")
-        if not name or (told is not None and name not in told):
+        if not name:
             continue
         for alias in written:
             # A name that is also game text (an NPC nicknamed 「Dex」) would rewrite 「DEX 檢定」: never used.
             if len(alias) >= 3 and _LATIN_NAME.fullmatch(alias) and alias.casefold() not in config.GAME_TEXT_NAMES and not any(
                     re.search(rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])", k) for k in kept):
                 targets.setdefault(alias.casefold(), set()).add(name)
-    names = {alias: next(iter(found)) for alias, found in targets.items() if len(found) == 1}
+    # An alias two entries share names neither; told or not, it is decided before the disclosure gate, or 「Guard」 for
+    # two guards would read as the one already met.
+    names = {alias: next(iter(found)) for alias, found in targets.items()
+             if len(found) == 1 and (told is None or next(iter(found)) in told)}
     if not names:
         return text
     pattern = re.compile(rf"(?<![{_L}0-9])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
