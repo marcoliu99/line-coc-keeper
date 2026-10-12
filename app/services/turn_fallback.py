@@ -60,14 +60,22 @@ _CLUE_HINT_CHARS = 24
 _RECENT_NARRATION = 60
 
 
-def guidance(reason: str | None, hints: str = "") -> str:
-    """What the player is told; ``hints`` (see ``scene_hints``) is added for reasons that ask them to try something else."""
-    text = _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
-    return f"{text}\n{hints}" if hints and reason in _HINTED else text
-
-
 # Reasons whose generic wording talks about the scenario; in a battle the table needs to know whose turn it is instead.
 _COMBAT_REASONS: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_action", "unsupported_action"})
+
+
+# Said instead of the scenario-blaming wording when the turn already rolled dice or changed the game: the result stands,
+# so 「劇本裡沒有足夠的內容」 is false (the 2026-10-12 soak reruns: a failed Driving roll, and five Sanity rolls, each
+# followed by exactly that).
+_AFTER_A_RESULT = "剛才的結果已經記錄，但這次行動的後續守密人還沒處理完；請接著說明你想怎麼做。"
+
+
+def guidance(reason: str | None, hints: str = "", *, acted: bool = False) -> str:
+    """What the player is told; ``hints`` (see ``scene_hints``) is added for reasons that ask them to try something else.
+
+    ``acted``: the turn rolled dice or changed the game before it stopped."""
+    text = _AFTER_A_RESULT if acted and reason in _COMBAT_REASONS else _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
+    return f"{text}\n{hints}" if hints and reason in _HINTED else text
 
 
 def combat_guidance(state: GroupState, reason: str | None, actor_character_id: str = "") -> str:
@@ -272,14 +280,16 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     return "unknown"
 
 
-def _failed_before_any_tool(reason: str | None, result: MechanicResult) -> bool:
-    """The model request itself failed (timeout, CLI error) before a single tool ran, so there is nothing to repeat.
+def _failed_without_a_change(reason: str | None, result: MechanicResult) -> bool:
+    """The model request itself failed (timeout, CLI error, a decision the provider could not parse twice) and the
+    game is as it was; ``recoverable`` still requires that every tool it ran only looked something up.
 
-    Real runs lost turns this way after 52-120 s with no tool call at all. ``execution_health == "failed"`` is only
-    set when the game state is also unchanged; a failure after any tool call stays a fallback.
+    Real runs lost turns this way after 52-120 s with no tool call at all, and in the 2026-10-12 soak a shot at Billy
+    ended 「系統發生內部錯誤」 after ``get_enemy_stat_block``, a look-up the retry would only have repeated.
+    ``execution_health`` is "failed" with no tool outcome, "partial" once one succeeded; "recovery_required" means
+    the game state changed, and a failure after a tool that failed is a ``tool_failure``, not this.
     """
-    return (reason == "internal_error" and result.execution_health == "failed"
-            and not result.tool_calls and not result.observed_outcomes)
+    return reason == "internal_error" and result.execution_health in {"failed", "partial"}
 
 
 def recoverable(reason: str | None, result: MechanicResult, *, before_pending: dict, before_luck: dict, state: GroupState) -> bool:
@@ -298,11 +308,12 @@ def recoverable(reason: str | None, result: MechanicResult, *, before_pending: d
 
     status = result.check_status
     return bool(
-        (reason in RECOVERABLE or _failed_before_any_tool(reason, result))
+        (reason in RECOVERABLE or _failed_without_a_change(reason, result))
         and not status.get("state_changed") and not status.get("dice_rolled") and not status.get("resolved")
         and state.pending_checks == before_pending and state.pending_luck_decisions == before_luck
         and not result.events
         and all(outcome.tool_name in registry.READ_ONLY_TOOL_NAMES for outcome in result.observed_outcomes)
+        and all(name in registry.READ_ONLY_TOOL_NAMES for name, _ in result.tool_calls)
     )
 
 

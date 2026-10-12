@@ -192,6 +192,16 @@ class ReplyTests(unittest.TestCase):
         self.assertIn("二樓房間", reply)
         self.assertNotIn("洗衣房", reply)
 
+    def test_a_turn_that_rolled_dice_before_it_stopped_does_not_say_the_scenario_lacks_content(self):
+        # Camp Sunny rerun7 turn 76: a failed Driving roll, then 「劇本裡沒有足夠的內容」 about a scenario that has the scene.
+        for status in ({"dice_rolled": True}, {"resolved": True}, {"state_changed": True}):
+            reply = prompt_config.enforce_mechanic_check_consistency(
+                "narration", blocked_result("executor_no_action", **status))
+            self.assertIn("剛才的結果已經記錄", reply)
+            self.assertNotIn("劇本裡沒有足夠的內容", reply)
+        untouched = prompt_config.enforce_mechanic_check_consistency("narration", blocked_result("executor_no_action"))
+        self.assertIn("劇本裡沒有足夠的內容", untouched)
+
     def test_without_state_or_without_anything_shown_the_reply_is_the_plain_one(self):
         plain = prompt_config.enforce_mechanic_check_consistency("narration", blocked_result("executor_no_action"))
         self.assertNotIn("目前已在劇情中出現", plain)

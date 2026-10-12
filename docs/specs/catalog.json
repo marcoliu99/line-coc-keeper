@@ -3153,6 +3153,34 @@
       "source_revision": "30d80945a5fdc23c37832f857d8a9ae96c102188"
     },
     {
+      "title": "A turn that stopped after rolling dice no longer says the scenario lacks content",
+      "zh": "擲過骰才停下的回合，不再說劇本沒有足夠內容",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/services/prompt_config.py",
+        "tests/test_scene_hints.py"
+      ],
+      "path": "docs/specs/enhancement/unfinished_after_a_result_wording_design_spec.md",
+      "zh_path": "docs/specs/enhancement/unfinished_after_a_result_wording_design_spec_zh.md",
+      "source_revision": "c46e34105088177c817b21ea386c47989cd7fcfa"
+    },
+    {
+      "title": "A turn that fails after only look-ups is run once more, and an unfinished turn logs why",
+      "zh": "只做過查詢就失敗的回合會再跑一次，未完成的回合會記下原因",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/agents/executor.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/retry_after_lookups_design_spec.md",
+      "zh_path": "docs/specs/enhancement/retry_after_lookups_design_spec_zh.md",
+      "source_revision": "c46e34105088177c817b21ea386c47989cd7fcfa"
+    },
+    {
       "title": "A choice label is typed whole, spaces and all",
       "zh": "選項標籤要整句輸入，空格也算",
       "category": "enhancement",
