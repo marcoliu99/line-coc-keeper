@@ -79,7 +79,7 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
     if not names:
         return text
     pattern = re.compile(rf"(?<![{_L}0-9])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
-                         + rf")(?:['’]s)?(?![{_L}0-9])", re.IGNORECASE)
+                         + rf")(?:['’]s|(?<=s)['’])?(?![{_L}0-9])", re.IGNORECASE)
 
     def chinese(match: re.Match[str]) -> str:
         before, after = text[:match.start()].rstrip()[-1:], text[match.end():].lstrip()[:1]

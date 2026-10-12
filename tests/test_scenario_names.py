@@ -191,3 +191,8 @@ def test_an_alias_that_is_a_skill_name_is_never_used():
 def test_an_uppercase_accented_alias_never_breaks_the_reply():
     entries = [{"name": "伊席克", "aliases": ["Işık"]}]
     assert presentation.use_scenario_names("IŞIK 走進來。", entries) == "伊席克 走進來。"
+
+
+def test_an_apostrophe_only_possessive_reads_as_possessive():
+    entries = [{"name": "詹姆斯", "aliases": ["James"]}]
+    assert presentation.use_scenario_names("James’ 外套掛在門邊。", entries) == "詹姆斯的 外套掛在門邊。"
