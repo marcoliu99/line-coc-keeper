@@ -392,7 +392,7 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
             continue
         if label.casefold() in _catalog_ranged_names():
             continue  # a catalog weapon that is shot or thrown (Shuriken, Javelin, 石頭)
-        if block[match.end():match.end() + 4].lstrip().startswith("/"):
+        if re.match(r"\s*[/／]", block[match.end():]):
             continue  # 「1D6 + 1/2 DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」
         damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
         if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
