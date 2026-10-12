@@ -180,11 +180,20 @@ def test_the_combat_catalog_loads_without_the_name_fields():
 
 
 def test_a_weapon_reads_the_same_in_english_and_in_either_script():
-    assert dictionary.lookup_term("Thompson") == dictionary.lookup_term("汤普森冲锋枪") == "湯普森衝鋒槍"
-    assert dictionary.lookup_term("Brass Knuckles") == "黃銅指虎"
-    assert dictionary.lookup_term("Thrown Spear") == dictionary.lookup_term("Spear, Thrown") == "投矛"
+    assert dictionary.lookup_weapon("Thompson") == dictionary.lookup_weapon("汤普森冲锋枪") == "湯普森衝鋒槍"
+    assert dictionary.lookup_weapon("Brass Knuckles") == "黃銅指虎"
+    assert dictionary.lookup_weapon("Thrown Spear") == dictionary.lookup_weapon("Spear, Thrown") == "投矛"
+
+
+def test_a_weapons_label_in_a_scenario_is_not_taken_for_the_weapon():
+    # "Detective Thompson", a bow of a ship and a game of blackjack are not weapons.
+    assert dictionary.lookup_term("Thompson") is None and dictionary.lookup_term("Bow") is None
+    assert dictionary.glossary_hits("Detective Thompson stood at the bow, playing blackjack.") == []
+    term = {"name": "湯普森", "aliases": ["Thompson"], "kind": "人物"}
+    from app import scenario_index
+    scenario_index._settle_term_names([term])
+    assert term["name"] == "湯普森"
 
 
 def test_a_weapon_the_rulebook_names_only_as_a_class_is_not_forced_on_a_text():
-    assert dictionary.lookup_term("small knife") is None and dictionary.lookup_term("Sword") is None
-    assert dictionary.glossary_hits("He drew a sword and a small knife.") == []
+    assert dictionary.lookup_weapon("small knife") is None and dictionary.lookup_weapon("Sword") is None

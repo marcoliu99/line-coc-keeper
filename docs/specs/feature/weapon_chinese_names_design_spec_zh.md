@@ -24,7 +24,7 @@
 
 - **名稱以規則書為準。** 兩份來源一致時（12 件，忽略異體字）直接用繁體原文。不一致時（34 件）用簡體規則書名稱轉繁體並標記，另一份的寫法不收成別名。弩和維克斯機槍不在 RuleWhisper，繁體名稱只來自第二份（2 件）。
 - **戰鬥不受影響。** `weapon_catalog()` 建立定義前先丟掉這五個新欄位。每個 `name_zh` 也加進 `aliases`，玩家打規則書的名稱就找得到武器；測試確認每一個都對到自己的武器（自動武器、絞索照舊要守密人裁定）。
-- **字典讀取。** `glossary_entries()` 為每件有名稱的武器加一筆 `weapon` 詞條：英文是目錄名稱和倒過來的寫法（「Spear, Thrown」與「Thrown Spear」），中文是 `name_zh` 和 `name_zh_cn`，標準名稱是 `name_zh`。有 `name_zh_generic` 的武器不收，所以「a small knife」不會被硬寫成小型刀具，「a sword」也不會變成大型劍。別名不當英文寫法：「axe」、「revolver」、「rifle」太常見，指不出單一武器。
+- **字典讀取，只供指名查詢。** `glossary_entries()` 為每件有名稱的武器加一筆 `weapon` 詞條，放在獨立的 `weapons` 表，用 `lookup_weapon()` 查。劇本文字比對、以及改寫模型詞條名稱用的是 `terms` 表；武器的英文標籤同時是姓氏（「Detective Thompson」）、牌戲（「blackjack」）或船首（bow），所以武器一件都不放進 `terms`。詞條內容：英文是目錄名稱和倒過來的寫法（「Spear, Thrown」與「Thrown Spear」），中文是 `name_zh` 和 `name_zh_cn`，標準名稱是 `name_zh`。有 `name_zh_generic` 的武器不收，所以「a small knife」不會被硬寫成小型刀具，「a sword」也不會變成大型劍。別名不當英文寫法：「axe」、「revolver」、「rifle」太常見，指不出單一武器。
 
 沒收：目錄沒有的武器（電擊器、催淚噴霧、手榴彈、地雷、重武器）。它們缺的是規則，不是名稱，而目錄是戰鬥規則的資料。
 

@@ -95,7 +95,7 @@ def glossary_entries() -> list[dict]:
 
 
 def _table_of(category: object) -> str:
-    return {"skill": "skills", "occupation": "occupations"}.get(str(category), "terms")
+    return {"skill": "skills", "occupation": "occupations", "weapon": "weapons"}.get(str(category), "terms")
 
 
 def _glossary_tables() -> dict[str, dict[str, str]]:
@@ -103,7 +103,7 @@ def _glossary_tables() -> dict[str, dict[str, str]]:
     out: neither can name one thing for certain, and a skill's spellings never include a characteristic's."""
     entries = glossary_entries()
     characteristics = {_normalize(s) for e in entries if e.get("category") == "characteristic" for s in _spellings(e)}
-    tables: dict[str, dict[str, str]] = {"skills": {}, "terms": {}, "occupations": {}}
+    tables: dict[str, dict[str, str]] = {"skills": {}, "terms": {}, "occupations": {}, "weapons": {}}
     claimed: dict[str, set[str]] = {name: set() for name in tables}
     ambiguous: dict[str, set[str]] = {name: set() for name in tables}
     for entry in entries:
@@ -135,6 +135,7 @@ _INITIAL: dict[str, dict[str, str]] = {
     "skills": dict(_GLOSSARY_TABLES["skills"]),
     "terms": dict(_GLOSSARY_TABLES["terms"]),
     "occupations": dict(_GLOSSARY_TABLES["occupations"]),
+    "weapons": dict(_GLOSSARY_TABLES["weapons"]),
     "character_aliases": {},
 }
 
@@ -235,6 +236,12 @@ def lookup_term(name: str) -> str | None:
     """The one Traditional Chinese name this project writes for a CoC7 term, characteristic, Mythos being, tome or
     place, from any spelling the glossary has (Necronomicon, 死灵之书 → 死靈之書)."""
     return _lookup("terms", name)
+
+
+def lookup_weapon(name: str) -> str | None:
+    """The rulebook's Traditional Chinese name of a weapon in the combat catalog, from any spelling. Asked for by name
+    only: a weapon's English label is also a surname, a card game or a ship's bow, so it is never matched in a text."""
+    return _lookup("weapons", name)
 
 
 def lookup_occupation(name: str) -> str | None:
