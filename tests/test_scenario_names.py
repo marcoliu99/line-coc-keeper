@@ -236,3 +236,9 @@ def test_a_longer_name_before_the_disguise_is_not_its_reveal():
     draft = MagicMock(text="約翰遜站在門邊。Masked Man 靠近。你認出他是約翰。", private_messages=[], private_controls=[])
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "約翰遜站在門邊。Masked Man 靠近。你認出他是約翰。"
+
+
+def test_quoted_english_with_punctuation_is_left_as_written():
+    may = {"name": "梅伊", "aliases": ["May"]}
+    assert presentation.use_scenario_names("她問：「May, I enter?」", [may]) == "她問：「May, I enter?」"
+    assert presentation.use_scenario_names("May，妳來了。", [may]) == "梅伊，妳來了。"
