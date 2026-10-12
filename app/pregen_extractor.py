@@ -478,14 +478,16 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
     capture the pairing."""
     original = (pregen.pop("occupation_original", "") or "").strip()
     translated = (pregen.pop("occupation_translated", "") or "").strip()
+    # What the model wrote is first put into the dictionary's own words (「古董商」 is 骨董商), so the pairing it teaches
+    # and the occupation the pregen gets are the name the project uses.
+    translated = dictionary.lookup_occupation(translated) or translated
     if original and translated and original.lower() != translated.lower():
         dictionary.learn_occupation(original, translated)
-    # An occupation the dictionary names is written that way, whatever the model chose (「Antiquarian」 is 骨董商).
-    named = dictionary.lookup_occupation(original) or dictionary.lookup_occupation(translated) if (original or translated) else None
-    pregen["occupation"] = named or translated or original or pregen.get("occupation", "")
+    pregen["occupation"] = dictionary.lookup_occupation(original) or translated or original or pregen.get("occupation", "")
 
     for translated_skill, original_skill in (pregen.pop("skill_translations", None) or {}).items():
         translated_skill, original_skill = (translated_skill or "").strip(), (original_skill or "").strip()
+        translated_skill = dictionary.lookup_skill(translated_skill) or translated_skill
         if original_skill and translated_skill and original_skill.lower() != translated_skill.lower():
             dictionary.learn_skill(original_skill, translated_skill)
 

@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import json
 
-from app import dictionary, skill_aliases
+import pytest
+
+from app import db, dictionary, skill_aliases
 from app.models import BASE_SKILLS
+
+
+@pytest.fixture(autouse=True)
+def clean_dictionary():
+    db.set_json("dictionary", "global", {})
+    yield
+    db.set_json("dictionary", "global", {})
 
 
 def _entries() -> list[dict]:
@@ -90,6 +99,15 @@ def test_a_pregen_occupation_is_written_the_way_the_dictionary_names_it():
     pregen = {"occupation_original": "Zorking Wrangler", "occupation_translated": "佐金牧人"}
     pregen_extractor._learn_translations_from_pregen(pregen)
     assert pregen["occupation"] == "佐金牧人"
+
+
+def test_a_new_english_occupation_translated_with_a_known_alias_is_learned_under_the_project_name():
+    from app import pregen_extractor
+    pregen = {"occupation_original": "Curio Peddler", "occupation_translated": "古董商"}
+    pregen_extractor._learn_translations_from_pregen(pregen)
+    assert pregen["occupation"] == "骨董商"
+    assert dictionary.lookup_occupation("Curio Peddler") == "骨董商"
+    dictionary.forget("Curio Peddler")
 
 
 def test_a_name_the_dictionary_knows_for_an_occupation_is_not_replaced_by_a_model_pairing():
