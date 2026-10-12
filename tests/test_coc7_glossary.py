@@ -55,3 +55,52 @@ def test_the_english_names_the_old_python_seed_had_still_resolve():
     for english, skill in [("brawl", "格鬥（鬥毆）"), ("handgun", "射擊（手槍）"), ("rifle/shotgun", "射擊（步槍/霰彈槍）"),
                            ("own language", "母語"), ("spot hidden", "偵查"), ("credit rating", "信用評級")]:
         assert dictionary.lookup_skill(english) == skill, english
+
+
+def test_the_expansion_files_are_read_and_carry_the_new_categories():
+    categories = {e["category"] for e in _entries()}
+    assert {"spell", "occupation", "mythos_item"} <= categories
+    assert len([e for e in _entries() if e["category"] == "occupation"]) >= 90
+    assert len([e for e in _entries() if e["category"] == "spell"]) >= 35
+
+
+def test_a_spell_reads_the_same_in_english_and_in_either_script():
+    assert dictionary.lookup_term("Voorish Sign") == dictionary.lookup_term("维瑞之印") == "維瑞之印"
+    assert dictionary.lookup_term("Apportion Ka") == "靈魂分配術"  # the spell's own name, not a back-translation (Soul Siphon)
+    assert dictionary.lookup_term("Soul Siphon") is None
+
+
+def test_an_occupation_reaches_the_name_this_project_uses():
+    assert dictionary.lookup_occupation("Antiquarian") == dictionary.lookup_occupation("古董商") == "骨董商"
+    assert dictionary.lookup_occupation("Doctor of Medicine") == dictionary.lookup_occupation("医生") == "醫生"
+    assert dictionary.lookup_occupation("Federal Agent") == "FBI探員"
+    assert dictionary.lookup_occupation("Archaeologist") == "考古學家"
+
+
+def test_the_rulebook_name_of_an_earlier_entry_is_recorded_as_another_spelling():
+    assert dictionary.lookup_term("夏乌戈纳尔·法格恩") == dictionary.lookup_term("Chaugnar Faugn") == "昌格納·方庚"
+    assert dictionary.lookup_term("加塔纳托亚") == "加塔諾托亞"
+
+
+def test_a_pregen_occupation_is_written_the_way_the_dictionary_names_it():
+    from app import pregen_extractor
+    pregen = {"occupation_original": "Antiquarian", "occupation_translated": "古董商"}
+    pregen_extractor._learn_translations_from_pregen(pregen)
+    assert pregen["occupation"] == "骨董商"
+    pregen = {"occupation_original": "Zorking Wrangler", "occupation_translated": "佐金牧人"}
+    pregen_extractor._learn_translations_from_pregen(pregen)
+    assert pregen["occupation"] == "佐金牧人"
+
+
+def test_a_name_the_dictionary_knows_for_an_occupation_is_not_replaced_by_a_model_pairing():
+    assert dictionary.learn_occupation("Antiquarian", "古物商") is False
+    assert dictionary.lookup_occupation("Antiquarian") == "骨董商"
+
+
+def test_a_converted_name_says_so_and_every_source_is_recorded_with_what_was_fetched():
+    sources = json.loads((dictionary._GLOSSARY / "sources.json").read_text(encoding="utf-8"))["sources"]
+    for source in sources:
+        if source["id"] >= "s15" and len(source["id"]) == 3:
+            assert source["retrieved"] and len(source["sha256"]) == 64 and source["url"].startswith("https://github.com/"), source
+    converted = [e for e in _entries() if e.get("zh_tw_converted")]
+    assert converted and all(e["zh_tw"] for e in converted)

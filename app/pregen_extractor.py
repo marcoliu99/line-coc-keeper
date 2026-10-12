@@ -480,7 +480,9 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
     translated = (pregen.pop("occupation_translated", "") or "").strip()
     if original and translated and original.lower() != translated.lower():
         dictionary.learn_occupation(original, translated)
-    pregen["occupation"] = translated or original or pregen.get("occupation", "")
+    # An occupation the dictionary names is written that way, whatever the model chose (「Antiquarian」 is 骨董商).
+    named = dictionary.lookup_occupation(original) or dictionary.lookup_occupation(translated) if (original or translated) else None
+    pregen["occupation"] = named or translated or original or pregen.get("occupation", "")
 
     for translated_skill, original_skill in (pregen.pop("skill_translations", None) or {}).items():
         translated_skill, original_skill = (translated_skill or "").strip(), (original_skill or "").strip()

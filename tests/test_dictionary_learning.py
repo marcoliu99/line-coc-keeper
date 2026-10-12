@@ -48,18 +48,18 @@ def test_only_what_was_learned_is_saved_so_the_glossary_can_still_change():
 
 
 def test_what_was_learned_remembers_where_and_when():
-    dictionary.learn_occupation("Antiquarian", "古董商人", source="pregen")
+    dictionary.learn_occupation("Zorking Wrangler", "佐金牧人", source="pregen")
     [entry] = dictionary.learned_entries()
-    assert (entry.category, entry.term, entry.canonical, entry.source) == ("occupations", "antiquarian", "古董商人", "pregen")
+    assert (entry.category, entry.term, entry.canonical, entry.source) == ("occupations", "zorking wrangler", "佐金牧人", "pregen")
     assert entry.at.startswith("20")
 
 
 def test_forget_removes_a_learned_entry_by_spelling_or_by_name():
     dictionary.learn_skill("Zorking", "佐金")
-    dictionary.learn_occupation("Antiquarian", "古董商人")
+    dictionary.learn_occupation("Zorking Wrangler", "佐金牧人")
     assert [e.term for e in dictionary.forget("ZORKING")] == ["zorking"]
     assert dictionary.lookup_skill("Zorking") is None
-    assert [e.term for e in dictionary.forget("古董商人")] == ["antiquarian"]
+    assert [e.term for e in dictionary.forget("佐金牧人")] == ["zorking wrangler"]
     assert dictionary.learned_entries() == []
     assert dictionary.forget("Zorking") == []
 

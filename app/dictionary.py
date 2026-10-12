@@ -68,17 +68,21 @@ def glossary_entries() -> list[dict]:
     return entries
 
 
+def _table_of(category: object) -> str:
+    return {"skill": "skills", "occupation": "occupations"}.get(str(category), "terms")
+
+
 def _glossary_tables() -> dict[str, dict[str, str]]:
     """The glossary's spellings by table. A spelling of one character (斧, 劍) or one that two entries claim is left
     out: neither can name one thing for certain, and a skill's spellings never include a characteristic's."""
     entries = glossary_entries()
     characteristics = {_normalize(s) for e in entries if e.get("category") == "characteristic" for s in _spellings(e)}
-    tables: dict[str, dict[str, str]] = {"skills": {}, "terms": {}}
-    claimed: dict[str, set[str]] = {"skills": set(), "terms": set()}
-    ambiguous: dict[str, set[str]] = {"skills": set(), "terms": set()}
+    tables: dict[str, dict[str, str]] = {"skills": {}, "terms": {}, "occupations": {}}
+    claimed: dict[str, set[str]] = {name: set() for name in tables}
+    ambiguous: dict[str, set[str]] = {name: set() for name in tables}
     for entry in entries:
         canonical = str(entry.get("canonical") or "")
-        table = "skills" if entry.get("category") == "skill" else "terms"
+        table = _table_of(entry.get("category"))
         if not canonical:
             continue
         for spelling in _spellings(entry):
@@ -97,15 +101,14 @@ def _glossary_tables() -> dict[str, dict[str, str]]:
     return tables
 
 
-# occupations/character_aliases deliberately start empty — unlike skills,
-# these aren't a closed official list (a scenario can invent any occupation
-# or character name), so there's nothing sensible to pre-seed; they grow
-# purely from what callers actually learn while resolving real uploads.
+# character_aliases deliberately start empty: a scenario can invent any character name, so there is nothing sensible to
+# pre-seed; they grow purely from what callers actually learn while resolving real uploads. Occupations start from the
+# glossary's list of CoC7 occupations and grow the same way.
 _GLOSSARY_TABLES = _glossary_tables()
 _INITIAL: dict[str, dict[str, str]] = {
     "skills": dict(_GLOSSARY_TABLES["skills"]),
     "terms": dict(_GLOSSARY_TABLES["terms"]),
-    "occupations": {},
+    "occupations": dict(_GLOSSARY_TABLES["occupations"]),
     "character_aliases": {},
 }
 
