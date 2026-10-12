@@ -13,7 +13,7 @@ Turn 81 of Camp Sunny: a player shot at Billy and was told 「系統發生內部
 ## Change
 
 - `_failed_before_any_tool` becomes `_failed_without_a_change`: an `internal_error` whose `execution_health` is `failed` or `partial` can be retried. `recoverable` keeps every other guard (no state change, no dice, pending checks and Luck as found, no events) and now also requires every `tool_calls` name, not only every observed outcome, to be a read-only tool, so a tool that ran and changed something still stops the retry. `recovery_required` (state changed) is never retried.
-- `executor.resolution` logs the model's own `reason` (cut to 240 characters) when the disposition is `incomplete` or `blocked`. In the reruns these turns showed no way to tell why the Executor gave up (Camp Sunny turns 67, 76 and 80, Scritch-Scratch turns 57, 69, 81 and 93); the next soak will.
+- When the disposition is `incomplete` or `blocked`, the model's own `reason` (cut to 240 characters) is written to the text log (`LOG_TEXT_ENABLED`), not to the structured `executor.resolution` event, because it is free text that may repeat what a player wrote. In the reruns these turns showed no way to tell why the Executor gave up (Camp Sunny turns 67, 76 and 80, Scritch-Scratch turns 57, 69, 81 and 93); the next soak will.
 
 ## Not changed
 

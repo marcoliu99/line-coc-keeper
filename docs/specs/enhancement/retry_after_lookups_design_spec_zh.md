@@ -13,7 +13,7 @@ Camp Sunny 第 81 輪：玩家對 Billy 開槍，卻收到「系統發生內部�
 ## 變更
 
 - `_failed_before_any_tool` 改為 `_failed_without_a_change`：`execution_health` 為 `failed` 或 `partial` 的 `internal_error` 可以重試。`recoverable` 其他條件都留著（沒有狀態變化、沒有擲骰、待處理檢定與 Luck 維持原樣、沒有事件），另外多要求 `tool_calls` 裡每個工具名稱（不只是觀察到的結果）都是唯讀工具，所以跑過會改東西的工具就不會重試。`recovery_required`（狀態已變）永遠不重試。
-- 回合以 `incomplete` 或 `blocked` 結束時，`executor.resolution` 會記下模型自己給的 `reason`（截到 240 字）。重跑的紀錄裡看不出這些回合為什麼放棄（Camp Sunny 第 67、76、80 輪，Scritch-Scratch 第 57、69、81、93 輪），下次就看得到了。
+- 回合以 `incomplete` 或 `blocked` 結束時，模型自己給的 `reason`（截到 240 字）會寫進文字記錄（`LOG_TEXT_ENABLED`），不寫進結構化的 `executor.resolution` 事件，因為它是自由文字，可能重複玩家寫的內容。重跑的紀錄裡看不出這些回合為什麼放棄（Camp Sunny 第 67、76、80 輪，Scritch-Scratch 第 57、69、81、93 輪），下次就看得到了。
 
 ## 沒有改的
 
