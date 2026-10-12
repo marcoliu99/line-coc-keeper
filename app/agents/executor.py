@@ -421,9 +421,13 @@ async def run_executor(message: AgentMessage) -> MechanicResult:
             has_scenario=bool(rag_context or (not tool_dispatch.SCENARIO_RAG_ENABLED and state.scenario_text)),
             before_actor=before_actor, before_gameplay=before_gameplay,
         )
+    # The model's own reason for a turn it could not finish: the soak logs showed 「incomplete」 and 「blocked」 with no
+    # way to tell why the Executor gave up. Only for those, and cut short.
+    unfinished_reason = resolution.reason[:240] if resolution.disposition in {"incomplete", "blocked"} else ""
     observability.event("executor.resolution", disposition=resolution.disposition,
                         evidence_count=len(resolution.evidence_refs),
-                        validation_code=resolution.validation_code, tool_event_count=len(tool_events))
+                        validation_code=resolution.validation_code, tool_event_count=len(tool_events),
+                        reason=unfinished_reason or None)
     state_changed = turn_resolution.gameplay_snapshot(state) != before_gameplay
     execution_health = "completed"
     if turn_status == "error":

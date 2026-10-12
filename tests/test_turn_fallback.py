@@ -400,19 +400,30 @@ async def test_a_failed_retry_is_not_repeated(events) -> None:
 
 
 @pytest.mark.parametrize("touched", [
-    {"tool_calls": (("search_scenario", True),)},
+    {"tool_calls": (("skill_check", True),)},
     {"observed_outcomes": [ObservedOutcome("e1", "add_carried_item", True)]},
-    {"execution_health": "partial"},
     {"execution_health": "recovery_required"},
     {"check_status": {"state_changed": True}},
     {"events": [object()]},
 ])
 @aio
-async def test_a_failure_after_a_tool_ran_is_never_run_again(touched) -> None:
+async def test_a_failure_after_a_tool_that_changed_something_is_never_run_again(touched) -> None:
     fields = {"execution_health": "failed", **touched}
     result = _result("incomplete", "model_incomplete", success=False, **fields)
     _, run_executor, _, _ = await _turn(_state(), [result])
     assert run_executor.await_count == 1
+
+
+@aio
+async def test_a_failure_after_only_look_ups_is_run_once_more(events) -> None:
+    # 2026-10-12 soak: get_enemy_stat_block ran, then the model's decision was invalid twice (「系統發生內部錯誤」).
+    looked = _result("incomplete", "model_incomplete", success=False, execution_health="partial",
+                     tool_calls=(("get_enemy_stat_block", True),),
+                     observed_outcomes=[ObservedOutcome("e1", "get_enemy_stat_block", True)])
+    reply, run_executor, _, _ = await _turn(_state(), [looked, _resolved()])
+    assert run_executor.await_count == 2 and turn_fallback.guidance("internal_error") not in reply
+    [row] = fallbacks(events)
+    assert (row["recovery_attempted"], row["recovery_result"]) == (True, "recovered")
 
 
 @aio
