@@ -1,0 +1,34 @@
+# A scenario's people and places keep one Chinese name
+
+[繁體中文](scenario_names_consistent_design_spec_zh.md)
+
+Status: **implemented**. Base: `main_v2` at `7dc932c`.
+
+## Problem
+
+The scenario index (`/coc index`) already translates each NPC/monster and main location into Traditional Chinese and lists English originals as aliases. The Keeper and Narrator see the index, but nothing asked them to use its names. A name could therefore come back as the English original or a new translation from turn to turn.
+
+Tools that keep long LLM translations consistent do two things. They give the model a fixed glossary, and they fix the names after generation, because a glossary in the prompt is followed most of the time but not every time.
+
+## Change
+
+- **Prompt rule.** When the index is present, the static prompt adds a 「譯名」 section. A person or place listed above is written with the Chinese name after 「・」, the same every time. Aliases and English originals only identify who is meant; they are not written into the narration, and no new translation is made.
+- **Names fixed before delivery.** A new reply-pipeline step, `scenario_names`, runs after `obligations` and before `finalize`. It calls `presentation.use_scenario_names` to write each English alias the index lists as its entry's Chinese name, for example 「Corbitt」 → 「柯比特」 and 「Corbitt's」 → 「柯比特的」.
+  - The match is case-insensitive and whole-word, so 「Corbittson」 stays.
+  - Only an alias of three letters or more that names one entry is used. An alias shared by two entries (「Deep One」 for 深潛者 and 深潛者（幼體）) is left alone.
+  - Investigators' and pregens' names are never rewritten, and neither is an alias that is a word of one (「Carter」 in 「Malcolm Carter」).
+  - No English word the index does not list is guessed at.
+  - The step runs before delivery validation, so the spoiler check sees the Chinese name the player will read.
+- **Existing games.** Nothing else changes: combat, checks, saved state and the index itself are untouched. A game whose scenario is already indexed gets both changes on its next turn.
+
+## Verification
+
+`tests/test_scenario_names.py`:
+
+- English originals and possessives become the index name.
+- A longer word, a two-letter alias and an alias shared by two entries are left alone.
+- An investigator's name is kept.
+- The prompt carries the rule only when an index exists.
+- `scenario_names` runs between `obligations` and `finalize`.
+
+`tests/test_reply_pipeline.py` lists the new step in the shipped order.

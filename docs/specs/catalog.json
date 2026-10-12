@@ -3054,6 +3054,21 @@
       "path": "docs/specs/bug/enemy_block_attacks_weapon_retry_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_block_attacks_weapon_retry_design_spec_zh.md",
       "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
+    },
+    {
+      "title": "A scenario's people and places keep one Chinese name",
+      "zh": "劇本的人物與地點固定用同一個中文名",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/presentation.py",
+        "app/agents/reply_pipeline.py",
+        "app/prompt_builder.py",
+        "tests/test_scenario_names.py"
+      ],
+      "path": "docs/specs/enhancement/scenario_names_consistent_design_spec.md",
+      "zh_path": "docs/specs/enhancement/scenario_names_consistent_design_spec_zh.md",
+      "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
     }
   ]
 }

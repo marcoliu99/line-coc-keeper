@@ -32,6 +32,42 @@ _ID_LABELLED = re.compile(
 _ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?![\w-])`?")
 
 
+_LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z .'’-]*[A-Za-z]")
+_HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = ()) -> str:
+    """``text`` with each English original the scenario index lists for a person or place written as the index's
+    Chinese name (「Corbitt」 → 「柯比特」, 「Corbitt's」 → 「柯比特的」), so a name reads the same on every turn.
+
+    Only an alias the index gives, of three letters or more, that names one entry: an English word that is not on
+    the list is never guessed at. A name inside ``keep`` (the investigators' own) is left as written.
+    """
+    if not text or not entries:
+        return text
+    kept = [k.casefold() for k in keep if k]
+    targets: dict[str, set[str]] = {}
+    for entry in entries:
+        name = str(entry.get("name") or "").strip() if isinstance(entry, dict) else ""
+        if not _HAS_CJK.search(name):
+            continue
+        for alias in entry.get("aliases") or []:
+            alias = str(alias).strip()
+            if len(alias) >= 3 and _LATIN_NAME.fullmatch(alias) and not any(
+                    re.search(rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])", k) for k in kept):
+                targets.setdefault(alias.casefold(), set()).add(name)
+    names = {alias: next(iter(found)) for alias, found in targets.items() if len(found) == 1}
+    if not names:
+        return text
+    pattern = re.compile(r"(?<![A-Za-z])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
+                         + r")(?:['’]s)?(?![A-Za-z])", re.IGNORECASE)
+
+    def chinese(match: re.Match[str]) -> str:
+        name = names[match.group(1).casefold()]
+        return name + "的" if match.group(0) != match.group(1) else name
+    return pattern.sub(chinese, text)
+
+
 def tier_label(value: str) -> str:
     """The table's name for a result tier; an unknown value is returned as it came."""
     return dice.TIER_ZH.get(value, value)

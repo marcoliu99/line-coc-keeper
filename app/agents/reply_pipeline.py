@@ -126,6 +126,16 @@ async def _obligations(ctx: ReplyContext, draft: ReplyDraft) -> None:
         draft.text = _consistent(ctx, draft, draft.text.rstrip() + "\n\n" + summaries, trailing=summaries)
 
 
+def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
+    """An English original the scenario index lists is written as its Chinese name, as the prompt asks; the prompt
+    alone left some through (a glossary in the prompt is followed most of the time, not every time)."""
+    state = ctx.state
+    keep = [c.name for c in (*state.characters_by_id.values(), *state.characters.values())]
+    keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
+    draft.text = presentation.use_scenario_names(
+        draft.text, [*state.scenario_npc_index, *state.scenario_location_index], keep)
+
+
 def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:
     draft.text = presentation.enforce_party_size(draft.text, len(ctx.state.active_characters()))
 
@@ -148,6 +158,7 @@ STEPS: tuple[Step, ...] = (
     Step("guard", _guard),
     Step("consistency_after_guard", _repair_consistency),
     Step("obligations", _obligations),
+    Step("scenario_names", _scenario_names),
     Step("party_size", _party_size),
     Step("finalize", _finalize),
     # Maps tier names and removes internal ids for display. Not lossless: a validated line that carried a raw tier
@@ -163,6 +174,8 @@ ORDER_RULES: tuple[tuple[str, str, str], ...] = (
     ("guard", "consistency_after_guard", "any Guard rewrite is checked for consistency again"),
     ("consistency_after_guard", "obligations",
      "obligations are decided on the narration that survived repair and the Guard"),
+    ("obligations", "scenario_names", "names are put in Chinese on the final wording, owed lines included"),
+    ("scenario_names", "finalize", "delivery validates the names as the player will read them"),
     ("obligations", "party_size", "the party count is corrected on the final wording, owed lines included"),
     ("party_size", "finalize", "delivery validates what is sent, so the count is corrected before it validates"),
     ("finalize", "player_text", "display mapping is the last writer"),

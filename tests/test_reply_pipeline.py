@@ -20,7 +20,8 @@ def reordered(first: str, second: str) -> list[Step]:
 class ReplyPipelineOrderTests(unittest.TestCase):
     def test_the_shipped_order(self):
         self.assertEqual([step.name for step in STEPS], [
-            "scrub_leaks", "consistency", "guard", "consistency_after_guard", "obligations", "party_size", "finalize",
+            "scrub_leaks", "consistency", "guard", "consistency_after_guard", "obligations", "scenario_names", "party_size",
+            "finalize",
             "player_text",
         ])
         validate(STEPS)

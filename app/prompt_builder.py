@@ -214,6 +214,9 @@ def build_static_prompt(state: GroupState) -> str:
             index_block += f"""
 ## 主要地點
 {location_index_text}"""
+        index_block += """
+## 譯名
+提到上面的人物或地點時，一律照「・」後面那個中文名寫，每次都一樣；別名和英文原名只用來認出是誰，不要寫進敘事，也不要自己另取譯名。"""
     summary_block = ""
     if state.campaign_summary:
         summary_block = f"""
