@@ -86,6 +86,17 @@ def test_an_occupation_reaches_the_name_this_project_uses():
     assert dictionary.lookup_occupation("Archaeologist") == "考古學家"
 
 
+def test_an_old_spelling_of_an_occupation_still_gets_the_occupation_bonus_when_typed_in_pc():
+    from app.commands.handlers import character
+    from app.models import OCCUPATIONS, GroupState
+    state = GroupState(group_id="g")
+    outcome = character._pc(state, "u1", ["/coc", "pc", "測試", "骨董商"])
+    char = state.characters["u1"]
+    assert "調查員建立完成" in outcome.text
+    assert char.occupation == "古董商"
+    assert all(char.skills[skill] >= value for skill, value in OCCUPATIONS["古董商"].items())
+
+
 def test_the_rulebook_name_of_an_earlier_entry_is_recorded_as_another_spelling():
     assert dictionary.lookup_term("夏乌戈纳尔·法格恩") == dictionary.lookup_term("Chaugnar Faugn") == "昌格納·方庚"
     assert dictionary.lookup_term("加塔纳托亚") == "加塔諾托亞"

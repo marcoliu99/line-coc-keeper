@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app import creation, pregen_extractor, presentation, spoiler_policy
+from app import creation, dictionary, pregen_extractor, presentation, spoiler_policy
 from app.commands.handlers.transact import Outcome, done, refuse, transact
 from app.commands.types import Reply, SendDM
 from app.keeper_tools import resource_bridge
@@ -73,6 +73,11 @@ def _retire(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     )
 
 
+def _standard_occupation(typed: str) -> str:
+    """The project's name for an occupation a player typed in another spelling (骨董商 → 古董商)."""
+    return dictionary.lookup_occupation(typed) or typed
+
+
 def _pc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     blocked = _guard_replacement(state)
     if blocked:
@@ -94,7 +99,7 @@ def _pc(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
         return refuse(existing)
 
     name = parts[2]
-    occupation = parts[3] if len(parts) > 3 else None
+    occupation = _standard_occupation(parts[3]) if len(parts) > 3 else None
     char = generate_investigator(name=name, owner_id=user_id, occupation=occupation)
     state.characters[user_id] = char
     state.set_active_character(user_id, char.character_id)
@@ -173,7 +178,7 @@ def _create(state: GroupState, user_id: str, parts: list[str]) -> Outcome:
     if existing:
         return refuse(existing)
 
-    occupation = parts[3] if len(parts) > 3 else None
+    occupation = _standard_occupation(parts[3]) if len(parts) > 3 else None
     session = creation.start_creation(state, user_id, action, occupation)
     return done(f"已擲出屬性，開始分配技能點數！\n\n{creation.status_text(session)}")
 
