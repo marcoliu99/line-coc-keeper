@@ -205,6 +205,17 @@ def test_a_handoff_naming_a_check_that_is_not_pending_logs_what_the_state_holds(
     assert "owner=a " not in line and "{'a':" not in line  # owners are hashed, not logged raw
 
 
+def test_a_luck_handoff_mismatch_logs_the_timelines(state, caplog):
+    state.pending_luck_decisions['a'] = {'decision_id': 'luck-1', 'timeline_id': 'restored'}
+    state.timeline_id = 'current'
+    kwargs = {'state': state, 'user_id': 'a', 'before_pending': {}, 'before_luck': {}, 'tool_events': [], 'has_scenario': False, 'before_actor': {}}
+    with caplog.at_level("INFO", logger=turn_resolution.__name__):
+        result = turn_resolution.validate_resolution(decision(state, 'await_luck', check_id='luck-1'), **kwargs)
+    assert result.validation_code == 'pending_identity_mismatch'
+    line = next(r.getMessage() for r in caplog.records if "not pending" in r.getMessage())
+    assert "timeline=current" in line and "('luck-1', 'restored')" in line
+
+
 def test_waiting_luck_cannot_be_reported_as_unrolled_check(state):
     state.pending_checks['a'] = pending('real')
     state.pending_luck_decisions['a'] = {'decision_id': 'luck-real', 'timeline_id': state.timeline_id}

@@ -10,7 +10,7 @@
 
 ## 變更
 
-`await_check` 或 `await_luck` 交接指名的編號不在待處理清單時，`turn_resolution.validate_resolution` 會寫一行只含識別碼的文字記錄（持有人與 `waiting_for` 經過 `observability.safe_identifier` 處理，與其他記錄欄位一致）：收到的 `waiting_for`、解析出的持有人、指名的編號、狀態中該持有人預期的編號，以及所有待處理檢定（持有人 → 檢定編號、時間線）和 Luck 決定。行為不變。
+`await_check` 或 `await_luck` 交接指名的編號不在待處理清單時，`turn_resolution.validate_resolution` 會寫一行只含識別碼的文字記錄（持有人與 `waiting_for` 經過 `observability.safe_identifier` 處理，與其他記錄欄位一致）：收到的 `waiting_for`、解析出的持有人、指名的編號、狀態中該持有人預期的編號，目前的時間線，以及所有待處理檢定（持有人 → 檢定編號、時間線）和 Luck 決定（持有人 → 決定編號、時間線）。行為不變。
 
 ## 驗證
 

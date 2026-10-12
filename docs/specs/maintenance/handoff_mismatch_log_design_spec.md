@@ -10,7 +10,7 @@ In one fight, twelve turns ended with 「這次行動尚未完整處理。目前
 
 ## Change
 
-When an `await_check` or `await_luck` handoff names an id that is not pending, `turn_resolution.validate_resolution` writes one text-log line with identifiers only (owners go through `observability.safe_identifier`, like every other log field): the `waiting_for` it was given, the owner it resolved to, the id it named, the id the state expected for that owner, and every pending check (owner → check id, timeline) and Luck decision. Behaviour is unchanged.
+When an `await_check` or `await_luck` handoff names an id that is not pending, `turn_resolution.validate_resolution` writes one text-log line with identifiers only (owners go through `observability.safe_identifier`, like every other log field): the `waiting_for` it was given, the owner it resolved to, the id it named, the id the state expected for that owner, the state's current timeline, and every pending check (owner → check id, timeline) and Luck decision (owner → decision id, timeline). Behaviour is unchanged.
 
 ## Verification
 
