@@ -34,6 +34,7 @@ _ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?!
 
 _LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z .'’-]*[A-Za-z]")
 _HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
+_LATIN_LETTER = re.compile(r"[A-Za-z]")
 
 
 def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = ()) -> str:
@@ -41,7 +42,8 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
     Chinese name (「Corbitt」 → 「柯比特」, 「Corbitt's」 → 「柯比特的」), so a name reads the same on every turn.
 
     Only an alias the index gives, of three letters or more, that names one entry: an English word that is not on
-    the list is never guessed at. A name inside ``keep`` (the investigators' own) is left as written.
+    the list is never guessed at. A name inside ``keep`` (the investigators' own) is left as written, and so is one
+    with an English word right beside it: that is English the narration quotes (「Will he return?」), not the name.
     """
     if not text or not entries:
         return text
@@ -63,6 +65,9 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
                          + r")(?:['’]s)?(?![A-Za-z])", re.IGNORECASE)
 
     def chinese(match: re.Match[str]) -> str:
+        before, after = text[:match.start()].rstrip()[-1:], text[match.end():].lstrip()[:1]
+        if _LATIN_LETTER.match(before) or _LATIN_LETTER.match(after):
+            return match.group(0)
         name = names[match.group(1).casefold()]
         return name + "的" if match.group(0) != match.group(1) else name
     return pattern.sub(chinese, text)

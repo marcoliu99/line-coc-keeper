@@ -39,3 +39,17 @@ def test_the_prompt_asks_for_the_index_names():
 def test_names_are_settled_before_delivery_validates_them():
     names = [step.name for step in reply_pipeline.STEPS]
     assert names.index("obligations") < names.index("scenario_names") < names.index("finalize")
+
+
+def test_a_name_inside_quoted_english_is_left_as_written():
+    will = {"name": "威爾", "aliases": ["Will"]}
+    assert presentation.use_scenario_names("紙條寫著：「Will he return?」", [will]) == "紙條寫著：「Will he return?」"
+    assert presentation.use_scenario_names("Will 推開了門。", [will]) == "威爾 推開了門。"
+
+
+def test_a_private_message_reads_the_same_names():
+    from unittest.mock import MagicMock
+    state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
+    draft = MagicMock(text="Corbitt 在看你。", private_messages=[("p1", "只有你注意到 Corbitt 的手在動。")])
+    reply_pipeline._scenario_names(MagicMock(state=state), draft)
+    assert draft.text == "柯比特 在看你。" and draft.private_messages == [("p1", "只有你注意到 柯比特 的手在動。")]
