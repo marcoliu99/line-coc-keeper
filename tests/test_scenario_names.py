@@ -36,9 +36,10 @@ def test_the_prompt_asks_for_the_index_names():
     assert "## 譯名" not in build_static_prompt(GroupState(group_id="g"))
 
 
-def test_names_are_settled_before_delivery_validates_them():
+def test_names_cover_what_delivery_rendered():
     names = [step.name for step in reply_pipeline.STEPS]
-    assert names.index("obligations") < names.index("scenario_names") < names.index("finalize")
+    assert names.index("finalize") < names.index("scenario_names") < names.index("player_text")
+    assert next(step for step in reply_pipeline.STEPS if step.name == "scenario_names").display_only
 
 
 def test_a_name_inside_quoted_english_is_left_as_written():
@@ -50,6 +51,9 @@ def test_a_name_inside_quoted_english_is_left_as_written():
 def test_a_private_message_reads_the_same_names():
     from unittest.mock import MagicMock
     state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
-    draft = MagicMock(text="Corbitt 在看你。", private_messages=[("p1", "只有你注意到 Corbitt 的手在動。")])
+    draft = MagicMock(text="Corbitt 在看你。\n線索：Corbitt 的日記。", private_messages=[("p1", "只有你注意到 Corbitt 的手在動。")],
+                      private_controls=[("p1", "Corbitt 的檢定")])
     reply_pipeline._scenario_names(MagicMock(state=state), draft)
-    assert draft.text == "柯比特 在看你。" and draft.private_messages == [("p1", "只有你注意到 柯比特 的手在動。")]
+    assert draft.text == "柯比特 在看你。\n線索：柯比特 的日記。"
+    assert draft.private_messages == [("p1", "只有你注意到 柯比特 的手在動。")]
+    assert draft.private_controls == [("p1", "柯比特 的檢定")]

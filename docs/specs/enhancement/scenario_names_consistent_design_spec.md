@@ -13,14 +13,14 @@ Tools that keep long LLM translations consistent do two things. They give the mo
 ## Change
 
 - **Prompt rule.** When the index is present, the static prompt adds a 「譯名」 section. A person or place listed above is written with the Chinese name after 「・」, the same every time. Aliases and English originals only identify who is meant; they are not written into the narration, and no new translation is made.
-- **Names fixed before delivery.** A new reply-pipeline step, `scenario_names`, runs after `obligations` and before `finalize`. It calls `presentation.use_scenario_names` to write each English alias the index lists as its entry's Chinese name, for example 「Corbitt」 → 「柯比特」 and 「Corbitt's」 → 「柯比特的」.
+- **Names fixed in what is delivered.** A new display-only reply-pipeline step, `scenario_names`, runs after `finalize` and before `player_text`, on the rendered reply, private messages and private controls, so result and clue lines that delivery appends read the same names as the narration. It calls `presentation.use_scenario_names` to write each English alias the index lists as its entry's Chinese name, for example 「Corbitt」 → 「柯比特」 and 「Corbitt's」 → 「柯比特的」.
   - The match is case-insensitive and whole-word, so 「Corbittson」 stays.
   - Only an alias of three letters or more that names one entry is used. An alias shared by two entries (「Deep One」 for 深潛者 and 深潛者（幼體）) is left alone.
   - Investigators' and pregens' names are never rewritten, and neither is an alias that is a word of one (「Carter」 in 「Malcolm Carter」).
   - No English word the index does not list is guessed at.
   - A match with an English word right beside it is English the narration quotes (「Will he return?」), not the name, and is left as written.
   - Private messages get the same names as the public narration.
-  - The step runs before delivery validation, so the spoiler check sees the Chinese name the player will read.
+  - Like `player_text`, it only changes how a name is written; the facts delivery validated are unchanged.
 - **Existing games.** Nothing else changes: combat, checks, saved state and the index itself are untouched. A game whose scenario is already indexed gets both changes on its next turn.
 
 ## Verification
@@ -32,6 +32,6 @@ Tools that keep long LLM translations consistent do two things. They give the mo
 - An investigator's name is kept, and so is a name inside quoted English.
 - A private message gets the same names.
 - The prompt carries the rule only when an index exists.
-- `scenario_names` runs between `obligations` and `finalize`.
+- `scenario_names` is display-only and runs between `finalize` and `player_text`, covering appended lines and private controls.
 
 `tests/test_reply_pipeline.py` lists the new step in the shipped order.
