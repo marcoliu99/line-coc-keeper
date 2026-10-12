@@ -48,9 +48,15 @@ def test_a_name_inside_quoted_english_is_left_as_written():
     assert presentation.use_scenario_names("Will 推開了門。", [will]) == "威爾 推開了門。"
 
 
+def _told(state: GroupState, text: str) -> GroupState:
+    state.log.append({"role": "assistant", "content": text, "audience": "public", "timeline_id": state.timeline_id or "",
+                      "record_kind": "narrative"})
+    return state
+
+
 def test_a_private_message_reads_the_same_names():
     from unittest.mock import MagicMock
-    state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
+    state = _told(GroupState(group_id="g", scenario_npc_index=[CORBITT]), "柯比特出現了。")
     draft = MagicMock(text="Corbitt 在看你。\n線索：Corbitt 的日記。", private_messages=[("p1", "只有你注意到 Corbitt 的手在動。")],
                       private_controls=[("p1", "Corbitt 的檢定")])
     ctx = MagicMock(state=state)
@@ -81,7 +87,7 @@ def test_a_name_that_would_reveal_a_secret_is_left_in_english():
     from unittest.mock import MagicMock, patch
 
     from app import spoiler_policy
-    state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
+    state = _told(GroupState(group_id="g", scenario_npc_index=[CORBITT]), "柯比特出現了。")
     ctx = MagicMock(state=state)
     ctx.message.payload = {"state": state}
     draft = MagicMock(text="你發現Corbitt。", private_messages=[("p1", "Corbitt 看著你。")], private_controls=[])
@@ -98,3 +104,18 @@ def test_an_older_english_headed_entry_is_listed_by_its_chinese_name():
 def test_an_alias_that_is_also_game_text_is_never_used():
     entry = {"name": "德克斯", "aliases": ["Dex", "Luck"]}
     assert presentation.use_scenario_names("請做 DEX 檢定，或按 Luck 按鈕。", [entry]) == "請做 DEX 檢定，或按 Luck 按鈕。"
+
+
+def test_a_disguise_is_never_rewritten_into_the_identity_it_hides():
+    from unittest.mock import MagicMock
+    culprit = {"name": "兇手約翰", "aliases": ["Masked Man"]}
+    state = GroupState(group_id="g", scenario_npc_index=[culprit])
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="走廊上站著 Masked Man。", private_messages=[], private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "走廊上站著 Masked Man。"  # never told: the name stays hidden
+    _told(state, "原來他就是兇手約翰。")
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "走廊上站著 兇手約翰。"  # once revealed, it is the name every time
+    assert "身分還沒揭露的人物" in build_static_prompt(state)
