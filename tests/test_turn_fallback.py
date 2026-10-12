@@ -687,3 +687,32 @@ async def test_a_narrator_that_failed_does_not_stand_in_for_the_explanation() ->
 
     reply, *_ = await _turn(_state(), [_cannot_be_done(), _cannot_be_done()], narrator=failing)
     assert "已提交的變更會保留" not in reply and "目前無法繼續" in reply
+
+
+def test_a_fight_that_began_is_not_followed_by_a_request_to_start_over() -> None:
+    # Haunting rerun3 turn 28: initialize_combat succeeded, the handoff named a check that did not exist.
+    story = "戰鬥已然開始，Felix，你先行動。"
+    began = _result("incomplete", "pending_identity_mismatch", fallback_reason="state_conflict",
+                    check_status={"tool_called": True, "pending": None, "combat_opened": True})
+    assert prompt_config.fight_started_cleanly(began)
+    assert prompt_config.enforce_mechanic_check_consistency(story, began) == story
+    for status in ({"pending": {"investigator": "小雨", "skill": "偵查"}}, {"dice_rolled": True}, {"resolved": True}):
+        other = _result("incomplete", "pending_identity_mismatch", fallback_reason="state_conflict",
+                        check_status={"tool_called": True, "pending": None, "combat_opened": True, **status})
+        assert not prompt_config.fight_started_cleanly(other)
+    unrelated = _result("incomplete", "model_incomplete", fallback_reason="executor_no_action",
+                        check_status={"tool_called": True, "pending": None, "combat_opened": True})
+    assert not prompt_config.fight_started_cleanly(unrelated)
+    failed = _result("incomplete", "pending_identity_mismatch", fallback_reason="state_conflict",
+                     check_status={"tool_called": True, "pending": None, "combat_opened": True},
+                     tool_calls=[("initialize_combat", True), ("record_item", False)])
+    assert not prompt_config.fight_started_cleanly(failed)  # another requested change failed
+    waiting = GroupState("g", pending_checks={"c1": {"check_id": "c1", "visibility": "private"}})
+    assert not prompt_config.fight_started_cleanly(began, waiting)  # a private check the public result hides
+    assert prompt_config.fight_started_cleanly(began, GroupState("g"))
+    # A cancellation nobody verified is a state conflict too, but the table still needs to hear about it.
+    cancelled = _result("incomplete", "cancellation_not_verified", fallback_reason="state_conflict",
+                        check_status={"tool_called": True, "pending": None, "combat_opened": True})
+    assert not prompt_config.fight_started_cleanly(cancelled)
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, cancelled)
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, unrelated)

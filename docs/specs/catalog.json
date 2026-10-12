@@ -3223,6 +3223,19 @@
       "path": "docs/specs/enhancement/dead_investigator_reply_design_spec.md",
       "zh_path": "docs/specs/enhancement/dead_investigator_reply_design_spec_zh.md",
       "source_revision": "112a22a5a1fc606a011c50ce9a546733c767053a"
+    },
+    {
+      "title": "A fight that began cleanly is not followed by a request to start over",
+      "zh": "戰鬥已正常開始，就不再要求重來",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/fight_started_state_conflict_design_spec.md",
+      "zh_path": "docs/specs/enhancement/fight_started_state_conflict_design_spec_zh.md",
+      "source_revision": "112a22a5a1fc606a011c50ce9a546733c767053a"
     }
   ]
 }
