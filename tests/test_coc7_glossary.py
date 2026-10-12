@@ -69,7 +69,7 @@ def test_the_english_names_the_old_python_seed_had_still_resolve():
 def test_the_expansion_files_are_read_and_carry_the_new_categories():
     categories = {e["category"] for e in _entries()}
     assert {"spell", "occupation", "mythos_item"} <= categories
-    assert len([e for e in _entries() if e["category"] == "occupation"]) >= 90
+    assert len([e for e in _entries() if e["category"] == "occupation"]) >= 110
     assert len([e for e in _entries() if e["category"] == "spell"]) >= 35
 
 
@@ -116,6 +116,14 @@ def test_the_maintainer_s_occupation_names_are_the_standard_and_the_old_wording_
         assert dictionary.lookup_occupation(english) == dictionary.lookup_occupation(before) == name
     occupations = [e for e in _entries() if e["category"] == "occupation"]
     assert occupations and not [e for e in occupations if e.get("zh_tw_converted")]
+
+
+def test_the_names_the_maintainer_gave_to_unbacked_occupations_and_hyperborea_resolve():
+    for english, name, other in [("Police Officer", "警察", "警官"), ("Bootlegger", "私酒販", "私酒贩"), ("Truck Driver", "卡車司機", "大貨車司機"),
+                                 ("Union Activist", "工運人士", "工会活动家"), ("Butler/Valet/Maid", "管家 / 男僕 / 女僕", "Butler / Valet")]:
+        assert dictionary.lookup_occupation(english) == dictionary.lookup_occupation(other) == name, english
+    assert dictionary.lookup_occupation("電腦技師") == "電腦技師" and dictionary.lookup_occupation("计算机技师") == "電腦技師"
+    assert dictionary.lookup_term("Hyperborea") == dictionary.lookup_term("亥伯柏里亚") == "亥伯柏里亞"
 
 
 def test_a_name_the_dictionary_knows_for_an_occupation_is_not_replaced_by_a_model_pairing():

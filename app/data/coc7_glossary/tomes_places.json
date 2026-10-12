@@ -20,7 +20,7 @@
 {"category": "tome_place", "en": "Innsmouth", "zh_tw": "因斯茅斯", "zh_cn": "印斯茅斯", "alt_zh_tw": ["印斯茅斯"], "alt_zh_cn": ["因斯茅斯"], "sources": ["s11", "s13"], "canonical": "因斯茅斯"},
 {"category": "tome_place", "en": "Dunwich", "zh_tw": "敦威治", "zh_cn": "敦威治", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s11", "s13"], "canonical": "敦威治"},
 {"category": "tome_place", "en": "Kingsport", "zh_tw": "金斯波特", "zh_cn": "金斯波特", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s11", "s13"], "canonical": "金斯波特"},
-{"category": "tome_place", "en": "Carcosa", "zh_tw": "卡爾克薩", "zh_cn": "卡尔克萨", "alt_zh_tw": ["卡爾科薩"], "alt_zh_cn": ["卡尔科萨"], "sources": ["s11", "s13", "s15"], "canonical": "卡爾克薩", "note": "The Chinese rulebook's name is 卡尔科萨."},
+{"category": "tome_place", "en": "Carcosa", "zh_tw": "卡爾克薩", "zh_cn": "卡尔克萨", "alt_zh_tw": ["卡爾科薩"], "alt_zh_cn": ["卡尔科萨"], "sources": ["s11", "s13", "s15"], "note": "The Chinese rulebook's name is 卡尔科萨.", "canonical": "卡爾克薩"},
 {"category": "tome_place", "en": "Dreamlands", "zh_tw": "幻夢境", "zh_cn": "幻梦境", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s11", "s13"], "canonical": "幻夢境"},
 {"category": "tome_place", "en": "Nameless City", "zh_tw": "無名都市", "zh_cn": "无名之城", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s11", "s13"], "canonical": "無名都市"},
 {"category": "tome_place", "en": "Yuggoth", "zh_tw": "猶格斯", "zh_cn": "犹格斯", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s13"], "zh_tw_converted": true, "canonical": "猶格斯"},
@@ -58,5 +58,6 @@
 {"category": "tome_place", "en": "Severn Valley", "zh_tw": "塞文河谷", "zh_cn": "塞文河谷", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s15"], "zh_tw_converted": true, "canonical": "塞文河谷"},
 {"category": "tome_place", "en": "Xiclotl", "zh_tw": "塞克洛托爾", "zh_cn": "塞克洛托尔", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s15"], "zh_tw_converted": true, "canonical": "塞克洛托爾"},
 {"category": "tome_place", "en": "Yoth", "zh_tw": "幽嘶", "zh_cn": "幽嘶", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s15"], "zh_tw_converted": true, "canonical": "幽嘶"},
-{"category": "tome_place", "en": "Zothique", "zh_tw": "佐希克", "zh_cn": "佐希克", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s15"], "zh_tw_converted": true, "canonical": "佐希克"}
+{"category": "tome_place", "en": "Zothique", "zh_tw": "佐希克", "zh_cn": "佐希克", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s15"], "zh_tw_converted": true, "canonical": "佐希克"},
+{"category": "tome_place", "en": "Hyperborea", "zh_tw": "亥伯柏里亞", "zh_cn": "亥伯柏里亚", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s15"], "note": "Traditional name set by the maintainer", "canonical": "亥伯柏里亞"}
 ]
