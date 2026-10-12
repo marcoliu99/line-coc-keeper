@@ -142,15 +142,15 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     if named != draft.text and not turn_delivery.rewrite_still_safe(ctx.message, named):
         return
     draft.text = named
-    # A private line may name what only its reader was told this turn: that counts for all of that reader's lines.
-    private: dict[str, list[str]] = {}
-    for owner, text in (*draft.private_messages, *draft.private_controls):
-        private.setdefault(owner, []).append(text)
-    told_by = {owner: told | turn_fallback.told_names(state, entries, texts, keep) for owner, texts in private.items()}
-    draft.private_messages = [(owner, presentation.use_scenario_names(text, entries, keep, told_by[owner]))
-                              for owner, text in draft.private_messages]
-    draft.private_controls = [(owner, presentation.use_scenario_names(text, entries, keep, told_by[owner]))
-                              for owner, text in draft.private_controls]
+    # A private line may name what only its reader was told: that counts for that line and the reader's later ones, in
+    # the order they are sent, never for an earlier line (which would reveal it before the line that does).
+    told_by: dict[str, set[str]] = {}
+
+    def private(owner: str, text: str) -> str:
+        told_by[owner] = told_by.get(owner, told) | turn_fallback.told_names(state, entries, [text], keep)
+        return presentation.use_scenario_names(text, entries, keep, told_by[owner])
+    draft.private_messages = [(owner, private(owner, text)) for owner, text in draft.private_messages]
+    draft.private_controls = [(owner, private(owner, text)) for owner, text in draft.private_controls]
 
 
 def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:
