@@ -57,3 +57,9 @@ def test_a_private_message_reads_the_same_names():
     assert draft.text == "柯比特 在看你。\n線索：柯比特 的日記。"
     assert draft.private_messages == [("p1", "只有你注意到 柯比特 的手在動。")]
     assert draft.private_controls == [("p1", "柯比特 的檢定")]
+
+
+def test_an_alias_with_digits_or_a_comma_is_used_too():
+    entries = [{"name": "三號房", "aliases": ["Room 3"]}, {"name": "幼體（深海夢魘）", "aliases": ["Youngling, deep-sea nightmare"]}]
+    assert presentation.use_scenario_names("他走進 Room 3。", entries) == "他走進 三號房。"
+    assert presentation.use_scenario_names("那是 Youngling, deep-sea nightmare。", entries) == "那是 幼體（深海夢魘）。"

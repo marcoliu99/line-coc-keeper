@@ -32,7 +32,9 @@ _ID_LABELLED = re.compile(
 _ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?![\w-])`?")
 
 
-_LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z .'’-]*[A-Za-z]")
+# An English name as an index writes it: letters first, then letters, digits and the punctuation names carry
+# (「Room 3」, 「Youngling, deep-sea nightmare」, 「Smith & Sons」); no CJK, which is already the Chinese name.
+_LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z0-9 .,&'’-]*[A-Za-z0-9]")
 _HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_LETTER = re.compile(r"[A-Za-z]")
 
