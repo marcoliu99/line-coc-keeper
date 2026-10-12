@@ -207,3 +207,12 @@ def test_the_weapon_names_the_maintainer_chose_are_the_ones_used():
     assert names["Thompson"]["name_zh"] == "湯普森衝鋒槍" and "芝加哥打字機" in names["Thompson"]["aliases"]
     assert not any(w.get("name_zh_converted") for w in _weapons())  # every converted spelling was reviewed
     assert dictionary.lookup_weapon("Rapier") == "細劍" and dictionary.lookup_weapon("贝格曼MP181/MP2811") == "貝格曼 MP18 I / MP28 II"
+
+
+def test_a_name_the_catalog_used_before_the_maintainer_changed_it_still_finds_the_weapon():
+    from app import combat_rules
+    for old, english in [("包革金屬棒", "Blackjack"), ("中型劍", "Rapier"), (".22口徑自動手槍", ".22 Short Automatic"),
+                         ("貝格曼MP181/MP2811", "Bergmann MP181/MP2811"), ("大型劍", "Sword"), ("投石", "Rock, Thrown")]:
+        found = combat_rules.resolve_weapon(old)
+        named = [found.definition] if found.definition else list(found.candidates)
+        assert [d.name for d in named] == [english], old

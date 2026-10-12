@@ -227,7 +227,8 @@
         "鉛頭棍",
         "短棒",
         "悶棍",
-        "皮夾鉛棍"
+        "皮夾鉛棍",
+        "包革金屬棒"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -537,7 +538,8 @@
         "彎刀",
         "sabre",
         "cavalry sabre",
-        "long sword"
+        "long sword",
+        "大型劍"
       ],
       "skill_id": "fighting-sword",
       "attack_mode": "melee",
@@ -577,7 +579,8 @@
         "細劍",
         "擊劍",
         "rapier",
-        "thrusting sword"
+        "thrusting sword",
+        "中型劍"
       ],
       "skill_id": "fighting-sword",
       "attack_mode": "melee",
@@ -956,7 +959,8 @@
         "點二二自動手槍",
         "點二二手槍",
         ".22 手槍",
-        ".22 短彈半自動手槍"
+        ".22 短彈半自動手槍",
+        ".22口徑自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -998,7 +1002,8 @@
         "德林加",
         "袖珍手槍",
         "derringer",
-        ".25 德林加手槍 (單管)"
+        ".25 德林加手槍 (單管)",
+        ".25德林傑手槍（單管）"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1043,7 +1048,8 @@
         "左輪",
         "左輪手槍",
         "revolver",
-        ".32 或 7.65mm 左輪手槍"
+        ".32 或 7.65mm 左輪手槍",
+        ".32/7.65mm左輪手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1084,7 +1090,8 @@
         ".32 自動手槍",
         "點三二自動手槍",
         "7.65mm 自動手槍",
-        ".32 或 7.65mm 半自動手槍"
+        ".32 或 7.65mm 半自動手槍",
+        ".32/7.65mm自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1126,7 +1133,8 @@
         "魯格",
         "luger",
         "p08",
-        "P08 魯格手槍"
+        "P08 魯格手槍",
+        "9mm魯格P08"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1262,7 +1270,8 @@
         ".22 栓式步槍",
         "步槍",
         "rifle",
-        ".22 栓動式步槍"
+        ".22 栓動式步槍",
+        ".22栓動步槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1305,7 +1314,8 @@
         "winchester",
         "步槍",
         "rifle",
-        ".30 槓桿式卡賓槍"
+        ".30 槓桿式卡賓槍",
+        ".30槓桿步槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1473,7 +1483,8 @@
         "springfield",
         "步槍",
         "rifle",
-        ".30-06 栓動式步槍"
+        ".30-06 栓動式步槍",
+        ".30-06(7.62mm)栓動步槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1805,7 +1816,8 @@
         "雙管散彈槍",
         "double barrel shotgun",
         "12號雙管霰彈槍 (削短型)",
-        "截短型"
+        "截短型",
+        "12號雙管霰彈槍（鋸短槍管）"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1858,7 +1870,8 @@
         "衝鋒槍",
         "submachine gun",
         "smg",
-        "貝格曼 MP18 I / MP28 II"
+        "貝格曼 MP18 I / MP28 II",
+        "貝格曼MP181/MP2811"
       ],
       "skill_id": "firearms-submachine-gun",
       "attack_mode": "single_shot",
@@ -1982,7 +1995,8 @@
         "m1918",
         "機槍",
         "machine gun",
-        "M1918 白朗寧自動步槍"
+        "M1918 白朗寧自動步槍",
+        "M1918勃朗寧自動步槍"
       ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
@@ -2022,7 +2036,8 @@
         "m1917",
         "機槍",
         "machine gun",
-        ".30 白朗寧 M1917A1 機槍"
+        ".30 白朗寧 M1917A1 機槍",
+        "勃朗寧M1917A1(.30-06/7.62mm)"
       ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
@@ -2103,7 +2118,8 @@
         "lewis gun",
         "機槍",
         "machine gun",
-        "Mk I 路易士機槍"
+        "Mk I 路易士機槍",
+        "劉易斯MK.I型機槍"
       ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
