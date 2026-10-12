@@ -84,7 +84,12 @@ def test_a_name_that_would_reveal_a_secret_is_left_in_english():
     state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
     ctx = MagicMock(state=state)
     ctx.message.payload = {"state": state}
-    draft = MagicMock(text="你發現Corbitt。", private_messages=[], private_controls=[])
+    draft = MagicMock(text="你發現Corbitt。", private_messages=[("p1", "Corbitt 看著你。")], private_controls=[])
     with patch.object(spoiler_policy, "collect_protected_terms", return_value=["發現柯比特"]):
         reply_pipeline._scenario_names(ctx, draft)
-    assert draft.text == "你發現Corbitt。"
+    assert draft.text == "你發現Corbitt。" and draft.private_messages == [("p1", "Corbitt 看著你。")]
+
+
+def test_an_older_english_headed_entry_is_listed_by_its_chinese_name():
+    state = GroupState(group_id="g", scenario_npc_index=[{"name": "Walter Corbitt", "aliases": ["柯比特", "Corbitt"]}])
+    assert "・柯比特（別名：Walter Corbitt、Corbitt）" in build_static_prompt(state)
