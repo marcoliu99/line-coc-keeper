@@ -3249,6 +3249,19 @@
       "path": "docs/specs/bug/declare_action_kind_default_design_spec.md",
       "zh_path": "docs/specs/bug/declare_action_kind_default_design_spec_zh.md",
       "source_revision": "d16bb75f6c1b7ddcb66698286ebac3668572fca3"
+    },
+    {
+      "title": "A handoff naming a missing check logs what the state holds",
+      "zh": "交接指名了不存在的檢定時，記錄狀態裡實際有什麼",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_resolution.py",
+        "tests/test_turn_consistency_handoff.py"
+      ],
+      "path": "docs/specs/maintenance/handoff_mismatch_log_design_spec.md",
+      "zh_path": "docs/specs/maintenance/handoff_mismatch_log_design_spec_zh.md",
+      "source_revision": "3565bed8ccd3b87ff58f8e7ec23a0aed9b4a5385"
     }
   ]
 }
