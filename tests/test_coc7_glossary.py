@@ -1,4 +1,4 @@
-"""The CoC7 glossary (app/data/coc7_glossary.json): community translations in Traditional and Simplified Chinese,
+"""The CoC7 glossary (app/data/coc7_glossary/): community translations in Traditional and Simplified Chinese,
 folded into the dictionary so every spelling reaches the one name this project writes."""
 from __future__ import annotations
 

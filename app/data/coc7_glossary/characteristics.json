@@ -1,0 +1,17 @@
+[
+{"category": "characteristic", "en": "Strength (STR)", "zh_tw": "力量", "zh_cn": "力量", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "力量"},
+{"category": "characteristic", "en": "Constitution (CON)", "zh_tw": "體質", "zh_cn": "体质", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "體質"},
+{"category": "characteristic", "en": "Size (SIZ)", "zh_tw": "體型", "zh_cn": "体型", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "體型"},
+{"category": "characteristic", "en": "Dexterity (DEX)", "zh_tw": "敏捷", "zh_cn": "敏捷", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "敏捷"},
+{"category": "characteristic", "en": "Appearance (APP)", "zh_tw": "外貌", "zh_cn": "外貌", "alt_zh_tw": [], "alt_zh_cn": ["魅力"], "sources": ["s1", "s3", "s5", "s10"], "note": "Foundry cn.json renders APP as 魅力; mainland rulebook text and SealDice use 外貌", "canonical": "外貌"},
+{"category": "characteristic", "en": "Intelligence (INT)", "zh_tw": "智力", "zh_cn": "智力", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "智力"},
+{"category": "characteristic", "en": "Power (POW)", "zh_tw": "意志", "zh_cn": "意志", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "意志"},
+{"category": "characteristic", "en": "Education (EDU)", "zh_tw": "教育", "zh_cn": "教育", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "教育"},
+{"category": "characteristic", "en": "Luck", "zh_tw": "幸運", "zh_cn": "幸运", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "幸運"},
+{"category": "characteristic", "en": "Hit Points (HP)", "zh_tw": "生命值", "zh_cn": "耐久值", "alt_zh_tw": [], "alt_zh_cn": ["生命值"], "sources": ["s1", "s2", "s3", "s5", "s10"], "note": "mainland Keeper Rulebook text defines 耐久值（HP）; Foundry cn and SealDice use 生命值", "canonical": "生命值"},
+{"category": "characteristic", "en": "Magic Points (MP)", "zh_tw": "魔法值", "zh_cn": "魔法值", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "魔法值"},
+{"category": "characteristic", "en": "Sanity (SAN)", "zh_tw": "理智", "zh_cn": "理智", "alt_zh_tw": ["心智", "San值"], "alt_zh_cn": ["理智值"], "sources": ["s1", "s2", "s3", "s5", "s10"], "note": "Foundry zh-TW uses 心智/心智值; Roll20 uses San值 and 理智", "canonical": "理智"},
+{"category": "characteristic", "en": "Movement Rate (MOV)", "zh_tw": "移動力", "zh_cn": "移动速度", "alt_zh_tw": ["移動速度"], "alt_zh_cn": ["移动力"], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "移動力"},
+{"category": "characteristic", "en": "Build", "zh_tw": "體格", "zh_cn": "体格", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s1", "s2", "s3", "s5", "s10"], "canonical": "體格"},
+{"category": "characteristic", "en": "Damage Bonus (DB)", "zh_tw": "傷害加值", "zh_cn": "伤害加值", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s2", "s3", "s5", "s10"], "canonical": "傷害加值"}
+]
