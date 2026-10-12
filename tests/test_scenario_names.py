@@ -53,7 +53,9 @@ def test_a_private_message_reads_the_same_names():
     state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
     draft = MagicMock(text="Corbitt 在看你。\n線索：Corbitt 的日記。", private_messages=[("p1", "只有你注意到 Corbitt 的手在動。")],
                       private_controls=[("p1", "Corbitt 的檢定")])
-    reply_pipeline._scenario_names(MagicMock(state=state), draft)
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "柯比特 在看你。\n線索：柯比特 的日記。"
     assert draft.private_messages == [("p1", "只有你注意到 柯比特 的手在動。")]
     assert draft.private_controls == [("p1", "柯比特 的檢定")]
@@ -73,3 +75,16 @@ def test_a_numbered_alias_does_not_match_a_longer_number():
 def test_an_older_index_with_the_english_heading_as_its_name_still_works():
     entry = {"name": "Walter Corbitt", "aliases": ["柯比特", "Corbitt"]}
     assert presentation.use_scenario_names("Walter Corbitt 與 Corbitt 都是他。", [entry]) == "柯比特 與 柯比特 都是他。"
+
+
+def test_a_name_that_would_reveal_a_secret_is_left_in_english():
+    from unittest.mock import MagicMock, patch
+
+    from app import spoiler_policy
+    state = GroupState(group_id="g", scenario_npc_index=[CORBITT])
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="你發現Corbitt。", private_messages=[], private_controls=[])
+    with patch.object(spoiler_policy, "collect_protected_terms", return_value=["發現柯比特"]):
+        reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "你發現Corbitt。"
