@@ -85,7 +85,11 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         before, after = text[:match.start()].rstrip()[-1:], text[match.end():].lstrip()[:1]
         if _LATIN_LETTER.match(before) or _LATIN_LETTER.match(after):
             return match.group(0)
-        name = names[match.group(1).casefold()]
+        # The pattern matches case-insensitively, which casefold() does not always mirror (「IŞIK」 for 「Işık」).
+        name = names.get(match.group(1).casefold()) or next(
+            (n for alias, n in names.items() if re.fullmatch(re.escape(alias), match.group(1), re.IGNORECASE)), "")
+        if not name:
+            return match.group(0)
         return name + "的" if match.group(0) != match.group(1) else name
     return pattern.sub(chinese, text)
 
