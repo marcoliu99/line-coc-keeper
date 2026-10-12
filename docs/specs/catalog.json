@@ -3151,6 +3151,20 @@
       "path": "docs/specs/feature/weapon_chinese_names_design_spec.md",
       "zh_path": "docs/specs/feature/weapon_chinese_names_design_spec_zh.md",
       "source_revision": "30d80945a5fdc23c37832f857d8a9ae96c102188"
+    },
+    {
+      "title": "An action the scenario cannot do is explained in the story",
+      "zh": "劇本做不到的行動，用故事說明",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "app/agents/supervisor.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/explain_blocked_in_story_design_spec.md",
+      "zh_path": "docs/specs/enhancement/explain_blocked_in_story_design_spec_zh.md",
+      "source_revision": "c46e34105088177c817b21ea386c47989cd7fcfa"
     }
   ]
 }

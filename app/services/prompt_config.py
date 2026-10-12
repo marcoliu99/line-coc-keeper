@@ -289,6 +289,13 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
             "incomplete 不可宣稱行動已完成；cancelled 只取消引用的未擲檢定，不回滾既有結果。"
             "未驗證的模型解釋不屬於權威事實，不能補造世界設定。"),
         ])
+    if explains_in_story(result):
+        lines.extend([
+            "【這個行動在劇本裡無法進行】",
+            ("玩家要做的事，以目前劇本的地點、人物與物件做不到（例如去一個劇本裡沒有的地方）。用故事口吻告訴玩家為什麼，"
+             "並只依上面的劇本內容指出最近的選擇（劇本裡有的地點或人物）；劇本沒寫的不能補造。"
+             "不可寫成行動已經做了、已經找到或已經抵達。"),
+        ])
     inventory_events = [event.payload for event in result.events if event.type == "inventory_change"]
     if inventory_events:
         lines.extend([
@@ -497,7 +504,28 @@ def _unfinished_reply(result: MechanicResult, resolution: TurnResolution, state:
     return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
 
 
-def narration_replaced(result: MechanicResult | None) -> bool:
+def explains_in_story(result: MechanicResult | None, state: GroupState | None = None) -> bool:
+    """Whether a blocked turn is answered by the Narrator instead of the fixed 「目前無法繼續」.
+
+    The action cannot be done in this scenario (a library the village does not have), the Executor searched the
+    scenario and found nothing it could rule on, and the turn changed nothing: no dice, no state, no pending check or
+    Luck decision, no fight, no refusal text of its own. A Keeper says why and points to the nearest option from the
+    scenario; the same request had been answered that way four times before it ended in the fixed text (Scritch-Scratch
+    rerun3, turns 57, 69, 81 and 93). In a running battle the table is told whose turn it is instead."""
+    resolution = result.turn_resolution if result is not None else None
+    if result is None or resolution is None or resolution.disposition != "blocked" or (state is not None and state.combat.active):
+        return False
+    status = result.check_status
+    return bool(
+        result.fallback_reason == "unsupported_action"
+        and not (status.get("pending") or status.get("pending_luck") or status.get("state_changed")
+                 or status.get("dice_rolled") or status.get("resolved") or status.get("combat_opened")
+                 or status.get("scenario_evidence_blocked"))
+        and not any(o.audience == "public" and o.public_text for o in result.observed_outcomes)
+    )
+
+
+def narration_replaced(result: MechanicResult | None, state: GroupState | None = None) -> bool:
     """Whether ``enforce_mechanic_check_consistency`` answers this turn with fixed text whatever the Narrator says, so
     running the Narrator (about 5 s) buys nothing: an incomplete or blocked turn that did not open a fight, a deferral
     that changed nothing, a cancellation."""
@@ -506,7 +534,7 @@ def narration_replaced(result: MechanicResult | None) -> bool:
         return False
     status = result.check_status
     if resolution.disposition in {"incomplete", "blocked"}:
-        return not status.get("combat_opened")
+        return not status.get("combat_opened") and not explains_in_story(result, state)
     if resolution.disposition == "deferred":
         return not status.get("state_changed")
     return resolution.disposition == "cancelled"
@@ -532,6 +560,8 @@ def enforce_mechanic_check_consistency(
                     and any(not o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)):
                 # A refusal that says why and what to do (an empty gun) is the whole answer, not a tool failure.
                 return "\n".join(confirmed)
+            if explains_in_story(result, state) and text.strip():
+                return text
             owed = _unfinished_reply(result, resolution, state, warning, confirmed).rstrip()
             if not (status.get("combat_opened") and text.strip()):
                 return owed

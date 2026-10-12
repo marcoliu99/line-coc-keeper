@@ -467,7 +467,9 @@ def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_abo
     state.combat.order[0].defeated = True
     assert "敵方已全數倒下" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
     state.combat.active = False
-    assert "劇本" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    assert prompt_config.enforce_mechanic_check_consistency("narration", result, state=state) == "narration"  # told in the story
+    assert "劇本" in prompt_config.enforce_mechanic_check_consistency(
+        "narration", _result("blocked", fallback_reason="no_scenario_evidence"), state=state)
     assert turn_fallback.combat_guidance(state, "tool_failure") == ""
 
 
@@ -534,3 +536,39 @@ def test_the_generic_roll_line_is_not_repeated_after_a_reply_that_gives_the_comm
     assert not ref.told_in("想回到上個存檔點，用 /coc checkpoint。")  # another command, not the roll
     assert not ref.told_in("輸入 /coc check偵查 擲骰。")  # not a command the router reads
     assert ref.told_in("請輸入 /coc check。") and ref.told_in("輸入 /coc check")
+
+
+# --- an action the scenario cannot do is explained in the story ---------------------------------------------------
+
+def _cannot_be_done(**status: Any) -> MechanicResult:
+    return _result("blocked", "validated", fallback_reason="unsupported_action",
+                   check_status={"tool_called": True, "pending": None, **status})
+
+
+def test_an_action_the_scenario_cannot_do_is_answered_by_the_narrator_not_the_fixed_refusal() -> None:
+    # Scritch-Scratch rerun3: 「去村裡的圖書館」 (the village has none) was explained four times, then refused in fixed text.
+    result = _cannot_be_done()
+    assert prompt_config.explains_in_story(result) and not prompt_config.narration_replaced(result)
+    story = "穆斯科比沒有圖書館；最近的在二十英里外的 Appleford。"
+    assert prompt_config.enforce_mechanic_check_consistency(story, result) == story
+    assert "【這個行動在劇本裡無法進行】" in prompt_config.build_mechanic_facts_block(result)
+    assert "目前無法繼續" in prompt_config.enforce_mechanic_check_consistency("", result)  # no narration: the fixed text stays
+
+
+@pytest.mark.parametrize("status", [
+    {"dice_rolled": True}, {"resolved": True}, {"state_changed": True}, {"combat_opened": True},
+    {"pending": {"investigator": "小雨", "skill": "偵查"}}, {"pending_luck": {"investigator": "小雨"}},
+    {"scenario_evidence_blocked": True},
+])
+def test_a_blocked_turn_that_did_anything_keeps_the_fixed_text(status: dict[str, Any]) -> None:
+    result = _cannot_be_done(**status)
+    assert not prompt_config.explains_in_story(result)
+
+
+def test_other_reasons_and_a_running_battle_keep_the_fixed_text() -> None:
+    assert not prompt_config.explains_in_story(_result("blocked", "validated", fallback_reason="no_scenario_evidence"))
+    assert not prompt_config.explains_in_story(_result("incomplete", "model_incomplete", fallback_reason="unsupported_action"))
+    state = _state()
+    state.combat = CombatState(active=True, round_number=1, current_index=0, phase="READY",
+                               order=[Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)])
+    assert not prompt_config.explains_in_story(_cannot_be_done(), state) and prompt_config.narration_replaced(_cannot_be_done(), state)
