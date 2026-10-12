@@ -110,6 +110,14 @@ def test_a_new_english_occupation_translated_with_a_known_alias_is_learned_under
     dictionary.forget("Curio Peddler")
 
 
+def test_the_maintainer_s_occupation_names_are_the_standard_and_the_old_wording_still_resolves():
+    for english, name, before in [("Hospital Orderly", "護工", "勤雜護工"), ("Sailor (Naval)", "水手", "軍艦海員"),
+                                  ("Deprogrammer", "反洗腦者", "除魅師"), ("Parapsychologist", "心理學家", "超心理學家")]:
+        assert dictionary.lookup_occupation(english) == dictionary.lookup_occupation(before) == name
+    occupations = [e for e in _entries() if e["category"] == "occupation"]
+    assert occupations and not [e for e in occupations if e.get("zh_tw_converted")]
+
+
 def test_a_name_the_dictionary_knows_for_an_occupation_is_not_replaced_by_a_model_pairing():
     assert dictionary.learn_occupation("Antiquarian", "古物商") is False
     assert dictionary.lookup_occupation("Antiquarian") == "古董商"
