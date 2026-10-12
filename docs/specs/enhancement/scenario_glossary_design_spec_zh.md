@@ -13,7 +13,7 @@
 - **抽取。** `report_scenario_index` 多一個 `terms` 清單，列出 `npcs`／`locations` 以外每個有名字的東西，格式是 `{"name": 中文, "aliases": [原文, …], "kind"}`。`extract_scenario_index` 會回傳 `terms`，沒有名字的條目會被丟掉。
 - **和數值索引分開存。** 名詞存在 `indexes.json` 和 `GroupState.scenario_glossary`，不放進 `scenario_npc_index`。戰鬥登記敵人時比對的是 NPC 索引，所以不會配到沒數值的人。
   - `scenario_library.load_context` 傳的是整份劇本的名詞，不只目前章節的，因為譯名要跨章節固定。
-  - 上傳、啟用、修正和 `/coc index` 都會設定這個欄位。
+  - 上傳、啟用和修正會設定這個欄位。`/coc index` 的文字可能只有目前章節，所以它是把找到的名詞依名稱合併進名詞表，其他章節的名詞會保留。
   - 劇本庫條目沒有名詞表時，同一劇本換到下一章會保留 `/coc index` 重建的名詞表；換成別的劇本則從空的開始。
   - 重新上傳時，如果只抽到名詞、沒抽到數值，就保留原本的數值索引，只換上新的名詞表。
 - **提示。** 索引區塊多一段「其他專有名詞（只固定譯名；列在這裡不代表調查員已經知道）」，格式是「・中文名（原文：…）」，最多 `GLOSSARY_PROMPT_LIMIT`（80）條。「譯名」規則改為涵蓋人物、地點和名詞。

@@ -199,6 +199,15 @@ def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:
 GLOSSARY_PROMPT_LIMIT = 80
 
 
+def merge_glossary(kept: list[dict[str, Any]], found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``kept`` with ``found`` laid over it by name: a rebuild from part of a scenario adds and updates names, and
+    never drops the ones it did not see."""
+    merged = {str(t.get("name") or "").strip(): t for t in kept if isinstance(t, dict) and str(t.get("name") or "").strip()}
+    merged.update({str(t.get("name") or "").strip(): t for t in found
+                   if isinstance(t, dict) and str(t.get("name") or "").strip()})
+    return list(merged.values())
+
+
 def format_glossary_block(terms: list[dict[str, Any]]) -> str:
     """The scenario's other proper names as 「・中文名（原文：…）」, to fix their translation; at most
     GLOSSARY_PROMPT_LIMIT, so a long scenario does not grow every prompt without end."""

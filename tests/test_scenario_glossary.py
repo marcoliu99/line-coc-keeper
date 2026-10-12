@@ -106,3 +106,11 @@ def test_a_repair_of_the_same_scenario_keeps_a_rebuilt_glossary():
     context = {"manifest": {"title": "t"}, "text": "x", "indexes": {"npcs": [], "locations": []}, "pregens": []}
     scenario_lifecycle._repair(state, context)
     assert state.scenario_glossary == [TOME]
+
+
+def test_a_rebuild_from_the_active_chapters_keeps_the_other_names():
+    old = [TOME, {"name": "銀色暮光", "aliases": ["Silver Twilight"]}]
+    new = [{"name": "死靈之書", "aliases": ["Necronomicon", "Al Azif"]}, {"name": "黃衣之王", "aliases": ["King in Yellow"]}]
+    merged = scenario_index.merge_glossary(old, new)
+    assert [t["name"] for t in merged] == ["死靈之書", "銀色暮光", "黃衣之王"]
+    assert merged[0]["aliases"] == ["Necronomicon", "Al Azif"]
