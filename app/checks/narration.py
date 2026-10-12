@@ -33,6 +33,17 @@ def match_choice_option(options: list[dict], wanted: str | None) -> dict | None:
     return loose[0] if len(loose) == 1 else None
 
 
+def match_typed_choice(options: list[dict], words: list[str]) -> dict | None:
+    """The option the words after ``/coc check`` name: the whole phrase first, then its first word.
+
+    A label may hold spaces (「以 STR 抓住」, the way the options are listed to the player), and the player types what
+    they read; cutting the line at the first word looked for an option called 「以」. The first word alone still
+    works, so 「/coc check 閃躲 謝謝」 does too."""
+    if not words:
+        return None
+    return match_choice_option(options, " ".join(words)) or match_choice_option(options, words[0])
+
+
 # Code review: this used to be its own independently-maintained copy of
 # dice.TIER_ZH, and had silently drifted from app/discord_bot.py's copy on
 # "regular" ("成功" vs "一般成功"). Now a plain alias to the single source.

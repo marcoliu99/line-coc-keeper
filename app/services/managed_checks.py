@@ -39,7 +39,7 @@ class ManagedCombatChecks:
         args = text.split()
         skill_arg = args[2] if len(args) > 2 else None
         if pending.get("type") == "choice":
-            return self._choose(state, user_id, pending, skill_arg)
+            return self._choose(state, user_id, pending, args[2:])
         if pending.get("type") != "skill" or (
             skill_arg and not narration.skill_names_match(pending.get("skill", ""), skill_arg)
         ):
@@ -100,8 +100,8 @@ class ManagedCombatChecks:
         settled.save_reason = "combat_check"
         return settled
 
-    def _choose(self, state: GroupState, user_id: str, pending: dict, skill_arg: str | None) -> CheckOutcome:
-        option = narration.match_choice_option(pending.get("options", []), skill_arg)
+    def _choose(self, state: GroupState, user_id: str, pending: dict, words: list[str]) -> CheckOutcome:
+        option = narration.match_typed_choice(pending.get("options", []), words)
         if option is None:
             labels = "、".join(o["label"] for o in pending.get("options", []))
             return outcome_for(user_id, pending, reply_text=f"請選擇：{labels}")
