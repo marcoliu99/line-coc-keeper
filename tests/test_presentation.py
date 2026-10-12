@@ -237,6 +237,33 @@ async def test_the_narrator_prompt_carries_the_real_party(monkeypatch) -> None:
 
 
 @aio
+async def test_the_narrator_sees_the_passage_the_executors_retry_was_given() -> None:
+    state = _state(2)
+    message = AgentMessage(payload={
+        "conversation_id": state.group_id, "user_id": "u0", "display_name": "調查員0", "text": "x", "speaker_role": "player",
+        "state": state, "rag_context": "初次檢索的內容", "recovery_context": "補查找到的段落", "memory_context": "",
+        "intent": "PURE_ROLEPLAY", "turn_kind": "player_action",
+    })
+    seen: list[str] = []
+
+    async def run_conversation(static, dynamic, *args, **kwargs):
+        seen.append(dynamic)
+        return "好。"
+
+    session = type("S", (), {
+        "provider": type("P", (), {"run_conversation": staticmethod(run_conversation)})(), "model": "m",
+        "decision_context": False, "dynamic_tools": False, "history": lambda self, log: [],
+        "stage_options": lambda self, stage, **kw: {},
+    })()
+    with patch.object(narrator.ConversationSession, "current", return_value=session), \
+            patch.object(narrator.prompt_builder, "build_static_prompt", return_value=""), \
+            patch.object(narrator.prompt_builder, "build_dynamic_prompt", return_value=""), \
+            patch.object(narrator.prompt_builder, "correction_context_message", return_value=""):
+        await narrator.run_narrator(message)
+    assert "初次檢索的內容" in seen[0] and "【補查結果】" in seen[0] and "補查找到的段落" in seen[0]
+
+
+@aio
 async def test_another_groups_count_in_the_same_reply_is_left_alone() -> None:
     reply, _ = await _reply(_state(5), "敵方有六名探員守在門口，你們六位調查員屏住呼吸。")
     assert "敵方有六名探員" in reply and "你們五位調查員" in reply
