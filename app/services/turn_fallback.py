@@ -280,14 +280,16 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     return "unknown"
 
 
-def _failed_before_any_tool(reason: str | None, result: MechanicResult) -> bool:
-    """The model request itself failed (timeout, CLI error) before a single tool ran, so there is nothing to repeat.
+def _failed_without_a_change(reason: str | None, result: MechanicResult) -> bool:
+    """The model request itself failed (timeout, CLI error, a decision the provider could not parse twice) and the
+    game is as it was; ``recoverable`` still requires that every tool it ran only looked something up.
 
-    Real runs lost turns this way after 52-120 s with no tool call at all. ``execution_health == "failed"`` is only
-    set when the game state is also unchanged; a failure after any tool call stays a fallback.
+    Real runs lost turns this way after 52-120 s with no tool call at all, and in the 2026-10-12 soak a shot at Billy
+    ended 「系統發生內部錯誤」 after ``get_enemy_stat_block``, a look-up the retry would only have repeated.
+    ``execution_health`` is "failed" with no tool outcome, "partial" once one succeeded; "recovery_required" means
+    the game state changed, and a failure after a tool that failed is a ``tool_failure``, not this.
     """
-    return (reason == "internal_error" and result.execution_health == "failed"
-            and not result.tool_calls and not result.observed_outcomes)
+    return reason == "internal_error" and result.execution_health in {"failed", "partial"}
 
 
 def recoverable(reason: str | None, result: MechanicResult, *, before_pending: dict, before_luck: dict, state: GroupState) -> bool:
@@ -306,11 +308,12 @@ def recoverable(reason: str | None, result: MechanicResult, *, before_pending: d
 
     status = result.check_status
     return bool(
-        (reason in RECOVERABLE or _failed_before_any_tool(reason, result))
+        (reason in RECOVERABLE or _failed_without_a_change(reason, result))
         and not status.get("state_changed") and not status.get("dice_rolled") and not status.get("resolved")
         and state.pending_checks == before_pending and state.pending_luck_decisions == before_luck
         and not result.events
         and all(outcome.tool_name in registry.READ_ONLY_TOOL_NAMES for outcome in result.observed_outcomes)
+        and all(name in registry.READ_ONLY_TOOL_NAMES for name, _ in result.tool_calls)
     )
 
 
