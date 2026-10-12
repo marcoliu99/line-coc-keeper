@@ -527,6 +527,19 @@ def explains_in_story(result: MechanicResult | None, state: GroupState | None = 
     )
 
 
+def fight_started_cleanly(result: MechanicResult) -> bool:
+    """Whether the fight began and the only thing left unfinished is the Executor's reference to a check that does not exist.
+
+    The Executor opened the fight with its tools, then handed the turn over naming a check or Luck decision nobody had
+    (「要求處理的檢定／Luck 決定不存在」, the Haunting 2026-10-12 rerun3 turn 28). The narration says the fight has begun and
+    whose turn it is; 「這次行動尚未完整處理…請依目前劇情重新操作」 after it told the table to start again."""
+    status = result.check_status
+    return bool(
+        status.get("combat_opened") and result.fallback_reason == "state_conflict"
+        and not (status.get("pending") or status.get("pending_luck") or status.get("dice_rolled") or status.get("resolved"))
+    )
+
+
 def narration_replaced(result: MechanicResult | None, state: GroupState | None = None) -> bool:
     """Whether ``enforce_mechanic_check_consistency`` answers this turn with fixed text whatever the Narrator says, so
     running the Narrator (about 5 s) buys nothing: an incomplete or blocked turn that did not open a fight, a deferral
@@ -563,6 +576,8 @@ def enforce_mechanic_check_consistency(
                 # A refusal that says why and what to do (an empty gun) is the whole answer, not a tool failure.
                 return "\n".join(confirmed)
             if explains_in_story(result, state) and text.strip():
+                return text
+            if fight_started_cleanly(result) and text.strip():
                 return text
             owed = _unfinished_reply(result, resolution, state, warning, confirmed).rstrip()
             if not (status.get("combat_opened") and text.strip()):
