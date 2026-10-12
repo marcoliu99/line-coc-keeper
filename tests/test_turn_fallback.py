@@ -469,7 +469,7 @@ def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_abo
         active=True, round_number=2, current_index=1, phase="READY",
         order=[Combatant(name="鼠群", side="enemy", hp=5, hp_max=5), Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)],
     )
-    result = _result("blocked", fallback_reason="unsupported_action")
+    result = _result("blocked", fallback_reason="unsupported_action", scenario_evidence=PASSAGE)
     reply = prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
     assert "現在輪到「小雨」行動" in reply and "劇本" not in reply and "鼠群" not in reply
     state.combat.phase = "SETTLEMENT"
@@ -478,7 +478,9 @@ def test_a_refused_turn_in_a_battle_says_whose_turn_it_is_instead_of_talking_abo
     state.combat.order[0].defeated = True
     assert "敵方已全數倒下" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
     state.combat.active = False
-    assert "劇本" in prompt_config.enforce_mechanic_check_consistency("narration", result, state=state)
+    assert prompt_config.enforce_mechanic_check_consistency("narration", result, state=state) == "narration"  # told in the story
+    assert "劇本" in prompt_config.enforce_mechanic_check_consistency(
+        "narration", _result("blocked", fallback_reason="no_scenario_evidence"), state=state)
     assert turn_fallback.combat_guidance(state, "tool_failure") == ""
 
 
@@ -545,3 +547,143 @@ def test_the_generic_roll_line_is_not_repeated_after_a_reply_that_gives_the_comm
     assert not ref.told_in("想回到上個存檔點，用 /coc checkpoint。")  # another command, not the roll
     assert not ref.told_in("輸入 /coc check偵查 擲骰。")  # not a command the router reads
     assert ref.told_in("請輸入 /coc check。") and ref.told_in("輸入 /coc check")
+
+
+# --- an action the scenario cannot do is explained in the story ---------------------------------------------------
+
+PASSAGE = ("--- 原稿補查 · 第 4 頁 ---\n穆斯科比沒有圖書館；最近的在二十英里外的 Appleford。",)
+
+
+def _cannot_be_done(**status: Any) -> MechanicResult:
+    return _result("blocked", "validated", fallback_reason="unsupported_action", scenario_evidence=PASSAGE,
+                   check_status={"tool_called": True, "pending": None, **status})
+
+
+def test_an_action_the_scenario_cannot_do_is_answered_by_the_narrator_not_the_fixed_refusal() -> None:
+    # Scritch-Scratch rerun3: 「去村裡的圖書館」 (the village has none) was explained four times, then refused in fixed text.
+    result = _cannot_be_done()
+    assert prompt_config.explains_in_story(result) and not prompt_config.narration_replaced(result)
+    story = "穆斯科比沒有圖書館；最近的在二十英里外的 Appleford。"
+    assert prompt_config.enforce_mechanic_check_consistency(story, result) == story
+    assert "【這個行動在劇本裡無法進行】" in prompt_config.build_mechanic_facts_block(result)
+    assert "目前無法繼續" in prompt_config.enforce_mechanic_check_consistency("", result)  # no narration: the fixed text stays
+
+
+@pytest.mark.parametrize("status", [
+    {"dice_rolled": True}, {"resolved": True}, {"state_changed": True}, {"combat_opened": True},
+    {"pending": {"investigator": "小雨", "skill": "偵查"}}, {"pending_luck": {"investigator": "小雨"}},
+    {"scenario_evidence_blocked": True},
+])
+def test_a_blocked_turn_that_did_anything_keeps_the_fixed_text(status: dict[str, Any]) -> None:
+    result = _cannot_be_done(**status)
+    assert not prompt_config.explains_in_story(result)
+
+
+def test_other_reasons_and_a_running_battle_keep_the_fixed_text() -> None:
+    assert not prompt_config.explains_in_story(_result("blocked", "validated", fallback_reason="no_scenario_evidence"))
+    assert not prompt_config.explains_in_story(_result("incomplete", "model_incomplete", fallback_reason="unsupported_action"))
+    state = _state()
+    state.combat = CombatState(active=True, round_number=1, current_index=0, phase="READY",
+                               order=[Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)])
+    assert not prompt_config.explains_in_story(_cannot_be_done(), state) and prompt_config.narration_replaced(_cannot_be_done(), state)
+
+
+@aio
+async def test_what_the_first_attempt_found_reaches_the_narrator_when_the_retry_found_nothing() -> None:
+    locked = "--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。"
+    first = _result("blocked", "validated", scenario_evidence=(locked,),
+                    check_status={"tool_called": True, "pending": None})
+    retry = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    _, run_executor, _, message = await _turn(_state(), [first, retry])
+    assert run_executor.await_count == 2
+    assert message.payload["first_attempt_evidence"] == locked
+
+
+@aio
+async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
+    found = ("--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。",)
+    first = _result("blocked", "validated", scenario_evidence=found)
+    retry = _result("blocked", "validated", scenario_evidence=found)
+    _, _, _, message = await _turn(_state(), [first, retry])
+    assert "first_attempt_evidence" not in message.payload
+
+
+def test_what_the_first_attempt_found_counts_as_evidence_for_the_status_and_the_obligations() -> None:
+    from app.agents import supervisor
+    bare = AgentMessage(payload={"rag_status": "empty", "rag_context": ""})
+    assert supervisor._evidence_status(bare) == "empty" and supervisor._evidence_text(bare) == ""
+    carried = AgentMessage(payload={"rag_status": "empty", "rag_context": "", "first_attempt_evidence": "門是鎖著的。"})
+    assert supervisor._evidence_status(carried) == "success" and "門是鎖著的。" in supervisor._evidence_text(carried)
+
+
+def test_an_empty_search_is_not_evidence_that_an_action_cannot_be_done() -> None:
+    # scenario_rag answers an empty search with 「（沒有找到相關內容）」, a successful call with a non-empty result.
+    empty = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    scenario_evidence=("（沒有找到相關內容）",), check_status={"tool_called": True, "pending": None})
+    assert not prompt_config.explains_in_story(empty) and turn_fallback.found_scenario_text(_cannot_be_done())
+    assert not turn_fallback.found_scenario_text(empty)
+    assert "目前無法繼續" in prompt_config.enforce_mechanic_check_consistency("故事", empty)
+
+
+@aio
+async def test_the_first_attempts_passage_counts_for_the_retry_that_found_nothing() -> None:
+    first = _result("blocked", "validated", scenario_evidence=PASSAGE, check_status={"tool_called": True, "pending": None})
+    retry = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [first, retry])
+    assert PASSAGE[0] in retry.scenario_evidence
+
+
+@aio
+async def test_the_passage_the_recovery_search_found_counts_for_a_retry_that_searched_nothing() -> None:
+    first = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    retry = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [first, retry], rag_status="empty", search=("--- 第 4 頁 ---\n門是鎖著的。", "success"))
+    assert turn_fallback.found_scenario_text(retry) and prompt_config.explains_in_story(retry)
+
+
+@aio
+async def test_what_the_narrator_suggests_instead_of_an_action_the_scenario_cannot_do_owes_nothing() -> None:
+    # The passage may attach a Sanity loss or damage to the alternative; suggesting it is not it happening.
+    from unittest.mock import patch
+    gate = MagicMock(return_value=True)
+    with patch.object(supervisor.obligation_gate, "possible", gate):
+        await _turn(_state(), [_cannot_be_done(), _cannot_be_done()], narration="去山洞入口看看吧。")
+        assert not gate.called
+        gate.reset_mock()
+        await _turn(_state(), [_result("resolved", "validated", scenario_evidence=PASSAGE)], narration="好。")
+        assert gate.called  # any other turn is still asked
+
+
+@aio
+async def test_the_passage_retrieval_already_gave_counts_when_the_executor_did_not_search_again() -> None:
+    # The Executor is told to reuse the proactive passage instead of calling search_scenario.
+    first = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    last = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [first, last], rag_status="success")
+    assert turn_fallback.found_scenario_text(last) and prompt_config.explains_in_story(last)
+    nothing = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [nothing, nothing], rag_status="empty")
+    assert not turn_fallback.found_scenario_text(nothing)  # no retrieved passage, nothing to explain from
+
+
+@aio
+async def test_an_empty_search_of_the_first_attempt_is_not_carried_as_evidence() -> None:
+    first = _result("blocked", "validated", scenario_evidence=("（沒有找到相關內容）",),
+                    check_status={"tool_called": True, "pending": None})
+    retry = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    check_status={"tool_called": False, "pending": None})
+    _, _, _, message = await _turn(_state(), [first, retry], rag_status="empty")
+    assert "first_attempt_evidence" not in message.payload and not turn_fallback.found_scenario_text(retry)
+
+
+@aio
+async def test_a_narrator_that_failed_does_not_stand_in_for_the_explanation() -> None:
+    # run_narrator answers a failed request with a notice that says submitted changes are kept; this turn changed nothing.
+    async def failing(message):
+        message.payload["narration_failed"] = True
+        return "守密人暫時無法完成敘事。已提交的變更會保留。", [], []
+
+    reply, *_ = await _turn(_state(), [_cannot_be_done(), _cannot_be_done()], narrator=failing)
+    assert "已提交的變更會保留" not in reply and "目前無法繼續" in reply

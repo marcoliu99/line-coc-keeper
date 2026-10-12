@@ -93,14 +93,17 @@ _DEGRADED_RAG = frozenset({"empty", "fallback", "timeout", "error"})
 
 
 def _evidence_status(message: AgentMessage) -> str:
-    """The retrieval status as the Executor saw it: a successful recovery search counts as evidence."""
-    return "success" if message.payload.get("recovery_context") else message.payload.get("rag_status", "")
+    """The retrieval status as the Executor saw it: a successful recovery search, or what a discarded first attempt
+    found, counts as evidence."""
+    found = message.payload.get("recovery_context") or message.payload.get("first_attempt_evidence")
+    return "success" if found else message.payload.get("rag_status", "")
 
 
 def _evidence_text(message: AgentMessage) -> str:
     """The scenario text the turn had, including what the one recovery search found."""
     return "\n\n".join(part for part in (message.payload.get("rag_context", ""),
-                                          message.payload.get("recovery_context", "")) if part)
+                                          message.payload.get("recovery_context", ""),
+                                          message.payload.get("first_attempt_evidence", "")) if part)
 
 
 def _time_for_retry() -> bool:
@@ -151,6 +154,15 @@ async def _recover_blocked_turn(
     if reason == "internal_error" and not _time_for_retry():  # the recovery search above may have spent the margin
         return result, reason, "not_attempted"
     retry = await executor.run_executor(message)
+    # What the first attempt found in the scenario is lost with it; the Narrator, who may be asked to explain a refusal
+    # from it, is handed what the retry did not find again.
+    carried = [text for text in result.scenario_evidence
+               if turn_fallback.is_passage(text) and text not in retry.scenario_evidence]  # not an empty search's placeholder
+    if carried:
+        message.payload["first_attempt_evidence"] = "\n\n".join(carried)
+        retry.scenario_evidence = (*carried, *retry.scenario_evidence)
+    if (found := message.payload.get("recovery_context", "")) and found not in retry.scenario_evidence:
+        retry.scenario_evidence = (*retry.scenario_evidence, found)  # the recovery search's passage is evidence too
     if turn_fallback.classify(retry, state, user_id, rag_status=_evidence_status(message)) is None:
         return retry, reason, "recovered"
     return retry, reason, "unresolved"
@@ -313,6 +325,11 @@ async def _mechanics(turn: _Turn) -> None:
         fallback_reason = turn_fallback.classify(
             mechanic_result, state, user_id, rag_status=_evidence_status(message))
         mechanic_result.fallback_reason = fallback_reason
+        if (fallback_reason == "unsupported_action" and _evidence_status(message) == "success"
+                and (retrieved := message.payload.get("rag_context", "")) and retrieved not in mechanic_result.scenario_evidence):
+            # The Executor is told to reuse the passage retrieval already gave it rather than search again; that passage is
+            # the evidence the refusal rests on, and the explanation gate looks for it among the result's own.
+            mechanic_result.scenario_evidence = (*mechanic_result.scenario_evidence, retrieved)
         if fallback_reason or recovery == "recovered":
             turn_fallback.record(
                 fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn.turn_id,
@@ -359,6 +376,8 @@ async def _mechanics(turn: _Turn) -> None:
     turn.obligation_candidates = (
         turn.turn_kind in {"player_action", "resolved_check_followup"}
         and not (turn.pending_reply and not turn.autoroll_followups)
+        # An action the scenario cannot do is explained in the story: what the Narrator suggests instead did not happen.
+        and not prompt_config.explains_in_story(mechanic_result, state)
         and obligation_gate.possible(turn.obligation_evidence, mechanic_result)
     )
     if (turn.handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
@@ -385,7 +404,7 @@ async def _narrate(turn: _Turn) -> TurnReply | None:
         image_requests: list[tuple[str | None, int]] = []
         observability.event('narrator.pending_reused', status='skipped')
     elif (not turn.autoroll_followups and turn.turn_kind == "player_action"
-          and prompt_config.narration_replaced(turn.mechanic_result)):
+          and prompt_config.narration_replaced(turn.mechanic_result, turn.state)):
         # The reply is fixed text whatever the Narrator would say (the action could not finish): the consistency
         # step writes it, and the Narrator's round trip is not spent to be thrown away. What the Executor's tools
         # already produced for players (a private clue, an image) is still delivered, as the Narrator would have.
@@ -415,6 +434,8 @@ async def _narrate(turn: _Turn) -> TurnReply | None:
     if turn.turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
+    if message.payload.get("narration_failed") and prompt_config.explains_in_story(turn.mechanic_result, state):
+        reply_text = ""  # the failure notice is no explanation, and says changes were kept; the fixed refusal answers instead
     turn.narration = (reply_text, private_messages, image_requests)
     return None
 

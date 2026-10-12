@@ -46,6 +46,10 @@ async def run_narrator(message: AgentMessage) -> tuple[str, list[tuple[str, str]
     intent = message.payload.get("intent", "PURE_ROLEPLAY")
     mechanic_result: MechanicResult | None = message.payload.get("mechanic_result")
     rag_context = message.payload.get("rag_context", "")
+    if recovery_context := message.payload.get("recovery_context", ""):  # the passage the Executor's retry was given
+        rag_context = (rag_context + "\n\n" if rag_context else "") + "【補查結果】\n" + recovery_context
+    if earlier := message.payload.get("first_attempt_evidence", ""):  # found by the attempt the retry replaced
+        rag_context = (rag_context + "\n\n" if rag_context else "") + "【前次查到的劇本段落】\n" + earlier
     memory_context = message.payload.get("memory_context", "")
     turn_kind = message.payload.get("turn_kind", "player_action")
     tool_enabled = turn_kind in {"resolved_check_followup", "opening_fallback"}

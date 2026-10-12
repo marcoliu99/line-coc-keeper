@@ -144,6 +144,7 @@ class TurnPayload(TypedDict, total=False):
     resolved_check_context: dict[str, Any]
     mechanic_result: MechanicResult
     recovery_context: str  # the one targeted search made after a recoverable fallback
+    first_attempt_evidence: str  # what the Executor attempt a recovery replaced had found in the scenario
     # executor: what its tools produced for the player
     private_messages: list[tuple[str, str]]
     image_requests: list[tuple[str | None, int]]

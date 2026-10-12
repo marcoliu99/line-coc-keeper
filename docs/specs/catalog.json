@@ -3195,6 +3195,20 @@
       "path": "docs/specs/enhancement/choice_label_with_spaces_design_spec.md",
       "zh_path": "docs/specs/enhancement/choice_label_with_spaces_design_spec_zh.md",
       "source_revision": "9666a864930986525cf43518b8dbc62d719347cd"
+    },
+    {
+      "title": "An action the scenario cannot do is explained in the story",
+      "zh": "劇本做不到的行動，用故事說明",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "app/agents/supervisor.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/explain_blocked_in_story_design_spec.md",
+      "zh_path": "docs/specs/enhancement/explain_blocked_in_story_design_spec_zh.md",
+      "source_revision": "c46e34105088177c817b21ea386c47989cd7fcfa"
     }
   ]
 }

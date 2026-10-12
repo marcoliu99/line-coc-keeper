@@ -17,7 +17,7 @@ from app.domain.models import FALLBACK_REASONS, FallbackReason, MechanicResult
 from app.models import GroupState
 from app.services import turn_phases
 
-__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "guidance", "record", "recoverable", "recovery_query", "scene_hints"]
+__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "found_scenario_text", "guidance", "is_passage", "record", "recoverable", "recovery_query", "scene_hints"]
 
 # What the player is told when the turn has no more specific wording; every reason has one.
 _GUIDANCE: dict[str, str] = {
@@ -234,6 +234,19 @@ def _has_scenario_evidence(result: MechanicResult, rag_status: str, state: Group
     # "disabled" means retrieval was off or skipped, not that nothing was found: the whole scenario is in the prompt.
     return (rag_status == "success" or (rag_status == "disabled" and bool(state.scenario_text))
             or any(name == "search_scenario" and ok for name, ok in result.tool_calls))
+
+
+def found_scenario_text(result: MechanicResult) -> bool:
+    """Whether a scenario search of this turn returned an actual passage, not only 「沒有找到相關內容」.
+
+    A passage carries its page header; the placeholder for an empty search does not, though it is a successful tool
+    call with a non-empty result."""
+    return any(is_passage(text) for text in result.scenario_evidence)
+
+
+def is_passage(text: str) -> bool:
+    """Whether a search result holds an actual passage (it carries its page header), not the empty-search placeholder."""
+    return bool(_HEADER.search(text))
 
 
 def _waiting(state: GroupState, user_id: str) -> bool:
