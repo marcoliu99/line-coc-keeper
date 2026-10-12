@@ -121,3 +121,24 @@ def test_a_rebuild_from_the_active_chapters_keeps_the_other_names():
 def test_a_term_found_again_under_another_translation_keeps_its_first_name():
     merged = scenario_index.merge_glossary([TOME], [{"name": "亡靈之書", "aliases": ["Necronomicon"]}])
     assert merged == [{"name": "死靈之書", "aliases": ["Necronomicon", "亡靈之書"], "kind": "書籍"}]
+
+def test_an_incomplete_location_index_still_keeps_the_names_it_found():
+    import asyncio
+
+    from app.commands.handlers import system as system_handler
+    text = "\n".join(f"LOCATION {n}: place {n}\nbody" for n in range(1, 6))
+    state = GroupState(group_id="g", scenario_text=text, scenario_location_index=[{"name": f"old {n}"} for n in range(5)])
+    index = {"npcs": [], "locations": [{"name": "new"}], "terms": [TOME]}
+
+    async def reply(text: str) -> None:
+        return None
+
+    async def noop(*args) -> None:
+        return None
+
+    with patch.object(system_handler, "load_state", return_value=state), \
+            patch("app.repositories.state_transaction.commit_snapshot") as commit, \
+            patch.object(system_handler.scenario_index, "extract_scenario_index", return_value=index):
+        asyncio.run(system_handler.handle_system_command("g", "kp-1", reply, noop, noop, noop, ["/coc", "index"]))
+    commit.assert_called_once()
+    assert len(state.scenario_location_index) == 5 and state.scenario_glossary == [TOME]
