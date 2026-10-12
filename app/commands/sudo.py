@@ -45,6 +45,7 @@ _FORBIDDEN_COMMANDS = frozenset({
     "alloc",
     "combat",
     "create",
+    "dict",
     "end",
     "era",
     "index",

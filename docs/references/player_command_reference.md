@@ -479,6 +479,17 @@ Usage:
 Notes:
 - Requires the current KP Assistant.
 
+### View what the dictionary learned **[KP-only]**
+
+List the occupations, skills and name translations the dictionary learned by itself, and remove a wrong one. The dictionary is shared by every group.
+
+Usage:
+- `/coc dict`
+- `/coc dict forget <original or translation>`
+
+Notes:
+- Requires the current KP Assistant. The built-in COC7 translations can't be removed with a command.
+
 ### View scene digest **[KP-only]**
 
 View the current or specified scene digest.

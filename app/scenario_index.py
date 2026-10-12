@@ -20,7 +20,7 @@ import logging
 import re
 from typing import Any
 
-from app import observability
+from app import dictionary, observability
 from app.providers.registry import conversation_provider
 from app.scenario_glossary import (
     merge_glossary,  # noqa: F401  (re-exported for its callers)
@@ -133,12 +133,40 @@ def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]
         scenario_text,
         _REPORT_TOOL,
         "以下是一份 COC7e 劇本的文字內容。請找出裡面所有有明確數值（尤其是生命值 HP）的 "
-        "NPC／怪物、主要的地點，以及其他有名字的專有名詞（固定譯名用），用 report_scenario_index 工具回報。",
+        "NPC／怪物、主要的地點，以及其他有名字的專有名詞（固定譯名用），用 report_scenario_index 工具回報。"
+        + _known_names(scenario_text),
     )
     if not result:
         return {"npcs": [], "locations": []}
-    return {"npcs": result.get("npcs") or [], "locations": result.get("locations") or [],
-            "terms": [t for t in result.get("terms") or [] if isinstance(t, dict) and str(t.get("name") or "").strip()]}
+    terms = [t for t in result.get("terms") or [] if isinstance(t, dict) and str(t.get("name") or "").strip()]
+    _settle_term_names(terms)
+    try:
+        dictionary.learn_terms(terms)
+    except Exception:  # learning is a bonus: a dictionary that cannot be written must not fail the upload
+        logging.getLogger(__name__).warning("dictionary could not learn the scenario's terms", exc_info=True)
+    return {"npcs": result.get("npcs") or [], "locations": result.get("locations") or [], "terms": terms}
+
+
+def _known_names(scenario_text: str) -> str:
+    """The dictionary's names for the terms this scenario uses, added to the instruction, so the model's translations
+    start from the names the project already writes (「Deep One」 is 深潛者 in every scenario)."""
+    hits = dictionary.glossary_hits(scenario_text)
+    if not hits:
+        return ""
+    return ("\n\n以下是這份劇本用到、而且本專案已有固定繁體中文譯名的詞。NPC、地點、專有名詞的名稱遇到它們時，"
+            "一律照這個譯名寫（括號內是劇本原文的寫法）：\n"
+            + "\n".join(f"・{zh}（{spelling}）" for spelling, zh in hits))
+
+
+def _settle_term_names(terms: list[dict[str, Any]]) -> None:
+    """A term the dictionary already names gets that name, whatever the model chose. The dictionary is asked for
+    the term's name and each spelling the model gave; when they point to different names the model's choice stays,
+    since nothing says which is right."""
+    for term in terms:
+        names = {dictionary.lookup_term(str(s)) for s in (term.get("name"), *(term.get("aliases") or [])) if str(s or "").strip()}
+        names.discard(None)
+        if len(names) == 1:
+            term["name"] = next(iter(names))
 
 
 # A heading line only: prose such as "Proceed to Location 2, 3 or 4" or "see Location 5" never matches.

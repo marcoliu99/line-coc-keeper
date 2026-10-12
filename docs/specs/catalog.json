@@ -3101,6 +3101,22 @@
       "path": "docs/specs/enhancement/scenario_glossary_design_spec.md",
       "zh_path": "docs/specs/enhancement/scenario_glossary_design_spec_zh.md",
       "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
+    },
+    {
+      "title": "The dictionary names the lore, learns it carefully, and can be corrected",
+      "zh": "字典會用上神話名詞、謹慎地學、而且可以更正",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/dictionary.py",
+        "app/scenario_index.py",
+        "app/commands/handlers/system.py",
+        "app/help_registration.py",
+        "tests/test_dictionary_learning.py"
+      ],
+      "path": "docs/specs/enhancement/dictionary_terms_and_learning_design_spec.md",
+      "zh_path": "docs/specs/enhancement/dictionary_terms_and_learning_design_spec_zh.md",
+      "source_revision": "9d9ce93d073df074655ac662710411805cf31ea0"
     }
   ]
 }
