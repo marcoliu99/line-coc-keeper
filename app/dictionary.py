@@ -19,7 +19,9 @@ deployment benefits from learning once.
 """
 from __future__ import annotations
 
+import json
 import threading
+from pathlib import Path
 
 from app import db
 
@@ -86,12 +88,62 @@ _SEED_SKILLS: dict[str, str] = {
     "own language": "母語",
 }
 
+def _normalize(term: str) -> str:
+    return " ".join((term or "").strip().lower().split())
+
+
+# CoC7 terms as the community translations write them, in Traditional and Simplified Chinese (see the file's own
+# sources). Every spelling a skill entry carries resolves to its "canonical", this project's own skill name, so a player
+# who types 侦查, 話術 or 喬裝 reaches 偵查, 快速交談 or 偽裝; the other categories form the "terms" table, each spelling to
+# the one Traditional name this project writes.
+_GLOSSARY = Path(__file__).with_name("data") / "coc7_glossary.json"
+
+
+def _spellings(entry: dict) -> list[str]:
+    return [str(s) for s in (entry.get("en"), entry.get("zh_tw"), entry.get("zh_cn"),
+                             *(entry.get("alt_zh_tw") or []), *(entry.get("alt_zh_cn") or [])) if s]
+
+
+def _glossary_tables() -> dict[str, dict[str, str]]:
+    """The glossary's spellings by table. A spelling of one character (斧, 劍) or one that two entries claim is left
+    out: neither can name one thing for certain, and a skill's spellings never include a characteristic's."""
+    try:
+        entries = json.loads(_GLOSSARY.read_text(encoding="utf-8")).get("entries", [])
+    except (OSError, ValueError):
+        return {"skills": {}, "terms": {}}
+    characteristics = {_normalize(s) for e in entries if e.get("category") == "characteristic" for s in _spellings(e)}
+    tables: dict[str, dict[str, str]] = {"skills": {}, "terms": {}}
+    claimed: dict[str, set[str]] = {"skills": set(), "terms": set()}
+    ambiguous: dict[str, set[str]] = {"skills": set(), "terms": set()}
+    for entry in entries:
+        canonical = str(entry.get("canonical") or "")
+        table = "skills" if entry.get("category") == "skill" else "terms"
+        if not canonical:
+            continue
+        for spelling in _spellings(entry):
+            key = _normalize(spelling)
+            if len(key) < 2:
+                continue
+            if table == "skills" and key in characteristics:
+                continue
+            if key in claimed[table] and tables[table][key] != canonical:
+                ambiguous[table].add(key)
+            claimed[table].add(key)
+            tables[table][key] = canonical
+    for table, keys in ambiguous.items():
+        for key in keys:
+            tables[table].pop(key, None)
+    return tables
+
+
 # occupations/character_aliases deliberately start empty — unlike skills,
 # these aren't a closed official list (a scenario can invent any occupation
 # or character name), so there's nothing sensible to pre-seed; they grow
 # purely from what callers actually learn while resolving real uploads.
+_GLOSSARY_TABLES = _glossary_tables()
 _INITIAL: dict[str, dict[str, str]] = {
-    "skills": dict(_SEED_SKILLS),
+    "skills": {**_GLOSSARY_TABLES["skills"], **_SEED_SKILLS},
+    "terms": dict(_GLOSSARY_TABLES["terms"]),
     "occupations": {},
     "character_aliases": {},
 }
@@ -106,10 +158,6 @@ _INITIAL: dict[str, dict[str, str]] = {
 _lock = threading.Lock()
 
 
-def _normalize(term: str) -> str:
-    return " ".join((term or "").strip().lower().split())
-
-
 def _load() -> dict:
     data = db.get_json(_TABLE, _KEY)
     if not isinstance(data, dict):
@@ -119,8 +167,11 @@ def _load() -> dict:
         # state transactions, where a second connection cannot initialize
         # this table without contending for the writer lock. _learn persists
         # the initial dictionary when an alias is actually added.
-        data = {k: dict(v) for k, v in _INITIAL.items()}
-    return data
+        data = {}
+    # The built-in tables sit under what this deployment has stored or learned, which wins: a dictionary saved before
+    # the glossary existed still answers its spellings.
+    return {k: {**_INITIAL.get(k, {}), **(v if isinstance(v, dict) else {})}
+            for k, v in {**{k: {} for k in _INITIAL}, **data}.items()}
 
 
 def _lookup(category: str, term: str) -> str | None:
@@ -143,6 +194,12 @@ def lookup_skill(name: str) -> str | None:
 
 def learn_skill(name: str, canonical: str) -> None:
     _learn("skills", name, canonical)
+
+
+def lookup_term(name: str) -> str | None:
+    """The one Traditional Chinese name this project writes for a CoC7 term, characteristic, Mythos being, tome or
+    place, from any spelling the glossary has (Necronomicon, 死灵之书 → 死靈之書)."""
+    return _lookup("terms", name)
 
 
 def lookup_occupation(name: str) -> str | None:
