@@ -67,7 +67,7 @@ _REPORT_TOOL = {
                         },
                         "page": {"type": "integer", "description": "這個條目數值主要出現在劇本的第幾頁，找不到就填 0"},
                     },
-                    "required": ["name"],
+                    "required": ["name", "aliases"],
                 },
             },
             "locations": {
@@ -85,7 +85,7 @@ _REPORT_TOOL = {
                         "summary": {"type": "string", "description": "一到兩句話的簡短描述，只摘要劇本原文，不要自己延伸"},
                         "page": {"type": "integer", "description": "主要描述出現在第幾頁，找不到就填 0"},
                     },
-                    "required": ["name"],
+                    "required": ["name", "aliases"],
                 },
             },
             "terms": {
