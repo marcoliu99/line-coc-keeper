@@ -50,7 +50,7 @@ _logger = logging.getLogger(__name__)
 PostTurnHook = turn_scope.PostTurnHook
 
 _CHARACTER_COMMANDS = {"pc", "sheet", "setskill", "setconnection", "create", "alloc", "pregens", "pregen", "usepregen", "switch", "characters", "retire"}
-_SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests", "autoroll"}
+_SYSTEM_COMMANDS = {"newgame", "pdf", "kp", "scenario", "status", "end", "setpersona", "era", "index", "dict", "away", "back", "start", "checkpoint", "checkpoints", "rollback", "digest", "digests", "autoroll"}
 _MAP_COMMANDS = {"showpage", "where", "enter", "leavemap"}
 
 

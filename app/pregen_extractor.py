@@ -466,7 +466,10 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
     the project ever called them, so the dictionary could only ever be as
     good as its initial seed (see app/data/coc7_glossary/) and would
     never actually grow from real scenario extractions the way its own
-    "self-learning" name promises.
+    "self-learning" name promises. A pair that disagrees with the built-in
+    glossary, or with what was learned first, is not stored (see
+    dictionary._learn); the KP can review and remove learned entries with
+    /coc dict.
 
     Collapses occupation_original/occupation_translated back into a single
     "occupation" key afterward — every other caller (pregen_to_character,

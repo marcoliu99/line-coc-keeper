@@ -10,6 +10,7 @@ from typing import Any, Literal
 from app import (
     character_matcher,
     checkpoints,
+    dictionary,
     observability,
     prompt_builder,
     scenario_authoring,
@@ -864,6 +865,49 @@ async def _index_command(call: _Call) -> None:
     return
 
 
+_DICT_CATEGORIES = {"skills": "技能", "occupations": "職業", "character_aliases": "角色名", "terms": "名詞"}
+_DICT_SOURCES = {"pregen": "角色卡", "match": "角色比對", "scenario": "劇本"}
+_DICT_LIST_LIMIT = 25
+
+
+async def _dict_command(call: _Call) -> None:
+    """/coc dict | /coc dict forget <詞> (KP only): what the dictionary has learned, and removing a wrong entry."""
+    conversation_id, user_id, reply, parts = call.conversation_id, call.user_id, call.reply, call.parts
+    if not permissions.is_kp(load_state(conversation_id), user_id):
+        # Learned names can come from the scenario (a monster's name is a spoiler), so players do not see the list.
+        await reply(permissions.kp_only("查看或修改字典"))
+        return
+    if len(parts) > 2 and parts[2].casefold() == "forget":
+        term = " ".join(parts[3:]).strip()
+        if not term:
+            await reply("用法：/coc dict forget <原文或譯名>")
+            return
+        removed = await asyncio.to_thread(dictionary.forget, term)
+        if removed:
+            lines = [f"・{_DICT_CATEGORIES.get(e.category, e.category)}　{e.term} → {e.canonical}" for e in removed]
+            await reply("已從字典移除（所有群組共用）：\n" + "\n".join(lines))
+            return
+        built_in = dictionary.built_in_name(term)
+        if built_in:
+            await reply(f"「{term}」是內建詞條（→ {built_in}），不能用指令移除；要修改請編輯 app/data/coc7_glossary/ 裡對應的檔案。")
+            return
+        await reply(f"字典裡沒有學到「{term}」。用 /coc dict 查看學到的內容。")
+        return
+    entries = await asyncio.to_thread(dictionary.learned_entries)
+    if not entries:
+        await reply("字典目前沒有學到新的詞；內建的 COC7 譯名不在這裡列出。")
+        return
+    lines = []
+    for e in entries[:_DICT_LIST_LIMIT]:
+        origin = "、".join(x for x in (_DICT_SOURCES.get(e.source, e.source), e.at[:10]) if x)
+        lines.append(f"・{_DICT_CATEGORIES.get(e.category, e.category)}　{e.term} → {e.canonical}" + (f"（{origin}）" if origin else ""))
+    more = f"\n…還有 {len(entries) - _DICT_LIST_LIMIT} 筆沒有列出。" if len(entries) > _DICT_LIST_LIMIT else ""
+    await reply(
+        f"字典學到的內容（所有群組共用，共 {len(entries)} 筆，最新在前）：\n" + "\n".join(lines) + more
+        + "\n\n學錯的用 /coc dict forget <原文或譯名> 移除；內建的 COC7 譯名不在這裡，不能用指令移除。"
+    )
+
+
 async def _away_command(call: _Call) -> None:
     """/coc away"""
     conversation_id, user_id, reply = call.conversation_id, call.user_id, call.reply
@@ -951,6 +995,7 @@ _COMMANDS: dict[str, Callable[[_Call], Awaitable[None]]] = {
     "setpersona": _setpersona_command,
     "era": _era_command,
     "index": _index_command,
+    "dict": _dict_command,
     "away": _away_command,
     "back": _back_command,
     "start": _start_command,

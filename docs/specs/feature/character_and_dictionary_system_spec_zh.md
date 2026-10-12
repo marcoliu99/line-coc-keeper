@@ -10,7 +10,7 @@
 
 ## 現行契約
 
-1. Discord 將 role_、map_ 輸入分送適當解析器（沒有 dict_ 上傳：字典只從抽取與比對學到的內容增長），劇本 PDF 走可重用劇本庫；檔名分流不授權玩家覆蓋無關活躍狀態。
+1. Discord 將 role_、map_ 輸入分送適當解析器（沒有 dict_ 上傳：字典只從抽取與比對學到的內容增長，把關規則與 KP 的 `/coc dict` 檢視見 [dictionary_terms_and_learning_design_spec_zh.md](../enhancement/dictionary_terms_and_learning_design_spec_zh.md)），劇本 PDF 走可重用劇本庫；檔名分流不授權玩家覆蓋無關活躍狀態。
 
 2. 角色比對有三個獨立條件，任一成立即可：姓名／別名完全相同或至少兩字的子字串；九項基本屬性中至少七項雙方皆有值且相等；或職業相符且至少三項正規化後的技能名稱與數值相同。不會進行通用音譯。屬性或職業／技能比對成功後，可學習姓名別名供後續使用。合併時保留來源與手動資料依據。
 

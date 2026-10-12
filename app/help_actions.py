@@ -162,6 +162,8 @@ ACTIONS: tuple[HelpExecution, ...] = (
        "/coc digest", source="digest"),
     _a("digest_clean", "kp/digest", "清除摘要", "select",
        "/coc digest clean", source="digest", confirm=True),
+    _a("dict", "kp/dict", "查看字典學到的詞", "direct", "/coc dict"),
+    _a("dict_forget", "kp/dict", "移除學錯的詞", "form", "/coc dict forget", Field("原文或譯名"), confirm=True),
     _a("digests", "kp/digests", "列出場景摘要", "direct", "/coc digests"),
     # Other
     _a("roll", "other/roll", "擲骰", "form", "/roll", Field("骰式")),

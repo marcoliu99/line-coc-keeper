@@ -20,13 +20,20 @@ deployment benefits from learning once.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import threading
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
-from app import db
+from app import db, observability
 
 _TABLE = "dictionary"
 _KEY = "global"
+# Provenance of what was learned, kept in the same row: {category: {spelling: {"source": ..., "at": ...}}}.
+_META = "_meta"
 
 def _normalize(term: str) -> str:
     return " ".join((term or "").strip().lower().split())
@@ -112,42 +119,87 @@ _INITIAL: dict[str, dict[str, str]] = {
 _lock = threading.Lock()
 
 
-def _load() -> dict:
+def _stored() -> dict:
     data = db.get_json(_TABLE, _KEY)
-    if not isinstance(data, dict):
-        # Missing, or not the mapping this module writes: the built-in table still answers, since roll lines on
-        # every reply look skill names up here.
-        # Lookups must stay read-only: character matching also runs inside
-        # state transactions, where a second connection cannot initialize
-        # this table without contending for the writer lock. _learn persists
-        # the initial dictionary when an alias is actually added.
-        data = {}
-    # The built-in tables sit under what this deployment has stored or learned, which wins: a dictionary saved before
-    # the glossary existed still answers its spellings.
-    return {k: {**_INITIAL.get(k, {}), **(v if isinstance(v, dict) else {})}
-            for k, v in {**{k: {} for k in _INITIAL}, **data}.items()}
+    return data if isinstance(data, dict) else {}
+
+
+def _learned(data: dict) -> dict[str, dict[str, str]]:
+    """What this deployment has learned: the stored entries whose spelling the built-in glossary does not already
+    settle. A built-in spelling always wins, whatever an older save holds for it, so a wrong translation learned
+    earlier can no longer shadow the glossary and a corrected glossary entry takes effect on every deployment."""
+    learned: dict[str, dict[str, str]] = {}
+    for category, table in data.items():
+        if category.startswith("_") or not isinstance(table, dict):
+            continue
+        built_in = _INITIAL.get(category, {})
+        learned[category] = {k: v for k, v in table.items()
+                             if isinstance(k, str) and isinstance(v, str) and v and k not in built_in}
+    return learned
+
+
+def _load() -> dict[str, dict[str, str]]:
+    # Missing, or not the mapping this module writes: the built-in table still answers, since roll lines on every
+    # reply look skill names up here.
+    # Lookups must stay read-only: character matching also runs inside state transactions, where a second
+    # connection cannot initialize this table without contending for the writer lock. _learn persists what was
+    # learned when something is actually added.
+    learned = _learned(_stored())
+    return {c: {**_INITIAL.get(c, {}), **learned.get(c, {})} for c in {*_INITIAL, *learned}}
+
+
+def _meta_of(data: dict) -> dict:
+    meta = data.get(_META)
+    return meta if isinstance(meta, dict) else {}
+
+
+def _info(meta: dict, category: str, term: str, *, drop: bool = False) -> dict:
+    """The provenance recorded for one learned spelling (removed from ``meta`` when ``drop``)."""
+    table = meta.get(category)
+    if not isinstance(table, dict):
+        return {}
+    info = table.pop(term, None) if drop else table.get(term)
+    return info if isinstance(info, dict) else {}
 
 
 def _lookup(category: str, term: str) -> str | None:
     return _load().get(category, {}).get(_normalize(term))
 
 
-def _learn(category: str, term: str, canonical: str) -> None:
-    key = _normalize(term)
-    if not key or not canonical:
-        return
+def _learn(category: str, term: str, canonical: str, source: str = "") -> bool:
+    """Remember ``term`` → ``canonical`` for the whole deployment; True when something was stored.
+
+    A spelling is settled once: the built-in glossary wins, then whatever was learned first, so the Chinese name
+    stays the same every time. A pair that disagrees is not stored (it is logged), and a wrong pair that was stored
+    can be removed with ``forget``. Only what was learned is saved; the built-in tables are not copied into the
+    database, so editing the glossary files is enough to change them."""
+    key, canonical = _normalize(term), (canonical or "").strip()
+    if not key or not canonical or key == _normalize(canonical):
+        return False
     with _lock:
-        data = _load()
-        data.setdefault(category, {})[key] = canonical
-        db.set_json(_TABLE, _KEY, data)
+        data = _stored()
+        learned = _learned(data)
+        built_in = _INITIAL.get(category, {}).get(key)
+        known = built_in or learned.get(category, {}).get(key)
+        if known:
+            if known != canonical:
+                observability.event(
+                    "dictionary.learn.rejected", level=logging.INFO, category=category, term=key, kept=known,
+                    offered=canonical, reason="built_in" if built_in else "learned_first", source=source)
+            return False
+        learned.setdefault(category, {})[key] = canonical
+        meta = _meta_of(data)
+        meta.setdefault(category, {})[key] = {"source": source, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        db.set_json(_TABLE, _KEY, {**learned, _META: meta})
+    return True
 
 
 def lookup_skill(name: str) -> str | None:
     return _lookup("skills", name)
 
 
-def learn_skill(name: str, canonical: str) -> None:
-    _learn("skills", name, canonical)
+def learn_skill(name: str, canonical: str, source: str = "pregen") -> bool:
+    return _learn("skills", name, canonical, source)
 
 
 def lookup_term(name: str) -> str | None:
@@ -160,13 +212,109 @@ def lookup_occupation(name: str) -> str | None:
     return _lookup("occupations", name)
 
 
-def learn_occupation(name: str, canonical: str) -> None:
-    _learn("occupations", name, canonical)
+def learn_occupation(name: str, canonical: str, source: str = "pregen") -> bool:
+    return _learn("occupations", name, canonical, source)
 
 
 def lookup_character_alias(name: str) -> str | None:
     return _lookup("character_aliases", name)
 
 
-def learn_character_alias(name: str, canonical: str) -> None:
-    _learn("character_aliases", name, canonical)
+def learn_character_alias(name: str, canonical: str, source: str = "match") -> bool:
+    return _learn("character_aliases", name, canonical, source)
+
+
+# Only lore that belongs to the game itself is learned for every scenario: a book, a spell, a group or a Mythos being
+# keeps one Chinese name wherever it appears. A person or an item is the scenario's own, so its name stays there.
+_LORE_KINDS = ("書籍", "法術", "組織", "神話")
+_HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
+_ENGLISH_NAME = re.compile(r"[A-Za-z][A-Za-z0-9 .,'’&-]*[A-Za-z0-9]")
+
+
+def learn_term(name: str, canonical: str, source: str = "scenario") -> bool:
+    return _learn("terms", name, canonical, source)
+
+
+def learn_terms(terms: Iterable[object], source: str = "scenario") -> int:
+    """Teach the dictionary the lore terms a scenario's name list found, each under its fullest English spelling (a
+    short alias such as 「John」 could belong to anyone). Returns how many were new."""
+    taught = 0
+    for term in terms:
+        if not isinstance(term, dict):
+            continue
+        name, kind = str(term.get("name") or "").strip(), str(term.get("kind") or "")
+        if not _HAS_CJK.search(name) or not any(word in kind for word in _LORE_KINDS):
+            continue
+        english = [a for a in (str(x).strip() for x in term.get("aliases") or []) if len(a) >= 4 and _ENGLISH_NAME.fullmatch(a)]
+        if english:
+            taught += learn_term(max(english, key=len), name, source)
+    return taught
+
+
+def glossary_hits(text: str, limit: int = 60) -> list[tuple[str, str]]:
+    """The glossary terms (built-in and learned) that ``text`` uses, as ``(spelling in the text, the one name this
+    project writes)``, in order of first use, one per name. Given to the model that reads a scenario so its
+    translations start from the same names."""
+    terms = _load().get("terms", {})
+    # The glossary lists beings in the plural ("Deep Ones"); a scenario says "a Deep One" as often.
+    singular = {k[:-1]: v for k, v in terms.items() if k.isascii() and len(k) > 5 and k.endswith("s") and not k.endswith("ss")}
+    terms = {**singular, **terms}
+    found: dict[str, tuple[int, str]] = {}
+    english = sorted((k for k in terms if k.isascii()), key=len, reverse=True)
+    if english:
+        pattern = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(re.escape(k) for k in english) + r")(?![A-Za-z0-9])", re.IGNORECASE)
+        for match in pattern.finditer(text):
+            found.setdefault(terms[_normalize(match.group(1))], (match.start(), match.group(1)))
+    for spelling in (k for k in terms if not k.isascii()):
+        at = text.find(spelling)
+        if at >= 0 and terms[spelling] != spelling:
+            found.setdefault(terms[spelling], (at, spelling))
+    ordered = sorted(found.items(), key=lambda item: item[1][0])
+    return [(spelling, canonical) for canonical, (_, spelling) in ordered[:limit]]
+
+
+@dataclass(frozen=True)
+class LearnedEntry:
+    category: str
+    term: str
+    canonical: str
+    source: str
+    at: str
+
+
+def learned_entries() -> list[LearnedEntry]:
+    """Everything this deployment has learned, newest first."""
+    data = _stored()
+    meta = _meta_of(data)
+    entries = []
+    for category, table in _learned(data).items():
+        for term, canonical in table.items():
+            info = _info(meta, category, term)
+            entries.append(LearnedEntry(category, term, canonical, str(info.get("source") or ""), str(info.get("at") or "")))
+    return sorted(entries, key=lambda e: (e.at, e.term), reverse=True)
+
+
+def built_in_name(term: str) -> str | None:
+    """The built-in glossary's name for ``term`` (any category), when it has one."""
+    key = _normalize(term)
+    return next((table[key] for table in _INITIAL.values() if key in table), None)
+
+
+def forget(term: str) -> list[LearnedEntry]:
+    """Remove what was learned for ``term``, given as the spelling or the name it was learned as. The built-in
+    glossary is not touched; the entries removed are returned."""
+    key = _normalize(term)
+    if not key:
+        return []
+    with _lock:
+        data = _stored()
+        learned = _learned(data)
+        meta = _meta_of(data)
+        removed = []
+        for category, table in learned.items():
+            for spelling in [k for k, v in table.items() if k == key or _normalize(v) == key]:
+                info = _info(meta, category, spelling, drop=True)
+                removed.append(LearnedEntry(category, spelling, table.pop(spelling), str(info.get("source") or ""), str(info.get("at") or "")))
+        if removed:
+            db.set_json(_TABLE, _KEY, {**learned, _META: meta})
+    return removed
