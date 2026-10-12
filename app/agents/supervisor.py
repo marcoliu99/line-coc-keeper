@@ -434,6 +434,8 @@ async def _narrate(turn: _Turn) -> TurnReply | None:
     if turn.turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
+    if message.payload.get("narration_failed") and prompt_config.explains_in_story(turn.mechanic_result, state):
+        reply_text = ""  # the failure notice is no explanation, and says changes were kept; the fixed refusal answers instead
     turn.narration = (reply_text, private_messages, image_requests)
     return None
 

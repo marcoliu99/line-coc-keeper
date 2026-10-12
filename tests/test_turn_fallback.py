@@ -665,3 +665,14 @@ async def test_an_empty_search_of_the_first_attempt_is_not_carried_as_evidence()
                     check_status={"tool_called": False, "pending": None})
     _, _, _, message = await _turn(_state(), [first, retry], rag_status="empty")
     assert "first_attempt_evidence" not in message.payload and not turn_fallback.found_scenario_text(retry)
+
+
+@aio
+async def test_a_narrator_that_failed_does_not_stand_in_for_the_explanation() -> None:
+    # run_narrator answers a failed request with a notice that says submitted changes are kept; this turn changed nothing.
+    async def failing(message):
+        message.payload["narration_failed"] = True
+        return "守密人暫時無法完成敘事。已提交的變更會保留。", [], []
+
+    reply, *_ = await _turn(_state(), [_cannot_be_done(), _cannot_be_done()], narrator=failing)
+    assert "已提交的變更會保留" not in reply and "目前無法繼續" in reply
