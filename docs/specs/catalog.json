@@ -3179,6 +3179,22 @@
       "path": "docs/specs/enhancement/retry_after_lookups_design_spec.md",
       "zh_path": "docs/specs/enhancement/retry_after_lookups_design_spec_zh.md",
       "source_revision": "c46e34105088177c817b21ea386c47989cd7fcfa"
+    },
+    {
+      "title": "A choice label is typed whole, spaces and all",
+      "zh": "選項標籤要整句輸入，空格也算",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/checks/narration.py",
+        "app/checks/service.py",
+        "app/services/managed_checks.py",
+        "app/commands/router.py",
+        "tests/test_choice_label_with_spaces.py"
+      ],
+      "path": "docs/specs/enhancement/choice_label_with_spaces_design_spec.md",
+      "zh_path": "docs/specs/enhancement/choice_label_with_spaces_design_spec_zh.md",
+      "source_revision": "9666a864930986525cf43518b8dbc62d719347cd"
     }
   ]
 }
