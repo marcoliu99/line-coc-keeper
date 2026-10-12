@@ -60,14 +60,22 @@ _CLUE_HINT_CHARS = 24
 _RECENT_NARRATION = 60
 
 
-def guidance(reason: str | None, hints: str = "") -> str:
-    """What the player is told; ``hints`` (see ``scene_hints``) is added for reasons that ask them to try something else."""
-    text = _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
-    return f"{text}\n{hints}" if hints and reason in _HINTED else text
-
-
 # Reasons whose generic wording talks about the scenario; in a battle the table needs to know whose turn it is instead.
 _COMBAT_REASONS: frozenset[str] = frozenset({"no_scenario_evidence", "executor_no_action", "unsupported_action"})
+
+
+# Said instead of the scenario-blaming wording when the turn already rolled dice or changed the game: the result stands,
+# so 「劇本裡沒有足夠的內容」 is false (Camp Sunny rerun7 turns 76 and 80, a failed Driving roll and five Sanity rolls
+# followed by exactly that).
+_AFTER_A_RESULT = "剛才的結果已經記錄，但這次行動的後續守密人還沒處理完；請接著說明你想怎麼做。"
+
+
+def guidance(reason: str | None, hints: str = "", *, acted: bool = False) -> str:
+    """What the player is told; ``hints`` (see ``scene_hints``) is added for reasons that ask them to try something else.
+
+    ``acted``: the turn rolled dice or changed the game before it stopped."""
+    text = _AFTER_A_RESULT if acted and reason in _COMBAT_REASONS else _GUIDANCE.get(reason or "unknown", _GUIDANCE["unknown"])
+    return f"{text}\n{hints}" if hints and reason in _HINTED else text
 
 
 def combat_guidance(state: GroupState, reason: str | None, actor_character_id: str = "") -> str:
