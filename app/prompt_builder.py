@@ -204,7 +204,7 @@ def build_static_prompt(state: GroupState) -> str:
     index_block = ""
     npc_index_text = scenario_index.format_npc_index_block(state.scenario_npc_index)
     location_index_text = scenario_index.format_location_index_block(state.scenario_location_index)
-    glossary_text = scenario_index.format_glossary_block(state.scenario_glossary)
+    glossary_text = scenario_index.format_glossary_block(state.scenario_glossary, state.scenario_text)
     if npc_index_text or location_index_text or glossary_text:
         index_block = "\n\n# 劇本索引（由 /coc index 抽取，僅列出劇本明確寫出的數值——這是唯一正確來源）"
         if npc_index_text:

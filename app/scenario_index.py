@@ -216,9 +216,17 @@ def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:
 GLOSSARY_PROMPT_LIMIT = 80
 
 
-def format_glossary_block(terms: list[dict[str, Any]]) -> str:
+def format_glossary_block(terms: list[dict[str, Any]], text: str = "") -> str:
     """The scenario's other proper names as 「・中文名（原文：…）」, to fix their translation; at most
-    GLOSSARY_PROMPT_LIMIT, so a long scenario does not grow every prompt without end."""
+    GLOSSARY_PROMPT_LIMIT, so a long scenario does not grow every prompt without end. Past the limit, the names that
+    ``text`` (the active chapters) uses come first, so a later chapter's names reach the prompt when it is played."""
+    def used(term: Any) -> bool:
+        return isinstance(term, dict) and any(
+            str(s).strip() and str(s).strip().casefold() in folded
+            for s in (term.get("name"), *(term.get("aliases") or [])))
+    folded = text.casefold()
+    if len(terms) > GLOSSARY_PROMPT_LIMIT and folded:
+        terms = sorted(terms, key=lambda term: not used(term))
     lines = []
     for term in terms[:GLOSSARY_PROMPT_LIMIT]:
         name = str(term.get("name") or "").strip() if isinstance(term, dict) else ""

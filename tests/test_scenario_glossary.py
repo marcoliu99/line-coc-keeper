@@ -53,6 +53,9 @@ def test_the_prompt_fixes_the_glossary_names_without_telling_the_investigators()
     assert "・死靈之書（原文：Necronomicon）" in prompt and "不代表調查員已經知道" in prompt and "## 譯名" in prompt
     many = [{"name": f"名詞{i}", "aliases": []} for i in range(scenario_index.GLOSSARY_PROMPT_LIMIT + 5)]
     assert scenario_index.format_glossary_block(many).count("・") == scenario_index.GLOSSARY_PROMPT_LIMIT
+    late = [*many, {"name": "黃衣之王", "aliases": ["King in Yellow"]}]
+    assert "黃衣之王" not in scenario_index.format_glossary_block(late)
+    assert "黃衣之王" in scenario_index.format_glossary_block(late, "Chapter 9: the King in Yellow arrives.")
 
 
 def test_a_glossary_original_in_the_narration_reads_in_chinese():
