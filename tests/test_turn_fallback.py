@@ -579,17 +579,18 @@ def test_other_reasons_and_a_running_battle_keep_the_fixed_text() -> None:
 
 @aio
 async def test_what_the_first_attempt_found_reaches_the_narrator_when_the_retry_found_nothing() -> None:
-    first = _result("blocked", "validated", scenario_evidence=("門是鎖著的，要開鎖或破門。",),
+    locked = "--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。"
+    first = _result("blocked", "validated", scenario_evidence=(locked,),
                     check_status={"tool_called": True, "pending": None})
     retry = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
     _, run_executor, _, message = await _turn(_state(), [first, retry])
     assert run_executor.await_count == 2
-    assert message.payload["first_attempt_evidence"] == "門是鎖著的，要開鎖或破門。"
+    assert message.payload["first_attempt_evidence"] == locked
 
 
 @aio
 async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
-    found = ("門是鎖著的，要開鎖或破門。",)
+    found = ("--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。",)
     first = _result("blocked", "validated", scenario_evidence=found)
     retry = _result("blocked", "validated", scenario_evidence=found)
     _, _, _, message = await _turn(_state(), [first, retry])
@@ -654,3 +655,13 @@ async def test_the_passage_retrieval_already_gave_counts_when_the_executor_did_n
     nothing = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
     await _turn(_state(), [nothing, nothing], rag_status="empty")
     assert not turn_fallback.found_scenario_text(nothing)  # no retrieved passage, nothing to explain from
+
+
+@aio
+async def test_an_empty_search_of_the_first_attempt_is_not_carried_as_evidence() -> None:
+    first = _result("blocked", "validated", scenario_evidence=("（沒有找到相關內容）",),
+                    check_status={"tool_called": True, "pending": None})
+    retry = _result("blocked", "validated", fallback_reason="unsupported_action",
+                    check_status={"tool_called": False, "pending": None})
+    _, _, _, message = await _turn(_state(), [first, retry], rag_status="empty")
+    assert "first_attempt_evidence" not in message.payload and not turn_fallback.found_scenario_text(retry)

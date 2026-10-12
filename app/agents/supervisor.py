@@ -156,7 +156,8 @@ async def _recover_blocked_turn(
     retry = await executor.run_executor(message)
     # What the first attempt found in the scenario is lost with it; the Narrator, who may be asked to explain a refusal
     # from it, is handed what the retry did not find again.
-    carried = [text for text in result.scenario_evidence if text not in retry.scenario_evidence]
+    carried = [text for text in result.scenario_evidence
+               if turn_fallback.is_passage(text) and text not in retry.scenario_evidence]  # not an empty search's placeholder
     if carried:
         message.payload["first_attempt_evidence"] = "\n\n".join(carried)
         retry.scenario_evidence = (*carried, *retry.scenario_evidence)
