@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app import presentation
+from app import config, presentation
 from app.agents import guard, obligation_gate
 from app.domain.models import AgentMessage, MechanicResult, SpeakerRole, StateDelta
 from app.models import GroupState
@@ -133,6 +133,8 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     state = ctx.state
     keep = [c.name for c in (*state.characters_by_id.values(), *state.characters.values())]
     keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
+    # And how the table writes them (an investigator Alice shown as 「Carter」 is never an NPC Carter).
+    keep += [config.CHARACTER_DISPLAY_ALIASES[k] for k in keep if k in config.CHARACTER_DISPLAY_ALIASES]
     indexed = [dict(e) for e in (*state.scenario_npc_index, *state.scenario_location_index) if isinstance(e, dict)]
     # A glossary term the index already lists under the same name is that entry, not a second one with its name: its
     # spellings join the entry's.
