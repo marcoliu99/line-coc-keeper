@@ -149,6 +149,8 @@ def test_two_people_who_share_a_short_alias_stay_two_terms():
     chief = {"name": "約翰史密斯", "aliases": ["John Smith", "Chief Investigator"]}
     other = {"name": "約翰杜", "aliases": ["John Doe", "Chief Investigator"]}
     assert scenario_index.merge_glossary([chief], [other]) == [chief, other]
+    lone = {"name": "約翰杜", "aliases": ["John"]}
+    assert scenario_index.merge_glossary([smith], [lone]) == [smith, lone]
 
 
 def test_an_incomplete_location_index_still_keeps_the_names_it_found():

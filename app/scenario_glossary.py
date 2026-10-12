@@ -2,14 +2,23 @@
 extraction so that scenario activation can merge without importing the LLM provider."""
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _fullest(spellings: set[str]) -> str:
+    """The longest original (non-Chinese) spelling: the one that names a term in full (「john smith」, not 「john」)."""
+    return max((s for s in spellings if not _CJK.search(s)), key=lambda s: (len(s), s), default="")
 
 
 def merge_glossary(kept: list[dict[str, Any]], found: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """``kept`` with what a rebuild ``found`` added: a rebuild from part of a scenario never drops the names it did not
     see, and a term it found again keeps the Chinese name it already had (the point is that a name reads the same every
     time) and gains the new spellings. A term is the same one when its Chinese name is already a spelling of that term,
-    or every original spelling it has is; one shared alias (「John」, 「Chief Investigator」) never makes two people one."""
+    or every original spelling it has is and its fullest one is that term's fullest too; one shared alias (「John」,
+    「Chief Investigator」) never makes two people one."""
     def key(text: Any) -> str:
         return str(text or "").strip().casefold()
 
@@ -22,7 +31,8 @@ def merge_glossary(kept: list[dict[str, Any]], found: list[dict[str, Any]]) -> l
         def spellings(t: dict[str, Any]) -> set[str]:
             return {key(t.get("name")), *(key(a) for a in t.get("aliases") or [])}
         same = next((t for t in merged if key(term.get("name")) in spellings(t)
-                     or (originals and originals <= spellings(t))), None)
+                     or (originals and originals <= spellings(t) and _fullest(originals) == _fullest(spellings(t)))),
+                    None)
         if same is None:
             merged.append(dict(term))
             continue
