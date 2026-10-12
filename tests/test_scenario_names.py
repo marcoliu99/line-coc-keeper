@@ -186,3 +186,8 @@ def test_an_alias_that_is_a_skill_name_is_never_used():
     dodge = {"name": "道奇", "aliases": ["Dodge", "Mr Dodge"]}
     assert presentation.use_scenario_names("請做 Dodge 檢定。", [dodge]) == "請做 Dodge 檢定。"
     assert presentation.use_scenario_names("Mr Dodge 走進來。", [dodge]) == "道奇 走進來。"
+
+
+def test_an_uppercase_accented_alias_never_breaks_the_reply():
+    entries = [{"name": "伊席克", "aliases": ["Işık"]}]
+    assert presentation.use_scenario_names("IŞIK 走進來。", entries) == "伊席克 走進來。"
