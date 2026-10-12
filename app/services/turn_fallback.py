@@ -121,9 +121,17 @@ def _empty_weapons(state: GroupState, current: Any) -> str:
     return f"{'、'.join(empty)} 已經沒有子彈，可以改用徒手或其他武器。" if empty else ""
 
 
-def public_narration(state: GroupState) -> list[str]:
-    """What the table has publicly been told in this timeline, newest first (see ``_public_narration``)."""
-    return _public_narration(state)
+def told_names(state: GroupState, entries: list[dict[str, Any]], also: list[str] | None = None) -> set[str]:
+    """The index names the table has been told: those used in this timeline's public narration or in ``also`` (the
+    reply being sent), as a name of their own rather than inside a longer index name (see ``_occurs``)."""
+    texts = [*(also or []), *_public_narration(state)]
+    every_name = [n for entry in entries for n in _names(entry)]
+    told: set[str] = set()
+    for name in every_name:
+        longer = [other for other in every_name if len(other) > len(name) and name in other]
+        if any(_occurs(name, text, longer) for text in texts):
+            told.add(name)
+    return told
 
 
 def _public_narration(state: GroupState) -> list[str]:

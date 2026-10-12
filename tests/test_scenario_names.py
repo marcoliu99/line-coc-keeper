@@ -124,3 +124,17 @@ def test_a_disguise_is_never_rewritten_into_the_identity_it_hides():
 def test_an_accented_alias_is_used_too():
     entries = [{"name": "何內", "aliases": ["René"]}, {"name": "慕尼黑", "aliases": ["München"]}]
     assert presentation.use_scenario_names("René 來自 München。", entries) == "何內 來自 慕尼黑。"
+
+
+def test_a_name_inside_a_longer_index_name_is_not_a_disclosure():
+    from unittest.mock import MagicMock
+    culprit = {"name": "約翰", "aliases": ["Masked Man"]}
+    other = {"name": "約翰遜", "aliases": ["Johnson"]}
+    state = _told(GroupState(group_id="g", scenario_npc_index=[culprit, other]), "約翰遜先生向你點頭。")
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="Masked Man 站在門口。", private_messages=[("p1", "只有你知道 約翰 是誰；Masked Man 在看你。")],
+                      private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "Masked Man 站在門口。"
+    assert draft.private_messages == [("p1", "只有你知道 約翰 是誰；約翰 在看你。")]  # told to that reader only

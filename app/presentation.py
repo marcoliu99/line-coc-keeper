@@ -40,15 +40,16 @@ _HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_LETTER = re.compile(rf"[{_L}]")
 
 
-def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = (), told: str | None = None) -> str:
+def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = (),
+                       told: Collection[str] | None = None) -> str:
     """``text`` with each English original the scenario index lists for a person or place written as the index's
     Chinese name (「Corbitt」 → 「柯比特」, 「Corbitt's」 → 「柯比特的」), so a name reads the same on every turn.
 
     Only an alias the index gives, of three letters or more, that names one entry: an English word that is not on
     the list is never guessed at. A name inside ``keep`` (the investigators' own) is left as written, and so is one
     with an English word right beside it: that is English the narration quotes (「Will he return?」), not the name.
-    With ``told`` (what the table has already been told), a name is used only once it appears there: an index name may
-    be the secret behind a disguise (「Masked Man」 for 兇手約翰), and rewriting must never be what reveals it.
+    With ``told`` (the index names the table has already been told), a name is used only once it is among them: an index
+    name may be the secret behind a disguise (「Masked Man」 for 兇手約翰), and rewriting must never be what reveals it.
     """
     if not text or not entries:
         return text

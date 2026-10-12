@@ -135,17 +135,18 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
     entries = [*state.scenario_npc_index, *state.scenario_location_index, *state.scenario_glossary]
     # Only names the table has already been told: an index name may be the identity a disguise hides.
-    told = "\n".join([draft.text, *turn_fallback.public_narration(state)])
+    told = turn_fallback.told_names(state, entries, [draft.text])
     named = presentation.use_scenario_names(draft.text, entries, keep, told)
     # Delivery validated the English spelling; the Chinese one is shown only if it passes the same checks, and when it
     # does not, the private lines keep theirs too, so one turn spells a name one way.
     if named != draft.text and not turn_delivery.rewrite_still_safe(ctx.message, named):
         return
     draft.text = named
-    draft.private_messages = [(owner, presentation.use_scenario_names(text, entries, keep, told))
-                              for owner, text in draft.private_messages]
-    draft.private_controls = [(owner, presentation.use_scenario_names(text, entries, keep, told))
-                              for owner, text in draft.private_controls]
+    # A private line may name what only its reader was told: that counts for that line.
+    draft.private_messages = [(owner, presentation.use_scenario_names(
+        text, entries, keep, told | turn_fallback.told_names(state, entries, [text]))) for owner, text in draft.private_messages]
+    draft.private_controls = [(owner, presentation.use_scenario_names(
+        text, entries, keep, told | turn_fallback.told_names(state, entries, [text]))) for owner, text in draft.private_controls]
 
 
 def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:
