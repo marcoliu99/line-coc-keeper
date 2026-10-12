@@ -572,3 +572,22 @@ def test_other_reasons_and_a_running_battle_keep_the_fixed_text() -> None:
     state.combat = CombatState(active=True, round_number=1, current_index=0, phase="READY",
                                order=[Combatant(name="小雨", side="pc", is_pc=True, hp=10, hp_max=10)])
     assert not prompt_config.explains_in_story(_cannot_be_done(), state) and prompt_config.narration_replaced(_cannot_be_done(), state)
+
+
+@aio
+async def test_what_the_first_attempt_found_reaches_the_narrator_when_the_retry_found_nothing() -> None:
+    first = _result("blocked", "validated", scenario_evidence=("門是鎖著的，要開鎖或破門。",),
+                    check_status={"tool_called": True, "pending": None})
+    retry = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    _, run_executor, _, message = await _turn(_state(), [first, retry])
+    assert run_executor.await_count == 2
+    assert message.payload["first_attempt_evidence"] == "門是鎖著的，要開鎖或破門。"
+
+
+@aio
+async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
+    found = ("門是鎖著的，要開鎖或破門。",)
+    first = _result("blocked", "validated", scenario_evidence=found)
+    retry = _result("blocked", "validated", scenario_evidence=found)
+    _, _, _, message = await _turn(_state(), [first, retry])
+    assert "first_attempt_evidence" not in message.payload

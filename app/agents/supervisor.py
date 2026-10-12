@@ -151,6 +151,11 @@ async def _recover_blocked_turn(
     if reason == "internal_error" and not _time_for_retry():  # the recovery search above may have spent the margin
         return result, reason, "not_attempted"
     retry = await executor.run_executor(message)
+    # What the first attempt found in the scenario is lost with it; the Narrator, who may be asked to explain a refusal
+    # from it, is handed what the retry did not find again.
+    carried = [text for text in result.scenario_evidence if text not in retry.scenario_evidence]
+    if carried:
+        message.payload["first_attempt_evidence"] = "\n\n".join(carried)
     if turn_fallback.classify(retry, state, user_id, rag_status=_evidence_status(message)) is None:
         return retry, reason, "recovered"
     return retry, reason, "unresolved"
