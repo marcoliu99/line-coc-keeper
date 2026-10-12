@@ -135,7 +135,19 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
     # And how the table writes them (an investigator Alice shown as 「Carter」 is never an NPC Carter).
     keep += [config.CHARACTER_DISPLAY_ALIASES[k] for k in keep if k in config.CHARACTER_DISPLAY_ALIASES]
-    entries = [*state.scenario_npc_index, *state.scenario_location_index]
+    indexed = [dict(e) for e in (*state.scenario_npc_index, *state.scenario_location_index) if isinstance(e, dict)]
+    # A glossary term the index already lists under the same name is that entry, not a second one with its name: its
+    # spellings join the entry's.
+    by_name = {str(e.get("name") or "").strip(): e for e in indexed}
+    entries: list[dict] = list(indexed)
+    for term in state.scenario_glossary:
+        if not isinstance(term, dict):
+            continue
+        same = by_name.get(str(term.get("name") or "").strip())
+        if same is None:
+            entries.append(term)
+        else:
+            same["aliases"] = [*(same.get("aliases") or []), *(term.get("aliases") or [])]
     # Only names the table has already been told: an index name may be the identity a disguise hides. One this reply
     # tells is used only after the reply tells it.
     before = turn_fallback.told_names(state, entries, [], keep)

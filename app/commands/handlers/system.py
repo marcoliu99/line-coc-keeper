@@ -822,6 +822,10 @@ async def _index_command(call: _Call) -> None:
     )
     if underflow is not None:
         expected, extracted = underflow
+        if index_data.get("terms"):
+            # The names stand apart from the incomplete stat index: they are kept even though the index is not.
+            state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, index_data["terms"])
+            state_transaction.commit_snapshot(state)
         kept = "已保留上一版索引。" if state.scenario_npc_index or state.scenario_location_index else "未寫入這份不完整索引。"
         await reply(
             f"⚠️ 索引重建結果不完整：劇本文字明確包含 LOCATION 1–{expected}，但本次只抽出 {extracted} 個地點；{kept}"
@@ -832,6 +836,8 @@ async def _index_command(call: _Call) -> None:
     index_data["locations"] = scenario_index.merge_scene_map_locations(index_data["locations"], state.scene_maps)
     state.scenario_npc_index = index_data["npcs"]
     state.scenario_location_index = index_data["locations"]
+    # The text here may be only the active chapters: names from earlier or later ones stay in the glossary.
+    state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, index_data.get("terms", []))
     state_transaction.commit_snapshot(state)
     if not index_data["npcs"] and not index_data["locations"]:
         await reply("沒有從劇本裡抽出任何有明確數值的 NPC／怪物或地點條目。")

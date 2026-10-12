@@ -10,7 +10,7 @@ This edition describes the current contract. Proposed work is explicitly identif
 
 ## Current contract
 
-1. Discord routes role_, dict_ and map_ inputs through the appropriate parsers; scenario PDFs use the reusable library lifecycle. Filename routing does not authorize a player to overwrite unrelated live state.
+1. Discord routes role_ and map_ inputs through the appropriate parsers (there is no dict_ upload: the dictionary grows only from what extraction and matching learn); scenario PDFs use the reusable library lifecycle. Filename routing does not authorize a player to overwrite unrelated live state.
 
 2. Matching has three independent gates; any one is sufficient: exact name/alias or a substring of at least two characters; at least seven equal, present values among nine base attributes; or matching occupations plus at least three canonical skill/value matches. It does not perform general phonetic translation. Successful attribute or occupation/skill matches can teach future name aliases. Preserve source/manual provenance when reconciling.
 

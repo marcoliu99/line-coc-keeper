@@ -161,6 +161,14 @@ class UploadIndexTests(unittest.TestCase):
         self.assertNotIn("已載入", notice)
         self.assertIn("9", notice)
 
+    def test_an_incomplete_index_still_keeps_the_names_it_found(self):
+        terms = [{"name": "死靈之書", "aliases": ["Necronomicon"]}]
+        index = {"npcs": [{"name": "n"}], "locations": _locations(8), "terms": terms}
+        with patch.object(scenario_ingestion.scenario_index, "extract_scenario_index", return_value=index):
+            kept, notice = asyncio.run(scenario_ingestion._extract_checked_index(_text(9), source="pdf_upload"))
+        self.assertEqual(kept, {"npcs": [], "locations": [], "terms": terms})
+        self.assertIn("未寫入這份不完整索引", notice)
+
     def test_a_complete_index_is_kept_without_a_notice(self):
         index, notice = self._extract(9)
         self.assertEqual(len(index["locations"]), 9)

@@ -3084,6 +3084,23 @@
       "path": "docs/specs/enhancement/scenario_names_consistent_design_spec.md",
       "zh_path": "docs/specs/enhancement/scenario_names_consistent_design_spec_zh.md",
       "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
+    },
+    {
+      "title": "The scenario's other proper names keep one Chinese name",
+      "zh": "劇本的其他專有名詞固定用同一個中文名",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_index.py",
+        "app/scenario_library.py",
+        "app/models.py",
+        "app/prompt_builder.py",
+        "app/agents/reply_pipeline.py",
+        "tests/test_scenario_glossary.py"
+      ],
+      "path": "docs/specs/enhancement/scenario_glossary_design_spec.md",
+      "zh_path": "docs/specs/enhancement/scenario_glossary_design_spec_zh.md",
+      "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
     }
   ]
 }

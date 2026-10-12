@@ -22,6 +22,9 @@ from typing import Any
 
 from app import observability
 from app.providers.registry import conversation_provider
+from app.scenario_glossary import (
+    merge_glossary,  # noqa: F401  (re-exported for its callers)
+)
 from app.scene_map_locations import (
     merge_scene_map_locations,  # noqa: F401  (re-exported for its callers)
 )
@@ -31,7 +34,7 @@ _REPORT_TOOL = {
     "description": (
         "回報這份 COC7e 劇本裡明確寫出的 NPC／怪物數值索引，以及主要地點索引。"
         "只回報文本裡明確寫出的資訊，不要自己編造或推算劇本沒寫的數值；沒有明確數值的"
-        "NPC（例如純粹的路人、沒有數值的背景角色）不用列入。"
+        "NPC（例如純粹的路人、沒有數值的背景角色）不用列入 npcs，有名字的話列進 terms。"
     ),
     "input_schema": {
         "type": "object",
@@ -67,7 +70,7 @@ _REPORT_TOOL = {
                         },
                         "page": {"type": "integer", "description": "這個條目數值主要出現在劇本的第幾頁，找不到就填 0"},
                     },
-                    "required": ["name"],
+                    "required": ["name", "aliases"],
                 },
             },
             "locations": {
@@ -85,11 +88,31 @@ _REPORT_TOOL = {
                         "summary": {"type": "string", "description": "一到兩句話的簡短描述，只摘要劇本原文，不要自己延伸"},
                         "page": {"type": "integer", "description": "主要描述出現在第幾頁，找不到就填 0"},
                     },
-                    "required": ["name"],
+                    "required": ["name", "aliases"],
+                },
+            },
+            "terms": {
+                "type": "array",
+                "description": (
+                    "劇本裡其他有名字的專有名詞：沒有數值的人物、物品、書籍、法術、組織、神話存在等。"
+                    "上面 npcs／locations 已列的不要重複。只用來固定譯名，每個名詞只列一次。"
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "這個名詞的繁體中文譯名，之後全程都用這個名字"},
+                        "aliases": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "劇本原文的寫法（英文原名）和其他稱呼，沒有就給空陣列",
+                        },
+                        "kind": {"type": "string", "description": "人物、物品、書籍、法術、組織、神話存在或其他"},
+                    },
+                    "required": ["name", "aliases"],
                 },
             },
         },
-        "required": ["npcs", "locations"],
+        "required": ["npcs", "locations", "terms"],
     },
 }
 
@@ -98,8 +121,8 @@ def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]
     """Dispatches through LLM_PROVIDER (see app/providers/*.py's analyze_text),
     same provider-agnostic pattern as app/pregen_extractor.py's
     extract_pregens — never hardcoded to a specific SDK regardless of which
-    one is actually configured. Returns {"npcs": [...], "locations": [...]},
-    both empty lists on any failure (no provider configured, empty scenario
+    one is actually configured. Returns {"npcs": [...], "locations": [...],
+    "terms": [...]}, all empty lists on any failure (no provider configured, empty scenario
     text, or the call itself failing) rather than raising — callers should
     treat that the same as "nothing extracted yet", not an error."""
     provider = conversation_provider()
@@ -110,11 +133,12 @@ def extract_scenario_index(scenario_text: str) -> dict[str, list[dict[str, Any]]
         scenario_text,
         _REPORT_TOOL,
         "以下是一份 COC7e 劇本的文字內容。請找出裡面所有有明確數值（尤其是生命值 HP）的 "
-        "NPC／怪物，以及主要的地點，用 report_scenario_index 工具回報。",
+        "NPC／怪物、主要的地點，以及其他有名字的專有名詞（固定譯名用），用 report_scenario_index 工具回報。",
     )
     if not result:
         return {"npcs": [], "locations": []}
-    return {"npcs": result.get("npcs") or [], "locations": result.get("locations") or []}
+    return {"npcs": result.get("npcs") or [], "locations": result.get("locations") or [],
+            "terms": [t for t in result.get("terms") or [] if isinstance(t, dict) and str(t.get("name") or "").strip()]}
 
 
 # A heading line only: prose such as "Proceed to Location 2, 3 or 4" or "see Location 5" never matches.
@@ -186,6 +210,30 @@ def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:
         page_note = f"第{page}頁" if isinstance(page, (int, float)) and page else ""
         detail = "　".join(part for part in (hp_note, stats, page_note) if part)
         lines.append(f"・{name}{alias_note}" + (f"：{detail}" if detail else ""))
+    return "\n".join(lines)
+
+
+GLOSSARY_PROMPT_LIMIT = 80
+
+
+def format_glossary_block(terms: list[dict[str, Any]], text: str = "") -> str:
+    """The scenario's other proper names as 「・中文名（原文：…）」, to fix their translation; at most
+    GLOSSARY_PROMPT_LIMIT, so a long scenario does not grow every prompt without end. Past the limit, the names that
+    ``text`` (the active chapters) uses come first, so a later chapter's names reach the prompt when it is played."""
+    def used(term: Any) -> bool:
+        return isinstance(term, dict) and any(
+            str(s).strip() and str(s).strip().casefold() in folded
+            for s in (term.get("name"), *(term.get("aliases") or [])))
+    folded = text.casefold()
+    if len(terms) > GLOSSARY_PROMPT_LIMIT and folded:
+        terms = sorted(terms, key=lambda term: not used(term))
+    lines = []
+    for term in terms[:GLOSSARY_PROMPT_LIMIT]:
+        name = str(term.get("name") or "").strip() if isinstance(term, dict) else ""
+        if not name:
+            continue
+        aliases = [str(a) for a in term.get("aliases") or [] if str(a).strip()]
+        lines.append(f"・{name}" + (f"（原文：{'、'.join(aliases)}）" if aliases else ""))
     return "\n".join(lines)
 
 
