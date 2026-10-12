@@ -21,7 +21,8 @@ def test_the_extraction_reports_named_terms_and_drops_unnamed_ones():
     with patch.object(scenario_index, "conversation_provider", return_value=provider):
         index = scenario_index.extract_scenario_index("The Necronomicon lies open.")
     assert index["terms"] == [TOME]
-    assert "terms" in scenario_index._REPORT_TOOL["input_schema"]["properties"]
+    schema = scenario_index._REPORT_TOOL["input_schema"]
+    assert "terms" in schema["required"] and schema["properties"]["terms"]["items"]["required"] == ["name", "aliases"]
 
 
 def test_the_glossary_is_the_whole_scenario_s_not_the_chapter_s():

@@ -105,11 +105,11 @@ _REPORT_TOOL = {
                         },
                         "kind": {"type": "string", "description": "人物、物品、書籍、法術、組織、神話存在或其他"},
                     },
-                    "required": ["name"],
+                    "required": ["name", "aliases"],
                 },
             },
         },
-        "required": ["npcs", "locations"],
+        "required": ["npcs", "locations", "terms"],
     },
 }
 
