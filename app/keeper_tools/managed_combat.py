@@ -90,7 +90,7 @@ def _owned_weapon_evidence(state, character, reference):
 
 
 def _weapon_attack_mode(reference: str, scenario_definitions: tuple[combat_rules.WeaponDefinition, ...],
-                        instance: combat_rules.WeaponInstance | None) -> str:
+                        instance: combat_rules.WeaponInstance | None) -> combat_rules.AttackMode:
     """The attack kind of a declaration that names none: the weapon's own (a revolver shoots), else melee.
 
     The kind is optional in the tool schema, and defaulting it to melee made a revolver shot "Unsupported attack mode"
