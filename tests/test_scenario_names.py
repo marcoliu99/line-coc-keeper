@@ -196,3 +196,15 @@ def test_an_uppercase_accented_alias_never_breaks_the_reply():
 def test_an_apostrophe_only_possessive_reads_as_possessive():
     entries = [{"name": "詹姆斯", "aliases": ["James"]}]
     assert presentation.use_scenario_names("James’ 外套掛在門邊。", entries) == "詹姆斯的 外套掛在門邊。"
+
+
+def test_a_private_line_before_the_reveal_keeps_the_disguise():
+    from unittest.mock import MagicMock
+    culprit = {"name": "約翰", "aliases": ["Masked Man"]}
+    state = GroupState(group_id="g", scenario_npc_index=[culprit])
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="門開了。", private_messages=[("p1", "Masked Man 靠近。"), ("p1", "你認出他是約翰。")],
+                      private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.private_messages == [("p1", "Masked Man 靠近。"), ("p1", "你認出他是約翰。")]
