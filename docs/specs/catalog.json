@@ -3117,6 +3117,24 @@
       "path": "docs/specs/enhancement/dictionary_terms_and_learning_design_spec.md",
       "zh_path": "docs/specs/enhancement/dictionary_terms_and_learning_design_spec_zh.md",
       "source_revision": "9d9ce93d073df074655ac662710411805cf31ea0"
+    },
+    {
+      "title": "CoC7 glossary: spells, Mythos items, tomes, places and occupations",
+      "zh": "CoC7 譯名檔：法術、神話造物、典籍、地名與職業",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/data/coc7_glossary/spells.json",
+        "app/data/coc7_glossary/occupations.json",
+        "app/data/coc7_glossary/mythos.json",
+        "app/data/coc7_glossary/tomes_places.json",
+        "app/dictionary.py",
+        "app/pregen_extractor.py",
+        "tests/test_coc7_glossary.py"
+      ],
+      "path": "docs/specs/feature/coc7_glossary_expansion_design_spec.md",
+      "zh_path": "docs/specs/feature/coc7_glossary_expansion_design_spec_zh.md",
+      "source_revision": "a2bd9e987115424c0692bf88a464f9d88d07be43"
     }
   ]
 }

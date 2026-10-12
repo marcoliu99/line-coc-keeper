@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import json
 
-from app import dictionary, skill_aliases
+import pytest
+
+from app import db, dictionary, skill_aliases
 from app.models import BASE_SKILLS
+
+
+@pytest.fixture(autouse=True)
+def clean_dictionary():
+    db.set_json("dictionary", "global", {})
+    yield
+    db.set_json("dictionary", "global", {})
 
 
 def _entries() -> list[dict]:
@@ -55,3 +64,88 @@ def test_the_english_names_the_old_python_seed_had_still_resolve():
     for english, skill in [("brawl", "格鬥（鬥毆）"), ("handgun", "射擊（手槍）"), ("rifle/shotgun", "射擊（步槍/霰彈槍）"),
                            ("own language", "母語"), ("spot hidden", "偵查"), ("credit rating", "信用評級")]:
         assert dictionary.lookup_skill(english) == skill, english
+
+
+def test_the_expansion_files_are_read_and_carry_the_new_categories():
+    categories = {e["category"] for e in _entries()}
+    assert {"spell", "occupation", "mythos_item"} <= categories
+    assert len([e for e in _entries() if e["category"] == "occupation"]) >= 110
+    assert len([e for e in _entries() if e["category"] == "spell"]) >= 35
+
+
+def test_a_spell_reads_the_same_in_english_and_in_either_script():
+    assert dictionary.lookup_term("Voorish Sign") == dictionary.lookup_term("维瑞之印") == "維瑞之印"
+    assert dictionary.lookup_term("Apportion Ka") == "靈魂分配術"  # the spell's own name, not a back-translation (Soul Siphon)
+    assert dictionary.lookup_term("Soul Siphon") is None
+
+
+def test_an_occupation_reaches_the_name_this_project_uses():
+    assert dictionary.lookup_occupation("Antiquarian") == dictionary.lookup_occupation("骨董商") == "古董商"
+    assert dictionary.lookup_occupation("Doctor of Medicine") == dictionary.lookup_occupation("医生") == "醫生"
+    assert dictionary.lookup_occupation("Federal Agent") == "FBI探員"
+    assert dictionary.lookup_occupation("Archaeologist") == "考古學家"
+
+
+def test_an_old_spelling_of_an_occupation_still_gets_the_occupation_bonus_when_typed_in_pc():
+    from app.commands.handlers import character
+    from app.models import OCCUPATIONS, GroupState
+    state = GroupState(group_id="g")
+    outcome = character._pc(state, "u1", ["/coc", "pc", "測試", "骨董商"])
+    char = state.characters["u1"]
+    assert "調查員建立完成" in outcome.text
+    assert char.occupation == "古董商"
+    assert all(char.skills[skill] >= value for skill, value in OCCUPATIONS["古董商"].items())
+
+
+def test_the_rulebook_name_of_an_earlier_entry_is_recorded_as_another_spelling():
+    assert dictionary.lookup_term("夏乌戈纳尔·法格恩") == dictionary.lookup_term("Chaugnar Faugn") == "昌格納·方庚"
+    assert dictionary.lookup_term("加塔纳托亚") == "加塔諾托亞"
+
+
+def test_a_pregen_occupation_is_written_the_way_the_dictionary_names_it():
+    from app import pregen_extractor
+    pregen = {"occupation_original": "Antiquarian", "occupation_translated": "文物学家"}
+    pregen_extractor._learn_translations_from_pregen(pregen)
+    assert pregen["occupation"] == "古董商"
+    pregen = {"occupation_original": "Zorking Wrangler", "occupation_translated": "佐金牧人"}
+    pregen_extractor._learn_translations_from_pregen(pregen)
+    assert pregen["occupation"] == "佐金牧人"
+
+
+def test_a_new_english_occupation_translated_with_a_known_alias_is_learned_under_the_project_name():
+    from app import pregen_extractor
+    pregen = {"occupation_original": "Curio Peddler", "occupation_translated": "文物学家"}
+    pregen_extractor._learn_translations_from_pregen(pregen)
+    assert pregen["occupation"] == "古董商"
+    assert dictionary.lookup_occupation("Curio Peddler") == "古董商"
+    dictionary.forget("Curio Peddler")
+
+
+def test_the_maintainer_s_occupation_names_are_the_standard_and_the_old_wording_still_resolves():
+    for english, name, before in [("Hospital Orderly", "護工", "勤雜護工"), ("Sailor (Naval)", "水手", "軍艦海員"),
+                                  ("Deprogrammer", "反洗腦者", "除魅師"), ("Parapsychologist", "心理學家", "超心理學家")]:
+        assert dictionary.lookup_occupation(english) == dictionary.lookup_occupation(before) == name
+    occupations = [e for e in _entries() if e["category"] == "occupation"]
+    assert occupations and not [e for e in occupations if e.get("zh_tw_converted")]
+
+
+def test_the_names_the_maintainer_gave_to_unbacked_occupations_and_hyperborea_resolve():
+    for english, name, other in [("Police Officer", "警察", "警官"), ("Bootlegger", "私酒販", "私酒贩"), ("Truck Driver", "卡車司機", "大貨車司機"),
+                                 ("Union Activist", "工運人士", "工会活动家"), ("Butler/Valet/Maid", "管家 / 男僕 / 女僕", "Butler / Valet")]:
+        assert dictionary.lookup_occupation(english) == dictionary.lookup_occupation(other) == name, english
+    assert dictionary.lookup_occupation("電腦技師") == "電腦技師" and dictionary.lookup_occupation("计算机技师") == "電腦技師"
+    assert dictionary.lookup_term("Hyperborea") == dictionary.lookup_term("亥伯柏里亚") == "亥伯柏里亞"
+
+
+def test_a_name_the_dictionary_knows_for_an_occupation_is_not_replaced_by_a_model_pairing():
+    assert dictionary.learn_occupation("Antiquarian", "古物商") is False
+    assert dictionary.lookup_occupation("Antiquarian") == "古董商"
+
+
+def test_a_converted_name_says_so_and_every_source_is_recorded_with_what_was_fetched():
+    sources = json.loads((dictionary._GLOSSARY / "sources.json").read_text(encoding="utf-8"))["sources"]
+    for source in sources:
+        if source["id"] >= "s15" and len(source["id"]) == 3:
+            assert source["retrieved"] and len(source["sha256"]) == 64 and source["url"].startswith("https://github.com/"), source
+    converted = [e for e in _entries() if e.get("zh_tw_converted")]
+    assert converted and all(e["zh_tw"] for e in converted)

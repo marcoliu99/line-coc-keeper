@@ -84,6 +84,62 @@
    "url": "https://github.com/COCchm/COC7thChm/tree/28969764ab522510ad9afd1301d562546fbef41a",
    "title": "COC不全书: full repository text (rulebooks, supplements, Lovecraft translations) for place-name usage",
    "variant": "zh-CN"
+  },
+  {
+   "id": "s15",
+   "url": "https://github.com/hairuiaa/opentrpg/tree/main/docs/coc规则书/译名表",
+   "title": "opentrpg: 《克苏鲁的呼唤》第七版 中英译名表 (the Chinese rulebook's own name table: Mythos tomes, creatures, gods, places)",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "26eb4d696aac5c5397e05c7ab37b8512798cc2f76c0064fd053180ee3a366b47"
+  },
+  {
+   "id": "s16",
+   "url": "https://github.com/errrr-er/alll/blob/main/call_of_cthulhu/magic/magic_all.toml",
+   "title": "errrr-er/alll: trilingual (JP/zh-CN/EN) spell list; only the names are used",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "f5c3923f5758667580d792c67f02a9a0f415921ff4db298d41b2f4f49900ac7a"
+  },
+  {
+   "id": "s17",
+   "url": "https://github.com/AblazeGHR/RuleWhisper/tree/main/data/versions/v1.0",
+   "title": "RuleWhisper: spell and monster names of the Chinese rulebook; used only to check that a Chinese name is the rulebook's",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "218193ced3fe84b8cc394e52997547d39afe07153e682a0c2249aa2393c2a948"
+  },
+  {
+   "id": "s18",
+   "url": "https://github.com/Uria030/cthulhu-card-game/blob/main/packages/client/public/admin/data/mythos-terminology.json",
+   "title": "cthulhu-card-game: Mythos terminology in Traditional Chinese (community usage)",
+   "variant": "zh-TW",
+   "retrieved": "2026-10-12",
+   "sha256": "35854e436e1a6bea7542bea4e69a4b34c28bb10542412c265ea0f028742012f6"
+  },
+  {
+   "id": "s19",
+   "url": "https://github.com/NyaaCaster/Keeper_CoC-TRPG/blob/master/.docs/occupation-list.md",
+   "title": "Keeper_CoC-TRPG: CoC 7e occupation list, Chinese and English",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "813b3405582d19df25cb093fa3bf202a8826d6f253056d585296f9a333c1929c"
+  },
+  {
+   "id": "s20",
+   "url": "https://github.com/sunnyday9/COC-AI-KP/blob/master/ai-trpg-web/src/data/coc7.ts",
+   "title": "COC-AI-KP: CoC 7e occupations with English names",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "69012f9cfe2574374a50c0ddc15e22f5ee788836091f1dca7737e608d77d4db4"
+  },
+  {
+   "id": "s21",
+   "url": "https://github.com/sealdice-ce/sealdice-ce/blob/master/builtins/data/helpdoc/COC/COC职业查询.json",
+   "title": "SealDice helpdoc: occupation names of the Chinese rulebook; used only to check a Chinese occupation name",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "9f61f19a9eeb2faf1d734db46b1f2b3f93f54a10364dddb94e61e8e4362f7b2f"
   }
  ]
 }
