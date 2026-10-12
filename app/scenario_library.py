@@ -432,8 +432,11 @@ def _save_scenario_source(
             )
             if not (indexes.get("npcs") or indexes.get("locations")):
                 # An empty index is what an upload stores after an incomplete or failed extraction: it never
-                # replaces the index this entry already has.
+                # replaces the index this entry already has. Names found without stats still update the glossary.
+                terms = indexes.get("terms")
                 indexes = _read_json(target / "indexes.json", indexes)
+                if terms:
+                    indexes = {**indexes, "terms": terms}
             (temporary / "indexes.json").write_text(json.dumps(indexes, ensure_ascii=False), encoding="utf-8")
             (temporary / "pregens.json").write_text(json.dumps(pregens, ensure_ascii=False), encoding="utf-8")
             (temporary / "scene_maps.json").write_text(json.dumps(page_maps, ensure_ascii=False), encoding="utf-8")

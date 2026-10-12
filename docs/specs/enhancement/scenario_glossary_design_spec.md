@@ -14,6 +14,8 @@ The stat index fixes the Chinese names of NPCs/monsters with stats and main loca
 - **Kept apart from the stat index.** The terms are stored in `indexes.json` and on `GroupState.scenario_glossary`, never in `scenario_npc_index`. Combat registration matches enemies against the NPC index, so it cannot pick up a person with no stats.
   - `scenario_library.load_context` passes the whole scenario's terms, not just the active chapter's, because a name stays fixed across chapters.
   - Upload, activation, repair and `/coc index` set the field.
+  - The next chapter of the same scenario keeps a glossary that `/coc index` rebuilt when the library entry has none; another scenario starts empty.
+  - A republish whose extraction found names but no stats keeps the entry's stat index and takes the new terms.
 - **Prompt.** The index block gains 「其他專有名詞（只固定譯名；列在這裡不代表調查員已經知道）」, listed as 「・中文名（原文：…）」 and capped at `GLOSSARY_PROMPT_LIMIT` (80). The 「譯名」 rule now covers people, places and terms.
 - **Narration.** The `scenario_names` reply step also reads the glossary, so an English original it lists, for example 「Necronomicon」, is written as its Chinese name.
 - **Existing games.** A scenario indexed before this change has no glossary and behaves as before. Its terms appear after the next upload or `/coc index`.
@@ -28,3 +30,5 @@ The stat index fixes the Chinese names of NPCs/monsters with stats and main loca
 - The field survives save and load.
 - The prompt lists terms with the "not known to investigators" note, capped.
 - A glossary original in the narration is written in Chinese.
+- A rebuilt glossary survives the next chapter of the same scenario only.
+- A names-only republish keeps the stat index and takes the new terms.

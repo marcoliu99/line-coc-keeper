@@ -60,3 +60,38 @@ def test_a_glossary_original_in_the_narration_reads_in_chinese():
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "書架上放著 死靈之書。"
     assert presentation.use_scenario_names("Necronomicon", [TOME]) == "死靈之書"
+
+
+def _install(state: GroupState, scenario_id: str, terms: list | None) -> None:
+    from app import scenario_activation
+    context = {"manifest": {"title": "t"}, "text": "text",
+               "indexes": {"npcs": [], "locations": [], **({"terms": terms} if terms else {})},
+               "active_chapter_id": "", "context_chapter_ids": [], "pregens": [], "scene_maps": {}}
+    with patch.object(scenario_activation.page_repairs, "apply_saved", side_effect=lambda g, s, h, t: t), \
+            patch.object(scenario_activation.scenario_maps, "load", return_value={}), \
+            patch.object(scenario_activation.scenario_templates, "preferred_variant", return_value=""):
+        scenario_activation.install_context_fields(state, scenario_id, context)
+
+
+def test_a_rebuilt_glossary_survives_the_next_chapter_but_not_another_scenario():
+    state = GroupState(group_id="g", scenario_library_id="sid", scenario_glossary=[TOME])
+    _install(state, "sid", None)
+    assert state.scenario_glossary == [TOME]  # an older library entry has no terms; /coc index's stay
+    _install(state, "other", None)
+    assert state.scenario_glossary == []
+    _install(state, "sid", [TOME])
+    assert state.scenario_glossary == [TOME]
+
+
+def test_names_found_without_stats_still_update_a_republished_entry():
+    with tempfile.TemporaryDirectory() as directory, patch.object(scenario_library, "SCENARIO_LIBRARY_DIR", Path(directory)):
+        def publish(indexes: dict) -> dict:
+            scenario_id = scenario_library.save_markdown_scenario(
+                b"x", title="t", filename="s.md", preview="p", text="--- 第 1 頁 ---\nx", indexes=indexes,
+                pregens=[], scenario_id="same-entry")
+            return scenario_library.load_context(scenario_id)["indexes"]
+
+        places = [{"name": "a", "page": 1}]
+        publish({"npcs": [], "locations": places})
+        kept = publish({"npcs": [], "locations": [], "terms": [TOME]})
+        assert kept["locations"] == places and kept["terms"] == [TOME]

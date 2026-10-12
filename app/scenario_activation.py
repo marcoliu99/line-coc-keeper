@@ -21,6 +21,7 @@ def install_context_fields(
     preserve_pregens: bool = False,
 ) -> None:
     """Install a library chapter while leaving transition policy to the caller."""
+    same_scenario = state.scenario_library_id == scenario_id
     state.scenario_library_id = scenario_id
     state.scenario_variant_id = (
         variant_id if variant_id is not None
@@ -34,7 +35,9 @@ def install_context_fields(
     state.context_chapter_ids = context["context_chapter_ids"]
     state.scenario_npc_index = context["indexes"].get("npcs", [])
     state.scenario_location_index = context["indexes"].get("locations", [])
-    state.scenario_glossary = context["indexes"].get("terms", [])
+    # A glossary /coc index rebuilt lives on the game, not in an older library entry: the next chapter of the same
+    # scenario keeps it rather than losing the names.
+    state.scenario_glossary = context["indexes"].get("terms") or (state.scenario_glossary if same_scenario else [])
     if not preserve_pregens:
         state.pregens = list(context.get("pregens", []))
     # The maps this conversation uploaded for the scenario come back with it, as its role cards do.
