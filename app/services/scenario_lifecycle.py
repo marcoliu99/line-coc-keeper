@@ -129,8 +129,8 @@ def _repair(state: GroupState, context: dict[str, Any]) -> None:
     state.scenario_text = context["text"]
     state.scenario_npc_index = context["indexes"]["npcs"]
     state.scenario_location_index = context["indexes"]["locations"]
-    # The same scenario corrected: a glossary /coc index rebuilt stays when the entry brings none.
-    state.scenario_glossary = context["indexes"].get("terms") or state.scenario_glossary
+    # The same scenario corrected: a glossary /coc index rebuilt stays, with the entry's names added.
+    state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, context["indexes"].get("terms") or [])
     scenario_index.report_location_index(
         state.scenario_location_index, source="correction", scenario_title=state.scenario_title,
     )

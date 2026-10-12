@@ -86,6 +86,10 @@ def test_a_rebuilt_glossary_survives_the_next_chapter_but_not_another_scenario()
     assert state.scenario_glossary == []
     _install(state, "sid", [TOME])
     assert state.scenario_glossary == [TOME]
+    king = {"name": "黃衣之王", "aliases": ["King in Yellow"]}
+    state.scenario_glossary = [TOME, king]  # /coc index added a name the library entry does not have
+    _install(state, "sid", [TOME])
+    assert state.scenario_glossary == [TOME, king]
 
 
 def test_names_found_without_stats_still_update_a_republished_entry():
