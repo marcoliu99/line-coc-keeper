@@ -10,7 +10,7 @@ A blow of twelve points killed a ten-point investigator in a running fight; the 
 
 ## Change
 
-Outside a fight, a player's line from an investigator whose injury says `dead` is answered from state, before any model is called (`unconscious_wake.dead`, `dead_reply`, the first check in `supervisor._prepare`): 「{name} 已經死亡，不能再行動了。想繼續參與的話，請告訴守密人，由他安排新的調查員；其他調查員可以繼續。」 In a running fight the combat engine still decides. A dying investigator (`dying`) is not dead and still waits for First Aid.
+Outside a fight, a player's line from an investigator whose injury says `dead` is answered from state, before any model is called (`unconscious_wake.dead`, `dead_reply`, the first check in `supervisor._prepare`): 「{name} 已經死亡，不能再行動了。想繼續參與的話，請告訴守密人，由他安排新的調查員；其他調查員可以繼續。」 The same check keeps the line from starting a retrieval prefetch and from moving the investigator on the scene map. In a running fight the combat engine still decides. A dying investigator (`dying`) is not dead and still waits for First Aid.
 
 ## Not changed
 

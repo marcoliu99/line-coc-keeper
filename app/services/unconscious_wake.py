@@ -32,6 +32,12 @@ def dead(character: Character) -> bool:
     return bool((character.injury or {}).get("dead"))
 
 
+def dead_outside_combat(state: GroupState, user_id: str) -> bool:
+    """Whether this player's investigator is dead and the table is out of combat: their line is answered from state."""
+    actor = state.get_active_character(user_id)
+    return actor is not None and not state.combat.active and dead(actor)
+
+
 def dead_reply(character: Character) -> str:
     name = character.name
     return (f"{name} 已經死亡，不能再行動了。想繼續參與的話，請告訴守密人，由他安排新的調查員；"

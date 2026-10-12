@@ -240,3 +240,25 @@ def test_only_an_investigator_whose_injury_says_dead_is_dead() -> None:
     assert unconscious_wake.dead(state.characters["p1"]) and not unconscious_wake.dead(state.characters["p2"])
     state.characters["p2"].injury = {"unconscious": True, "dying": True}
     assert not unconscious_wake.dead(state.characters["p2"])  # dying waits for First Aid; it is not dead
+
+
+def test_a_dead_investigators_line_neither_searches_nor_moves_them(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.agents import context_builder
+    from app.commands import router
+
+    state = _party("p1", "p2")
+    state.characters["p1"].injury = {"dead": True}
+    searched = AsyncMock()
+    monkeypatch.setattr(context_builder, "prefetch_retrieval", searched)
+    assert asyncio.run(supervisor.prefetch_retrieval(state, "p1", "我走進廚房", "player", GROUP)) is None
+    searched.assert_not_awaited()
+    asyncio.run(supervisor.prefetch_retrieval(state, "p2", "我走進廚房", "player", GROUP))
+    searched.assert_awaited_once()
+
+    _save(state)
+    moved = []
+    monkeypatch.setattr(router, "resolve_map_action", lambda *args: moved.append(args) or {"room": "kitchen"})
+    assert router._resolve_player_location(GROUP, "p1", "走進廚房") is None and not moved
+    assert router._resolve_player_location(GROUP, "p2", "走進廚房") == {"room": "kitchen"}
