@@ -703,4 +703,9 @@ def test_a_fight_that_began_is_not_followed_by_a_request_to_start_over() -> None
     unrelated = _result("incomplete", "model_incomplete", fallback_reason="executor_no_action",
                         check_status={"tool_called": True, "pending": None, "combat_opened": True})
     assert not prompt_config.fight_started_cleanly(unrelated)
+    # A cancellation nobody verified is a state conflict too, but the table still needs to hear about it.
+    cancelled = _result("incomplete", "cancellation_not_verified", fallback_reason="state_conflict",
+                        check_status={"tool_called": True, "pending": None, "combat_opened": True})
+    assert not prompt_config.fight_started_cleanly(cancelled)
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, cancelled)
     assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, unrelated)

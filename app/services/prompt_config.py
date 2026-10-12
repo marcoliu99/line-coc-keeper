@@ -532,10 +532,13 @@ def fight_started_cleanly(result: MechanicResult) -> bool:
 
     The Executor opened the fight with its tools, then handed the turn over naming a check or Luck decision nobody had
     (「要求處理的檢定／Luck 決定不存在」, the Haunting 2026-10-12 rerun3 turn 28). The narration says the fight has begun and
-    whose turn it is; 「這次行動尚未完整處理…請依目前劇情重新操作」 after it told the table to start again."""
+    whose turn it is; 「這次行動尚未完整處理…請依目前劇情重新操作」 after it told the table to start again. A cancellation
+    that could not be verified is also a ``state_conflict`` but a real one, so only the missing-check code qualifies."""
     status = result.check_status
+    resolution = result.turn_resolution
     return bool(
         status.get("combat_opened") and result.fallback_reason == "state_conflict"
+        and resolution is not None and resolution.validation_code == "pending_identity_mismatch"
         and not (status.get("pending") or status.get("pending_luck") or status.get("dice_rolled") or status.get("resolved"))
     )
 

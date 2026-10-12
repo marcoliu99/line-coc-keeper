@@ -10,7 +10,7 @@
 
 ## 變更
 
-`prompt_config.fight_started_cleanly(result)` 在下列情況為真：這回合開了戰鬥（`combat_opened`）、原因是 `state_conflict`，而且回合沒留下任何待處理項目、也沒擲骰（沒有待處理檢定或 Luck 決定、沒擲骰、沒結算檢定）。一致性步驟就直接回傳敘事者的文字，不再附上「尚未完整處理」的提示。其他未完成的回合，以及擲過骰或還有檢定在等的回合，仍然有這段提示。
+`prompt_config.fight_started_cleanly(result)` 在下列情況為真：這回合開了戰鬥（`combat_opened`）、原因是 `state_conflict` 且驗證碼為 `pending_identity_mismatch`（指名的檢定不存在；取消動作未驗證的 `cancellation_not_verified` 雖然也歸為 `state_conflict`，但仍保留提示），而且回合沒留下任何待處理項目、也沒擲骰（沒有待處理檢定或 Luck 決定、沒擲骰、沒結算檢定）。一致性步驟就直接回傳敘事者的文字，不再附上「尚未完整處理」的提示。其他未完成的回合，以及擲過骰或還有檢定在等的回合，仍然有這段提示。
 
 這個回合仍記錄為 `state_conflict`，測試報告的統計照舊。
 
