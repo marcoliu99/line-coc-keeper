@@ -119,3 +119,8 @@ def test_a_disguise_is_never_rewritten_into_the_identity_it_hides():
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "走廊上站著 兇手約翰。"  # once revealed, it is the name every time
     assert "身分還沒揭露的人物" in build_static_prompt(state)
+
+
+def test_an_accented_alias_is_used_too():
+    entries = [{"name": "何內", "aliases": ["René"]}, {"name": "慕尼黑", "aliases": ["München"]}]
+    assert presentation.use_scenario_names("René 來自 München。", entries) == "何內 來自 慕尼黑。"

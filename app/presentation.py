@@ -34,9 +34,10 @@ _ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?!
 
 # An English name as an index writes it: letters first, then letters, digits and the punctuation names carry
 # (「Room 3」, 「Youngling, deep-sea nightmare」, 「Smith & Sons」); no CJK, which is already the Chinese name.
-_LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z0-9 .,&'’-]*[A-Za-z0-9]")
+_L = "A-Za-zÀ-ÖØ-öø-ɏ"  # Latin letters, accented ones included (René, München)
+_LATIN_NAME = re.compile(rf"[{_L}][{_L}0-9 .,&'’-]*[{_L}0-9]")
 _HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
-_LATIN_LETTER = re.compile(r"[A-Za-z]")
+_LATIN_LETTER = re.compile(rf"[{_L}]")
 
 
 def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = (), told: str | None = None) -> str:
@@ -69,8 +70,8 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
     names = {alias: next(iter(found)) for alias, found in targets.items() if len(found) == 1}
     if not names:
         return text
-    pattern = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
-                         + r")(?:['’]s)?(?![A-Za-z0-9])", re.IGNORECASE)
+    pattern = re.compile(rf"(?<![{_L}0-9])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
+                         + rf")(?:['’]s)?(?![{_L}0-9])", re.IGNORECASE)
 
     def chinese(match: re.Match[str]) -> str:
         before, after = text[:match.start()].rstrip()[-1:], text[match.end():].lstrip()[:1]
