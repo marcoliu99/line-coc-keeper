@@ -388,7 +388,8 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     db_match = _BLOCK_DB.search(block)
     bonus = db_match.group("db").replace(" ", "") if db_match else ""
     attacks: list[dict[str, Any]] = []
-    for match in _BLOCK_ATTACK.finditer(block):
+    matches = list(_BLOCK_ATTACK.finditer(block))
+    for index, match in enumerate(matches):
         label = match.group("label").strip()
         if _NOT_AN_ATTACK.match(label) or combat.SHOOTING_NAME.search(label) or _THROWN.search(label):
             continue
@@ -407,7 +408,8 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
         except ValueError:
             continue
         attack = {"label": label, "skill_name": "格鬥", "skill_value": int(match.group("value")), "damage": damage.upper()}
-        if _IMPALE.search(block[match.end():].split("\n", 1)[0]):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(block)
+        if _IMPALE.search(re.split(r"[\n;；。]", block[match.end():end], maxsplit=1)[0]):
             attack["tags"] = ["impale"]  # 「damage 1D8+1 (impale)」: an Extreme success impales, as the block says
         attacks.append(attack)
     return attacks
