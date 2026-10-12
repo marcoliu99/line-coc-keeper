@@ -180,4 +180,5 @@ def test_the_dict_command_lists_and_forgets():
 def test_the_dict_command_says_why_a_built_in_entry_stays():
     reply = _run(["/coc", "dict", "forget", "Necronomicon"])[0]
     assert "內建" in reply and "死靈之書" in reply
+    assert "combat_weapons.json" in _run(["/coc", "dict", "forget", "Thompson"])[0]  # a weapon's name is not in the glossary files
     assert "用法" in _run(["/coc", "dict", "forget"])[0]

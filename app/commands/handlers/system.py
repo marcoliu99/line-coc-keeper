@@ -889,7 +889,7 @@ async def _dict_command(call: _Call) -> None:
             return
         built_in = dictionary.built_in_name(term)
         if built_in:
-            await reply(f"「{term}」是內建詞條（→ {built_in}），不能用指令移除；要修改請編輯 app/data/coc7_glossary/ 裡對應的檔案。")
+            await reply(f"「{term}」是內建詞條（→ {built_in}），不能用指令移除；要修改請編輯 app/data/ 裡對應的檔案（譯名在 coc7_glossary/，武器名稱在 combat_weapons.json）。")
             return
         await reply(f"字典裡沒有學到「{term}」。用 /coc dict 查看學到的內容。")
         return
