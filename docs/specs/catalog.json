@@ -3061,7 +3061,8 @@
       "category": "feature",
       "status": "implemented",
       "evidence": [
-        "app/data/coc7_glossary.json",
+        "app/data/coc7_glossary/skills.json",
+        "app/data/coc7_glossary/sources.json",
         "app/dictionary.py",
         "tests/test_coc7_glossary.py"
       ],

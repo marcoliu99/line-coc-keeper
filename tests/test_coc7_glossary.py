@@ -9,13 +9,13 @@ from app.models import BASE_SKILLS
 
 
 def _entries() -> list[dict]:
-    return json.loads(dictionary._GLOSSARY.read_text(encoding="utf-8"))["entries"]
+    return dictionary.glossary_entries()
 
 
 def test_every_entry_has_a_canonical_name_and_its_sources():
-    data = json.loads(dictionary._GLOSSARY.read_text(encoding="utf-8"))
-    sources = {s["id"] for s in data["sources"]}
-    for entry in data["entries"]:
+    sources = {s["id"] for s in json.loads((dictionary._GLOSSARY / "sources.json").read_text(encoding="utf-8"))["sources"]}
+    assert len(_entries()) >= 238
+    for entry in _entries():
         assert entry["canonical"] and entry["en"], entry
         assert entry["sources"] and set(entry["sources"]) <= sources, entry
 
@@ -49,3 +49,9 @@ def test_a_stored_dictionary_still_has_the_glossary_and_keeps_what_it_learned(mo
     monkeypatch.setattr(db, "get_json", lambda table, key: stored)
     assert dictionary.lookup_skill("secret skill") == "祕技"
     assert dictionary.lookup_skill("侦查") == "偵查" and dictionary.lookup_term("克苏鲁") == "克蘇魯"
+
+
+def test_the_english_names_the_old_python_seed_had_still_resolve():
+    for english, skill in [("brawl", "格鬥（鬥毆）"), ("handgun", "射擊（手槍）"), ("rifle/shotgun", "射擊（步槍/霰彈槍）"),
+                           ("own language", "母語"), ("spot hidden", "偵查"), ("credit rating", "信用評級")]:
+        assert dictionary.lookup_skill(english) == skill, english

@@ -10,13 +10,13 @@ The self-learning dictionary (`app/dictionary.py`) started with about 50 English
 
 ## Change
 
-- **`app/data/coc7_glossary.json`**: 238 CoC7 terms in English, Traditional (`zh_tw`) and Simplified (`zh_cn`) Chinese, with alternative renderings and the sources they came from. It covers 15 characteristics, 86 skills, 38 rule terms, 71 Mythos beings and 28 tomes and places.
+- **`app/data/coc7_glossary/`**: one JSON file per category (`skills`, `characteristics`, `rules`, `mythos`, `tomes_places`), one entry per line, plus `sources.json`. To add a term, add a line to the right file. Together they hold 238 CoC7 terms in English, Traditional (`zh_tw`) and Simplified (`zh_cn`) Chinese, with alternative renderings and the sources they came from. It covers 15 characteristics, 86 skills, 38 rule terms, 71 Mythos beings and 28 tomes and places.
   - The sources are community translations pinned to a commit: the Foundry VTT CoC7 system (zh-TW, zh-CN), SealDice's CoC7 template, COC不全书, the HKTRPG dice bot, the Roll20 sheet, the Komica wiki and a TRPG character sheet.
   - Each entry has a `canonical` name, the one this project writes:
     - **Skills:** this project's own skill name (for example 話術 and 话术 → 快速交談, 喬裝 → 偽裝, 鎖匠 → 開鎖), so existing sheets keep their names.
     - **Other terms:** the Traditional name, except where the project already has its own wording (極難成功, not 極限成功; 守密人, not 守祕人).
   - Two zh-CN-only entries were given their plain Traditional spelling (永久性瘋狂, 食屍教典儀), as were six marked `zh_tw_converted`.
-- **Dictionary.** Every spelling of a skill entry resolves to its canonical skill through `lookup_skill`, and so through `skill_aliases.canonical_skill_name`, which checks and roll lines already use. Other entries form a new `terms` table, read with `lookup_term`.
+- **Dictionary.** The built-in vocabulary is now all data. The hard-coded `_SEED_SKILLS` table in `app/dictionary.py` is gone, and its 52 English names live in the skill entries (`alt_en` for Brawl, Handgun, Rifle/Shotgun and Own Language) and resolve exactly as before. Every spelling of a skill entry resolves to its canonical skill through `lookup_skill`, and so through `skill_aliases.canonical_skill_name`, which checks and roll lines already use. Other entries form a new `terms` table, read with `lookup_term`.
   - A one-character spelling (斧, 劍) is never used.
   - A spelling two entries claim is never used.
   - A characteristic's name is never read as a skill.
@@ -32,6 +32,7 @@ The self-learning dictionary (`app/dictionary.py`) started with about 50 English
 
 `tests/test_coc7_glossary.py`:
 
+- The old seed's English names still resolve.
 - Every entry has a canonical name and known sources.
 - Skill entries resolve to project skill names, and other spellings reach them.
 - One-character spellings and characteristics are not skills.
