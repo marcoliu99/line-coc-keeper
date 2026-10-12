@@ -39,13 +39,15 @@ _HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_LETTER = re.compile(r"[A-Za-z]")
 
 
-def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = ()) -> str:
+def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = (), told: str | None = None) -> str:
     """``text`` with each English original the scenario index lists for a person or place written as the index's
     Chinese name (「Corbitt」 → 「柯比特」, 「Corbitt's」 → 「柯比特的」), so a name reads the same on every turn.
 
     Only an alias the index gives, of three letters or more, that names one entry: an English word that is not on
     the list is never guessed at. A name inside ``keep`` (the investigators' own) is left as written, and so is one
     with an English word right beside it: that is English the narration quotes (「Will he return?」), not the name.
+    With ``told`` (what the table has already been told), a name is used only once it appears there: an index name may
+    be the secret behind a disguise (「Masked Man」 for 兇手約翰), and rewriting must never be what reveals it.
     """
     if not text or not entries:
         return text
@@ -57,7 +59,7 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         written = [str(n).strip() for n in (entry.get("name"), *(entry.get("aliases") or [])) if str(n or "").strip()]
         # The Chinese name, which an older index may keep among the aliases under an English heading.
         name = next((n for n in written if _HAS_CJK.search(n)), "")
-        if not name:
+        if not name or (told is not None and name not in told):
             continue
         for alias in written:
             # A name that is also game text (an NPC nicknamed 「Dex」) would rewrite 「DEX 檢定」: never used.

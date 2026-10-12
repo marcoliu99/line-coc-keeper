@@ -121,6 +121,11 @@ def _empty_weapons(state: GroupState, current: Any) -> str:
     return f"{'、'.join(empty)} 已經沒有子彈，可以改用徒手或其他武器。" if empty else ""
 
 
+def public_narration(state: GroupState) -> list[str]:
+    """What the table has publicly been told in this timeline, newest first (see ``_public_narration``)."""
+    return _public_narration(state)
+
+
 def _public_narration(state: GroupState) -> list[str]:
     """What players have actually been told in this timeline, newest first.
 
