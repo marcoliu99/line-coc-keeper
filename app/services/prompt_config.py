@@ -501,7 +501,8 @@ def _unfinished_reply(result: MechanicResult, resolution: TurnResolution, state:
     if status.get("scenario_evidence_blocked"):
         blocked = f"{warning}目前未取得足夠的劇本依據，系統已暫停相關操作；待依據補齊後再繼續。"
         return f"{blocked}\n{hints}" if hints else blocked
-    return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints)}"
+    acted = bool(status.get("dice_rolled") or status.get("resolved") or status.get("state_changed"))
+    return f"{warning}{turn_fallback.guidance(result.fallback_reason, hints, acted=acted)}"
 
 
 def explains_in_story(result: MechanicResult | None, state: GroupState | None = None) -> bool:
