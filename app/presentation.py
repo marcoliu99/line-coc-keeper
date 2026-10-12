@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+from collections import Counter
 from collections.abc import Collection
 
 from app import config, dice, skill_aliases
@@ -41,7 +42,7 @@ _LATIN_LETTER = re.compile(rf"[{_L}]")
 
 
 def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = (),
-                       told: Collection[str] | None = None) -> str:
+                       told: Collection[str] | None = None, earlier: Collection[str] | None = None) -> str:
     """``text`` with each English original the scenario index lists for a person or place written as the index's
     Chinese name (「Corbitt」 → 「柯比特」, 「Corbitt's」 → 「柯比特的」), so a name reads the same on every turn.
 
@@ -50,20 +51,26 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
     with an English word right beside it: that is English the narration quotes (「Will he return?」), not the name.
     With ``told`` (the index names the table has already been told), a name is used only once it is among them: an index
     name may be the secret behind a disguise (「Masked Man」 for 兇手約翰), and rewriting must never be what reveals it.
+    With ``earlier`` too (the names told before this text), a name ``text`` itself tells is used only after the place it
+    first appears: 「Masked Man 靠近。你認出他是約翰。」 keeps its first sentence. An entry whose Chinese name another
+    entry also has is never used: telling one would read as telling both.
     """
     if not text or not entries:
         return text
     kept = [k.casefold() for k in keep if k]
-    targets: dict[str, set[str]] = {}
+    spelled: list[tuple[str, list[str]]] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         written = [str(n).strip() for n in (entry.get("name"), *(entry.get("aliases") or [])) if str(n or "").strip()]
         # The Chinese name, which an older index may keep among the aliases under an English heading.
-        name = next((n for n in written if _HAS_CJK.search(n)), "")
-        # An index name an investigator also has is never written in: narration about the investigator would read as
-        # the NPC being told, and a disguise could be rewritten into it.
-        if not name or name.casefold() in kept:
+        spelled.append((next((n for n in written if _HAS_CJK.search(n)), ""), written))
+    shared = Counter(name for name, _ in spelled if name)
+    targets: dict[str, set[str]] = {}
+    for name, written in spelled:
+        # An index name an investigator or another entry also has is never written in: narration about the one would
+        # read as the other being told, and a disguise could be rewritten into it.
+        if not name or name.casefold() in kept or shared[name] > 1:
             continue
         for alias in written:
             # A name that is also game text or a skill (an NPC nicknamed 「Dex」 or surnamed 「Dodge」) would rewrite
@@ -88,7 +95,7 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         # The pattern matches case-insensitively, which casefold() does not always mirror (「IŞIK」 for 「Işık」).
         name = names.get(match.group(1).casefold()) or next(
             (n for alias, n in names.items() if re.fullmatch(re.escape(alias), match.group(1), re.IGNORECASE)), "")
-        if not name:
+        if not name or (earlier is not None and name not in earlier and name not in text[:match.start()]):
             return match.group(0)
         return name + "的" if match.group(0) != match.group(1) else name
     return pattern.sub(chinese, text)

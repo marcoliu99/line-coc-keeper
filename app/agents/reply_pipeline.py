@@ -134,9 +134,11 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     keep = [c.name for c in (*state.characters_by_id.values(), *state.characters.values())]
     keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
     entries = [*state.scenario_npc_index, *state.scenario_location_index]
-    # Only names the table has already been told: an index name may be the identity a disguise hides.
-    told = turn_fallback.told_names(state, entries, [draft.text], keep)
-    named = presentation.use_scenario_names(draft.text, entries, keep, told)
+    # Only names the table has already been told: an index name may be the identity a disguise hides. One this reply
+    # tells is used only after the reply tells it.
+    before = turn_fallback.told_names(state, entries, [], keep)
+    told = before | turn_fallback.told_names(state, entries, [draft.text], keep)
+    named = presentation.use_scenario_names(draft.text, entries, keep, told, before)
     # Delivery validated the English spelling; the Chinese one is shown only if it passes the same checks, and when it
     # does not, the private lines keep theirs too, so one turn spells a name one way.
     if named != draft.text and not turn_delivery.rewrite_still_safe(ctx.message, named):
@@ -147,8 +149,9 @@ def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
     told_by: dict[str, set[str]] = {}
 
     def private(owner: str, text: str) -> str:
-        told_by[owner] = told_by.get(owner, told) | turn_fallback.told_names(state, entries, [text], keep)
-        return presentation.use_scenario_names(text, entries, keep, told_by[owner])
+        earlier = told_by.get(owner, told)
+        told_by[owner] = earlier | turn_fallback.told_names(state, entries, [text], keep)
+        return presentation.use_scenario_names(text, entries, keep, told_by[owner], earlier)
     draft.private_messages = [(owner, private(owner, text)) for owner, text in draft.private_messages]
     draft.private_controls = [(owner, private(owner, text)) for owner, text in draft.private_controls]
 
