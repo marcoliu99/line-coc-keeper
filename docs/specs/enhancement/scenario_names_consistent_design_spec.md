@@ -20,7 +20,7 @@ Tools that keep long LLM translations consistent do two things. They give the mo
   - No English word the index does not list is guessed at.
   - A match with an English word right beside it is English the narration quotes (「Will he return?」), not the name, and is left as written.
   - Private messages get the same names as the public narration.
-  - Like `player_text`, it only changes how a name is written; the facts delivery validated are unchanged.
+  - Like `player_text`, it only changes how a name is written; the facts delivery validated are unchanged. The rewritten public reply must still pass delivery's spoiler and hard-fact checks (`turn_delivery.rewrite_still_safe`); if it doesn't, the validated English spelling is shown.
 - **Existing games.** Nothing else changes: combat, checks, saved state and the index itself are untouched. A game whose scenario is already indexed gets both changes on its next turn.
 
 ## Verification
