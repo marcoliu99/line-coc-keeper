@@ -65,7 +65,7 @@ _COMBAT_REASONS: frozenset[str] = frozenset({"no_scenario_evidence", "executor_n
 
 
 # Said instead of the scenario-blaming wording when the turn already rolled dice or changed the game: the result stands,
-# so 「劇本裡沒有足夠的內容」 is false (Camp Sunny rerun7 turns 76 and 80, a failed Driving roll and five Sanity rolls
+# so 「劇本裡沒有足夠的內容」 is false (the 2026-10-12 soak reruns: a failed Driving roll, and five Sanity rolls, each
 # followed by exactly that).
 _AFTER_A_RESULT = "剛才的結果已經記錄，但這次行動的後續守密人還沒處理完；請接著說明你想怎麼做。"
 
