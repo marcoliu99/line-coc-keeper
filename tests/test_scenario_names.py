@@ -140,23 +140,6 @@ def test_a_name_inside_a_longer_index_name_is_not_a_disclosure():
     assert draft.private_messages == [("p1", "只有你知道 約翰 是誰；約翰 在看你。")]  # told to that reader only
 
 
-def test_a_one_character_name_is_used_once_told():
-    from app.services import turn_fallback
-    well = {"name": "井", "aliases": ["Well"]}
-    state = _told(GroupState(group_id="g", scenario_location_index=[well]), "院子中央有一口井。")
-    told = turn_fallback.told_names(state, [well])
-    assert "井" in told
-    assert presentation.use_scenario_names("你走向 Well。", [well], told=told) == "你走向 井。"
-
-
-def test_a_one_character_name_under_an_english_heading_is_used_once_told():
-    from app.services import turn_fallback
-    well = {"name": "Well", "aliases": ["井"]}
-    state = _told(GroupState(group_id="g", scenario_location_index=[well]), "院子中央有一口井。")
-    told = turn_fallback.told_names(state, [well])
-    assert presentation.use_scenario_names("你走向 Well。", [well], told=told) == "你走向 井。"
-
-
 def test_an_alias_two_entries_share_stays_ambiguous_when_only_one_is_told():
     first, second = {"name": "守衛甲", "aliases": ["Guard"]}, {"name": "守衛乙", "aliases": ["Guard"]}
     assert presentation.use_scenario_names("Guard 走過來。", [first, second], told={"守衛甲"}) == "Guard 走過來。"
@@ -190,3 +173,16 @@ def test_an_investigator_whose_name_contains_an_npc_name_does_not_tell_it():
     draft = MagicMock(text="Masked Man 站在門口。", private_messages=[], private_controls=[])
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "Masked Man 站在門口。"
+
+
+def test_a_one_character_name_is_never_counted_as_told():
+    from app.services import turn_fallback
+    king = {"name": "王", "aliases": ["Masked Man"]}
+    state = _told(GroupState(group_id="g", scenario_npc_index=[king]), "國王的畫像掛在牆上。")
+    assert turn_fallback.told_names(state, [king]) == set()
+
+
+def test_an_alias_that_is_a_skill_name_is_never_used():
+    dodge = {"name": "道奇", "aliases": ["Dodge", "Mr Dodge"]}
+    assert presentation.use_scenario_names("請做 Dodge 檢定。", [dodge]) == "請做 Dodge 檢定。"
+    assert presentation.use_scenario_names("Mr Dodge 走進來。", [dodge]) == "道奇 走進來。"
