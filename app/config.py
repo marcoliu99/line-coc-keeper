@@ -53,7 +53,7 @@ def _env_str_map(name: str) -> dict[str, str]:
 # A registered name that is also ordinary game text cannot be replaced everywhere it appears without rewriting the game:
 # a character called "7" would turn a dice result into the alias, one called "Luck" or "HP" a mechanic. Such a key is
 # refused (the whole setting is ignored and reported) rather than guessed at.
-_GAME_TEXT_NAMES = frozenset({
+GAME_TEXT_NAMES = frozenset({
     "luck", "hp", "mp", "san", "sanity", "str", "con", "siz", "dex", "app", "int", "pow", "edu", "db", "mov", "build",
     "coc", "check", "roll", "skill", "success", "fail", "failure", "critical", "fumble", "hard", "extreme", "regular",
 })
@@ -61,7 +61,7 @@ _GAME_TEXT_NAMES = frozenset({
 
 def _alias_map(name: str) -> dict[str, str]:
     aliases = _env_str_map(name)
-    ambiguous = [key for key in aliases if key.strip().isdigit() or len(key.strip()) < 2 or key.strip().casefold() in _GAME_TEXT_NAMES]
+    ambiguous = [key for key in aliases if key.strip().isdigit() or len(key.strip()) < 2 or key.strip().casefold() in GAME_TEXT_NAMES]
     if ambiguous:
         INVALID_LOG_SETTINGS.append((name, f"names that are not also game text (not {ambiguous[0]!r})", "{}"))
         return {}

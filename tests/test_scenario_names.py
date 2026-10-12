@@ -93,3 +93,8 @@ def test_a_name_that_would_reveal_a_secret_is_left_in_english():
 def test_an_older_english_headed_entry_is_listed_by_its_chinese_name():
     state = GroupState(group_id="g", scenario_npc_index=[{"name": "Walter Corbitt", "aliases": ["柯比特", "Corbitt"]}])
     assert "・柯比特（別名：Walter Corbitt、Corbitt）" in build_static_prompt(state)
+
+
+def test_an_alias_that_is_also_game_text_is_never_used():
+    entry = {"name": "德克斯", "aliases": ["Dex", "Luck"]}
+    assert presentation.use_scenario_names("請做 DEX 檢定，或按 Luck 按鈕。", [entry]) == "請做 DEX 檢定，或按 Luck 按鈕。"
