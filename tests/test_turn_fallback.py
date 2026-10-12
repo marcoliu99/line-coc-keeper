@@ -591,3 +591,11 @@ async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None
     retry = _result("blocked", "validated", scenario_evidence=found)
     _, _, _, message = await _turn(_state(), [first, retry])
     assert "first_attempt_evidence" not in message.payload
+
+
+def test_what_the_first_attempt_found_counts_as_evidence_for_the_status_and_the_obligations() -> None:
+    from app.agents import supervisor
+    bare = AgentMessage(payload={"rag_status": "empty", "rag_context": ""})
+    assert supervisor._evidence_status(bare) == "empty" and supervisor._evidence_text(bare) == ""
+    carried = AgentMessage(payload={"rag_status": "empty", "rag_context": "", "first_attempt_evidence": "門是鎖著的。"})
+    assert supervisor._evidence_status(carried) == "success" and "門是鎖著的。" in supervisor._evidence_text(carried)

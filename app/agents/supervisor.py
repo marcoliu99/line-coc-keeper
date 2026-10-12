@@ -93,14 +93,17 @@ _DEGRADED_RAG = frozenset({"empty", "fallback", "timeout", "error"})
 
 
 def _evidence_status(message: AgentMessage) -> str:
-    """The retrieval status as the Executor saw it: a successful recovery search counts as evidence."""
-    return "success" if message.payload.get("recovery_context") else message.payload.get("rag_status", "")
+    """The retrieval status as the Executor saw it: a successful recovery search, or what a discarded first attempt
+    found, counts as evidence."""
+    found = message.payload.get("recovery_context") or message.payload.get("first_attempt_evidence")
+    return "success" if found else message.payload.get("rag_status", "")
 
 
 def _evidence_text(message: AgentMessage) -> str:
     """The scenario text the turn had, including what the one recovery search found."""
     return "\n\n".join(part for part in (message.payload.get("rag_context", ""),
-                                          message.payload.get("recovery_context", "")) if part)
+                                          message.payload.get("recovery_context", ""),
+                                          message.payload.get("first_attempt_evidence", "")) if part)
 
 
 def _time_for_retry() -> bool:
