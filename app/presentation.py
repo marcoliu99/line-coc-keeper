@@ -66,6 +66,13 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         # The Chinese name, which an older index may keep among the aliases under an English heading.
         spelled.append((next((n for n in written if _HAS_CJK.search(n)), ""), written))
     shared = Counter(name for name, _ in spelled if name)
+    # Every longer name a short one can hide inside (約翰 in 約翰遜, an investigator's 約翰·史密斯).
+    longer_names = [n for _, written in spelled for n in written if _HAS_CJK.search(n)] + [k for k in keep if k]
+
+    def _said(name: str, before: str) -> bool:
+        for other in sorted({n for n in longer_names if len(n) > len(name) and name in n}, key=len, reverse=True):
+            before = before.replace(other, " ")
+        return name in before
     targets: dict[str, set[str]] = {}
     for name, written in spelled:
         # An index name an investigator or another entry also has is never written in: narration about the one would
@@ -95,7 +102,7 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         # The pattern matches case-insensitively, which casefold() does not always mirror (「IŞIK」 for 「Işık」).
         name = names.get(match.group(1).casefold()) or next(
             (n for alias, n in names.items() if re.fullmatch(re.escape(alias), match.group(1), re.IGNORECASE)), "")
-        if not name or (earlier is not None and name not in earlier and name not in text[:match.start()]):
+        if not name or (earlier is not None and name not in earlier and not _said(name, text[:match.start()])):
             return match.group(0)
         return name + "的" if match.group(0) != match.group(1) else name
     return pattern.sub(chinese, text)

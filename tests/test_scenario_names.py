@@ -225,3 +225,14 @@ def test_two_entries_with_one_chinese_name_are_never_written_in():
     told_one = {"name": "約翰", "aliases": ["John Carter"]}
     hidden = {"name": "約翰", "aliases": ["Masked Man"]}
     assert presentation.use_scenario_names("Masked Man 站在門口。", [told_one, hidden], told={"約翰"}) == "Masked Man 站在門口。"
+
+
+def test_a_longer_name_before_the_disguise_is_not_its_reveal():
+    from unittest.mock import MagicMock
+    culprit, other = {"name": "約翰", "aliases": ["Masked Man"]}, {"name": "約翰遜", "aliases": ["Johnson"]}
+    state = GroupState(group_id="g", scenario_npc_index=[culprit, other])
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="約翰遜站在門邊。Masked Man 靠近。你認出他是約翰。", private_messages=[], private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "約翰遜站在門邊。Masked Man 靠近。你認出他是約翰。"
