@@ -358,7 +358,7 @@ _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
 # Read as a blow, a shot or a throw would be fought back against and spend no ammunition: only melee attacks are taken
 # this way (guns and bows are combat.SHOOTING_NAME).
-_IMPALE = re.compile(r"impal|穿刺|貫穿", re.IGNORECASE)
+_IMPALE = re.compile(r"(?<!non-)(?<!non)(?<!not )impal|(?<![不無非])(?:穿刺|貫穿)", re.IGNORECASE)
 _THROWN = re.compile(r"投擲|\bthrow(?:n|ing)?\b", re.IGNORECASE)
 # 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
 _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
@@ -383,10 +383,10 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     found = stat_block_for(state, name)
     if found is None:
         return []
-    block = found[1].translate(str.maketrans("＋－−–", "+---"))  # full-width and typographic signs from PDF text
-    block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), block))
-    db_match = _BLOCK_DB.search(block)
-    bonus = db_match.group("db").replace(" ", "") if db_match else ""
+    raw = found[1].translate(str.maketrans("＋－−–⁄∕", "+---//"))  # full-width and typographic signs from PDF text
+    db_match = _BLOCK_DB.search(raw) or _BLOCK_DB_WRAPPED.search(raw)  # 「DB: +1D4」 or 「DB (+1D4)」
+    bonus = re.sub(r"\s+", "", db_match.group(db_match.lastindex or 0)) if db_match else ""
+    block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), raw))
     attacks: list[dict[str, Any]] = []
     matches = list(_BLOCK_ATTACK.finditer(block))
     for index, match in enumerate(matches):
