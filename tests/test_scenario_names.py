@@ -178,3 +178,15 @@ def test_an_index_name_an_investigator_shares_is_never_written_in():
     culprit = {"name": "約翰", "aliases": ["Masked Man"]}
     assert presentation.use_scenario_names("Masked Man 站在門口。", [culprit], keep=["約翰"], told={"約翰"}) == \
         "Masked Man 站在門口。"
+
+
+def test_an_investigator_whose_name_contains_an_npc_name_does_not_tell_it():
+    from unittest.mock import MagicMock
+    culprit = {"name": "約翰", "aliases": ["Masked Man"]}
+    state = _told(GroupState(group_id="g", scenario_npc_index=[culprit]), "約翰·史密斯推開了門。")
+    state.pregens = [{"name": "約翰·史密斯"}]
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="Masked Man 站在門口。", private_messages=[], private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "Masked Man 站在門口。"
