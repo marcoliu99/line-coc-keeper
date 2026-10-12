@@ -67,6 +67,18 @@ def test_a_glossary_original_in_the_narration_reads_in_chinese():
     assert presentation.use_scenario_names("Necronomicon", [TOME]) == "死靈之書"
 
 
+def test_a_glossary_term_the_index_also_lists_still_reads_in_chinese():
+    corbitt = {"name": "柯比特", "aliases": ["Corbitt"]}
+    state = GroupState(group_id="g", scenario_npc_index=[corbitt], scenario_glossary=[dict(corbitt)])
+    state.log.append({"role": "assistant", "content": "柯比特的日記。", "audience": "public", "timeline_id": "",
+                      "record_kind": "narrative"})
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="Corbitt 在看你。", private_messages=[], private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "柯比特 在看你。"
+
+
 def _install(state: GroupState, scenario_id: str, terms: list | None) -> None:
     from app import scenario_activation
     context = {"manifest": {"title": "t"}, "text": "text",

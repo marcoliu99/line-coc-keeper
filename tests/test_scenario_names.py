@@ -208,3 +208,20 @@ def test_a_private_line_before_the_reveal_keeps_the_disguise():
                       private_controls=[])
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.private_messages == [("p1", "Masked Man 靠近。"), ("p1", "你認出他是約翰。")]
+
+
+def test_a_reveal_late_in_the_reply_does_not_rewrite_what_came_before():
+    from unittest.mock import MagicMock
+    culprit = {"name": "約翰", "aliases": ["Masked Man"]}
+    state = GroupState(group_id="g", scenario_npc_index=[culprit])
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="Masked Man 靠近。你認出他是約翰。Masked Man 笑了。", private_messages=[], private_controls=[])
+    reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "Masked Man 靠近。你認出他是約翰。約翰 笑了。"
+
+
+def test_two_entries_with_one_chinese_name_are_never_written_in():
+    told_one = {"name": "約翰", "aliases": ["John Carter"]}
+    hidden = {"name": "約翰", "aliases": ["Masked Man"]}
+    assert presentation.use_scenario_names("Masked Man 站在門口。", [told_one, hidden], told={"約翰"}) == "Masked Man 站在門口。"
