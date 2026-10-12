@@ -171,6 +171,21 @@ def location_index_underflow(scenario_text: str, locations: list[dict[str, Any]]
     return (len(sequence), extracted) if status == "reject" and sequence else None
 
 
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _chinese_first(entry: dict[str, Any]) -> tuple[str, list[str]]:
+    """The entry's Chinese name and its other spellings. An older index may hold the English heading as the name and
+    the Chinese among the aliases; the prompt names the Chinese one first, since that is the name to write."""
+    name = str(entry.get("name") or "").strip()
+    aliases = [str(a) for a in entry.get("aliases") or [] if str(a).strip()]
+    if name and not _CJK.search(name):
+        chinese = next((a for a in aliases if _CJK.search(a)), "")
+        if chinese:
+            return chinese, [name, *(a for a in aliases if a != chinese)]
+    return name or "（未命名）", aliases
+
+
 def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:
     """Renders the NPC/monster index into the block app/keeper.py's
     build_static_prompt injects into the cached system prompt. Empty input
@@ -180,8 +195,7 @@ def format_npc_index_block(npcs: list[dict[str, Any]]) -> str:
         return ""
     lines = []
     for n in npcs:
-        name = n.get("name") or "（未命名）"
-        aliases = n.get("aliases") or []
+        name, aliases = _chinese_first(n)
         alias_note = f"（別名：{'、'.join(aliases)}）" if aliases else ""
         hp = n.get("hp")
         hp_note = f"HP {hp}" if isinstance(hp, (int, float)) else ""
@@ -226,8 +240,7 @@ def format_location_index_block(locations: list[dict[str, Any]]) -> str:
         return ""
     lines = []
     for loc in locations:
-        name = loc.get("name") or "（未命名）"
-        aliases = loc.get("aliases") or []
+        name, aliases = _chinese_first(loc)
         alias_note = f"（別名：{'、'.join(aliases)}）" if aliases else ""
         summary = loc.get("summary") or ""
         page = loc.get("page")
