@@ -122,6 +122,13 @@ def test_a_term_found_again_under_another_translation_keeps_its_first_name():
     merged = scenario_index.merge_glossary([TOME], [{"name": "亡靈之書", "aliases": ["Necronomicon"]}])
     assert merged == [{"name": "死靈之書", "aliases": ["Necronomicon", "亡靈之書"], "kind": "書籍"}]
 
+
+def test_two_people_who_share_a_short_alias_stay_two_terms():
+    smith = {"name": "約翰史密斯", "aliases": ["John Smith", "John"]}
+    doe = {"name": "約翰杜", "aliases": ["John Doe", "John"]}
+    assert scenario_index.merge_glossary([smith], [doe]) == [smith, doe]
+
+
 def test_an_incomplete_location_index_still_keeps_the_names_it_found():
     import asyncio
 

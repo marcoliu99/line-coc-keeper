@@ -215,8 +215,10 @@ GLOSSARY_PROMPT_LIMIT = 80
 
 def merge_glossary(kept: list[dict[str, Any]], found: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """``kept`` with what a rebuild ``found`` added: a rebuild from part of a scenario never drops the names it did not
-    see, and a term it found again, by its name or any original spelling, keeps the Chinese name it already had (the
-    point is that a name reads the same every time) and gains the new spellings."""
+    see, and a term it found again keeps the Chinese name it already had (the point is that a name reads the same every
+    time) and gains the new spellings. A term is the same one when its Chinese name or its fullest original spelling
+    (the longest) is already a spelling of that term; a short alias two people share (「John」 for John Smith and John
+    Doe) never makes them one."""
     def key(text: Any) -> str:
         return str(text or "").strip().casefold()
 
@@ -224,9 +226,10 @@ def merge_glossary(kept: list[dict[str, Any]], found: list[dict[str, Any]]) -> l
     for term in found:
         if not isinstance(term, dict) or not key(term.get("name")):
             continue
-        spellings = {key(term.get("name")), *(key(a) for a in term.get("aliases") or [] if key(a))}
-        same = next((t for t in merged if spellings & {key(t.get("name")), *(key(a) for a in t.get("aliases") or [])}),
-                    None)
+        originals = sorted((key(a) for a in term.get("aliases") or [] if key(a)), key=len, reverse=True)
+        identifying = {key(term.get("name")), *originals[:1]}
+        same = next((t for t in merged
+                     if identifying & {key(t.get("name")), *(key(a) for a in t.get("aliases") or [])}), None)
         if same is None:
             merged.append(dict(term))
             continue
