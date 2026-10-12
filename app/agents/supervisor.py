@@ -370,6 +370,8 @@ async def _mechanics(turn: _Turn) -> None:
     turn.obligation_candidates = (
         turn.turn_kind in {"player_action", "resolved_check_followup"}
         and not (turn.pending_reply and not turn.autoroll_followups)
+        # An action the scenario cannot do is explained in the story: what the Narrator suggests instead did not happen.
+        and not prompt_config.explains_in_story(mechanic_result, state)
         and obligation_gate.possible(turn.obligation_evidence, mechanic_result)
     )
     if (turn.handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK

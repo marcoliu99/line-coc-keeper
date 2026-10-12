@@ -14,6 +14,7 @@ The soak script asked the party to go to "the Muscoby library" twelve turns apar
 
 - the Narrator runs (`narration_replaced` is false) instead of the fixed text being written without it;
 - the Narrator's facts block carries 【這個行動在劇本裡無法進行】: say why in the story, point only to the places and people the scenario has, invent nothing, and never write the action as done;
+- the obligation gate is not asked about such a turn: a passage may attach a Sanity loss or damage to the alternative the Narrator suggests, and suggesting it is not it happening;
 - `enforce_mechanic_check_consistency` keeps the Narrator's text. If the Narrator produced none, the fixed text is the fallback as before.
 
 Every other blocked or incomplete turn is unchanged, and a running battle keeps its whose-turn guidance.

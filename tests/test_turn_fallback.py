@@ -629,3 +629,16 @@ async def test_the_passage_the_recovery_search_found_counts_for_a_retry_that_sea
                     check_status={"tool_called": False, "pending": None})
     await _turn(_state(), [first, retry], rag_status="empty", search=("--- 第 4 頁 ---\n門是鎖著的。", "success"))
     assert turn_fallback.found_scenario_text(retry) and prompt_config.explains_in_story(retry)
+
+
+@aio
+async def test_what_the_narrator_suggests_instead_of_an_action_the_scenario_cannot_do_owes_nothing() -> None:
+    # The passage may attach a Sanity loss or damage to the alternative; suggesting it is not it happening.
+    from unittest.mock import patch
+    gate = MagicMock(return_value=True)
+    with patch.object(supervisor.obligation_gate, "possible", gate):
+        await _turn(_state(), [_cannot_be_done(), _cannot_be_done()], narration="去山洞入口看看吧。")
+        assert not gate.called
+        gate.reset_mock()
+        await _turn(_state(), [_result("resolved", "validated", scenario_evidence=PASSAGE)], narration="好。")
+        assert gate.called  # any other turn is still asked
