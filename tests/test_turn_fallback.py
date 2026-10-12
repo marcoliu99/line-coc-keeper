@@ -619,7 +619,7 @@ async def test_the_first_attempts_passage_counts_for_the_retry_that_found_nothin
     retry = _result("blocked", "validated", fallback_reason="unsupported_action",
                     check_status={"tool_called": False, "pending": None})
     await _turn(_state(), [first, retry])
-    assert retry.scenario_evidence == PASSAGE
+    assert PASSAGE[0] in retry.scenario_evidence
 
 
 @aio
@@ -642,3 +642,15 @@ async def test_what_the_narrator_suggests_instead_of_an_action_the_scenario_cann
         gate.reset_mock()
         await _turn(_state(), [_result("resolved", "validated", scenario_evidence=PASSAGE)], narration="好。")
         assert gate.called  # any other turn is still asked
+
+
+@aio
+async def test_the_passage_retrieval_already_gave_counts_when_the_executor_did_not_search_again() -> None:
+    # The Executor is told to reuse the proactive passage instead of calling search_scenario.
+    first = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    last = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [first, last], rag_status="success")
+    assert turn_fallback.found_scenario_text(last) and prompt_config.explains_in_story(last)
+    nothing = _result("blocked", "validated", check_status={"tool_called": False, "pending": None})
+    await _turn(_state(), [nothing, nothing], rag_status="empty")
+    assert not turn_fallback.found_scenario_text(nothing)  # no retrieved passage, nothing to explain from

@@ -324,6 +324,11 @@ async def _mechanics(turn: _Turn) -> None:
         fallback_reason = turn_fallback.classify(
             mechanic_result, state, user_id, rag_status=_evidence_status(message))
         mechanic_result.fallback_reason = fallback_reason
+        if (fallback_reason == "unsupported_action" and _evidence_status(message) == "success"
+                and (retrieved := message.payload.get("rag_context", "")) and retrieved not in mechanic_result.scenario_evidence):
+            # The Executor is told to reuse the passage retrieval already gave it rather than search again; that passage is
+            # the evidence the refusal rests on, and the explanation gate looks for it among the result's own.
+            mechanic_result.scenario_evidence = (*mechanic_result.scenario_evidence, retrieved)
         if fallback_reason or recovery == "recovered":
             turn_fallback.record(
                 fallback_reason or first_reason or "unknown", state=state, user_id=user_id, turn_id=turn.turn_id,

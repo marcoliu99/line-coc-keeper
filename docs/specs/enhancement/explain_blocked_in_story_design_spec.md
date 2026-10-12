@@ -10,7 +10,7 @@ The soak script asked the party to go to "the Muscoby library" twelve turns apar
 
 ## Change
 
-`prompt_config.explains_in_story(result, state)` is true when the turn is `blocked`, its fallback reason is `unsupported_action`, a scenario search of the turn returned an actual passage (`turn_fallback.found_scenario_text`: a page header, not only 「（沒有找到相關內容）」, which is a successful call with a non-empty result), and it changed nothing: no pending check or Luck decision, no state change, no dice, no resolved check, no fight opened, no scenario-evidence block, no public refusal text of its own, and no battle running. For such a turn:
+`prompt_config.explains_in_story(result, state)` is true when the turn is `blocked`, its fallback reason is `unsupported_action`, a scenario search of the turn returned an actual passage (`turn_fallback.found_scenario_text`; the passage retrieval already gave the Executor, which it is told to reuse instead of searching again, counts as the turn's own evidence: a page header, not only 「（沒有找到相關內容）」, which is a successful call with a non-empty result), and it changed nothing: no pending check or Luck decision, no state change, no dice, no resolved check, no fight opened, no scenario-evidence block, no public refusal text of its own, and no battle running. For such a turn:
 
 - the Narrator runs (`narration_replaced` is false) instead of the fixed text being written without it;
 - the Narrator's facts block carries 【這個行動在劇本裡無法進行】: say why in the story, point only to the places and people the scenario has, invent nothing, and never write the action as done;
