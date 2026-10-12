@@ -367,9 +367,13 @@ _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*(
 
 @functools.cache
 def _catalog_ranged_names() -> frozenset[str]:
-    """The catalog's shot and thrown weapons by exact name or alias; a contained word would make 「Elbow」 a bow."""
-    return frozenset(name.casefold() for weapon in combat_rules.weapon_catalog() if weapon.attack_mode != 'melee'
-                     for name in (weapon.name, *weapon.aliases))
+    """The catalog's shot and thrown weapons by exact name or alias ; a contained word would make 「Elbow」 a bow."""
+    def names(melee: bool) -> set[str]:
+        return {name.casefold() for weapon in combat_rules.weapon_catalog() if (weapon.attack_mode == 'melee') == melee
+                for name in (weapon.name, *weapon.aliases)}
+    ranged = names(False)
+    # 「Rock, Thrown」 is also Rock; 「Spear, Thrown」 is not Spear, which is held to thrust as well.
+    return frozenset(ranged | {re.sub(r",\s*thrown$", "", name) for name in ranged} - names(True))
 
 
 def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]]:
