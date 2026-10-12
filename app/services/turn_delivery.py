@@ -284,6 +284,24 @@ def validate_delivery_contract(envelope: DeliveryEnvelope, text: str, state: Gro
     return all(line in text for line in envelope.projected_text().splitlines())
 
 
+def _protected_terms(state) -> list[str]:
+    protected = spoiler_policy.collect_protected_terms(state)
+    for entries in (state.pending_checks, state.pending_luck_decisions):
+        for entry in entries.values():
+            if is_private(entry):
+                protected.extend(str(entry[key]) for key in ("skill", "skill_name", "action_context") if entry.get(key))
+    return protected
+
+
+def rewrite_still_safe(message, text: str) -> bool:
+    """Whether ``text``, a display rewrite of what ``finalize`` already passed, still passes its checks: no protected
+    term and no proven conflict with the turn's verified facts. A rewrite that fails is not shown."""
+    state = message.payload["state"]
+    envelope = message.payload.get("delivery_envelope")
+    facts = envelope.verified_fact_refs if envelope is not None else []
+    return spoiler_policy.sanitize_public_text(text, _protected_terms(state)).is_safe and not _proven_hard_fact_conflict(text, facts)
+
+
 def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
     state = message.payload["state"]
     outcomes = list(message.payload.get("observed_outcomes", []))
@@ -326,11 +344,7 @@ def finalize(message, narrative: str) -> tuple[str, list[tuple[str, str]]]:
                                 public_outcomes,
                                 due_public,
                                 [ref for ref in refs if ref.audience == "public"])
-    protected = spoiler_policy.collect_protected_terms(state)
-    for entries in (state.pending_checks, state.pending_luck_decisions):
-        for entry in entries.values():
-            if is_private(entry):
-                protected.extend(str(entry[key]) for key in ("skill", "skill_name", "action_context") if entry.get(key))
+    protected = _protected_terms(state)
     result = envelope.render()
     conflict = _proven_hard_fact_conflict(narrative, due_public)
     safe = spoiler_policy.sanitize_public_text(result, protected).is_safe and not conflict

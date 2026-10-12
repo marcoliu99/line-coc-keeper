@@ -3069,6 +3069,21 @@
       "path": "docs/specs/feature/coc7_glossary_design_spec.md",
       "zh_path": "docs/specs/feature/coc7_glossary_design_spec_zh.md",
       "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
+    },
+    {
+      "title": "A scenario's people and places keep one Chinese name",
+      "zh": "劇本的人物與地點固定用同一個中文名",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/presentation.py",
+        "app/agents/reply_pipeline.py",
+        "app/prompt_builder.py",
+        "tests/test_scenario_names.py"
+      ],
+      "path": "docs/specs/enhancement/scenario_names_consistent_design_spec.md",
+      "zh_path": "docs/specs/enhancement/scenario_names_consistent_design_spec_zh.md",
+      "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
     }
   ]
 }

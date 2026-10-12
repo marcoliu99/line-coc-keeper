@@ -21,7 +21,7 @@ class ReplyPipelineOrderTests(unittest.TestCase):
     def test_the_shipped_order(self):
         self.assertEqual([step.name for step in STEPS], [
             "scrub_leaks", "consistency", "guard", "consistency_after_guard", "obligations", "party_size", "finalize",
-            "player_text",
+            "scenario_names", "player_text",
         ])
         validate(STEPS)
 

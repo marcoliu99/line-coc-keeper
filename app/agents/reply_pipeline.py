@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from app import presentation
+from app import config, presentation
 from app.agents import guard, obligation_gate
 from app.domain.models import AgentMessage, MechanicResult, SpeakerRole, StateDelta
 from app.models import GroupState
@@ -52,8 +52,8 @@ class ReplyDraft:
 class Step:
     name: str
     run: Callable[[ReplyContext, ReplyDraft], Awaitable[None] | None]
-    # Rewrites the text for display only and is the last writer by design. It already ran after delivery validation
-    # before this module existed, and this move keeps that; it is the one step allowed to follow ``finalize``.
+    # Rewrites the text for display only. ``player_text`` already ran after delivery validation before this module
+    # existed and is the last writer; ``scenario_names`` is the other step allowed to follow ``finalize``.
     display_only: bool = False
 
 
@@ -126,6 +126,38 @@ async def _obligations(ctx: ReplyContext, draft: ReplyDraft) -> None:
         draft.text = _consistent(ctx, draft, draft.text.rstrip() + "\n\n" + summaries, trailing=summaries)
 
 
+def _scenario_names(ctx: ReplyContext, draft: ReplyDraft) -> None:
+    """An English original the scenario index lists is written as its Chinese name, as the prompt asks; the prompt
+    alone left some through (a glossary in the prompt is followed most of the time, not every time). Run on what
+    delivery rendered, so a clue or result line it appended reads the same names as the narration."""
+    state = ctx.state
+    keep = [c.name for c in (*state.characters_by_id.values(), *state.characters.values())]
+    keep += [str(p.get("name") or "") for p in state.pregens if isinstance(p, dict)]
+    # And how the table writes them (an investigator Alice shown as 「Carter」 is never an NPC Carter).
+    keep += [config.CHARACTER_DISPLAY_ALIASES[k] for k in keep if k in config.CHARACTER_DISPLAY_ALIASES]
+    entries = [*state.scenario_npc_index, *state.scenario_location_index]
+    # Only names the table has already been told: an index name may be the identity a disguise hides. One this reply
+    # tells is used only after the reply tells it.
+    before = turn_fallback.told_names(state, entries, [], keep)
+    told = before | turn_fallback.told_names(state, entries, [draft.text], keep)
+    named = presentation.use_scenario_names(draft.text, entries, keep, told, before)
+    # Delivery validated the English spelling; the Chinese one is shown only if it passes the same checks, and when it
+    # does not, the private lines keep theirs too, so one turn spells a name one way.
+    if named != draft.text and not turn_delivery.rewrite_still_safe(ctx.message, named):
+        return
+    draft.text = named
+    # A private line may name what only its reader was told: that counts for that line and the reader's later ones, in
+    # the order they are sent, never for an earlier line (which would reveal it before the line that does).
+    told_by: dict[str, set[str]] = {}
+
+    def private(owner: str, text: str) -> str:
+        earlier = told_by.get(owner, told)
+        told_by[owner] = earlier | turn_fallback.told_names(state, entries, [text], keep)
+        return presentation.use_scenario_names(text, entries, keep, told_by[owner], earlier)
+    draft.private_messages = [(owner, private(owner, text)) for owner, text in draft.private_messages]
+    draft.private_controls = [(owner, private(owner, text)) for owner, text in draft.private_controls]
+
+
 def _party_size(ctx: ReplyContext, draft: ReplyDraft) -> None:
     draft.text = presentation.enforce_party_size(draft.text, len(ctx.state.active_characters()))
 
@@ -150,6 +182,8 @@ STEPS: tuple[Step, ...] = (
     Step("obligations", _obligations),
     Step("party_size", _party_size),
     Step("finalize", _finalize),
+    # Names are display: delivery validated the facts, this writes the index's Chinese name in all it rendered.
+    Step("scenario_names", _scenario_names, display_only=True),
     # Maps tier names and removes internal ids for display. Not lossless: a validated line that carried a raw tier
     # name or a labelled id would be rewritten after validation. None does today (``finalize`` labels outcomes itself
     # and ``player_text`` is idempotent), and validating the mapped text instead is a behaviour change, not a move.
@@ -163,6 +197,7 @@ ORDER_RULES: tuple[tuple[str, str, str], ...] = (
     ("guard", "consistency_after_guard", "any Guard rewrite is checked for consistency again"),
     ("consistency_after_guard", "obligations",
      "obligations are decided on the narration that survived repair and the Guard"),
+    ("finalize", "scenario_names", "names are put in Chinese on everything delivery rendered, its lines included"),
     ("obligations", "party_size", "the party count is corrected on the final wording, owed lines included"),
     ("party_size", "finalize", "delivery validates what is sent, so the count is corrected before it validates"),
     ("finalize", "player_text", "display mapping is the last writer"),

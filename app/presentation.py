@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+from collections import Counter
 from collections.abc import Collection
 
 from app import config, dice, skill_aliases
@@ -30,6 +31,83 @@ _ID_LABELLED = re.compile(
 # A Luck decision's id is its check's plus ":luck"; the suffix and any code quotes go with it, or the reply showed
 # 「仍待你作答：`:luck`。」 (rerun8 turn 44).
 _ID_BARE = re.compile(r"`?(?<![\w-])(?:check|decision)-[0-9a-f]{32}(?::luck)?(?![\w-])`?")
+
+
+# An English name as an index writes it: letters first, then letters, digits and the punctuation names carry
+# (「Room 3」, 「Youngling, deep-sea nightmare」, 「Smith & Sons」); no CJK, which is already the Chinese name.
+_L = "A-Za-zÀ-ÖØ-öø-ɏ"  # Latin letters, accented ones included (René, München)
+_LATIN_NAME = re.compile(rf"[{_L}][{_L}0-9 .,&'’-]*[{_L}0-9]")
+_HAS_CJK = re.compile(r"[\u4e00-\u9fff]")
+_LATIN_LETTER = re.compile(rf"[{_L}]")
+
+
+def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[str] = (),
+                       told: Collection[str] | None = None, earlier: Collection[str] | None = None) -> str:
+    """``text`` with each English original the scenario index lists for a person or place written as the index's
+    Chinese name (「Corbitt」 → 「柯比特」, 「Corbitt's」 → 「柯比特的」), so a name reads the same on every turn.
+
+    Only an alias the index gives, of three letters or more, that names one entry: an English word that is not on
+    the list is never guessed at. A name inside ``keep`` (the investigators' own) is left as written, and so is one
+    with an English word right beside it: that is English the narration quotes (「Will he return?」), not the name.
+    With ``told`` (the index names the table has already been told), a name is used only once it is among them: an index
+    name may be the secret behind a disguise (「Masked Man」 for 兇手約翰), and rewriting must never be what reveals it.
+    With ``earlier`` too (the names told before this text), a name ``text`` itself tells is used only after the place it
+    first appears: 「Masked Man 靠近。你認出他是約翰。」 keeps its first sentence. An entry whose Chinese name another
+    entry also has is never used: telling one would read as telling both.
+    """
+    if not text or not entries:
+        return text
+    kept = [k.casefold() for k in keep if k]
+    spelled: list[tuple[str, list[str]]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        written = [str(n).strip() for n in (entry.get("name"), *(entry.get("aliases") or [])) if str(n or "").strip()]
+        # The Chinese name, which an older index may keep among the aliases under an English heading.
+        spelled.append((next((n for n in written if _HAS_CJK.search(n)), ""), written))
+    shared = Counter(name for name, _ in spelled if name)
+    # Every longer name a short one can hide inside (約翰 in 約翰遜, an investigator's 約翰·史密斯).
+    longer_names = [n for _, written in spelled for n in written if _HAS_CJK.search(n)] + [k for k in keep if k]
+
+    def _said(name: str, before: str) -> bool:
+        for other in sorted({n for n in longer_names if len(n) > len(name) and name in n}, key=len, reverse=True):
+            before = before.replace(other, " ")
+        return name in before
+    targets: dict[str, set[str]] = {}
+    for name, written in spelled:
+        # An index name an investigator or another entry also has is never written in: narration about the one would
+        # read as the other being told, and a disguise could be rewritten into it.
+        if not name or name.casefold() in kept or shared[name] > 1:
+            continue
+        for alias in written:
+            # A name that is also game text or a skill (an NPC nicknamed 「Dex」 or surnamed 「Dodge」) would rewrite
+            # 「DEX 檢定」 or 「Dodge 檢定」: never used.
+            if len(alias) >= 3 and _LATIN_NAME.fullmatch(alias) and alias.casefold() not in config.GAME_TEXT_NAMES \
+                    and skill_aliases.canonical_skill_name(alias) == alias and not any(
+                    re.search(rf"(?<![a-z]){re.escape(alias.casefold())}(?![a-z])", k) for k in kept):
+                targets.setdefault(alias.casefold(), set()).add(name)
+    # An alias two entries share names neither; told or not, it is decided before the disclosure gate, or 「Guard」 for
+    # two guards would read as the one already met.
+    names = {alias: next(iter(found)) for alias, found in targets.items()
+             if len(found) == 1 and (told is None or next(iter(found)) in told)}
+    if not names:
+        return text
+    pattern = re.compile(rf"(?<![{_L}0-9])(" + "|".join(re.escape(a) for a in sorted(names, key=len, reverse=True))
+                         + rf")(?:['’]s|(?<=s)['’])?(?![{_L}0-9])", re.IGNORECASE)
+
+    def chinese(match: re.Match[str]) -> str:
+        # Past spaces and English punctuation (「May, I enter?」 is still English).
+        before = text[:match.start()].rstrip(" \t,.;:!?'\"’“”")[-1:]
+        after = text[match.end():].lstrip(" \t,.;:!?'\"’“”")[:1]
+        if _LATIN_LETTER.match(before) or _LATIN_LETTER.match(after):
+            return match.group(0)
+        # The pattern matches case-insensitively, which casefold() does not always mirror (「IŞIK」 for 「Işık」).
+        name = names.get(match.group(1).casefold()) or next(
+            (n for alias, n in names.items() if re.fullmatch(re.escape(alias), match.group(1), re.IGNORECASE)), "")
+        if not name or (earlier is not None and name not in earlier and not _said(name, text[:match.start()])):
+            return match.group(0)
+        return name + "的" if match.group(0) != match.group(1) else name
+    return pattern.sub(chinese, text)
 
 
 def tier_label(value: str) -> str:
