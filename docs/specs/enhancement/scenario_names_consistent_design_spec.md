@@ -18,6 +18,8 @@ Tools that keep long LLM translations consistent do two things. They give the mo
   - Only an alias of three letters or more that names one entry is used. An alias shared by two entries (「Deep One」 for 深潛者 and 深潛者（幼體）) is left alone.
   - Investigators' and pregens' names are never rewritten, and neither is an alias that is a word of one (「Carter」 in 「Malcolm Carter」).
   - No English word the index does not list is guessed at.
+  - A match with an English word right beside it is English the narration quotes (「Will he return?」), not the name, and is left as written.
+  - Private messages get the same names as the public narration.
   - The step runs before delivery validation, so the spoiler check sees the Chinese name the player will read.
 - **Existing games.** Nothing else changes: combat, checks, saved state and the index itself are untouched. A game whose scenario is already indexed gets both changes on its next turn.
 
@@ -27,7 +29,8 @@ Tools that keep long LLM translations consistent do two things. They give the mo
 
 - English originals and possessives become the index name.
 - A longer word, a two-letter alias and an alias shared by two entries are left alone.
-- An investigator's name is kept.
+- An investigator's name is kept, and so is a name inside quoted English.
+- A private message gets the same names.
 - The prompt carries the rule only when an index exists.
 - `scenario_names` runs between `obligations` and `finalize`.
 
