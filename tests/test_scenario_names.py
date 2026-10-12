@@ -242,3 +242,18 @@ def test_quoted_english_with_punctuation_is_left_as_written():
     may = {"name": "梅伊", "aliases": ["May"]}
     assert presentation.use_scenario_names("她問：「May, I enter?」", [may]) == "她問：「May, I enter?」"
     assert presentation.use_scenario_names("May，妳來了。", [may]) == "梅伊，妳來了。"
+
+
+def test_an_investigator_s_display_name_is_never_an_npc_alias():
+    from unittest.mock import MagicMock, patch
+
+    from app import config
+    carter = {"name": "卡特", "aliases": ["Carter"]}
+    state = _told(GroupState(group_id="g", scenario_npc_index=[carter]), "卡特點頭。")
+    state.pregens = [{"name": "Alice"}]
+    ctx = MagicMock(state=state)
+    ctx.message.payload = {"state": state}
+    draft = MagicMock(text="Carter 拿起手電筒。", private_messages=[], private_controls=[])
+    with patch.dict(config.CHARACTER_DISPLAY_ALIASES, {"Alice": "Carter"}):
+        reply_pipeline._scenario_names(ctx, draft)
+    assert draft.text == "Carter 拿起手電筒。"
