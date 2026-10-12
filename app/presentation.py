@@ -61,7 +61,9 @@ def use_scenario_names(text: str, entries: Collection[dict], keep: Collection[st
         written = [str(n).strip() for n in (entry.get("name"), *(entry.get("aliases") or [])) if str(n or "").strip()]
         # The Chinese name, which an older index may keep among the aliases under an English heading.
         name = next((n for n in written if _HAS_CJK.search(n)), "")
-        if not name:
+        # An index name an investigator also has is never written in: narration about the investigator would read as
+        # the NPC being told, and a disguise could be rewritten into it.
+        if not name or name.casefold() in kept:
             continue
         for alias in written:
             # A name that is also game text (an NPC nicknamed 「Dex」) would rewrite 「DEX 檢定」: never used.

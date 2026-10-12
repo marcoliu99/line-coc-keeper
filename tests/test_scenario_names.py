@@ -172,3 +172,9 @@ def test_a_reader_told_a_name_in_one_private_line_reads_it_in_the_next():
                                                          ("p2", "Masked Man 在看你。")], private_controls=[])
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.private_messages == [("p1", "約翰是兇手。"), ("p1", "約翰 離開了。"), ("p2", "Masked Man 在看你。")]
+
+
+def test_an_index_name_an_investigator_shares_is_never_written_in():
+    culprit = {"name": "約翰", "aliases": ["Masked Man"]}
+    assert presentation.use_scenario_names("Masked Man 站在門口。", [culprit], keep=["約翰"], told={"約翰"}) == \
+        "Masked Man 站在門口。"
