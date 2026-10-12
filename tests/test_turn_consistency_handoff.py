@@ -201,7 +201,8 @@ def test_a_handoff_naming_a_check_that_is_not_pending_logs_what_the_state_holds(
         result = turn_resolution.validate_resolution(decision(state, 'await_check', check_id='gone'), **kwargs)
     assert result.validation_code == 'pending_identity_mismatch'
     line = next(r.getMessage() for r in caplog.records if "not pending" in r.getMessage())
-    assert "check_id=gone" in line and "expected=real" in line and "'a': ('real'" in line
+    assert "check_id=gone" in line and "expected=real" in line and "('real'" in line
+    assert "owner=a " not in line and "{'a':" not in line  # owners are hashed, not logged raw
 
 
 def test_waiting_luck_cannot_be_reported_as_unrolled_check(state):

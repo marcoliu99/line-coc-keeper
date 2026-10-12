@@ -288,15 +288,17 @@ def validate_resolution(
         record = collection.get(owner or "", {})
         expected_id = record.get("check_id") if disposition == "await_check" else record.get("decision_id")
         if not expected_id or check_id != expected_id or record.get("timeline_id", state.timeline_id) != state.timeline_id:
-            # Identifiers only: which owner the handoff resolved to and what the state actually holds, so a repeated
+            # Identifiers only (owners hashed like every other log field): which owner the handoff resolved to and what the state actually holds, so a repeated
             # mismatch (soak 2026-10-12, twelve turns in one fight) shows whether the check was never registered,
             # already gone, or named for the wrong owner.
             _logger.info(
                 "Handoff named a %s that is not pending: waiting_for=%s owner=%s check_id=%s expected=%s "
                 "pending_checks=%s pending_luck=%s", "check" if disposition == "await_check" else "Luck decision",
-                waiting[:80], owner, check_id[:80], expected_id,
-                {k: (v.get("check_id"), v.get("timeline_id")) for k, v in state.pending_checks.items()},
-                {k: v.get("decision_id") for k, v in state.pending_luck_decisions.items()})
+                observability.safe_identifier(waiting[:80]), observability.safe_identifier(owner), check_id[:80],
+                expected_id,
+                {observability.safe_identifier(k): (v.get("check_id"), v.get("timeline_id"))
+                 for k, v in state.pending_checks.items()},
+                {observability.safe_identifier(k): v.get("decision_id") for k, v in state.pending_luck_decisions.items()})
             return incomplete("要求處理的檢定／Luck 決定不存在或已過期", "pending_identity_mismatch")
         if disposition == "await_check" and owner in state.pending_luck_decisions:
             return incomplete("骰已擲出，必須先處理 Luck", "luck_takes_precedence")
