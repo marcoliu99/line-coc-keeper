@@ -178,12 +178,11 @@
     {
       "id": "i.weapon.burning-torch",
       "name": "Burning Torch",
-      "name_zh": "燃燒的火把",
+      "name_zh": "火把",
       "name_zh_cn": "燃烧的火把",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "火把",
         "火炬",
@@ -217,18 +216,18 @@
     {
       "id": "i.weapon.blackjack",
       "name": "Blackjack",
-      "name_zh": "包革金屬棒",
+      "name_zh": "悶棍",
       "name_zh_cn": "包革金属棒",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "沙包棍",
         "皮棍",
         "鉛頭棍",
         "短棒",
-        "包革金屬棒"
+        "悶棍",
+        "皮夾鉛棍"
       ],
       "skill_id": "fighting-brawl",
       "attack_mode": "melee",
@@ -263,7 +262,6 @@
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "large club",
         "baseball bat",
@@ -315,7 +313,6 @@
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "small club",
         "警棍",
@@ -441,7 +438,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "hatchet",
         "sickle",
@@ -485,7 +481,6 @@
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "axe",
         "wood axe",
@@ -525,13 +520,12 @@
     {
       "id": "i.weapon.sword",
       "name": "Sword",
-      "name_zh": "大型劍",
+      "name_zh": "劍",
       "name_zh_cn": "大型剑",
       "name_sources": [
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "sword",
         "劍",
@@ -543,8 +537,7 @@
         "彎刀",
         "sabre",
         "cavalry sabre",
-        "long sword",
-        "大型劍"
+        "long sword"
       ],
       "skill_id": "fighting-sword",
       "attack_mode": "melee",
@@ -573,21 +566,18 @@
     {
       "id": "i.weapon.rapier",
       "name": "Rapier",
-      "name_zh": "中型劍",
+      "name_zh": "細劍",
       "name_zh_cn": "中型剑",
       "name_sources": [
         "s22"
       ],
-      "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "西洋劍",
         "刺劍",
         "細劍",
         "擊劍",
         "rapier",
-        "thrusting sword",
-        "中型劍"
+        "thrusting sword"
       ],
       "skill_id": "fighting-sword",
       "attack_mode": "melee",
@@ -622,7 +612,6 @@
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "大刀",
         "砍刀",
@@ -666,7 +655,6 @@
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "中型刀",
         "獵刀",
@@ -711,7 +699,6 @@
         "s22"
       ],
       "name_zh_generic": true,
-      "name_zh_converted": true,
       "aliases": [
         "小刀",
         "短刀",
@@ -795,18 +782,18 @@
     {
       "id": "i.weapon.rock-thrown",
       "name": "Rock, Thrown",
-      "name_zh": "投石",
+      "name_zh": "投擲用石頭",
       "name_zh_cn": "投石",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "石頭",
         "投石",
         "石塊",
         "丟石頭",
-        "石子"
+        "石子",
+        "投擲用石頭"
       ],
       "skill_id": "throw",
       "attack_mode": "single_shot",
@@ -922,7 +909,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "投矛",
         "標槍",
@@ -957,12 +943,11 @@
     {
       "id": "i.weapon.22-short-automatic",
       "name": ".22 Short Automatic",
-      "name_zh": ".22口徑自動手槍",
+      "name_zh": ".22 短彈半自動手槍",
       "name_zh_cn": ".22口径自动手枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "handgun",
         "pistol",
@@ -971,7 +956,7 @@
         "點二二自動手槍",
         "點二二手槍",
         ".22 手槍",
-        ".22口徑自動手槍"
+        ".22 短彈半自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1000,12 +985,11 @@
     {
       "id": "i.weapon.25-derringer-1b",
       "name": ".25 Derringer (1B)",
-      "name_zh": ".25德林傑手槍（單管）",
+      "name_zh": ".25 德林加手槍 (單管)",
       "name_zh_cn": ".25德林杰手枪（单管）",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "handgun",
         "pistol",
@@ -1014,7 +998,7 @@
         "德林加",
         "袖珍手槍",
         "derringer",
-        ".25德林傑手槍（單管）"
+        ".25 德林加手槍 (單管)"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1043,12 +1027,11 @@
     {
       "id": "i.weapon.32-or-7-65mm-revolver",
       "name": ".32 or 7.65mm Revolver",
-      "name_zh": ".32/7.65mm左輪手槍",
+      "name_zh": ".32 或 7.65mm 左輪手槍",
       "name_zh_cn": ".32/7.65mm左轮手枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "handgun",
         "pistol",
@@ -1060,7 +1043,7 @@
         "左輪",
         "左輪手槍",
         "revolver",
-        ".32/7.65mm左輪手槍"
+        ".32 或 7.65mm 左輪手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1089,12 +1072,11 @@
     {
       "id": "i.weapon.32-or-7-65mm-automatic",
       "name": ".32 or 7.65mm Automatic",
-      "name_zh": ".32/7.65mm自動手槍",
+      "name_zh": ".32 或 7.65mm 半自動手槍",
       "name_zh_cn": ".32/7.65mm自动手枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "handgun",
         "pistol",
@@ -1102,7 +1084,7 @@
         ".32 自動手槍",
         "點三二自動手槍",
         "7.65mm 自動手槍",
-        ".32/7.65mm自動手槍"
+        ".32 或 7.65mm 半自動手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1131,12 +1113,11 @@
     {
       "id": "i.weapon.model-p08-luger",
       "name": "Model P08 Luger",
-      "name_zh": "9mm魯格P08",
+      "name_zh": "P08 魯格手槍",
       "name_zh_cn": "9mm鲁格P08",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "handgun",
         "pistol",
@@ -1145,7 +1126,7 @@
         "魯格",
         "luger",
         "p08",
-        "9mm魯格P08"
+        "P08 魯格手槍"
       ],
       "skill_id": "firearms-handgun",
       "attack_mode": "single_shot",
@@ -1269,12 +1250,11 @@
     {
       "id": "i.weapon.22-bolt-action-rifle",
       "name": ".22 Bolt-Action Rifle",
-      "name_zh": ".22栓動步槍",
+      "name_zh": ".22 栓動式步槍",
       "name_zh_cn": ".22栓动步枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         ".22 步槍",
         "點二二步槍",
@@ -1282,7 +1262,7 @@
         ".22 栓式步槍",
         "步槍",
         "rifle",
-        ".22栓動步槍"
+        ".22 栓動式步槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1311,12 +1291,11 @@
     {
       "id": "i.weapon.30-lever-action-carbine",
       "name": ".30 Lever-Action Carbine",
-      "name_zh": ".30槓桿步槍",
+      "name_zh": ".30 槓桿式卡賓槍",
       "name_zh_cn": ".30杠杆步枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         ".30 卡賓槍",
         "槓桿式卡賓槍",
@@ -1326,7 +1305,7 @@
         "winchester",
         "步槍",
         "rifle",
-        ".30槓桿步槍"
+        ".30 槓桿式卡賓槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1402,7 +1381,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "莫蘭氣槍",
         "氣槍",
@@ -1483,12 +1461,11 @@
     {
       "id": "i.weapon.30-06-bolt-action-rifle",
       "name": ".30-06 Bolt-Action Rifle",
-      "name_zh": ".30-06(7.62mm)栓動步槍",
+      "name_zh": ".30-06 栓動式步槍",
       "name_zh_cn": ".30-06(7.62mm)栓动步枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         ".30-06 步槍",
         "栓式步槍",
@@ -1496,7 +1473,7 @@
         "springfield",
         "步槍",
         "rifle",
-        ".30-06(7.62mm)栓動步槍"
+        ".30-06 栓動式步槍"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1530,7 +1507,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "象槍",
         "大口徑獵槍",
@@ -1571,7 +1547,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "shotgun",
         "霰彈槍",
@@ -1633,7 +1608,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "shotgun",
         "霰彈槍",
@@ -1695,7 +1669,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "shotgun",
         "霰彈槍",
@@ -1759,7 +1732,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "shotgun",
         "霰彈槍",
@@ -1813,12 +1785,11 @@
     {
       "id": "i.weapon.12-gauge-shotgun-2b-sawed-off",
       "name": "12-gauge Shotgun (2B sawed off)",
-      "name_zh": "12號雙管霰彈槍（鋸短槍管）",
+      "name_zh": "12號雙管霰彈槍 (削短型)",
       "name_zh_cn": "12号双管霰弹枪（锯短枪管）",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "shotgun",
         "霰彈槍",
@@ -1833,7 +1804,8 @@
         "雙管霰彈槍",
         "雙管散彈槍",
         "double barrel shotgun",
-        "12號雙管霰彈槍（鋸短槍管）"
+        "12號雙管霰彈槍 (削短型)",
+        "截短型"
       ],
       "skill_id": "firearms-rifle-shotgun",
       "attack_mode": "single_shot",
@@ -1873,12 +1845,11 @@
     {
       "id": "i.weapon.bergmann-mp181-mp2811",
       "name": "Bergmann MP181/MP2811",
-      "name_zh": "貝格曼MP181/MP2811",
+      "name_zh": "貝格曼 MP18 I / MP28 II",
       "name_zh_cn": "贝格曼MP181/MP2811",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "柏格曼",
         "柏格曼衝鋒槍",
@@ -1887,7 +1858,7 @@
         "衝鋒槍",
         "submachine gun",
         "smg",
-        "貝格曼MP181/MP2811"
+        "貝格曼 MP18 I / MP28 II"
       ],
       "skill_id": "firearms-submachine-gun",
       "attack_mode": "single_shot",
@@ -1921,7 +1892,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "湯普森衝鋒槍",
         "湯姆森衝鋒槍",
@@ -1966,7 +1936,6 @@
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "烏茲",
         "烏茲衝鋒槍",
@@ -2002,19 +1971,18 @@
     {
       "id": "i.weapon.browning-auto-rifle-m1918",
       "name": "Browning Auto Rifle M1918",
-      "name_zh": "M1918勃朗寧自動步槍",
+      "name_zh": "M1918 白朗寧自動步槍",
       "name_zh_cn": "M1918勃朗宁自动步枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "白朗寧自動步槍",
         "bar",
         "m1918",
         "機槍",
         "machine gun",
-        "M1918勃朗寧自動步槍"
+        "M1918 白朗寧自動步槍"
       ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
@@ -2043,19 +2011,18 @@
     {
       "id": "i.weapon.30-browning-m1917a1",
       "name": ".30 Browning M1917A1",
-      "name_zh": "勃朗寧M1917A1(.30-06/7.62mm)",
+      "name_zh": ".30 白朗寧 M1917A1 機槍",
       "name_zh_cn": "勃朗宁M1917A1(.30-06/7.62mm)",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "白朗寧重機槍",
         "水冷機槍",
         "m1917",
         "機槍",
         "machine gun",
-        "勃朗寧M1917A1(.30-06/7.62mm)"
+        ".30 白朗寧 M1917A1 機槍"
       ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
@@ -2125,19 +2092,18 @@
     {
       "id": "i.weapon.mark-i-lewis-gun",
       "name": "Mark I Lewis Gun",
-      "name_zh": "劉易斯MK.I型機槍",
+      "name_zh": "Mk I 路易士機槍",
       "name_zh_cn": "刘易斯MK.I型机枪",
       "name_sources": [
         "s22"
       ],
-      "name_zh_converted": true,
       "aliases": [
         "路易士",
         "路易士機槍",
         "lewis gun",
         "機槍",
         "machine gun",
-        "劉易斯MK.I型機槍"
+        "Mk I 路易士機槍"
       ],
       "skill_id": "firearms-machine-gun",
       "attack_mode": "single_shot",
