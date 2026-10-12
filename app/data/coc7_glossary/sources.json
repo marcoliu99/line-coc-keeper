@@ -1,0 +1,89 @@
+{
+ "description": "CoC7 terms in English, Traditional Chinese (zh_tw) and Simplified Chinese (zh_cn), gathered from community translations (sources below). A skill's 'canonical' is this project's own skill name, which every other spelling resolves to.",
+ "sources": [
+  {
+   "id": "s1",
+   "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/8cefc11f757738f863243d72bfc224ed0f976cc1/static/lang/zh-TW.json",
+   "title": "Foundry VTT CoC7 system, Traditional Chinese UI strings (zh-TW.json)",
+   "variant": "zh-TW"
+  },
+  {
+   "id": "s2",
+   "url": "https://github.com/Miskatonic-Investigative-Society/CoC7-FoundryVTT/blob/8cefc11f757738f863243d72bfc224ed0f976cc1/static/lang/cn.json",
+   "title": "Foundry VTT CoC7 system, Simplified Chinese UI strings (cn.json)",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s3",
+   "url": "https://github.com/sealdice/sealdice-core/blob/887a5502206e2217111c3f4bbed7d10e8411f3f1/dice/templates/coc7.yaml",
+   "title": "SealDice (海豹骰) CoC7 attribute/skill template with aliases",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s14",
+   "url": "https://github.com/sealdice/sealdice-core/blob/887a5502206e2217111c3f4bbed7d10e8411f3f1/dice/ext_coc7.go",
+   "title": "SealDice (海豹骰) CoC7 extension code (success levels, sanity/madness messages)",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s4",
+   "url": "https://github.com/COCchm/COC7thChm/tree/28969764ab522510ad9afd1301d562546fbef41a/守秘人规则书/技能/技能列表",
+   "title": "COC不全书 (mainland community CoC7 CHM): Keeper Rulebook skill list + 技能速查表",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s5",
+   "url": "https://github.com/COCchm/COC7thChm/tree/28969764ab522510ad9afd1301d562546fbef41a/守秘人规则书",
+   "title": "COC不全书: Keeper Rulebook chapters (game system, combat, sanity, etc.) and 七版基础规则",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s6",
+   "url": "https://github.com/COCchm/COC7thChm/tree/28969764ab522510ad9afd1301d562546fbef41a/守秘人规则书/怪物、野兽和异星诸神",
+   "title": "COC不全书: Keeper Rulebook 怪物、野兽和异星诸神 (monsters and Mythos gods)",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s7",
+   "url": "https://github.com/COCchm/COC7thChm/tree/28969764ab522510ad9afd1301d562546fbef41a/守秘人规则书/可怖传说书籍/神话典籍",
+   "title": "COC不全书: Keeper Rulebook 神话典籍 (Mythos tomes)",
+   "variant": "zh-CN"
+  },
+  {
+   "id": "s8",
+   "url": "https://github.com/hktrpg/TG.line.Discord.Roll.Bot/blob/bd9cef5e0f52c0793d38c87055fd489bdde77335/lang/zh-tw.json",
+   "title": "HKTRPG dice bot (HK/TW), zh-tw UI strings incl. CoC7 skills/outcomes; also roll/2-coc.js",
+   "variant": "zh-TW"
+  },
+  {
+   "id": "s9",
+   "url": "https://github.com/hktrpg/TG.line.Discord.Roll.Bot/blob/bd9cef5e0f52c0793d38c87055fd489bdde77335/lang/overlays/zh-tw",
+   "title": "HKTRPG dice bot, zh-tw Mythos god/monster/tome tables (coc.mythos_*.json)",
+   "variant": "zh-TW"
+  },
+  {
+   "id": "s10",
+   "url": "https://github.com/Roll20/roll20-character-sheets/blob/fed38cd56d073ae59bbdb18c0c4d7e9b0f9ea2ad/Call_of_Cthulhu_7th_Ed/translations/zh.json",
+   "title": "Roll20 CoC7 character sheet, Chinese (Traditional script) translation",
+   "variant": "zh-TW"
+  },
+  {
+   "id": "s11",
+   "url": "https://github.com/mwzhx/komicawiki-backup/blob/50abc8f6994b2254017c9e7ee006243020238455/wikitext/克蘇魯神話.txt",
+   "title": "Komica wiki (Taiwan ACG wiki) 克蘇魯神話 article, backup wikitext",
+   "variant": "zh-TW"
+  },
+  {
+   "id": "s12",
+   "url": "https://github.com/ItisCaleb/TRPG-Character-Sheet/blob/13e05ac88a007d2f68ce0aeeeda7058231f56107/trpg-fe/src/i18n/zh_tw.js",
+   "title": "TRPG-Character-Sheet zh_tw.js (CoC skill names; seen via GitHub code search snippet)",
+   "variant": "zh-TW"
+  },
+  {
+   "id": "s13",
+   "url": "https://github.com/COCchm/COC7thChm/tree/28969764ab522510ad9afd1301d562546fbef41a",
+   "title": "COC不全书: full repository text (rulebooks, supplements, Lovecraft translations) for place-name usage",
+   "variant": "zh-CN"
+  }
+ ]
+}

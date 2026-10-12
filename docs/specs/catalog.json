@@ -3054,6 +3054,21 @@
       "path": "docs/specs/bug/enemy_block_attacks_weapon_retry_design_spec.md",
       "zh_path": "docs/specs/bug/enemy_block_attacks_weapon_retry_design_spec_zh.md",
       "source_revision": "b0c11f3ffcfff215628fb66c2742bc11e3668319"
+    },
+    {
+      "title": "CoC7 glossary in the dictionary",
+      "zh": "字典裡的 CoC7 譯名表",
+      "category": "feature",
+      "status": "implemented",
+      "evidence": [
+        "app/data/coc7_glossary/skills.json",
+        "app/data/coc7_glossary/sources.json",
+        "app/dictionary.py",
+        "tests/test_coc7_glossary.py"
+      ],
+      "path": "docs/specs/feature/coc7_glossary_design_spec.md",
+      "zh_path": "docs/specs/feature/coc7_glossary_design_spec_zh.md",
+      "source_revision": "7dc932c6d6a4220a3de8d46b99c5eb5c5ec1cee0"
     }
   ]
 }
