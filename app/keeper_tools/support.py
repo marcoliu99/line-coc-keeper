@@ -358,6 +358,7 @@ _BLOCK_DB = re.compile(r"(?:\bDB|damage bonus|傷害加值)\s*[:：]\s*(?P<db>[+
 _NOT_AN_ATTACK = re.compile(r"^(?:dodge|閃避|skills?|技能)$", re.IGNORECASE)
 # Read as a blow, a shot or a throw would be fought back against and spend no ammunition: only melee attacks are taken
 # this way (guns and bows are combat.SHOOTING_NAME).
+_IMPALE = re.compile(r"impal|穿刺|貫穿", re.IGNORECASE)
 _THROWN = re.compile(r"投擲|\bthrow(?:n|ing)?\b", re.IGNORECASE)
 # 「damage bonus(1D4)」, 「傷害加值（-1）」: the bonus given in place, read as its value.
 _BLOCK_DB_WRAPPED = re.compile(r"(?:damage bonus|傷害加值|\bDB)\s*[（(]\s*([+-]?\s*\d*\s*[dD]?\s*\d+)\s*[）)]",
@@ -405,8 +406,10 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
             dice.max_expression_value(damage)
         except ValueError:
             continue
-        attacks.append({"label": label, "skill_name": "格鬥", "skill_value": int(match.group("value")),
-                        "damage": damage.upper()})
+        attack = {"label": label, "skill_name": "格鬥", "skill_value": int(match.group("value")), "damage": damage.upper()}
+        if _IMPALE.search(block[match.end():].split("\n", 1)[0]):
+            attack["tags"] = ["impale"]  # 「damage 1D8+1 (impale)」: an Extreme success impales, as the block says
+        attacks.append(attack)
     return attacks
 
 
