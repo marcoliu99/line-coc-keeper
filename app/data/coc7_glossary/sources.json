@@ -140,6 +140,22 @@
    "variant": "zh-CN",
    "retrieved": "2026-10-12",
    "sha256": "9f61f19a9eeb2faf1d734db46b1f2b3f93f54a10364dddb94e61e8e4362f7b2f"
+  },
+  {
+   "id": "s22",
+   "url": "https://github.com/AblazeGHR/RuleWhisper/blob/main/data/versions/v1.0/weapons.json",
+   "title": "RuleWhisper: the Chinese rulebook's weapon table (names, in the rulebook's order); the primary source of the weapon names in app/data/combat_weapons.json",
+   "variant": "zh-CN",
+   "retrieved": "2026-10-12",
+   "sha256": "b47f1d4f0b6c22b829c67b4f251f0884838316097d71c15fb4d7b7d2e0a07992"
+  },
+  {
+   "id": "s23",
+   "url": "https://github.com/trpgline/TRPGLine-system-rule/blob/ac549cd901c3e890c818a313036125c16cdd535a/coc7/zh-TW/combat.json",
+   "title": "TRPGLine-system-rule: English and Traditional Chinese weapon table of the Keeper Rulebook p. 401 (MIT); a Traditional spelling is taken from it only where it agrees with s22",
+   "variant": "zh-TW",
+   "retrieved": "2026-10-12",
+   "sha256": "b8ce7ab680d4f135b576605cc90869eff7bbccfe0aded18a6bfb84e7a76d5670"
   }
  ]
 }

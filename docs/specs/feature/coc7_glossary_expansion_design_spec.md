@@ -33,7 +33,7 @@ Every source was compared with the others before an entry was kept.
 
 ## Not added
 
-- **Weapons.** The only English–Chinese weapon list (Keeper_CoC-TRPG) groups weapons by caliber and invents English labels (「Small Auto」), and its Chinese names differ from the rulebook's weapon table (指虎 against 黃銅指虎). No source pairs the rulebook's English weapon names with its Chinese ones, so none is added. The combat catalog keeps its own names.
+- **Weapons.** The only English–Chinese weapon list (Keeper_CoC-TRPG) groups weapons by caliber and invents English labels (「Small Auto」), and its Chinese names differ from the rulebook's weapon table (指虎 against 黃銅指虎). That list is not used. The rulebook's names for the combat catalog's weapons were added later, from the Chinese rulebook's own table, in `weapon_chinese_names_design_spec.md`.
 - **Organizations and cults.** Only random tables exist among the sources that could be fetched; the Wikipedia pages are outside the network policy.
 - **Terms and skills of the rulebook's name table** (about 190 rows), people's names, and the rulebook text itself. Only names are taken.
 
