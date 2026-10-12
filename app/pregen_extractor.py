@@ -68,7 +68,7 @@ _REPORT_TOOL = {
                             "type": "string",
                             "description": (
                                 "職業，請翻譯成繁體中文（例如英文劇本寫 'Artist' 就回報'藝術家'，"
-                                "'Antiques Dealer' 回報'骨董商'），方便玩家之後用 /coc pc 角色名 職業 "
+                                "'Antiques Dealer' 回報'古董商'），方便玩家之後用 /coc pc 角色名 職業 "
                                 "直接指定這個職業。只翻譯這個欄位的用詞，不要連帶編造或更動任何數值。"
                             ),
                         },
@@ -478,7 +478,7 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
     capture the pairing."""
     original = (pregen.pop("occupation_original", "") or "").strip()
     translated = (pregen.pop("occupation_translated", "") or "").strip()
-    # What the model wrote is first put into the dictionary's own words (「古董商」 is 骨董商), so the pairing it teaches
+    # What the model wrote is first put into the dictionary's own words (「文物学家」 is 古董商), so the pairing it teaches
     # and the occupation the pregen gets are the name the project uses.
     translated = dictionary.lookup_occupation(translated) or translated
     if original and translated and original.lower() != translated.lower():

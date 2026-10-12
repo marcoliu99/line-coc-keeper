@@ -80,7 +80,7 @@ def test_a_spell_reads_the_same_in_english_and_in_either_script():
 
 
 def test_an_occupation_reaches_the_name_this_project_uses():
-    assert dictionary.lookup_occupation("Antiquarian") == dictionary.lookup_occupation("古董商") == "骨董商"
+    assert dictionary.lookup_occupation("Antiquarian") == dictionary.lookup_occupation("骨董商") == "古董商"
     assert dictionary.lookup_occupation("Doctor of Medicine") == dictionary.lookup_occupation("医生") == "醫生"
     assert dictionary.lookup_occupation("Federal Agent") == "FBI探員"
     assert dictionary.lookup_occupation("Archaeologist") == "考古學家"
@@ -93,9 +93,9 @@ def test_the_rulebook_name_of_an_earlier_entry_is_recorded_as_another_spelling()
 
 def test_a_pregen_occupation_is_written_the_way_the_dictionary_names_it():
     from app import pregen_extractor
-    pregen = {"occupation_original": "Antiquarian", "occupation_translated": "古董商"}
+    pregen = {"occupation_original": "Antiquarian", "occupation_translated": "文物学家"}
     pregen_extractor._learn_translations_from_pregen(pregen)
-    assert pregen["occupation"] == "骨董商"
+    assert pregen["occupation"] == "古董商"
     pregen = {"occupation_original": "Zorking Wrangler", "occupation_translated": "佐金牧人"}
     pregen_extractor._learn_translations_from_pregen(pregen)
     assert pregen["occupation"] == "佐金牧人"
@@ -103,16 +103,16 @@ def test_a_pregen_occupation_is_written_the_way_the_dictionary_names_it():
 
 def test_a_new_english_occupation_translated_with_a_known_alias_is_learned_under_the_project_name():
     from app import pregen_extractor
-    pregen = {"occupation_original": "Curio Peddler", "occupation_translated": "古董商"}
+    pregen = {"occupation_original": "Curio Peddler", "occupation_translated": "文物学家"}
     pregen_extractor._learn_translations_from_pregen(pregen)
-    assert pregen["occupation"] == "骨董商"
-    assert dictionary.lookup_occupation("Curio Peddler") == "骨董商"
+    assert pregen["occupation"] == "古董商"
+    assert dictionary.lookup_occupation("Curio Peddler") == "古董商"
     dictionary.forget("Curio Peddler")
 
 
 def test_a_name_the_dictionary_knows_for_an_occupation_is_not_replaced_by_a_model_pairing():
     assert dictionary.learn_occupation("Antiquarian", "古物商") is False
-    assert dictionary.lookup_occupation("Antiquarian") == "骨董商"
+    assert dictionary.lookup_occupation("Antiquarian") == "古董商"
 
 
 def test_a_converted_name_says_so_and_every_source_is_recorded_with_what_was_fetched():

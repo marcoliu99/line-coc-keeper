@@ -1,5 +1,5 @@
 [
-{"category": "occupation", "en": "Antiquarian", "alt_en": ["Antique Dealer"], "zh_tw": "骨董商", "zh_cn": "古董商", "alt_zh_tw": [], "alt_zh_cn": ["文物学家"], "sources": ["s19", "s21"], "note": "canonical is the name this project already uses", "canonical": "骨董商"},
+{"category": "occupation", "en": "Antiquarian", "alt_en": ["Antique Dealer"], "zh_tw": "古董商", "zh_cn": "古董商", "alt_zh_tw": ["骨董商"], "alt_zh_cn": ["文物学家"], "sources": ["s19", "s21"], "canonical": "古董商"},
 {"category": "occupation", "en": "Artist", "zh_tw": "藝術家", "zh_cn": "艺术家", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s19", "s20", "s21"], "note": "canonical is the name this project already uses", "canonical": "藝術家"},
 {"category": "occupation", "en": "Athlete", "zh_tw": "運動員", "zh_cn": "运动员", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s19", "s20", "s21"], "zh_tw_converted": true, "canonical": "運動員"},
 {"category": "occupation", "en": "Author", "zh_tw": "作家", "zh_cn": "作家", "alt_zh_tw": [], "alt_zh_cn": [], "sources": ["s19", "s20", "s21"], "canonical": "作家"},
