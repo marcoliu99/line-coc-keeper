@@ -19,8 +19,12 @@ Tools that keep long LLM translations consistent do two things. They give the mo
   - Investigators' and pregens' names are never rewritten, and neither is an alias that is a word of one (「Carter」 in 「Malcolm Carter」).
   - No English word the index does not list is guessed at.
   - A Chinese name is written only once the table has been told it, in this reply or earlier public narration: an index name may be the identity behind a disguise (「Masked Man」 for 兇手約翰), and the rewrite must never be what reveals it.
-  - A match with an English word right beside it is English the narration quotes (「Will he return?」), not the name, and is left as written.
-  - Private messages get the same names as the public narration.
+    - A name this reply tells is used only after the place it first appears, so 「Masked Man 靠近。你認出他是約翰。」 keeps its first sentence.
+    - A name found inside a longer index or investigator name (約翰 in 約翰遜) does not count as told, and neither does a one-character name (王 in 國王).
+    - An entry whose Chinese name an investigator or another entry also has is never written in.
+  - An alias that is game text or a skill name (「DEX」, 「Dodge」) and an investigator's display name (`CHARACTER_DISPLAY_ALIASES`) are never rewritten.
+  - A match with an English word right beside it, past spaces and English punctuation, is English the narration quotes (「Will he return?」, 「May, I enter?」), not the name, and is left as written.
+  - Private messages get the same names as the public narration. A private line may also use what its own reader was told, up to that line, in the order the lines are sent.
   - Like `player_text`, it only changes how a name is written; the facts delivery validated are unchanged. The rewritten public reply must still pass delivery's spoiler and hard-fact checks (`turn_delivery.rewrite_still_safe`); if it doesn't, the validated English spelling is shown.
 - **Existing games.** Nothing else changes: combat, checks, saved state and the index itself are untouched. A game whose scenario is already indexed gets both changes on its next turn.
 

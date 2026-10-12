@@ -464,7 +464,7 @@ def _learn_translations_from_pregen(pregen: dict[str, Any]) -> None:
     translation pass needs it, no second LLM call required. Without this,
     dictionary.py's learn_skill/learn_occupation were dead code: nothing in
     the project ever called them, so the dictionary could only ever be as
-    good as its initial seed (see dictionary.py's _SEED_SKILLS) and would
+    good as its initial seed (see app/data/coc7_glossary/) and would
     never actually grow from real scenario extractions the way its own
     "self-learning" name promises.
 
