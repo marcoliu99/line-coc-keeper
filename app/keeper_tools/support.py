@@ -382,7 +382,8 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
     found = stat_block_for(state, name)
     if found is None:
         return []
-    block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), found[1]))
+    block = found[1].translate(str.maketrans("＋－", "+-"))
+    block = re.sub(r"\+\s*-", "-", _BLOCK_DB_WRAPPED.sub(lambda m: m.group(1).replace(" ", ""), block))
     db_match = _BLOCK_DB.search(block)
     bonus = db_match.group("db").replace(" ", "") if db_match else ""
     attacks: list[dict[str, Any]] = []
@@ -392,8 +393,8 @@ def attacks_from_stat_block(state: GroupState, name: str) -> list[dict[str, Any]
             continue
         if label.casefold() in _catalog_ranged_names():
             continue  # a catalog weapon that is shot or thrown (Shuriken, Javelin, 石頭)
-        if re.match(r"\s*(?:[/／]|[+＋]?\s*½)", block[match.end():]):
-            continue  # 「1D6 + 1/2 DB」, 「1D6 + ½ DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」
+        if re.match(r"\s*(?:[/／]|[+-]?\s*[½半])", block[match.end():]):
+            continue  # 「1D6 + 1/2 DB」, 「1D6 + ½ DB」, 「1D6 + 半DB」: a fraction of the bonus the engine cannot roll, never read as 「1D6+1」
         damage = re.sub(r"\s+", "", match.group("damage")).replace("+-", "-").replace("++", "+")
         if re.search(r"db|damagebonus|傷害加值", damage, re.IGNORECASE):
             if not bonus:
