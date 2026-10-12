@@ -56,7 +56,7 @@ def test_the_prompt_fixes_the_glossary_names_without_telling_the_investigators()
 def test_a_glossary_original_in_the_narration_reads_in_chinese():
     state = GroupState(group_id="g", scenario_glossary=[TOME])
     ctx = MagicMock(state=state)
-    draft = MagicMock(text="書架上放著 Necronomicon。", private_messages=[])
+    draft = MagicMock(text="書架上放著 Necronomicon。", private_messages=[], private_controls=[])
     reply_pipeline._scenario_names(ctx, draft)
     assert draft.text == "書架上放著 死靈之書。"
     assert presentation.use_scenario_names("Necronomicon", [TOME]) == "死靈之書"
