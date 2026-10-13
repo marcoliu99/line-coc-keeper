@@ -10,7 +10,7 @@ The players ask to research in the village library; the scenario has none (the l
 
 ## Change
 
-In `_recover_blocked_turn`, when the first attempt was a validated `blocked` (an `unsupported_action`) and the retry did not end `blocked`, is still a fallback and, like the first attempt, only looked things up (no state change, roll, resolved check or new pending check), the first attempt's result is kept. The recovery is still logged as `unresolved`, and the Narrator explains from the first attempt's evidence as it would have without a retry. A retry that blocks again, or that resolves the turn, behaves as before.
+In `_recover_blocked_turn`, when the first attempt was a validated `blocked` (an `unsupported_action`) and the retry ended `incomplete` (a deferral to another player, for one, is kept) and, like the first attempt, only looked things up (no state change, roll, resolved check or new pending check), the first attempt's result is kept. The recovery is still logged as `unresolved`, and the Narrator explains from the first attempt's evidence as it would have without a retry. A retry that blocks again, or that resolves the turn, behaves as before.
 
 ## Verification
 

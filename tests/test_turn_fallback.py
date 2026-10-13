@@ -656,6 +656,14 @@ async def test_a_retry_that_changed_the_game_is_kept_over_the_first_attempts_ans
 
 
 @aio
+async def test_a_retry_that_deferred_to_someone_else_is_kept_over_the_first_attempts_answer() -> None:
+    """Codex #304: only a retry that ran dry (incomplete) gives way; a deferral names whom the turn is waiting for."""
+    deferred = _result("deferred", "validated", check_status={"tool_called": False, "pending": None})
+    reply, *_ = await _turn(_state(), [_cannot_be_done(), deferred], narration="穆斯科比沒有圖書館。")
+    assert reply != "穆斯科比沒有圖書館。"
+
+
+@aio
 async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
     found = ("--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。",)
     first = _result("blocked", "validated", scenario_evidence=found)

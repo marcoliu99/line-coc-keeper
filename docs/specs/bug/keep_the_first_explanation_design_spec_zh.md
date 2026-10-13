@@ -10,7 +10,7 @@
 
 ## 變更
 
-在 `_recover_blocked_turn` 中，若第一次是驗證通過的 `blocked`（`unsupported_action`），而重試沒有以 `blocked` 結束、仍屬 fallback，且和第一次一樣只做了查詢（沒有改狀態、沒有擲骰、沒有結算檢定、沒有新的待處理項目），就保留第一次的結果。恢復仍記錄為 `unresolved`，旁白照沒有重試時那樣，依第一次的證據解釋。重試再次 `blocked`、或把這一輪解決掉的情況，行為不變。
+在 `_recover_blocked_turn` 中，若第一次是驗證通過的 `blocked`（`unsupported_action`），而重試以 `incomplete` 結束（例如重試改為等別人，則保留重試），且和第一次一樣只做了查詢（沒有改狀態、沒有擲骰、沒有結算檢定、沒有新的待處理項目），就保留第一次的結果。恢復仍記錄為 `unresolved`，旁白照沒有重試時那樣，依第一次的證據解釋。重試再次 `blocked`、或把這一輪解決掉的情況，行為不變。
 
 ## 驗證
 

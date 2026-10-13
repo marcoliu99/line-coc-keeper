@@ -169,7 +169,7 @@ async def _recover_blocked_turn(
         return retry, reason, "recovered"
     if (reason == "unsupported_action" and result.turn_resolution is not None
             and result.turn_resolution.disposition == "blocked"
-            and retry.turn_resolution is not None and retry.turn_resolution.disposition != "blocked"
+            and retry.turn_resolution is not None and retry.turn_resolution.disposition == "incomplete"
             and turn_fallback.changed_nothing(retry, before_pending=before_pending, before_luck=before_luck, state=state)):
         # The first attempt found the answer (「Muscoby 沒有圖書館，最近的在 Appleford」) and the retry, whose searches come
         # out of the same per-turn allowance, ran dry and said nothing: the player is told what the first one found, not
