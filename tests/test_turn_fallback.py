@@ -762,6 +762,14 @@ def test_a_search_the_allowance_refused_does_not_keep_a_turn_from_being_narrated
     assert not prompt_config.narrates_what_was_done(own, _state())
 
 
+def test_a_refused_search_is_not_among_the_facts_the_narrator_is_given() -> None:
+    result = _acted(tool_calls=(("skill_check", True), ("search_scenario", False)),
+                    check_status={"scenario_searches_refused": 1})
+    result.narrative_facts = ["skill_check 成功：骰值 13", "search_scenario 失敗：scenario_search_limit_reached"]
+    block = prompt_config.build_mechanic_facts_block(result)
+    assert "骰值 13" in block and "scenario_search_limit_reached" not in block
+
+
 def test_only_a_clean_incomplete_turn_that_did_something_is_narrated() -> None:
     state = _state()
     assert not prompt_config.narrates_what_was_done(_acted(check_status={"dice_rolled": False, "state_changed": False}), state)

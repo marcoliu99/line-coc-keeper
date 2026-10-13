@@ -268,7 +268,8 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         f"執行健康狀態：{result.execution_health}；中斷不得抹除已確認事實，也不得重播工具。",
         "發生的事實：",
     ]
-    lines.extend(f"- {fact}" for fact in result.narrative_facts)
+    # A search the turn's allowance refused is bookkeeping, not something that happened in the story.
+    lines.extend(f"- {fact}" for fact in result.narrative_facts if "scenario_search_limit_reached" not in fact)
     blows = [o.public_text for o in result.observed_outcomes
              if o.success and o.audience == "public" and o.public_text and o.tool_name in _ATTACK_TOOLS]
     if blows:
