@@ -376,7 +376,8 @@ def declare_action(
     weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     combat_resources.initialize_working_state(state)
-    action_id = _id_for_this_round(state, action_id)
+    action_id = _id_for_this_round(state, action_id, {
+        'actor_id': actor_id, 'target_id': target_id, 'weapon_reference': weapon_reference, 'action_kind': action_kind})
     before = deepcopy(state.combat) if state.combat.phase == 'NEEDS_RULING' else None
     withdrawn = _withdraw_unrolled_ruling(state, actor_id)
     result = _declare_action(
@@ -396,21 +397,29 @@ def declare_action(
     return result
 
 
-def _id_for_this_round(state: GroupState, action_id: str) -> str:
+def _id_for_this_round(state: GroupState, action_id: str, declaration: dict[str, Any]) -> str:
     """The id a declaration is kept under: its own, unless that names an action finished in an earlier round.
 
     An id that is already known replays that action's receipt, which is how a retried call within one turn stays safe.
     The Executor also names actions after the round it counts ("arthur:round6:melee-youngling") and was seen reusing
     one a round later, so the call replayed last round's finished attack: nothing was rolled, no check was owed, and
     the turn ended 「尚未完整處理」 (Lightless Beacon 2026-10-13 rerun3, six turns). A finished action of an earlier round
-    is never this turn's: the declaration is a new action, kept under the id plus the round it was made in, and a
-    retry in that round replays that one.
+    is never this turn's: the declaration is a new action, kept under the id plus the round it was made in. A retry in
+    that round finds it again; a derived id that some other action already holds gets a counter instead.
     """
-    earlier = state.combat.actions.get(action_id)
-    if (earlier and not action_id.startswith('system:') and earlier.get('completed')
-            and earlier.get('round') != state.combat.round_number):
-        return f'{action_id}:r{state.combat.round_number}'
-    return action_id
+    actions = state.combat.actions
+    earlier = actions.get(action_id)
+    if (not earlier or action_id.startswith('system:') or not earlier.get('completed')
+            or earlier.get('round') == state.combat.round_number):
+        return action_id
+    candidate = f'{action_id}:r{state.combat.round_number}'
+    taken = 1
+    while (held := actions.get(candidate)) and not (
+            held.get('round') == state.combat.round_number
+            and all(held.get(key) == value for key, value in declaration.items())):
+        taken += 1
+        candidate = f'{action_id}:r{state.combat.round_number}-{taken}'
+    return candidate
 
 
 def _declare_action(

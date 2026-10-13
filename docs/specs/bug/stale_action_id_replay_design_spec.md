@@ -16,7 +16,7 @@ Six of the 200 turns in that run were lost this way, all in the long fight; the 
 
 ## Change
 
-`combat_flow.declare_action` first asks `_id_for_this_round`: when the id names an action that is finished and was made in an earlier round (`action['round'] != combat.round_number`), the declaration is a new action and is kept under `<id>:r<round>`. A retry of that call in the same round finds the new action and replays it, so the in-turn idempotence is unchanged. An id that names an unfinished action, or one finished in this round, behaves as before. The tool result carries the id the action was kept under (`action_id`), and the earlier action is left untouched.
+`combat_flow.declare_action` first asks `_id_for_this_round`: when the id names an action that is finished and was made in an earlier round (`action['round'] != combat.round_number`), the declaration is a new action and is kept under `<id>:r<round>`. A retry of that call in the same round finds the new action and replays it, so the in-turn idempotence is unchanged. If another action already holds that derived id (a caller who wrote `<id>:r2` itself), a counter is added (`<id>:r2-2`) instead of capturing it. An id that names an unfinished action, or one finished in this round, behaves as before. The tool result carries the id the action was kept under (`action_id`), and the earlier action is left untouched.
 
 ## Verification
 

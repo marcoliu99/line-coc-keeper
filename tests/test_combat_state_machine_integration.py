@@ -571,6 +571,20 @@ def test_a_stale_action_id_retried_in_the_same_round_replays_the_new_action(batt
     assert len([a for a in battle.load().combat.actions.values() if not a.get('completed')]) == 1
 
 
+def test_a_derived_action_id_another_action_holds_gets_a_counter(battle):
+    """Codex #302: an id the caller wrote as "<id>:r2" must not capture the derived one."""
+    _finish_a_round_and_start_the_next(battle, 'ada:round1:melee')
+    current = battle.load()
+    held = deepcopy(current.combat.actions['ada:round1:melee'])
+    held.update(action_id='ada:round1:melee:r2', actor_id='pc:char:other')
+    current.combat.actions['ada:round1:melee:r2'] = held
+    group_state.save_state(current)
+    declared = battle.declare('ada:round1:melee')
+    assert declared['ok'] and declared['action_id'] == 'ada:round1:melee:r2-2', declared
+    assert battle.declare('ada:round1:melee') == declared
+    assert battle.load().combat.actions['ada:round1:melee:r2'] == held
+
+
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     battle.start()
     for resource_field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
