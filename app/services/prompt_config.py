@@ -553,7 +553,7 @@ def narrates_what_was_done(result: MechanicResult | None, state: GroupState | No
         (status.get("dice_rolled") or status.get("resolved") or status.get("state_changed"))
         and not (status.get("pending") or status.get("pending_luck") or status.get("combat_opened")
                  or status.get("scenario_evidence_blocked"))
-        and result.tool_calls and all(ok for _, ok in result.tool_calls)
+        and result.tool_calls and not turn_fallback.failed_a_tool(result)
     )
 
 

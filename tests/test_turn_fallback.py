@@ -754,6 +754,14 @@ def test_an_incomplete_turn_after_committed_results_is_told_in_the_story() -> No
     assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency("", result, state=_state())
 
 
+def test_a_search_the_allowance_refused_does_not_keep_a_turn_from_being_narrated() -> None:
+    refused = _acted(tool_calls=(("skill_check", True), ("search_scenario", False)),
+                     check_status={"scenario_searches_refused": 1})
+    assert prompt_config.narrates_what_was_done(refused, _state())
+    own = _acted(tool_calls=(("skill_check", True), ("search_scenario", False)))
+    assert not prompt_config.narrates_what_was_done(own, _state())
+
+
 def test_only_a_clean_incomplete_turn_that_did_something_is_narrated() -> None:
     state = _state()
     assert not prompt_config.narrates_what_was_done(_acted(check_status={"dice_rolled": False, "state_changed": False}), state)
