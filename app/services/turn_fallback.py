@@ -258,11 +258,12 @@ def failed_a_tool(result: MechanicResult) -> bool:
 
     Searches the turn's allowance refused did nothing and failed nothing (Scritch-Scratch 2026-10-13: 「逐一查看所有房間」
     spent the allowance, and two turns in 200 ended 「工具失敗了」): the model gave up with what it had found. Only
-    the refusals are exempt; a search that failed for its own reason still is a failure."""
+    the refusals are exempt; a search that failed for its own reason still is a failure, and so is a witness of a batched
+    Sanity call that did not roll (it fails inside the call that rolled the others)."""
     failed_searches = sum(1 for name, ok in result.tool_calls if name == "search_scenario" and not ok)
     refused = int(result.check_status.get("scenario_searches_refused", 0))
     return (any(not ok and name != "search_scenario" for name, ok in result.tool_calls)
-            or failed_searches > refused)
+            or failed_searches > refused or bool(result.check_status.get("batched_call_failed")))
 
 
 def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, rag_status: str = "") -> FallbackReason | None:

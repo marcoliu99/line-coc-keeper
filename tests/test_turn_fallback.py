@@ -770,6 +770,12 @@ def test_a_refused_search_is_not_among_the_facts_the_narrator_is_given() -> None
     assert "骰值 13" in block and "scenario_search_limit_reached" not in block
 
 
+def test_a_batched_sanity_witness_that_did_not_roll_keeps_the_notice() -> None:
+    partial = _acted(check_status={"batched_call_failed": True})
+    assert not prompt_config.narrates_what_was_done(partial, _state())
+    assert turn_fallback.failed_a_tool(partial)
+
+
 def test_only_a_clean_incomplete_turn_that_did_something_is_narrated() -> None:
     state = _state()
     assert not prompt_config.narrates_what_was_done(_acted(check_status={"dice_rolled": False, "state_changed": False}), state)

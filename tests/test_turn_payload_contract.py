@@ -33,7 +33,7 @@ MUTATORS = {"setdefault", "update", "pop", "popitem", "clear", "__setitem__"}
 CHECK_STATUS_WRITERS = {
     "app/agents/tool_gateway.py": {
         "tool_called", "pending", "pending_luck", "resolved", "scenario_evidence_blocked",
-        "scenario_searches_refused", "cleared",
+        "scenario_searches_refused", "batched_call_failed", "cleared",
     },
     "app/agents/executor.py": {
         "tool_called", "pending", "pending_luck", "resolved", "tool_event_count", "state_changed", "dice_rolled",
