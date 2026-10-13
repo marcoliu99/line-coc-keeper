@@ -732,3 +732,45 @@ def test_a_fight_that_began_is_not_followed_by_a_request_to_start_over() -> None
     assert not prompt_config.fight_started_cleanly(cancelled)
     assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, cancelled)
     assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, unrelated)
+
+
+def _acted(**fields: Any) -> MechanicResult:
+    """An Executor that rolled and changed something, then left the turn incomplete (Scritch-Scratch turn 21)."""
+    status = {"tool_called": True, "pending": None, "dice_rolled": True, "state_changed": True, **fields.pop("check_status", {})}
+    fields.setdefault("fallback_reason", "executor_no_action")
+    return _result("incomplete", "model_incomplete", check_status=status,
+                   tool_calls=fields.pop("tool_calls", (("search_scenario", True), ("skill_check", True), ("sanity_check", True))),
+                   **fields)
+
+
+def test_an_incomplete_turn_after_committed_results_is_told_in_the_story() -> None:
+    result = _acted()
+    assert prompt_config.narrates_what_was_done(result, _state())
+    assert not prompt_config.narration_replaced(result, _state())
+    story = "林間的鼠屍掛滿枝頭，你們屏住了呼吸。"
+    assert prompt_config.enforce_mechanic_check_consistency(story, result, state=_state()) == story
+    assert "【本回合已完成的部分" in prompt_config.build_mechanic_facts_block(result)
+    # Narration that failed leaves the fixed notice, not an empty reply.
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency("", result, state=_state())
+
+
+def test_only_a_clean_incomplete_turn_that_did_something_is_narrated() -> None:
+    state = _state()
+    assert not prompt_config.narrates_what_was_done(_acted(check_status={"dice_rolled": False, "state_changed": False}), state)
+    assert not prompt_config.narrates_what_was_done(_acted(tool_calls=(("skill_check", True), ("record_clue", False))), state)
+    assert not prompt_config.narrates_what_was_done(_acted(check_status={"pending": {"investigator": "小雨", "skill": "偵查"}}), state)
+    assert not prompt_config.narrates_what_was_done(_acted(check_status={"combat_opened": True}), state)
+    assert not prompt_config.narrates_what_was_done(_acted(fallback_reason="tool_failure"), state)
+    assert not prompt_config.narrates_what_was_done(_result("blocked", "validated"), state)
+    waiting = _state()
+    waiting.pending_checks["u2"] = {"check_id": "c1"}
+    assert not prompt_config.narrates_what_was_done(_acted(), waiting)
+    fighting = _state()
+    fighting.combat.active = True
+    assert not prompt_config.narrates_what_was_done(_acted(), fighting)
+
+
+@aio
+async def test_a_turn_that_rolled_and_gave_up_reads_as_the_narration() -> None:
+    reply, run_executor, _, _ = await _turn(_state(), [_acted()], narration="枝頭的鼠屍在風裡輕輕搖晃，你們一時說不出話。")
+    assert "枝頭的鼠屍" in reply and "尚未完整處理" not in reply and run_executor.await_count == 1
