@@ -100,7 +100,8 @@ def test_every_reason_is_stable_enumerable_and_has_a_player_message() -> None:
     ("completion_too_long", "invalid_tool_plan"), ("invalid_fields", "invalid_tool_plan"),
     ("invalid_actor_or_disposition", "invalid_tool_plan"), ("invalid_evidence_format", "invalid_tool_plan"),
     ("invalid_evidence_reference", "invalid_tool_plan"), ("missing_actor", "invalid_tool_plan"),
-    ("pending_identity_mismatch", "state_conflict"), ("cancellation_not_verified", "state_conflict"),
+    ("pending_identity_mismatch", "invalid_tool_plan"),  # with nothing run or pending; see the conflict cases below
+    ("cancellation_not_verified", "state_conflict"),
     ("luck_takes_precedence", "unresolved_pending_state"), ("unfinished_check_or_luck", "unresolved_pending_state"),
     ("deferral_not_verified", "executor_no_action"),
     ("inventory_or_combat_not_verified", "tool_result_rejected"), ("missing_resolved_effect", "tool_result_rejected"),
@@ -110,6 +111,20 @@ def test_every_reason_is_stable_enumerable_and_has_a_player_message() -> None:
 ])
 def test_each_validation_code_the_executor_can_fail_with_has_a_reason(code: str, expected: str) -> None:
     assert turn_fallback.classify(_result("incomplete", code), _state(), "u1") == expected
+
+
+def test_a_handoff_naming_a_check_nobody_opened_after_only_look_ups_is_a_decision_to_retry() -> None:
+    """Lightless Beacon 2026-10-13 rerun4, turn 183: the Executor searched, then named a Spot Hidden it never started;
+    the player was told 「時間線已更新」."""
+    looked = _result("incomplete", "pending_identity_mismatch", tool_calls=(("search_scenario", True),))
+    assert turn_fallback.classify(looked, _state(), "u1") == "invalid_tool_plan"
+    assert turn_fallback.classify(_result("incomplete", "pending_identity_mismatch"), _state(), "u1") == "invalid_tool_plan"
+    # A tool that could have changed the game, or a check someone is waiting on, is still a conflict.
+    acted = _result("incomplete", "pending_identity_mismatch", tool_calls=(("initialize_combat", True),))
+    assert turn_fallback.classify(acted, _state(), "u1") == "state_conflict"
+    waiting = GroupState(group_id="g", timeline_id="timeline-a", pending_checks={"u2": {"check_id": "c1"}})
+    assert turn_fallback.classify(looked, waiting, "u1") == "state_conflict"
+    assert turn_fallback.classify(_result("incomplete", "cancellation_not_verified"), _state(), "u1") == "state_conflict"
 
 
 def test_a_model_that_says_incomplete_after_a_failed_tool_is_a_tool_failure() -> None:
