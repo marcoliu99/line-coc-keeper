@@ -3316,6 +3316,19 @@
       "path": "docs/specs/bug/handoff_mismatch_retry_design_spec.md",
       "zh_path": "docs/specs/bug/handoff_mismatch_retry_design_spec_zh.md",
       "source_revision": "137f126e75294376db90303bea8abe9cd3cd371f"
+    },
+    {
+      "title": "A retry that ran dry does not replace the first attempt's answer",
+      "zh": "查詢額度用完的重試，不取代第一次嘗試的答案",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/agents/supervisor.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/keep_the_first_explanation_design_spec.md",
+      "zh_path": "docs/specs/bug/keep_the_first_explanation_design_spec_zh.md",
+      "source_revision": "6e767722561b8f25230fa25c407e206b438ff927"
     }
   ]
 }

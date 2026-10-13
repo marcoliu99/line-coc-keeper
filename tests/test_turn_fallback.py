@@ -631,6 +631,20 @@ async def test_what_the_first_attempt_found_reaches_the_narrator_when_the_retry_
 
 
 @aio
+async def test_a_retry_that_ran_dry_does_not_replace_the_first_attempts_validated_answer(events) -> None:
+    """Scritch-Scratch 2026-10-13 rerun3, turn 22: the first attempt worked out that the village has no library; the
+    retry spent the rest of the turn's searches and ended 「劇本裡沒有足夠的內容」."""
+    first = _cannot_be_done()
+    dry = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", False),),
+                  check_status={"tool_called": True, "pending": None, "scenario_searches_refused": 1})
+    reply, run_executor, _, _ = await _turn(_state(), [first, dry], narration="穆斯科比沒有圖書館；最近的在 Appleford。")
+    assert run_executor.await_count == 2
+    assert reply == "穆斯科比沒有圖書館；最近的在 Appleford。"
+    [row] = fallbacks(events)
+    assert row["fallback_reason"] == "unsupported_action" and row["recovery_result"] == "unresolved"
+
+
+@aio
 async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
     found = ("--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。",)
     first = _result("blocked", "validated", scenario_evidence=found)
