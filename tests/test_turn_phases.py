@@ -348,6 +348,19 @@ async def test_a_turn_may_search_the_scenario_only_so_many_times(events) -> None
 
 
 @aio
+async def test_a_refused_search_leaves_a_mark_for_the_fallback_to_read() -> None:
+    state = make_state()
+    status: dict = {}
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *_a, **_k: {"ok": True, "results": "內容"}):
+        execute = tool_gateway.make_tool_executor(state, [], [], "player", [], scenario_search_limit=1, actor_id="a",
+                                                  check_status=status)
+        await execute("search_scenario", {"query": "q1"})
+        assert "scenario_search_limit_reached" not in status
+        await execute("search_scenario", {"query": "q2"})
+    assert status["scenario_search_limit_reached"] is True
+
+
+@aio
 async def test_without_a_limit_searching_is_unbounded() -> None:
     facts: list[str] = []
     with patch.object(tool_gateway.tool_dispatch, "execute_tool", lambda *a, **k: {"ok": True, "results": "x"}):

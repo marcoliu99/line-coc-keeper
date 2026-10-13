@@ -73,7 +73,8 @@ class CheckStatus(TypedDict, total=False):
     decision is open, or a result is final. Who writes each key:
 
     * Executor / tool gateway, while tools run: ``tool_called``, ``pending``, ``pending_luck``,
-      ``resolved``, ``scenario_evidence_blocked``, ``cleared`` (a wait was removed).
+      ``resolved``, ``scenario_evidence_blocked``, ``scenario_search_limit_reached`` (the turn's
+      search allowance refused a search), ``cleared`` (a wait was removed).
     * Executor, once the tools are done: ``tool_event_count``, ``state_changed``, ``dice_rolled``,
       ``combat_opened`` (a call took the battle from inactive to active).
     * ``turn_handoff.prepare_narrator_handoff``, from the latest state: ``pending``,
@@ -87,6 +88,7 @@ class CheckStatus(TypedDict, total=False):
     pending_luck: dict[str, Any] | None
     resolved: dict[str, Any] | None
     scenario_evidence_blocked: bool
+    scenario_search_limit_reached: bool
     cleared: bool
     tool_event_count: int
     state_changed: bool
