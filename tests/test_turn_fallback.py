@@ -784,3 +784,16 @@ async def test_a_failed_narration_after_a_result_gets_the_fixed_notice_not_the_f
 
     reply, _, _, _ = await _turn(_state(), [_acted()], narrator=failing)
     assert "尚未完整處理" in reply and "暫時無法完成敘事" not in reply
+
+
+@aio
+async def test_a_turn_told_from_its_results_does_not_open_a_check_after_the_story() -> None:
+    """A check the obligation gate opened after the story would make the predicate false and drop the story."""
+    gate = AsyncMock(return_value=[])
+    with patch.object(supervisor.obligation_gate, "possible", return_value=True), \
+            patch.object(reply_pipeline.obligation_gate, "enforce", gate):
+        reply, _, _, _ = await _turn(_state(), [_acted()], narration="枝頭的鼠屍在風裡輕輕搖晃。")
+        assert "枝頭的鼠屍" in reply and gate.await_count == 0
+        # An ordinary resolved turn still goes through the gate.
+        await _turn(_state(), [_resolved()], narration="你走進廚房。")
+        assert gate.await_count == 1

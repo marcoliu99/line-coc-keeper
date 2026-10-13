@@ -12,6 +12,8 @@ The party walked the public footpath behind the cottage. The Executor rolled the
 
 `prompt_config.narrates_what_was_done(result, state)` is true for an incomplete turn that gave up on its own (`model_incomplete`, fallback reason `executor_no_action`), whose tools all succeeded and rolled or changed something (`dice_rolled`, `resolved` or `state_changed`), with nothing waiting on anyone (no pending check or Luck decision, in the result or in the game state), no fight on or opened this turn, and no blocked scenario evidence. For that turn the Narrator runs (`narration_replaced` is false), the consistency step returns its text, and the roll lines still ride with it as for any turn. The Narrator's facts say that the listed results have happened and to tell what they showed and hand the next step back to the players; what was not rolled or done must not be written as done, and it must not say the system failed. If the narration itself fails, the failure text is dropped (as for an explained refusal) and the fixed notice answers.
 
+Such a turn does not go through the obligation gate (as an explained refusal does): a check the gate opened after the story would make the turn ineligible again and the story would be replaced by the notice, and the Executor has already settled this turn's mechanics.
+
 Not changed: a turn with a failed tool, a pending wait, a fight, or no result keeps its notice.
 
 ## Verification

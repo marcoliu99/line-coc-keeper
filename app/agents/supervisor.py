@@ -388,6 +388,9 @@ async def _mechanics(turn: _Turn) -> None:
         and not (turn.pending_reply and not turn.autoroll_followups)
         # An action the scenario cannot do is explained in the story: what the Narrator suggests instead did not happen.
         and not prompt_config.explains_in_story(mechanic_result, state)
+        # An incomplete turn told from what its tools did: a check the gate opened after the story would make that
+        # story an unfinished-turn notice again, and the Executor has already settled this turn's mechanics.
+        and not prompt_config.narrates_what_was_done(mechanic_result, state)
         and obligation_gate.possible(turn.obligation_evidence, mechanic_result)
     )
     if (turn.handoff is not None and config.NARRATION_OUTSIDE_MUTATION_LOCK
