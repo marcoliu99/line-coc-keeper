@@ -3262,6 +3262,21 @@
       "path": "docs/specs/maintenance/handoff_mismatch_log_design_spec.md",
       "zh_path": "docs/specs/maintenance/handoff_mismatch_log_design_spec_zh.md",
       "source_revision": "3565bed8ccd3b87ff58f8e7ec23a0aed9b4a5385"
+    },
+    {
+      "title": "A refused scenario search is not a tool failure",
+      "zh": "被拒絕的劇本查詢不算工具失敗",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "app/agents/tool_gateway.py",
+        "tests/test_turn_fallback.py",
+        "tests/test_turn_phases.py"
+      ],
+      "path": "docs/specs/bug/search_limit_is_not_a_tool_failure_design_spec.md",
+      "zh_path": "docs/specs/bug/search_limit_is_not_a_tool_failure_design_spec_zh.md",
+      "source_revision": "06d5d9a151fbb9a1834d779d5b815ba6e5728559"
     }
   ]
 }
