@@ -152,7 +152,7 @@ def make_tool_executor(
                 observability.event("executor.scenario_search.limit_exceeded", level=logging.WARNING,
                                     limit=scenario_search_limit, attempted=scenario_searches)
                 if check_status is not None:
-                    check_status["scenario_search_limit_reached"] = True
+                    check_status["scenario_searches_refused"] = check_status.get("scenario_searches_refused", 0) + 1
                 return rejection(tool_name, "scenario_search_limit_reached",
                                  "本回合的劇本查詢次數已達上限；請用已取得的依據裁決，或暫緩並請玩家聚焦行動。")
         spec = tool_registry.REGISTRY.get(tool_name)

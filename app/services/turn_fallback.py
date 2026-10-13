@@ -263,10 +263,13 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     if resolution.disposition not in {"incomplete", "blocked"}:
         return None
     code = resolution.validation_code
-    # A search the turn's allowance refused did nothing and failed nothing (Scritch-Scratch 2026-10-13: 「逐一查看所有房間」
-    # spent the allowance, and two turns in 200 ended 「工具失敗了」): the model gave up with what it had found.
-    refused = bool(result.check_status.get("scenario_search_limit_reached"))
-    failed_tool = any(not ok and not (refused and name == "search_scenario") for name, ok in result.tool_calls)
+    # Searches the turn's allowance refused did nothing and failed nothing (Scritch-Scratch 2026-10-13: 「逐一查看所有房間」
+    # spent the allowance, and two turns in 200 ended 「工具失敗了」): the model gave up with what it had found. Only
+    # the refusals are exempt; a search that failed for its own reason still is a failure.
+    failed_searches = sum(1 for name, ok in result.tool_calls if name == "search_scenario" and not ok)
+    refused = int(result.check_status.get("scenario_searches_refused", 0))
+    failed_tool = (any(not ok and name != "search_scenario" for name, ok in result.tool_calls)
+                   or failed_searches > refused)
     if result.execution_health != "completed" or not result.success:
         return "tool_failure" if failed_tool else "internal_error"
     if result.check_status.get("scenario_evidence_blocked") or code == "missing_scenario_or_mutation_evidence":

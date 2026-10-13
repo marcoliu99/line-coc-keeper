@@ -355,9 +355,10 @@ async def test_a_refused_search_leaves_a_mark_for_the_fallback_to_read() -> None
         execute = tool_gateway.make_tool_executor(state, [], [], "player", [], scenario_search_limit=1, actor_id="a",
                                                   check_status=status)
         await execute("search_scenario", {"query": "q1"})
-        assert "scenario_search_limit_reached" not in status
+        assert "scenario_searches_refused" not in status
         await execute("search_scenario", {"query": "q2"})
-    assert status["scenario_search_limit_reached"] is True
+        await execute("search_scenario", {"query": "q3"})
+    assert status["scenario_searches_refused"] == 2
 
 
 @aio

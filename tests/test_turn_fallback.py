@@ -120,12 +120,16 @@ def test_a_model_that_says_incomplete_after_a_failed_tool_is_a_tool_failure() ->
 def test_a_search_the_allowance_refused_is_not_a_tool_failure() -> None:
     calls = (("search_scenario", True), ("search_scenario", False))
     refused = _result("incomplete", "model_incomplete", tool_calls=calls,
-                      check_status={"tool_called": True, "pending": None, "scenario_search_limit_reached": True})
+                      check_status={"tool_called": True, "pending": None, "scenario_searches_refused": 1})
     assert turn_fallback.classify(refused, _state(), "u1") == "executor_no_action"
     # A search that failed for another reason, or any other tool that failed, still is one.
     assert turn_fallback.classify(_result("incomplete", "model_incomplete", tool_calls=calls), _state(), "u1") == "tool_failure"
+    # An earlier search that failed for its own reason is not excused by a later refusal.
+    own = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", False),) + calls,
+                  check_status={"tool_called": True, "pending": None, "scenario_searches_refused": 1})
+    assert turn_fallback.classify(own, _state(), "u1") == "tool_failure"
     mixed = _result("incomplete", "model_incomplete", tool_calls=calls + (("skill_check", False),),
-                    check_status={"tool_called": True, "pending": None, "scenario_search_limit_reached": True})
+                    check_status={"tool_called": True, "pending": None, "scenario_searches_refused": 1})
     assert turn_fallback.classify(mixed, _state(), "u1") == "tool_failure"
 
 

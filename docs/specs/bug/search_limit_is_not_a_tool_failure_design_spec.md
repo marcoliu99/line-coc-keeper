@@ -10,7 +10,7 @@ Status: **implemented**. Base: `main_v2` at `06d5d9a`. Found in the 2026-10-13 S
 
 ## Change
 
-When the allowance refuses a search, the tool gateway marks the turn (`check_status["scenario_search_limit_reached"]`). `turn_fallback.classify` then does not count a `search_scenario` call among the failed tools of that turn. A model that gave up after it is `executor_no_action`, which the fallback already retries once (carrying the first attempt's passages) and, if it stays unresolved, answers with the scene's concrete options. Any other failed tool, or a search that failed with no refusal, is still a `tool_failure`.
+When the allowance refuses a search, the tool gateway marks the turn (`check_status["scenario_searches_refused"]` (a count)). `turn_fallback.classify` then does not count that many failed `search_scenario` calls among the failed tools of that turn; a search that failed for its own reason still counts. A model that gave up after it is `executor_no_action`, which the fallback already retries once (carrying the first attempt's passages) and, if it stays unresolved, answers with the scene's concrete options. Any other failed tool, or a search that failed with no refusal, is still a `tool_failure`.
 
 ## Verification
 

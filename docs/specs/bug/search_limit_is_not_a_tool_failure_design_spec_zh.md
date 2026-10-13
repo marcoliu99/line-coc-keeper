@@ -10,7 +10,7 @@
 
 ## 變更
 
-查詢額度拒絕一次查詢時，工具閘道在這回合做記號（`check_status["scenario_search_limit_reached"]`）。`turn_fallback.classify` 之後不把這回合的 `search_scenario` 算進失敗的工具。於是放棄的執行器歸為 `executor_no_action`：備援本來就會重試一次（帶著第一次查到的段落），仍無法解決時則用場景裡具體的選項回覆玩家。其他工具失敗、或沒有被拒絕卻失敗的查詢，仍是 `tool_failure`。
+查詢額度拒絕一次查詢時，工具閘道在這回合做記號（`check_status["scenario_searches_refused"]` (a count)）。`turn_fallback.classify` 之後不把這麼多次失敗的 `search_scenario` 算進失敗的工具；因自身原因失敗的查詢仍然算數。於是放棄的執行器歸為 `executor_no_action`：備援本來就會重試一次（帶著第一次查到的段落），仍無法解決時則用場景裡具體的選項回覆玩家。其他工具失敗、或沒有被拒絕卻失敗的查詢，仍是 `tool_failure`。
 
 ## 驗證
 
