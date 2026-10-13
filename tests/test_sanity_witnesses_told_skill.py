@@ -84,6 +84,28 @@ def test_a_refused_primary_does_not_hide_the_witnesses_who_rolled():
     assert [w.get("error") for w in result["witnesses"]] == ["Marco 已有待處理的檢定"]
 
 
+def test_a_witness_that_did_not_roll_marks_the_turn_for_the_fallback():
+    def fake_tool(_state, name, args, *_rest, **_kw):
+        if args["investigator"] == "Ken":
+            return {"ok": False, "error": "找不到調查員 Ken"}
+        return {"ok": True, "resolved": True, "investigator": args["investigator"], "roll": 40}
+
+    status: dict = {}
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool", fake_tool):
+        execute = tool_gateway.make_tool_executor(_state(), [], [], "player", [], actor_id="a", check_status=status)
+        result = asyncio.run(execute("sanity_check", {"investigator": "Marco", "witnesses": ["Ken"],
+                                                      "loss_success": "0", "loss_failure": "1"}))
+    assert result["ok"] and status["batched_call_failed"] is True
+    # Every witness rolling leaves no mark.
+    clean: dict = {}
+    with patch.object(tool_gateway.tool_dispatch, "execute_tool",
+                      lambda _s, _n, args, *_r, **_k: {"ok": True, "resolved": True, "investigator": args["investigator"]}):
+        execute = tool_gateway.make_tool_executor(_state(), [], [], "player", [], actor_id="a", check_status=clean)
+        asyncio.run(execute("sanity_check", {"investigator": "Marco", "witnesses": ["Ken"],
+                                             "loss_success": "0", "loss_failure": "1"}))
+    assert "batched_call_failed" not in clean
+
+
 def test_a_choice_settled_without_a_roll_does_not_read_as_a_zero_roll():
     msg = AgentMessage({"state": _state(), "user_id": "a", "resolved_check_context": {
         "investigator": "Marco", "skill": "不閃躲", "roll": 0, "outcome": "不閃躲，攻擊已結算", "no_roll": True,

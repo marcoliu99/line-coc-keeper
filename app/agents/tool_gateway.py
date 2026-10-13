@@ -132,6 +132,10 @@ def make_tool_executor(
         # Led by a roll that happened: a primary refused (a check already waiting) must not hide the witnesses who
         # rolled. A witness refused beside a roll rides in the list with its own error, as its own call would.
         results = [first, *others]
+        if check_status is not None and not all(result.get("ok") for result in results):
+            # The outer result is the one that rolled; a witness that did not rolls inside it, where the turn's
+            # tool list does not see it. The turn is told so, as a failed tool of its own.
+            check_status["batched_call_failed"] = True
         lead = next((result for result in results if result.get("ok")), first)
         return {**lead, "witnesses": [result for result in results if result is not lead]}
 

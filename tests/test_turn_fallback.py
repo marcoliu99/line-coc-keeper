@@ -732,3 +732,106 @@ def test_a_fight_that_began_is_not_followed_by_a_request_to_start_over() -> None
     assert not prompt_config.fight_started_cleanly(cancelled)
     assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, cancelled)
     assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, unrelated)
+
+
+def _acted(**fields: Any) -> MechanicResult:
+    """An Executor that rolled and changed something, then left the turn incomplete (Scritch-Scratch turn 21)."""
+    status = {"tool_called": True, "pending": None, "dice_rolled": True, "state_changed": True, **fields.pop("check_status", {})}
+    fields.setdefault("fallback_reason", "executor_no_action")
+    fields.setdefault("observed_outcomes", [ObservedOutcome("tool:2", "skill_check", True, "已結算檢定：小雨 的偵查，骰值 13，結果為「極難成功」。", "public")])
+    return _result("incomplete", "model_incomplete", check_status=status,
+                   tool_calls=fields.pop("tool_calls", (("search_scenario", True), ("skill_check", True), ("sanity_check", True))),
+                   **fields)
+
+
+def test_an_incomplete_turn_after_committed_results_is_told_in_the_story() -> None:
+    result = _acted()
+    assert prompt_config.narrates_what_was_done(result, _state())
+    assert not prompt_config.narration_replaced(result, _state())
+    story = "林間的鼠屍掛滿枝頭，你們屏住了呼吸。"
+    assert prompt_config.enforce_mechanic_check_consistency(story, result, state=_state()) == story
+    assert "【本回合已完成的部分" in prompt_config.build_mechanic_facts_block(result)
+    # Narration that failed leaves the fixed notice, not an empty reply.
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency("", result, state=_state())
+
+
+def test_a_search_the_allowance_refused_does_not_keep_a_turn_from_being_narrated() -> None:
+    refused = _acted(tool_calls=(("skill_check", True), ("search_scenario", False)),
+                     check_status={"scenario_searches_refused": 1})
+    assert prompt_config.narrates_what_was_done(refused, _state())
+    own = _acted(tool_calls=(("skill_check", True), ("search_scenario", False)))
+    assert not prompt_config.narrates_what_was_done(own, _state())
+
+
+def test_a_refused_search_is_not_among_the_facts_the_narrator_is_given() -> None:
+    result = _acted(tool_calls=(("skill_check", True), ("search_scenario", False)),
+                    check_status={"scenario_searches_refused": 1})
+    result.narrative_facts = ["skill_check 成功：骰值 13", "search_scenario 失敗：scenario_search_limit_reached"]
+    block = prompt_config.build_mechanic_facts_block(result)
+    assert "骰值 13" in block and "scenario_search_limit_reached" not in block
+
+
+def test_a_turn_that_only_kept_a_kp_only_note_has_nothing_to_narrate() -> None:
+    quiet = _acted(observed_outcomes=[ObservedOutcome("tool:1", "record_clue", True, "", "internal")])
+    assert not prompt_config.narrates_what_was_done(quiet, _state())
+    assert prompt_config.narrates_what_was_done(_acted(), _state())
+
+
+def test_a_batched_sanity_witness_that_did_not_roll_keeps_the_notice() -> None:
+    partial = _acted(check_status={"batched_call_failed": True})
+    assert not prompt_config.narrates_what_was_done(partial, _state())
+    assert turn_fallback.failed_a_tool(partial)
+
+
+def test_only_a_clean_incomplete_turn_that_did_something_is_narrated() -> None:
+    state = _state()
+    assert not prompt_config.narrates_what_was_done(_acted(check_status={"dice_rolled": False, "state_changed": False}), state)
+    assert not prompt_config.narrates_what_was_done(_acted(tool_calls=(("skill_check", True), ("record_clue", False))), state)
+    assert not prompt_config.narrates_what_was_done(_acted(check_status={"pending": {"investigator": "小雨", "skill": "偵查"}}), state)
+    assert not prompt_config.narrates_what_was_done(_acted(check_status={"combat_opened": True}), state)
+    assert not prompt_config.narrates_what_was_done(_acted(fallback_reason="tool_failure"), state)
+    assert not prompt_config.narrates_what_was_done(_result("blocked", "validated"), state)
+    waiting = _state()
+    waiting.pending_checks["u2"] = {"check_id": "c1"}
+    assert not prompt_config.narrates_what_was_done(_acted(), waiting)
+    fighting = _state()
+    fighting.combat.active = True
+    assert not prompt_config.narrates_what_was_done(_acted(), fighting)
+
+
+@aio
+async def test_a_turn_that_rolled_and_gave_up_reads_as_the_narration() -> None:
+    reply, run_executor, _, _ = await _turn(_state(), [_acted()], narration="枝頭的鼠屍在風裡輕輕搖晃，你們一時說不出話。")
+    assert "枝頭的鼠屍" in reply and "尚未完整處理" not in reply and run_executor.await_count == 1
+
+
+@aio
+async def test_a_failed_narration_after_a_result_gets_the_fixed_notice_not_the_failure_text() -> None:
+    async def failing(message):
+        message.payload["narration_failed"] = True
+        return "守密人暫時無法完成敘事。已提交的變更會保留；請查看目前狀態。", [], []
+
+    reply, _, _, _ = await _turn(_state(), [_acted()], narrator=failing)
+    assert "尚未完整處理" in reply and "暫時無法完成敘事" not in reply
+
+
+@aio
+async def test_a_turn_told_from_its_results_still_goes_through_the_obligation_gate() -> None:
+    """The gate records what the Executor applied (its receipts stop a later turn charging it twice)."""
+    gate = AsyncMock(return_value=[])
+    with patch.object(supervisor.obligation_gate, "possible", return_value=True), \
+            patch.object(reply_pipeline.obligation_gate, "enforce", gate):
+        reply, _, _, _ = await _turn(_state(), [_acted()], narration="枝頭的鼠屍在風裡輕輕搖晃。")
+    assert "枝頭的鼠屍" in reply and gate.await_count == 1
+
+
+def test_a_check_the_gate_opens_after_the_story_does_not_turn_it_back_into_a_notice() -> None:
+    story = "林間的鼠屍掛滿枝頭，你們屏住了呼吸。"
+    opened = _acted(check_status={"pending": {"investigator": "小雨", "skill": "理智", "check_id": "c9"}})
+    # Decided before the gate: the story is kept and the new check's instruction rides with it.
+    kept = prompt_config.enforce_mechanic_check_consistency(story, opened, state=_state(), narrated=True)
+    assert story in kept and "尚未完整處理" not in kept and "/coc check" in kept
+    # Without that decision the live pending check makes the turn ineligible, as before.
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, opened, state=_state())
+    # Narration that failed still gets the notice.
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency("", _acted(), state=_state(), narrated=True)

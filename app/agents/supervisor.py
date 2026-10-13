@@ -206,6 +206,7 @@ class _Turn:
     pending_before: tuple[dict, dict] | None = None  # pending checks and Luck decisions as the Executor found them
     obligation_evidence: list[str] = field(default_factory=list)
     obligation_candidates: bool = False
+    narrated_incomplete: bool = False  # told from its results (decided before the obligation gate can open a check)
     handoff_before: tuple[dict, dict] = field(default_factory=lambda: ({}, {}))
     narration: tuple[str, list[tuple[str, str]], list[tuple[str | None, int]]] = ("", [], [])
 
@@ -381,6 +382,7 @@ async def _mechanics(turn: _Turn) -> None:
     #
     # Nor when the evidence states a mechanic the narration may make due: that gate changes state, so it needs the
     # mutation phase.
+    turn.narrated_incomplete = prompt_config.narrates_what_was_done(mechanic_result, state)
     turn.obligation_evidence = [
         _evidence_text(message), *(mechanic_result.scenario_evidence if mechanic_result else ())]
     turn.obligation_candidates = (
@@ -444,8 +446,9 @@ async def _narrate(turn: _Turn) -> TurnReply | None:
     if turn.turn_kind == "opening_fallback" and message.payload.get("narration_failed"):
         # A failed opening produced no scene. Leave /coc start retryable.
         return reply_text, [], []
-    if message.payload.get("narration_failed") and prompt_config.explains_in_story(turn.mechanic_result, state):
-        reply_text = ""  # the failure notice is no explanation, and says changes were kept; the fixed refusal answers instead
+    if message.payload.get("narration_failed") and (prompt_config.explains_in_story(turn.mechanic_result, state)
+                                                    or prompt_config.narrates_what_was_done(turn.mechanic_result, state)):
+        reply_text = ""  # the failure notice is no story, and says changes were kept; the fixed answer takes its place
     turn.narration = (reply_text, private_messages, image_requests)
     return None
 
@@ -458,6 +461,7 @@ def _gate(turn: _Turn) -> tuple[reply_pipeline.ReplyContext, reply_pipeline.Repl
         state=state, message=message, user_id=turn.user_id, speaker_role=turn.speaker_role,
         turn_kind=turn.turn_kind, resolved_check_context=turn.resolved_check_context, turn_id=turn.turn_id,
         obligation_candidates=turn.obligation_candidates, obligation_evidence=turn.obligation_evidence,
+        narrated_incomplete=turn.narrated_incomplete,
         handoff_before=turn.handoff_before,
     )
     draft = reply_pipeline.ReplyDraft(

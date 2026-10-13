@@ -3277,6 +3277,19 @@
       "path": "docs/specs/bug/search_limit_is_not_a_tool_failure_design_spec.md",
       "zh_path": "docs/specs/bug/search_limit_is_not_a_tool_failure_design_spec_zh.md",
       "source_revision": "06d5d9a151fbb9a1834d779d5b815ba6e5728559"
+    },
+    {
+      "title": "An incomplete turn after committed results is told in the story",
+      "zh": "已有結果的未完成回合，用故事說明",
+      "category": "enhancement",
+      "status": "implemented",
+      "evidence": [
+        "app/services/prompt_config.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/enhancement/incomplete_after_a_result_is_narrated_design_spec.md",
+      "zh_path": "docs/specs/enhancement/incomplete_after_a_result_is_narrated_design_spec_zh.md",
+      "source_revision": "8d7a55a8bb759d003b14d8c0298f5314838ca947"
     }
   ]
 }

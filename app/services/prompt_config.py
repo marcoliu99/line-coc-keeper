@@ -268,7 +268,8 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
         f"執行健康狀態：{result.execution_health}；中斷不得抹除已確認事實，也不得重播工具。",
         "發生的事實：",
     ]
-    lines.extend(f"- {fact}" for fact in result.narrative_facts)
+    # A search the turn's allowance refused is bookkeeping, not something that happened in the story.
+    lines.extend(f"- {fact}" for fact in result.narrative_facts if "scenario_search_limit_reached" not in fact)
     blows = [o.public_text for o in result.observed_outcomes
              if o.success and o.audience == "public" and o.public_text and o.tool_name in _ATTACK_TOOLS]
     if blows:
@@ -295,6 +296,13 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
             ("玩家要做的事，以目前劇本的地點、人物與物件做不到（例如去一個劇本裡沒有的地方）。用故事口吻告訴玩家為什麼，"
              "並只依上面的劇本內容指出最近的選擇（劇本裡有的地點或人物）；劇本沒寫的不能補造。"
              "不可寫成行動已經做了、已經找到或已經抵達。"),
+        ])
+    if narrates_what_was_done(result):
+        lines.extend([
+            "【本回合已完成的部分：上面的事實與擲骰結果已經發生】",
+            ("用故事口吻交代這些已發生的結果（擲骰的結果、看到了什麼、有什麼感受或後果），再自然地把下一步交還給玩家。"
+             "守密人專用（KP only）的記錄只供你掌握，內容不可說出。"
+             "這回合沒有處理完的部分（沒有擲的檢定、沒有發生的後果）不可寫成已經發生；也不要說系統出錯或要玩家重做已完成的部分。"),
         ])
     inventory_events = [event.payload for event in result.events if event.type == "inventory_change"]
     if inventory_events:
@@ -527,6 +535,33 @@ def explains_in_story(result: MechanicResult | None, state: GroupState | None = 
     )
 
 
+def narrates_what_was_done(result: MechanicResult | None, state: GroupState | None = None) -> bool:
+    """Whether an incomplete turn is answered by the Narrator, from what its tools already did.
+
+    The Executor rolled or changed something (a Spot Hidden, the Sanity of everyone who saw the dead rats), every tool
+    did not fail, nothing waits on anyone and no fight is on, and then it left the turn incomplete for the rest it could
+    not settle (the scenario's Listen beside the Spot Hidden). The table read the roll lines and 「尚未完整處理…請接著說明你想
+    怎麼做」, with nothing of what the investigators saw (Scritch-Scratch 2026-10-13 turn 21, and turn 67 of the run
+    before). The narration tells the committed results; what was left undone stays undone and the players can ask
+    for it."""
+    resolution = result.turn_resolution if result is not None else None
+    if (result is None or resolution is None or resolution.disposition != "incomplete"
+            or resolution.validation_code != "model_incomplete" or result.fallback_reason != "executor_no_action"):
+        return False
+    if state is not None and (state.combat.active or state.pending_checks or state.pending_luck_decisions):
+        return False
+    status = result.check_status
+    return bool(
+        (status.get("dice_rolled") or status.get("resolved") or status.get("state_changed"))
+        and not (status.get("pending") or status.get("pending_luck") or status.get("combat_opened")
+                 or status.get("scenario_evidence_blocked"))
+        and result.tool_calls and not turn_fallback.failed_a_tool(result)
+        # Something the players read: a turn that only kept a KP-only note has nothing to tell, and its facts hold the
+        # secret.
+        and any(o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)
+    )
+
+
 def fight_started_cleanly(result: MechanicResult, state: GroupState | None = None) -> bool:
     """Whether the fight began and the only thing left unfinished is the Executor's reference to a check that does not exist.
 
@@ -555,23 +590,28 @@ def narration_replaced(result: MechanicResult | None, state: GroupState | None =
         return False
     status = result.check_status
     if resolution.disposition in {"incomplete", "blocked"}:
-        return not status.get("combat_opened") and not explains_in_story(result, state)
+        return (not status.get("combat_opened") and not explains_in_story(result, state)
+                and not narrates_what_was_done(result, state))
     if resolution.disposition == "deferred":
         return not status.get("state_changed")
     return resolution.disposition == "cancelled"
 
 
 def enforce_mechanic_check_consistency(
-    text: str, result: MechanicResult, *, state: GroupState | None = None, trailing: str = "",
+    text: str, result: MechanicResult, *, state: GroupState | None = None, trailing: str = "", narrated: bool = False,
 ) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
     ``state`` lets a turn that could not finish name what the table has already been shown (``turn_fallback.scene_hints``).
     ``trailing`` is what the caller appended after an already repaired reply (the obligation gate's summaries): a repair
     that rebuilds the reply around its narration puts it back at the end.
+    ``narrated`` says the turn was told from its results (``narrates_what_was_done``, decided before the obligation gate
+    could open a check of its own): its narration then goes through the checks below as a resolved turn's does.
     """
     status = result.check_status
     resolution = result.turn_resolution
+    if narrated and text.strip():
+        resolution = None
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
@@ -581,7 +621,7 @@ def enforce_mechanic_check_consistency(
                     and any(not o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)):
                 # A refusal that says why and what to do (an empty gun) is the whole answer, not a tool failure.
                 return "\n".join(confirmed)
-            if explains_in_story(result, state) and text.strip():
+            if (explains_in_story(result, state) or narrates_what_was_done(result, state)) and text.strip():
                 return text
             if fight_started_cleanly(result, state) and text.strip():
                 return text

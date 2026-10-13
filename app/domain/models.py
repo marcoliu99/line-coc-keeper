@@ -74,7 +74,7 @@ class CheckStatus(TypedDict, total=False):
 
     * Executor / tool gateway, while tools run: ``tool_called``, ``pending``, ``pending_luck``,
       ``resolved``, ``scenario_evidence_blocked``, ``scenario_searches_refused`` (how many searches the
-      turn's allowance refused), ``cleared`` (a wait was removed).
+      turn's allowance refused), ``batched_call_failed`` (a witness of a batched Sanity call did not roll), ``cleared`` (a wait was removed).
     * Executor, once the tools are done: ``tool_event_count``, ``state_changed``, ``dice_rolled``,
       ``combat_opened`` (a call took the battle from inactive to active).
     * ``turn_handoff.prepare_narrator_handoff``, from the latest state: ``pending``,
@@ -89,6 +89,7 @@ class CheckStatus(TypedDict, total=False):
     resolved: dict[str, Any] | None
     scenario_evidence_blocked: bool
     scenario_searches_refused: int
+    batched_call_failed: bool
     cleared: bool
     tool_event_count: int
     state_changed: bool

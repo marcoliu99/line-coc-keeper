@@ -17,7 +17,7 @@ from app.domain.models import FALLBACK_REASONS, FallbackReason, MechanicResult
 from app.models import GroupState
 from app.services import turn_phases
 
-__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "found_scenario_text", "guidance", "is_passage", "record", "recoverable", "recovery_query", "scene_hints"]
+__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "failed_a_tool", "found_scenario_text", "guidance", "is_passage", "record", "recoverable", "recovery_query", "scene_hints"]
 
 # What the player is told when the turn has no more specific wording; every reason has one.
 _GUIDANCE: dict[str, str] = {
@@ -253,6 +253,19 @@ def _waiting(state: GroupState, user_id: str) -> bool:
     return any(owner == user_id for owner in (*state.pending_checks, *state.pending_luck_decisions))
 
 
+def failed_a_tool(result: MechanicResult) -> bool:
+    """Whether a tool of this turn really failed.
+
+    Searches the turn's allowance refused did nothing and failed nothing (Scritch-Scratch 2026-10-13: 「逐一查看所有房間」
+    spent the allowance, and two turns in 200 ended 「工具失敗了」): the model gave up with what it had found. Only
+    the refusals are exempt; a search that failed for its own reason still is a failure, and so is a witness of a batched
+    Sanity call that did not roll (it fails inside the call that rolled the others)."""
+    failed_searches = sum(1 for name, ok in result.tool_calls if name == "search_scenario" and not ok)
+    refused = int(result.check_status.get("scenario_searches_refused", 0))
+    return (any(not ok and name != "search_scenario" for name, ok in result.tool_calls)
+            or failed_searches > refused or bool(result.check_status.get("batched_call_failed")))
+
+
 def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, rag_status: str = "") -> FallbackReason | None:
     """The reason for a generic reply to this turn's mechanics, or None when the turn is not a fallback."""
     resolution = None if result is None else result.turn_resolution
@@ -263,13 +276,7 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     if resolution.disposition not in {"incomplete", "blocked"}:
         return None
     code = resolution.validation_code
-    # Searches the turn's allowance refused did nothing and failed nothing (Scritch-Scratch 2026-10-13: 「逐一查看所有房間」
-    # spent the allowance, and two turns in 200 ended 「工具失敗了」): the model gave up with what it had found. Only
-    # the refusals are exempt; a search that failed for its own reason still is a failure.
-    failed_searches = sum(1 for name, ok in result.tool_calls if name == "search_scenario" and not ok)
-    refused = int(result.check_status.get("scenario_searches_refused", 0))
-    failed_tool = (any(not ok and name != "search_scenario" for name, ok in result.tool_calls)
-                   or failed_searches > refused)
+    failed_tool = failed_a_tool(result)
     if result.execution_health != "completed" or not result.success:
         return "tool_failure" if failed_tool else "internal_error"
     if result.check_status.get("scenario_evidence_blocked") or code == "missing_scenario_or_mutation_evidence":
