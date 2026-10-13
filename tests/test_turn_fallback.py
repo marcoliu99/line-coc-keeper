@@ -774,3 +774,13 @@ def test_only_a_clean_incomplete_turn_that_did_something_is_narrated() -> None:
 async def test_a_turn_that_rolled_and_gave_up_reads_as_the_narration() -> None:
     reply, run_executor, _, _ = await _turn(_state(), [_acted()], narration="枝頭的鼠屍在風裡輕輕搖晃，你們一時說不出話。")
     assert "枝頭的鼠屍" in reply and "尚未完整處理" not in reply and run_executor.await_count == 1
+
+
+@aio
+async def test_a_failed_narration_after_a_result_gets_the_fixed_notice_not_the_failure_text() -> None:
+    async def failing(message):
+        message.payload["narration_failed"] = True
+        return "守密人暫時無法完成敘事。已提交的變更會保留；請查看目前狀態。", [], []
+
+    reply, _, _, _ = await _turn(_state(), [_acted()], narrator=failing)
+    assert "尚未完整處理" in reply and "暫時無法完成敘事" not in reply
