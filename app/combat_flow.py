@@ -376,6 +376,7 @@ def declare_action(
     weapon_instance: combat_rules.WeaponInstance | None = None,
 ) -> dict[str, Any]:
     combat_resources.initialize_working_state(state)
+    action_id = _id_for_this_round(state, action_id)
     before = deepcopy(state.combat) if state.combat.phase == 'NEEDS_RULING' else None
     withdrawn = _withdraw_unrolled_ruling(state, actor_id)
     result = _declare_action(
@@ -393,6 +394,23 @@ def declare_action(
         if result.get('ok'):
             return _error('That action ID is an earlier finished action; declare the correction with a new action ID')
     return result
+
+
+def _id_for_this_round(state: GroupState, action_id: str) -> str:
+    """The id a declaration is kept under: its own, unless that names an action finished in an earlier round.
+
+    An id that is already known replays that action's receipt, which is how a retried call within one turn stays safe.
+    The Executor also names actions after the round it counts ("arthur:round6:melee-youngling") and was seen reusing
+    one a round later, so the call replayed last round's finished attack: nothing was rolled, no check was owed, and
+    the turn ended 「尚未完整處理」 (Lightless Beacon 2026-10-13 rerun3, six turns). A finished action of an earlier round
+    is never this turn's: the declaration is a new action, kept under the id plus the round it was made in, and a
+    retry in that round replays that one.
+    """
+    earlier = state.combat.actions.get(action_id)
+    if (earlier and not action_id.startswith('system:') and earlier.get('completed')
+            and earlier.get('round') != state.combat.round_number):
+        return f'{action_id}:r{state.combat.round_number}'
+    return action_id
 
 
 def _declare_action(

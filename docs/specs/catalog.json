@@ -3290,6 +3290,19 @@
       "path": "docs/specs/enhancement/incomplete_after_a_result_is_narrated_design_spec.md",
       "zh_path": "docs/specs/enhancement/incomplete_after_a_result_is_narrated_design_spec_zh.md",
       "source_revision": "8d7a55a8bb759d003b14d8c0298f5314838ca947"
+    },
+    {
+      "title": "An action id finished in an earlier round is not replayed",
+      "zh": "前幾輪已完成的行動 ID 不再被當成重播",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/combat_flow.py",
+        "tests/test_combat_state_machine_integration.py"
+      ],
+      "path": "docs/specs/bug/stale_action_id_replay_design_spec.md",
+      "zh_path": "docs/specs/bug/stale_action_id_replay_design_spec_zh.md",
+      "source_revision": "f063965d8bc3c90dcb6f8f6be9871de06660cf50"
     }
   ]
 }

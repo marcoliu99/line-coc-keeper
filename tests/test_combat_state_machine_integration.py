@@ -531,6 +531,46 @@ def test_a_declaration_without_an_attack_kind_is_melee_for_a_fist(battle):
     assert battle.load().combat.actions['punch:nokind']['action_kind'] == 'melee'
 
 
+def _finish_a_round_and_start_the_next(battle, action_id: str) -> None:
+    """Ada's attack under ``action_id`` is rolled and finished, then the battle is on her turn in the next round."""
+    battle.start()
+    battle.declare(action_id)
+    pending = battle.load().pending_checks['player']
+    with patch.object(dice, 'skill_check', return_value=result(roll=100, tier='fumble')):
+        battle.check(pending['check_id'])
+    current = battle.load()
+    assert current.combat.actions[action_id]['completed']
+    current.combat.round_number += 1
+    current.combat.current_index = next(i for i, p in enumerate(current.combat.order) if p.combatant_id == 'pc:char:ada')
+    current.combat.phase = 'READY'
+    current.combat.interaction = {}
+    current.pending_checks.clear()
+    group_state.save_state(current)
+
+
+def test_an_action_id_finished_in_an_earlier_round_is_not_replayed(battle):
+    """Lightless Beacon 2026-10-13 rerun3: the Executor named an attack after the round it counted and reused the id a
+    round later. The engine answered with last round's finished receipt: no roll, no check owed, and the turn ended
+    「尚未完整處理」 six times in one fight."""
+    _finish_a_round_and_start_the_next(battle, 'ada:round1:melee')
+    first = battle.load().combat.actions['ada:round1:melee']
+    second = battle.declare('ada:round1:melee')
+    assert second['ok'] and not second.get('completed'), second
+    after = battle.load()
+    assert after.pending_checks['player']['check_id'] != first['checks'].get('attack', {}).get('check_id')
+    assert after.combat.actions['ada:round1:melee'] == first
+    fresh = after.combat.actions[second['action_id']]
+    assert second['action_id'] == 'ada:round1:melee:r2' and fresh['round'] == after.combat.round_number
+
+
+def test_a_stale_action_id_retried_in_the_same_round_replays_the_new_action(battle):
+    _finish_a_round_and_start_the_next(battle, 'ada:round1:melee')
+    first = battle.declare('ada:round1:melee')
+    again = battle.declare('ada:round1:melee')
+    assert again == first
+    assert len([a for a in battle.load().combat.actions.values() if not a.get('completed')]) == 1
+
+
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     battle.start()
     for resource_field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
