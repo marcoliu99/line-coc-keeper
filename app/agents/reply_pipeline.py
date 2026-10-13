@@ -34,6 +34,7 @@ class ReplyContext:
     obligation_candidates: bool
     obligation_evidence: Sequence[str]
     handoff_before: tuple[dict, dict]
+    narrated_incomplete: bool = False
 
 
 @dataclass
@@ -74,7 +75,9 @@ def _consistent(ctx: ReplyContext, draft: ReplyDraft, candidate: str, *, trailin
         )
     if draft.public_result is not None:
         # ``trailing`` is passed only when set, so a pass without one keeps the call shape tests stub.
-        extra = {"trailing": trailing} if trailing else {}
+        extra: dict[str, Any] = {"trailing": trailing} if trailing else {}
+        if ctx.narrated_incomplete:
+            extra["narrated"] = True
         candidate = prompt_config.enforce_mechanic_check_consistency(candidate, draft.public_result, state=ctx.state, **extra)
     return candidate
 

@@ -816,13 +816,22 @@ async def test_a_failed_narration_after_a_result_gets_the_fixed_notice_not_the_f
 
 
 @aio
-async def test_a_turn_told_from_its_results_does_not_open_a_check_after_the_story() -> None:
-    """A check the obligation gate opened after the story would make the predicate false and drop the story."""
+async def test_a_turn_told_from_its_results_still_goes_through_the_obligation_gate() -> None:
+    """The gate records what the Executor applied (its receipts stop a later turn charging it twice)."""
     gate = AsyncMock(return_value=[])
     with patch.object(supervisor.obligation_gate, "possible", return_value=True), \
             patch.object(reply_pipeline.obligation_gate, "enforce", gate):
         reply, _, _, _ = await _turn(_state(), [_acted()], narration="枝頭的鼠屍在風裡輕輕搖晃。")
-        assert "枝頭的鼠屍" in reply and gate.await_count == 0
-        # An ordinary resolved turn still goes through the gate.
-        await _turn(_state(), [_resolved()], narration="你走進廚房。")
-        assert gate.await_count == 1
+    assert "枝頭的鼠屍" in reply and gate.await_count == 1
+
+
+def test_a_check_the_gate_opens_after_the_story_does_not_turn_it_back_into_a_notice() -> None:
+    story = "林間的鼠屍掛滿枝頭，你們屏住了呼吸。"
+    opened = _acted(check_status={"pending": {"investigator": "小雨", "skill": "理智", "check_id": "c9"}})
+    # Decided before the gate: the story is kept and the new check's instruction rides with it.
+    kept = prompt_config.enforce_mechanic_check_consistency(story, opened, state=_state(), narrated=True)
+    assert story in kept and "尚未完整處理" not in kept and "/coc check" in kept
+    # Without that decision the live pending check makes the turn ineligible, as before.
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency(story, opened, state=_state())
+    # Narration that failed still gets the notice.
+    assert "尚未完整處理" in prompt_config.enforce_mechanic_check_consistency("", _acted(), state=_state(), narrated=True)

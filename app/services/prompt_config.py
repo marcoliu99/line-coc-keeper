@@ -300,7 +300,8 @@ def build_mechanic_facts_block(result: MechanicResult) -> str:
     if narrates_what_was_done(result):
         lines.extend([
             "【本回合已完成的部分：上面的事實與擲骰結果已經發生】",
-            ("用故事口吻交代這些已發生的結果（看到了什麼、有什麼感受或後果），再自然地把下一步交還給玩家。"
+            ("用故事口吻交代這些已發生的結果（擲骰的結果、看到了什麼、有什麼感受或後果），再自然地把下一步交還給玩家。"
+             "守密人專用（KP only）的記錄只供你掌握，內容不可說出。"
              "這回合沒有處理完的部分（沒有擲的檢定、沒有發生的後果）不可寫成已經發生；也不要說系統出錯或要玩家重做已完成的部分。"),
         ])
     inventory_events = [event.payload for event in result.events if event.type == "inventory_change"]
@@ -597,16 +598,20 @@ def narration_replaced(result: MechanicResult | None, state: GroupState | None =
 
 
 def enforce_mechanic_check_consistency(
-    text: str, result: MechanicResult, *, state: GroupState | None = None, trailing: str = "",
+    text: str, result: MechanicResult, *, state: GroupState | None = None, trailing: str = "", narrated: bool = False,
 ) -> str:
     """Enforce check, Luck, and resolved-result state after model narration.
 
     ``state`` lets a turn that could not finish name what the table has already been shown (``turn_fallback.scene_hints``).
     ``trailing`` is what the caller appended after an already repaired reply (the obligation gate's summaries): a repair
     that rebuilds the reply around its narration puts it back at the end.
+    ``narrated`` says the turn was told from its results (``narrates_what_was_done``, decided before the obligation gate
+    could open a check of its own): its narration then goes through the checks below as a resolved turn's does.
     """
     status = result.check_status
     resolution = result.turn_resolution
+    if narrated and text.strip():
+        resolution = None
     if resolution is not None:
         if resolution.disposition in {"incomplete", "blocked"}:
             warning = "這次行動目前無法繼續。" if resolution.disposition == "blocked" else "這次行動尚未完整處理。"
