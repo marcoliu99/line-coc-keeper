@@ -585,6 +585,27 @@ def test_a_derived_action_id_another_action_holds_gets_a_counter(battle):
     assert battle.load().combat.actions['ada:round1:melee:r2'] == held
 
 
+def test_a_finished_actions_retry_after_the_round_wrapped_still_replays(battle):
+    """Codex #302: a call repeated after its own battle moved on (the actor is not up) is that call's retry."""
+    _finish_a_round_and_start_the_next(battle, 'ada:round1:melee')
+    current = battle.load()
+    current.combat.current_index = next(i for i, p in enumerate(current.combat.order) if p.side == 'enemy')
+    group_state.save_state(current)
+    before = battle.load().combat.actions['ada:round1:melee']
+    replayed = battle.declare('ada:round1:melee')
+    assert replayed['ok'] and replayed['action_id'] == 'ada:round1:melee' and replayed['completed'], replayed
+    assert battle.load().combat.actions['ada:round1:melee'] == before
+    assert not any(key.startswith('ada:round1:melee:r') for key in battle.load().combat.actions)
+
+
+def test_a_derived_action_id_stays_within_the_accepted_length(battle):
+    long_id = 'a' * 160
+    _finish_a_round_and_start_the_next(battle, long_id)
+    declared = battle.declare(long_id)
+    assert declared['ok'] and len(declared['action_id']) == 160 and declared['action_id'].endswith(':r2'), declared
+    assert battle.declare(long_id) == declared
+
+
 def test_existing_resource_and_inventory_tools_share_working_snapshot(battle):
     battle.start()
     for resource_field, delta, expected in [('san', -2, 48), ('mp', -3, 7), ('luck', -4, 46)]:
