@@ -645,6 +645,17 @@ async def test_a_retry_that_ran_dry_does_not_replace_the_first_attempts_validate
 
 
 @aio
+async def test_a_retry_that_changed_the_game_is_kept_over_the_first_attempts_answer() -> None:
+    """Codex #304: the first attempt's answer is only kept over a retry that, like it, only looked things up."""
+    first = _cannot_be_done()
+    for status in ({"dice_rolled": True}, {"state_changed": True}, {"resolved": True}):
+        acted = _result("incomplete", "model_incomplete", fallback_reason="executor_no_action",
+                        check_status={"tool_called": True, "pending": None, **status})
+        reply, *_ = await _turn(_state(), [first, acted], narration="穆斯科比沒有圖書館。")
+        assert reply != "穆斯科比沒有圖書館。", status
+
+
+@aio
 async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
     found = ("--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。",)
     first = _result("blocked", "validated", scenario_evidence=found)
