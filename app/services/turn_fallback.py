@@ -284,6 +284,12 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
     if code in _INVALID_DECISION:
         return "invalid_tool_plan"
     if code in _STATE_CONFLICT:
+        # A handoff naming a check that was never opened, on a turn that only looked things up and with nobody waiting
+        # on anything, is a decision that did not pass the check, not a timeline that moved (Lightless Beacon
+        # 2026-10-13 rerun4, turn 183: 「時間線已更新」 for a Spot Hidden the Executor never started): one more try, and
+        # wording that asks for the action again.
+        if code == "pending_identity_mismatch" and _only_looked_things_up(result, state):
+            return "invalid_tool_plan"
         return "state_conflict"
     if code in _PENDING:
         # 「在等別人」 with nobody waiting on anything and no tool run is a turn with no action, not a pending state
@@ -304,6 +310,15 @@ def classify(result: MechanicResult | None, state: GroupState, user_id: str, *, 
             return "unresolved_pending_state"
         return "unsupported_action" if _has_scenario_evidence(result, rag_status, state) else "no_scenario_evidence"
     return "unknown"
+
+
+def _only_looked_things_up(result: MechanicResult, state: GroupState) -> bool:
+    """No tool ran that could have changed the game, and no check or Luck decision is pending for anyone."""
+    from app.keeper_tools import (
+        registry,  # imported here: the tool registry imports modules that import this one
+    )
+    return (not state.pending_checks and not state.pending_luck_decisions
+            and all(name in registry.INFORMATION_QUERY_TOOL_NAMES for name, _ok in result.tool_calls))
 
 
 def _failed_without_a_change(reason: str | None, result: MechanicResult) -> bool:

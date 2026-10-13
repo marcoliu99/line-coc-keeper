@@ -3303,6 +3303,19 @@
       "path": "docs/specs/bug/stale_action_id_replay_design_spec.md",
       "zh_path": "docs/specs/bug/stale_action_id_replay_design_spec_zh.md",
       "source_revision": "f063965d8bc3c90dcb6f8f6be9871de06660cf50"
+    },
+    {
+      "title": "A handoff naming a check nobody opened is a decision to retry",
+      "zh": "交接指名了沒人開過的檢定，視為裁決要重來",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/turn_fallback.py",
+        "tests/test_turn_fallback.py"
+      ],
+      "path": "docs/specs/bug/handoff_mismatch_retry_design_spec.md",
+      "zh_path": "docs/specs/bug/handoff_mismatch_retry_design_spec_zh.md",
+      "source_revision": "137f126e75294376db90303bea8abe9cd3cd371f"
     }
   ]
 }
