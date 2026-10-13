@@ -738,6 +738,7 @@ def _acted(**fields: Any) -> MechanicResult:
     """An Executor that rolled and changed something, then left the turn incomplete (Scritch-Scratch turn 21)."""
     status = {"tool_called": True, "pending": None, "dice_rolled": True, "state_changed": True, **fields.pop("check_status", {})}
     fields.setdefault("fallback_reason", "executor_no_action")
+    fields.setdefault("observed_outcomes", [ObservedOutcome("tool:2", "skill_check", True, "已結算檢定：小雨 的偵查，骰值 13，結果為「極難成功」。", "public")])
     return _result("incomplete", "model_incomplete", check_status=status,
                    tool_calls=fields.pop("tool_calls", (("search_scenario", True), ("skill_check", True), ("sanity_check", True))),
                    **fields)
@@ -768,6 +769,12 @@ def test_a_refused_search_is_not_among_the_facts_the_narrator_is_given() -> None
     result.narrative_facts = ["skill_check 成功：骰值 13", "search_scenario 失敗：scenario_search_limit_reached"]
     block = prompt_config.build_mechanic_facts_block(result)
     assert "骰值 13" in block and "scenario_search_limit_reached" not in block
+
+
+def test_a_turn_that_only_kept_a_kp_only_note_has_nothing_to_narrate() -> None:
+    quiet = _acted(observed_outcomes=[ObservedOutcome("tool:1", "record_clue", True, "", "internal")])
+    assert not prompt_config.narrates_what_was_done(quiet, _state())
+    assert prompt_config.narrates_what_was_done(_acted(), _state())
 
 
 def test_a_batched_sanity_witness_that_did_not_roll_keeps_the_notice() -> None:

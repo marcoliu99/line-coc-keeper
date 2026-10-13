@@ -538,7 +538,7 @@ def narrates_what_was_done(result: MechanicResult | None, state: GroupState | No
     """Whether an incomplete turn is answered by the Narrator, from what its tools already did.
 
     The Executor rolled or changed something (a Spot Hidden, the Sanity of everyone who saw the dead rats), every tool
-    succeeded, nothing waits on anyone and no fight is on, and then it left the turn incomplete for the rest it could
+    did not fail, nothing waits on anyone and no fight is on, and then it left the turn incomplete for the rest it could
     not settle (the scenario's Listen beside the Spot Hidden). The table read the roll lines and 「尚未完整處理…請接著說明你想
     怎麼做」, with nothing of what the investigators saw (Scritch-Scratch 2026-10-13 turn 21, and turn 67 of the run
     before). The narration tells the committed results; what was left undone stays undone and the players can ask
@@ -555,6 +555,9 @@ def narrates_what_was_done(result: MechanicResult | None, state: GroupState | No
         and not (status.get("pending") or status.get("pending_luck") or status.get("combat_opened")
                  or status.get("scenario_evidence_blocked"))
         and result.tool_calls and not turn_fallback.failed_a_tool(result)
+        # Something the players read: a turn that only kept a KP-only note has nothing to tell, and its facts hold the
+        # secret.
+        and any(o.success and o.audience == "public" and o.public_text for o in result.observed_outcomes)
     )
 
 
