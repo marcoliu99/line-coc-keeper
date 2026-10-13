@@ -17,7 +17,7 @@ from app.domain.models import FALLBACK_REASONS, FallbackReason, MechanicResult
 from app.models import GroupState
 from app.services import turn_phases
 
-__all__ = ["FALLBACK_REASONS", "FallbackRecord", "classify", "failed_a_tool", "found_scenario_text", "guidance", "is_passage", "record", "recoverable", "recovery_query", "scene_hints"]
+__all__ = ["FALLBACK_REASONS", "FallbackRecord", "changed_nothing", "classify", "failed_a_tool", "found_scenario_text", "guidance", "is_passage", "record", "recoverable", "recovery_query", "scene_hints"]
 
 # What the player is told when the turn has no more specific wording; every reason has one.
 _GUIDANCE: dict[str, str] = {
@@ -343,14 +343,22 @@ def recoverable(reason: str | None, result: MechanicResult, *, before_pending: d
     scenario unrecoverable: in a 200-turn run, one of 18 searching fallback turns was retried and four of four that
     made no tool call were.
     """
+    return bool(
+        (reason in RECOVERABLE or _failed_without_a_change(reason, result))
+        and changed_nothing(result, before_pending=before_pending, before_luck=before_luck, state=state)
+    )
+
+
+def changed_nothing(result: MechanicResult, *, before_pending: dict, before_luck: dict, state: GroupState) -> bool:
+    """The turn's Executor changed no game state, rolled no dice, and left every pending check and Luck decision as it
+    found it; its tools only looked things up."""
     from app.keeper_tools import (
         registry,  # imported here: the tool registry imports modules that import this one
     )
 
     status = result.check_status
     return bool(
-        (reason in RECOVERABLE or _failed_without_a_change(reason, result))
-        and not status.get("state_changed") and not status.get("dice_rolled") and not status.get("resolved")
+        not status.get("state_changed") and not status.get("dice_rolled") and not status.get("resolved")
         and state.pending_checks == before_pending and state.pending_luck_decisions == before_luck
         and not result.events
         and all(outcome.tool_name in registry.READ_ONLY_TOOL_NAMES for outcome in result.observed_outcomes)

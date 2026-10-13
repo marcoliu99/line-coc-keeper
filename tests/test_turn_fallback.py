@@ -631,6 +631,39 @@ async def test_what_the_first_attempt_found_reaches_the_narrator_when_the_retry_
 
 
 @aio
+async def test_a_retry_that_ran_dry_does_not_replace_the_first_attempts_validated_answer(events) -> None:
+    """Scritch-Scratch 2026-10-13 rerun3, turn 22: the first attempt worked out that the village has no library; the
+    retry spent the rest of the turn's searches and ended 「劇本裡沒有足夠的內容」."""
+    first = _cannot_be_done()
+    dry = _result("incomplete", "model_incomplete", tool_calls=(("search_scenario", False),),
+                  check_status={"tool_called": True, "pending": None, "scenario_searches_refused": 1})
+    reply, run_executor, _, _ = await _turn(_state(), [first, dry], narration="穆斯科比沒有圖書館；最近的在 Appleford。")
+    assert run_executor.await_count == 2
+    assert reply == "穆斯科比沒有圖書館；最近的在 Appleford。"
+    [row] = fallbacks(events)
+    assert row["fallback_reason"] == "unsupported_action" and row["recovery_result"] == "unresolved"
+
+
+@aio
+async def test_a_retry_that_changed_the_game_is_kept_over_the_first_attempts_answer() -> None:
+    """Codex #304: the first attempt's answer is only kept over a retry that, like it, only looked things up."""
+    first = _cannot_be_done()
+    for status in ({"dice_rolled": True}, {"state_changed": True}, {"resolved": True}):
+        acted = _result("incomplete", "model_incomplete", fallback_reason="executor_no_action",
+                        check_status={"tool_called": True, "pending": None, **status})
+        reply, *_ = await _turn(_state(), [first, acted], narration="穆斯科比沒有圖書館。")
+        assert reply != "穆斯科比沒有圖書館。", status
+
+
+@aio
+async def test_a_retry_that_deferred_to_someone_else_is_kept_over_the_first_attempts_answer() -> None:
+    """Codex #304: only a retry that ran dry (incomplete) gives way; a deferral names whom the turn is waiting for."""
+    deferred = _result("deferred", "validated", check_status={"tool_called": False, "pending": None})
+    reply, *_ = await _turn(_state(), [_cannot_be_done(), deferred], narration="穆斯科比沒有圖書館。")
+    assert reply != "穆斯科比沒有圖書館。"
+
+
+@aio
 async def test_evidence_the_retry_found_again_is_not_handed_over_twice() -> None:
     found = ("--- 第 4 頁 ---\n門是鎖著的，要開鎖或破門。",)
     first = _result("blocked", "validated", scenario_evidence=found)
