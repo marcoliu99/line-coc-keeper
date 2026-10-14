@@ -353,6 +353,28 @@ class UnlockedOpeningRaces(unittest.IsolatedAsyncioTestCase):
                 self.assert_not_started(replies)
                 pipeline.assert_not_awaited()
 
+    async def test_a_fallback_opening_for_an_older_timeline_is_not_generated(self) -> None:
+        """The token's timeline is checked again where the fallback turn takes its own: a new game started after the
+        last check must not receive the old opening (an external writer is the only way in, hence no lock to hold)."""
+        from app.services import game_opening
+        state = load_state(self.group)
+        token = game_opening.OpeningExtractionToken(
+            "timeline-v0", state.active_scenario_source_hash,
+            game_opening.opening_identity.context_identity(state),
+            game_opening.opening_identity.participant_identity(state),
+        )
+        with patch("app.services.game_opening.supervisor.run_turn", new_callable=AsyncMock) as pipeline:
+            result = await game_opening._run_fallback(self.group, "first", state, token=token)
+        self.assertEqual((result.outcome, result.reason), ("rejected", "timeline_changed"))
+        pipeline.assert_not_awaited()
+        matching = game_opening.OpeningExtractionToken(
+            state.timeline_id, token.source_hash, token.context, token.character_set)
+        with patch("app.services.game_opening.supervisor.run_turn", new_callable=AsyncMock,
+                   return_value=("opening", [], [])) as pipeline:
+            result = await game_opening._run_fallback(self.group, "first", state, token=matching)
+        self.assertEqual(result.outcome, "fallback")
+        pipeline.assert_awaited_once()
+
     async def test_race_13_source_changes_at_scripted_transaction_boundary(self) -> None:
         original = state_transaction.mutate
         def racing_mutate(conversation_id, mutation, **kwargs):
