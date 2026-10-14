@@ -3382,6 +3382,19 @@
       "path": "docs/specs/enhancement/page_repair_refreshes_index_design_spec.md",
       "zh_path": "docs/specs/enhancement/page_repair_refreshes_index_design_spec_zh.md",
       "source_revision": "c6512c405a722e15f5c4a2a94275c84c07681eb5"
+    },
+    {
+      "title": "A rejected Codex decision tells the model what was wrong, and the log says which field",
+      "zh": "Codex 的決定被拒時，告訴模型哪裡錯，日誌也記下是哪個欄位",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/providers/codex_provider.py",
+        "tests/test_codex_provider.py"
+      ],
+      "path": "docs/specs/bug/codex_invalid_decision_feedback_design_spec.md",
+      "zh_path": "docs/specs/bug/codex_invalid_decision_feedback_design_spec_zh.md",
+      "source_revision": "0b203bc7ba114267b3cc66d99acb0366b22b76b9"
     }
   ]
 }
