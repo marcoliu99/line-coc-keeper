@@ -669,6 +669,9 @@ async def _refresh_index_after_repair(conversation_id: str, reply: Reply) -> Non
     try:
         state = load_state(conversation_id)
         index = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        if not index["npcs"] and not index["locations"]:
+            await reply("頁面已替換，但這次重新抽取沒有結果（可能是服務暫時失敗），已保留上一版索引。可以再用 /coc index 重建。")
+            return
         underflow = scenario_index.location_index_underflow(
             state.scenario_text, index["locations"],
             previous_count=len(state.scenario_location_index), source="page_repair",

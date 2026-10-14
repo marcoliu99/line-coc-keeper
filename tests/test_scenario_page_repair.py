@@ -291,6 +291,20 @@ def test_a_failed_index_rebuild_leaves_the_repair_and_the_old_index_and_says_so(
     assert "索引沒有更新" in replies[-1] and "/coc index" in replies[-1]
 
 
+def test_an_empty_extraction_result_does_not_wipe_the_old_index():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}],
+                       scenario_location_index=[{"name": "hall", "summary": "s", "page": 1}])
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index(0, 0)):
+        replies = upload(page(2, "new two"), state=state)
+    saved = group_state.load_state("g")
+    assert "new two" in saved.scenario_text
+    assert [n["name"] for n in saved.scenario_npc_index] == ["old"] and [x["name"] for x in saved.scenario_location_index] == ["hall"]
+    assert "沒有結果" in replies[-1] and "已保留上一版" in replies[-1]
+
+
 def test_an_incomplete_index_is_not_written_over_the_old_one():
     from unittest.mock import patch
 
