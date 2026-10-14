@@ -384,10 +384,13 @@ def test_an_incomplete_index_is_not_written_over_the_old_one():
     from app import scenario_index
     text = "--- 第 1 頁 ---\nLOCATION 1: a\nLOCATION 2: b\n\n--- 第 2 頁 ---\nold two\n"
     state = GroupState("g", scenario_text=text, scenario_npc_index=[{"name": "old", "hp": 1}])
-    with patch.object(scenario_index, "extract_scenario_index", return_value=_index(3, 1)):
+    with patch.object(scenario_index, "extract_scenario_index",
+                      return_value={**_index(3, 1), "terms": [{"name": "Kept Name", "zh": "保留名"}]}):
         replies = upload(page(2, "new two"), state=state)
-    assert [n["name"] for n in group_state.load_state("g").scenario_npc_index] == ["old"]
+    saved = group_state.load_state("g")
+    assert [n["name"] for n in saved.scenario_npc_index] == ["old"]
     assert "沒有更新" in replies[-1] and "已保留上一版" in replies[-1]
+    assert [t["name"] for t in saved.scenario_glossary] == ["Kept Name"]  # the names are kept all the same
 
 
 def test_pages_saved_for_later_do_not_touch_the_index():

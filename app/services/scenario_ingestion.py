@@ -682,6 +682,9 @@ async def _refresh_index_after_repair(conversation_id: str, text: str, reply: Re
                 text, index["locations"], previous_count=len(state.scenario_location_index), source="page_repair",
             )
             if underflow is not None:
+                if index.get("terms"):  # the names stand apart from the incomplete stat index, as in /coc index
+                    state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, index["terms"])
+                    state_transaction.commit_snapshot(state)
                 await reply(f"頁面已替換，但劇本索引沒有更新：重新抽取的地點比劇本文字的編號地點少（{underflow[1]}／{underflow[0]}），已保留上一版。可以再用 /coc index 重建。")
                 return
             index["locations"] = scenario_index.merge_scene_map_locations(index["locations"], state.scene_maps)
