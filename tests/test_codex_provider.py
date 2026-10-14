@@ -60,6 +60,35 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
             await self.run_provider(['bad', 'bad'])
         self.tool.assert_not_awaited()
 
+    async def test_the_retry_is_told_which_field_was_wrong(self):
+        """docs/specs/bug/codex_invalid_decision_feedback_design_spec.md: the repair note named no field, and the model
+        sent the same decision again (2026-10-14 Haunting run, turn 29)."""
+        missing = json.dumps({'decision': {'type': 'tool_call', 'name': 'inspect', 'arguments_json': '{}'}})
+        self.assertEqual(await self.run_provider([missing, final()]), 'done')
+        note = json.loads(self.transport.request.call_args.args[0])['current_conversation'][0]
+        self.assertEqual(note['error'], 'invalid_decision')
+        self.assertEqual(note['validation_error']['path'], 'arguments')
+        self.assertIn("'target' is a required property", note['validation_error']['message'])
+        self.tool.assert_not_awaited()
+
+    async def test_a_wrong_type_names_the_argument_and_a_broken_json_says_what_broke(self):
+        self.assertEqual(await self.run_provider([call(target=7), final()]), 'done')
+        note = json.loads(self.transport.request.call_args.args[0])['current_conversation'][0]['validation_error']
+        self.assertEqual((note['path'], note['validator']), ('arguments.target', 'type'))
+        self.assertEqual(await self.run_provider(['not json', final()]), 'done')
+        note = json.loads(self.transport.request.call_args.args[0])['current_conversation'][0]['validation_error']
+        self.assertTrue(note['message'].startswith('JSONDecodeError'))
+
+    async def test_the_log_names_the_field_and_rule_but_not_the_content(self):
+        from app import observability
+        events = []
+        with patch.object(observability, 'event', side_effect=lambda name, **fields: events.append((name, fields))):
+            await self.run_provider([call(target=7), final()])
+        [(_, fields)] = [e for e in events if e[0] == 'codex.decision.rejected']
+        self.assertEqual((fields['path'], fields['validator'], fields['error_type']),
+                         ('arguments.target', 'type', 'ValidationError'))
+        self.assertNotIn('message', fields)
+
     async def test_unknown_tool_and_invalid_arguments_are_not_dispatched(self):
         for data in [call(name='shell'), call(target=7), '{"decision":{"type":"final","content":""}}']:
             self.assertEqual(await self.run_provider([data, final()]), 'done')

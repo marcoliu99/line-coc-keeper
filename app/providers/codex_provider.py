@@ -123,12 +123,25 @@ def parse_decision(text: str, tools: list[dict]) -> dict:
     schema = dict(tool['input_schema'])
     # Deny host-only fields even when an older schema omits this constraint.
     schema.setdefault('additionalProperties', False)
-    Draft202012Validator(schema).validate(arguments)
+    try:
+        Draft202012Validator(schema).validate(arguments)
+    except ValidationError as exc:  # say whose arguments the path is in: the decision's own are checked first
+        raise ValidationError(exc.message, validator=exc.validator, path=['arguments', *exc.absolute_path]) from None
     if not isinstance(arguments, dict):
         raise TypeError('arguments must be an object')
     if any(key.startswith('_') for key in arguments):
         raise ValueError('host-only argument')
     return {**decision, 'arguments': arguments}
+
+
+def _decision_error(exc: Exception) -> dict[str, str]:
+    """What was wrong with a rejected decision: the field and the rule for the log (never the content), and the
+    validator's own message for the model's one retry, which is otherwise told only that something was invalid and
+    repeats it (2026-10-14 Haunting run, turn 29: two near-identical rejected decisions, 28 s, then the turn was lost)."""
+    if isinstance(exc, ValidationError):
+        return {'path': '.'.join(str(part) for part in exc.absolute_path), 'validator': str(exc.validator or ''),
+                'message': exc.message[:300]}
+    return {'path': '', 'validator': '', 'message': f'{type(exc).__name__}: {exc}'.rstrip(': ')[:300]}
 
 
 def _schema_accepts_null(schema: dict) -> bool:
@@ -389,13 +402,16 @@ async def run_conversation(
                 prompt, response_schema(current_tools), instructions=PROTOCOL_INSTRUCTIONS))
             try:
                 decision = parse_decision(raw, current_tools)
-            except (ValueError, TypeError, ValidationError, StopIteration, RecursionError):
-                observability.event('codex.decision.rejected', stage=response_stage, reason='invalid_schema')
+            except (ValueError, TypeError, ValidationError, StopIteration, RecursionError) as exc:
+                problem = _decision_error(exc)
+                observability.event('codex.decision.rejected', stage=response_stage, reason='invalid_schema',
+                                    error_type=type(exc).__name__, path=problem['path'], validator=problem['validator'])
                 if repaired:
                     raise CodexError('codex_invalid_decision') from None
                 repaired = True
-                transcript.append({'role': 'host', 'error': 'invalid_decision',
+                transcript.append({'role': 'host', 'error': 'invalid_decision', 'validation_error': problem,
                     'instruction': 'Return one decision matching the actual tools and input_schema, including investigator enums. '
+                                   'Fix what validation_error names (path is where in your decision, message is the rule). '
                                    'Use decision_context to distinguish pending work from a new action.'})
                 continue
             if decision['type'] == 'final':
