@@ -302,6 +302,10 @@ async def _run_fallback(
         fresh_state = support.refresh_tool_state(state)
         if fresh_state.game_started:
             return OpeningResult("silent")
+        if token is not None and fresh_state.timeline_id != token.timeline_id:
+            # The turn takes the timeline of the state it starts from, and the commit only compares it with itself:
+            # a new game started since the token was checked would otherwise get this opening.
+            return OpeningResult("rejected", reason="timeline_changed")
         try:
             keeper_reply, private_messages, image_requests = await supervisor.run_turn(
                 state=fresh_state,
