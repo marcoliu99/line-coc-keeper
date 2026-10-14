@@ -3357,6 +3357,19 @@
       "source_revision": "c6512c405a722e15f5c4a2a94275c84c07681eb5"
     },
     {
+      "title": "A library source that is not the game's is recorded when the variant index is chosen",
+      "zh": "選擇變體索引時，記錄「函式庫來源不是這場遊戲的來源」",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_templates.py",
+        "tests/test_scenario_template_v3.py"
+      ],
+      "path": "docs/specs/maintenance/index_source_mismatch_event_design_spec.md",
+      "zh_path": "docs/specs/maintenance/index_source_mismatch_event_design_spec_zh.md",
+      "source_revision": "c6512c405a722e15f5c4a2a94275c84c07681eb5"
+    },
+    {
       "title": "A page repair refreshes the index and names the numbers it dropped",
       "zh": "頁面修復後自動更新索引，並指出被拿掉的數字",
       "category": "enhancement",
