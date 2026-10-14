@@ -3329,6 +3329,19 @@
       "path": "docs/specs/bug/keep_the_first_explanation_design_spec.md",
       "zh_path": "docs/specs/bug/keep_the_first_explanation_design_spec_zh.md",
       "source_revision": "6e767722561b8f25230fa25c407e206b438ff927"
+    },
+    {
+      "title": "A library source that is not the game's is recorded when the variant index is chosen",
+      "zh": "選擇變體索引時，記錄「函式庫來源不是這場遊戲的來源」",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "app/scenario_templates.py",
+        "tests/test_scenario_template_v3.py"
+      ],
+      "path": "docs/specs/maintenance/index_source_mismatch_event_design_spec.md",
+      "zh_path": "docs/specs/maintenance/index_source_mismatch_event_design_spec_zh.md",
+      "source_revision": "c6512c405a722e15f5c4a2a94275c84c07681eb5"
     }
   ]
 }

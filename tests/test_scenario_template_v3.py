@@ -169,6 +169,45 @@ def test_cache_invalidates_on_file_edits(prepared, changed):
     assert metrics['variant_fallback'] == ('unapproved' if changed == 'approval' else 'invalid_or_stale')
 
 
+def test_a_library_source_that_is_not_the_games_is_recorded_and_changes_nothing(prepared):
+    """The variant index follows the library's source and the original index follows the game's; a mismatch between the
+    two (the library re-parsed after the game started) is an event, and the turn answers exactly as before."""
+    from app import observability
+    state, _, _ = prepared
+    templates.approve('sample', state.scenario_variant_id, reviewer_id='keeper')
+    state.active_scenario_source_hash = MANIFEST['content_hash']
+    events = []
+    with patch.object(observability, 'event', side_effect=lambda name, **fields: events.append((name, fields))):
+        templates._selection_cache.clear()
+        metrics = {}
+        templates.index_for_state(state, metrics)
+        assert metrics['effective_variant'] == state.scenario_variant_id
+        assert not [e for e in events if e[0] == 'scenario.index.source_mismatch']
+        state.active_scenario_source_hash = 'f' * 64  # the game was started from another source
+        templates._selection_cache.clear()
+        again = {}
+        templates.index_for_state(state, again)
+    assert again['effective_variant'] == state.scenario_variant_id and again['variant_fallback'] == 'none'
+    [(_, fields)] = [e for e in events if e[0] == 'scenario.index.source_mismatch']
+    assert fields['scenario_id'] == 'sample' and fields['game_source_hash'] == 'f' * 12
+    assert fields['library_source_hash'] == MANIFEST['content_hash'][:12]
+
+
+def test_an_unreadable_library_entry_is_not_reported_as_a_source_mismatch(prepared):
+    from app import observability
+    state, root, _ = prepared
+    templates.approve('sample', state.scenario_variant_id, reviewer_id='keeper')
+    state.active_scenario_source_hash = MANIFEST['content_hash']
+    templates.index_for_state(state)
+    (root / 'manifest.json').write_text('[]')  # the library entry can no longer be read for this source
+    events = []
+    with patch.object(observability, 'event', side_effect=lambda name, **fields: events.append(name)):
+        metrics = {}
+        templates.index_for_state(state, metrics)
+    assert metrics['variant_fallback'] == 'invalid_or_stale' and metrics['effective_variant'] == 'original'
+    assert 'scenario.index.source_mismatch' not in events  # nothing to compare with: no false report
+
+
 def test_chapter_window_is_part_of_cache_identity(prepared):
     state, _, _ = prepared
     templates.approve('sample', state.scenario_variant_id, reviewer_id='keeper')

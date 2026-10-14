@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -14,6 +15,7 @@ from uuid import uuid4
 
 from app import (
     db,
+    observability,
     scenario_authoring,
     scenario_library,
     scenario_numbers,
@@ -710,6 +712,25 @@ def _selection_stamp(scenario_id: str, variant_id: str) -> tuple:
         scenario_id, manifest.get("content_hash", ""), _LOCALE, _check_variant_id(variant_id))
 
 
+def _note_source_mismatch(state: Any, scenario_id: str, library_hash: str = "") -> None:
+    """Record, never act on, a library source that is not the one this game was started with.
+
+    The variant index follows the library's current source while ``state.scenario_text`` and the original-text index
+    follow the game's own, so after the library is re-parsed the two can answer from different versions, or the variant
+    silently gives way to the original. Only an event: the turn must go on exactly as it did."""
+    held = getattr(state, "active_scenario_source_hash", "") or ""
+    try:
+        current = library_hash or scenario_library.source_manifest(scenario_id).get("content_hash", "")
+    except (OSError, ValueError):
+        return
+    if held and current and held != current:
+        observability.event(
+            "scenario.index.source_mismatch", level=logging.WARNING, scenario_id=scenario_id,
+            game_source_hash=held[:12], library_source_hash=current[:12],
+            group_id_hash=observability.safe_identifier(getattr(state, "group_id", "")),
+        )
+
+
 def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenario_rag.ScenarioIndex:
     from app import scenario_references
     scenario_id = state.scenario_library_id
@@ -729,6 +750,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                 return cached[1]
             diagnostics["template_cache"] = "miss"
             variant, records = _read_variant(scenario_id, variant_id)
+            _note_source_mismatch(state, scenario_id, variant.get("source_hash", ""))
             records, reference_diagnostics = scenario_references.link_records(records)
             diagnostics['cross_reference_diagnostic_count'] = len(reference_diagnostics)
             diagnostics["projection_version"] = variant["compiler_version"]
@@ -752,6 +774,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
                     return index
         except (FileNotFoundError, ValueError):
             diagnostics["variant_fallback"] = "invalid_or_stale"
+            _note_source_mismatch(state, scenario_id)
     return scenario_rag.get_index(state.group_id, state.scenario_text)
 
 
