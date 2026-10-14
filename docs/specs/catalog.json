@@ -3331,6 +3331,32 @@
       "source_revision": "6e767722561b8f25230fa25c407e206b438ff927"
     },
     {
+      "title": "A fallback opening checks its timeline where the turn takes its own",
+      "zh": "後備開場在回合取用 timeline 的地方，再檢查一次 timeline",
+      "category": "bug",
+      "status": "implemented",
+      "evidence": [
+        "app/services/game_opening.py",
+        "tests/test_game_opening_unlocked_extraction.py"
+      ],
+      "path": "docs/specs/bug/fallback_opening_timeline_design_spec.md",
+      "zh_path": "docs/specs/bug/fallback_opening_timeline_design_spec_zh.md",
+      "source_revision": "c6512c405a722e15f5c4a2a94275c84c07681eb5"
+    },
+    {
+      "title": "Tests for what the 2026-10-14 audit found uncovered",
+      "zh": "補上 2026-10-14 稽核發現沒有測試的行為",
+      "category": "maintenance",
+      "status": "implemented",
+      "evidence": [
+        "tests/test_combat_rules.py",
+        "tests/test_resolved_check_consequences.py"
+      ],
+      "path": "docs/specs/maintenance/audit_coverage_tests_design_spec.md",
+      "zh_path": "docs/specs/maintenance/audit_coverage_tests_design_spec_zh.md",
+      "source_revision": "c6512c405a722e15f5c4a2a94275c84c07681eb5"
+    },
+    {
       "title": "A page repair refreshes the index and names the numbers it dropped",
       "zh": "頁面修復後自動更新索引，並指出被拿掉的數字",
       "category": "enhancement",
