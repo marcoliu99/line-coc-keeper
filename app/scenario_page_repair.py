@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from app import scenario_library as library
+from app import scenario_numbers
 
 _FENCE = re.compile(r"^```[\w-]*[ \t]*$")
 
@@ -69,3 +70,20 @@ def apply_pages(scenario_text: str, pages: dict[int, str]) -> str:
         cursor = max(start, end)
     pieces.append(scenario_text[cursor:])
     return "".join(pieces)
+
+
+def lost_numbers(scenario_text: str, pages: dict[int, str]) -> dict[int, list[str]]:
+    """``{page: numbers and dice the text's page holds that the corrected page no longer has}``, for the pages the text
+    holds. A correction may fix a misread number (1D5 for 1D6) or copy one wrong, and nothing here can tell which: the
+    player is asked to look, not stopped."""
+    marks = list(library.PAGE_MARKER_RE.finditer(scenario_text))
+    lost: dict[int, list[str]] = {}
+    for i, mark in enumerate(marks):
+        page = int(mark.group(1))
+        if page not in pages:
+            continue
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(scenario_text)
+        gone = scenario_numbers.missing(scenario_text[mark.end():end], pages[page])
+        if gone:
+            lost[page] = gone
+    return lost

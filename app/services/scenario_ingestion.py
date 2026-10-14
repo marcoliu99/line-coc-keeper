@@ -7,6 +7,7 @@ specific behavior here.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,6 +34,8 @@ from app.services import mutation_admission, scenario_lifecycle
 
 if TYPE_CHECKING:
     from app.commands.types import PdfChoice, Reply
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -634,6 +637,7 @@ async def handle_page_repair_upload(
         if repaired == state.scenario_text and not later:
             await reply("這些頁面的內容已經與目前劇本相同，沒有變動。")
             return
+        lost = scenario_page_repair.lost_numbers(state.scenario_text, pages)
         state.scenario_text = repaired
 
         def save_pages(conn):
@@ -645,3 +649,41 @@ async def handle_page_repair_upload(
     if later:
         note += f"第 {'、'.join(map(str, later))} 頁不在目前載入的章節裡，已先存下，載入到那一頁時會套用，"
     await reply(note + "其餘頁面沒有變動，遊戲進度不受影響。之後重新載入這份劇本、或 /coc newgame 後再上傳同一份劇本，也都會套用。")
+    if lost:
+        await reply(_lost_numbers_notice(lost))
+    if now:
+        await _refresh_index_after_repair(conversation_id, reply)
+
+
+def _lost_numbers_notice(lost: dict[int, list[str]]) -> str:
+    """Which numbers the corrected pages no longer hold (at most a few per page), so a copy slip shows up at once."""
+    lines = [f"・第 {page} 頁：{'、'.join(numbers[:6])}{'…' if len(numbers) > 6 else ''}" for page, numbers in sorted(lost.items())[:5]]
+    return ("⚠️ 修復後的頁面裡，找不到原本頁面有的這些數字／骰式（可能是修正了原本辨識錯的數字，也可能是抄漏了），請確認：\n"
+            + "\n".join(lines))
+
+
+async def _refresh_index_after_repair(conversation_id: str, reply: Reply) -> None:
+    """Rebuild the NPC/location index from the repaired text, the way /coc index does, so a corrected stat block or
+    location is what play refers to without a manual command. Nothing here may undo the repair: any failure leaves the
+    old index and says so."""
+    try:
+        state = load_state(conversation_id)
+        index = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        underflow = scenario_index.location_index_underflow(
+            state.scenario_text, index["locations"],
+            previous_count=len(state.scenario_location_index), source="page_repair",
+        )
+        if underflow is not None:
+            await reply(f"頁面已替換，但劇本索引沒有更新：重新抽取的地點比劇本文字的編號地點少（{underflow[1]}／{underflow[0]}），已保留上一版。可以再用 /coc index 重建。")
+            return
+        index["locations"] = scenario_index.merge_scene_map_locations(index["locations"], state.scene_maps)
+        state.scenario_npc_index = index["npcs"]
+        state.scenario_location_index = index["locations"]
+        state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, index.get("terms", []))
+        state_transaction.commit_snapshot(state)
+        await reply(f"已依修復後的頁面重新建立劇本索引：{len(index['npcs'])} 個 NPC／怪物、{len(index['locations'])} 個地點。")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _logger.exception("Scenario index refresh after a page repair failed")
+        await reply("頁面已替換，但劇本索引沒有更新，可以用 /coc index 重建。")
