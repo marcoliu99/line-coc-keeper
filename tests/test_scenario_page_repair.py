@@ -7,7 +7,7 @@ import pytest
 
 from app import scenario_page_repair as repair
 from app.models import GroupState
-from app.repositories import group_state
+from app.repositories import group_state, state_transaction
 from app.services import scenario_ingestion
 from tests.state_store import replace_state
 
@@ -256,3 +256,167 @@ def test_a_repair_binds_to_the_source_the_game_is_running_not_to_a_pending_repar
         replace_state(GroupState("g", scenario_text=TEXT, scenario_library_id=sid, active_scenario_source_hash="running-hash"))
         upload(page(2, "new two"), state=None)
         assert page_repairs.load("g", sid, "running-hash") == {2: "new two"}
+
+
+# the index and the numbers after an upload
+
+def _index(npcs=1, locations=0):
+    return {"npcs": [{"name": f"N{i}", "hp": 10} for i in range(npcs)],
+            "locations": [{"name": f"L{i}", "summary": "s", "page": 1} for i in range(locations)], "terms": []}
+
+
+def test_a_page_repair_rebuilds_the_npc_and_location_index_from_the_repaired_text():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index(2, 1)) as extract:
+        replies = upload(page(2, "new two"), state=state)
+    assert "new two" in extract.call_args.args[0] and "old two" not in extract.call_args.args[0]
+    saved = group_state.load_state("g")
+    assert [n["name"] for n in saved.scenario_npc_index] == ["N0", "N1"] and saved.scenario_location_index
+    assert "第 2 頁" in replies[0] and "2 個 NPC／怪物、1 個地點" in replies[-1]
+    assert "new two" in saved.scenario_text
+
+
+def test_a_failed_index_rebuild_leaves_the_repair_and_the_old_index_and_says_so():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+    with patch.object(scenario_index, "extract_scenario_index", side_effect=RuntimeError("provider down")):
+        replies = upload(page(2, "new two"), state=state)
+    saved = group_state.load_state("g")
+    assert "new two" in saved.scenario_text and [n["name"] for n in saved.scenario_npc_index] == ["old"]
+    assert "索引沒有更新" in replies[-1] and "/coc index" in replies[-1]
+
+
+def test_an_empty_extraction_result_does_not_wipe_the_old_index():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}],
+                       scenario_location_index=[{"name": "hall", "summary": "s", "page": 1}])
+    with patch.object(scenario_index, "extract_scenario_index", return_value={"npcs": [], "locations": []}):  # what a failed extraction returns
+        replies = upload(page(2, "new two"), state=state)
+    saved = group_state.load_state("g")
+    assert "new two" in saved.scenario_text
+    assert [n["name"] for n in saved.scenario_npc_index] == ["old"] and [x["name"] for x in saved.scenario_location_index] == ["hall"]
+    assert "沒有結果" in replies[-1] and "已保留上一版" in replies[-1]
+
+
+def test_a_successful_extraction_that_finds_nothing_does_replace_the_old_index():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index(0, 0)):  # carries its terms: it succeeded
+        replies = upload(page(2, "new two"), state=state)
+    assert group_state.load_state("g").scenario_npc_index == []
+    assert "0 個 NPC／怪物、0 個地點" in replies[-1]
+
+
+def test_a_turn_that_commits_while_the_index_is_extracted_does_not_lose_the_refresh():
+    """The extraction is a provider call outside the lock: play goes on meanwhile, and the index lands on the latest
+    state instead of failing on a stale revision."""
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+
+    def extract_while_play_goes_on(text):
+        newer = group_state.load_state("g")
+        newer.game_started = True  # another turn's commit moves the revision on
+        state_transaction.commit_snapshot(newer)
+        return _index(2, 1)
+
+    with patch.object(scenario_index, "extract_scenario_index", side_effect=extract_while_play_goes_on):
+        replies = upload(page(2, "new two"), state=state)
+    saved = group_state.load_state("g")
+    assert [n["name"] for n in saved.scenario_npc_index] == ["N0", "N1"] and saved.game_started
+    assert "2 個 NPC／怪物、1 個地點" in replies[-1]
+
+
+def test_an_index_extracted_from_text_that_changed_meanwhile_is_not_applied():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+
+    def extract_while_the_text_changes(text):
+        newer = group_state.load_state("g")
+        newer.scenario_text += "\nmore"
+        state_transaction.commit_snapshot(newer)
+        return _index(2, 1)
+
+    with patch.object(scenario_index, "extract_scenario_index", side_effect=extract_while_the_text_changes):
+        replies = upload(page(2, "new two"), state=state)
+    assert [n["name"] for n in group_state.load_state("g").scenario_npc_index] == ["old"]
+    assert "又變動了" in replies[-1] and "/coc index" in replies[-1]
+
+
+def test_a_scenario_loaded_between_the_repair_and_the_refresh_keeps_its_own_index():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+    replies: list[str] = []
+
+    async def reply(message):
+        replies.append(message)
+        if len(replies) == 1:  # the player switches scenario right after the repair is confirmed
+            other = group_state.load_state("g")
+            other.scenario_text = "--- 第 1 頁 ---\nanother scenario"
+            other.scenario_npc_index = [{"name": "other", "hp": 2}]
+            state_transaction.commit_snapshot(other)
+
+    replace_state(state)
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index(2, 1)):
+        asyncio.run(scenario_ingestion.handle_page_repair_upload("g", reply, page(2, "new two"), "repair_x.md"))
+    saved = group_state.load_state("g")
+    assert saved.scenario_text.endswith("another scenario") and [n["name"] for n in saved.scenario_npc_index] == ["other"]
+    assert "又變動了" in replies[-1]
+
+
+def test_an_incomplete_index_is_not_written_over_the_old_one():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    text = "--- 第 1 頁 ---\nLOCATION 1: a\nLOCATION 2: b\n\n--- 第 2 頁 ---\nold two\n"
+    state = GroupState("g", scenario_text=text, scenario_npc_index=[{"name": "old", "hp": 1}])
+    with patch.object(scenario_index, "extract_scenario_index",
+                      return_value={**_index(3, 1), "terms": [{"name": "Kept Name", "zh": "保留名"}]}):
+        replies = upload(page(2, "new two"), state=state)
+    saved = group_state.load_state("g")
+    assert [n["name"] for n in saved.scenario_npc_index] == ["old"]
+    assert "沒有更新" in replies[-1] and "已保留上一版" in replies[-1]
+    assert [t["name"] for t in saved.scenario_glossary] == ["Kept Name"]  # the names are kept all the same
+
+
+def test_pages_saved_for_later_do_not_touch_the_index():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index()) as extract:
+        upload(page(3, "elsewhere"), state=GroupState("g", scenario_text="--- 第 1 頁 ---\none\n\n--- 第 2 頁 ---\ntwo"))
+    extract.assert_not_called()
+
+
+def test_numbers_the_corrected_page_no_longer_has_are_listed_but_do_not_stop_the_repair():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    text = "--- 第 1 頁 ---\nHP 12, bite 1D6+2, SAN 1/1D4\n\n--- 第 2 頁 ---\nkeep 30\n"
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index()):
+        replies = upload(page(1, "HP 12, bite 1D5+2, SAN 1/1D4"), state=GroupState("g", scenario_text=text))
+    assert "1D5+2" in group_state.load_state("g").scenario_text
+    warning = next(r for r in replies if r.startswith("⚠️"))
+    assert "第 1 頁" in warning and "1d6+2" in warning and "12" not in warning
+
+
+def test_an_unchanged_set_of_numbers_gets_no_warning():
+    assert repair.lost_numbers(TEXT, {2: "new two"}) == {}
+    text = "--- 第 1 頁 ---\nHP 12 bite 1D6\n\n--- 第 2 頁 ---\nx"
+    assert repair.lost_numbers(text, {1: "bite 1D6 and HP 12, plus more 40"}) == {}
+    assert repair.lost_numbers(text, {1: "HP 12 bite 1D5"}) == {1: ["1d6"]}
+    assert repair.lost_numbers(text, {7: "pages the text lacks are skipped 1D5"}) == {}
