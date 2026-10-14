@@ -13,11 +13,11 @@
 `codex_provider.run_conversation`，只改拒絕的那條分支：
 
 - 驗證器自己的訊息與出錯欄位的路徑（例如 `arguments.enemies.0.source`；`arguments` 表示是工具自己的參數，而不是決定外層）以 `validation_error` 放進修復提示（訊息截到 300 字），並要求模型修正它指出的地方。非格式的失敗（JSON 壞掉、重複鍵、空的最終回覆）給錯誤類別與文字；
-- `codex.decision.rejected` 事件多了 `error_type`、`path`、`validator`（欄位與規則，絕不含模型的內容）；
+- `codex.decision.rejected` 事件多了 `error_type`、`path`、`validator`（欄位與規則，絕不含模型的內容）。重試看到完整路徑；事件裡的路徑會把 schema 沒有列名的物件鍵（例如敵人的 `skills` 可以填任何技能名）換成 `*`，所以模型自己寫的字不會進日誌；
 - 其他都不變：仍然只修復一次，之後才 `codex_invalid_decision`；被拒的決定不會執行任何工具。
 
 第 29 輪被拒的決定，是不是 `initialize_combat` 的選填 `source` 少了五個必填欄位之一，是從格式推測的，原始輸出沒有記錄。新的欄位之後會直接說明。
 
 ## 驗證
 
-`tests/test_codex_provider.py`：缺必填參數的決定，重試拿到帶路徑與「required property」訊息的 `validation_error`；型別錯誤指出 `arguments.target` 與規則 `type`，壞掉的 JSON 指出錯誤類別；日誌事件帶路徑、規則與錯誤類別，不含訊息。這三個測試在沒有這項變更時都會失敗。
+`tests/test_codex_provider.py`：缺必填參數的決定，重試拿到帶路徑與「required property」訊息的 `validation_error`；型別錯誤指出 `arguments.target` 與規則 `type`，壞掉的 JSON 指出錯誤類別；日誌事件帶路徑、規則與錯誤類別，不含訊息；schema 沒有列名的鍵會給模型看，但日誌裡記成 `*`。這四個測試在沒有這項變更時都會失敗。

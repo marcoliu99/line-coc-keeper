@@ -74,7 +74,8 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_wrong_type_names_the_argument_and_a_broken_json_says_what_broke(self):
         self.assertEqual(await self.run_provider([call(target=7), final()]), 'done')
         note = json.loads(self.transport.request.call_args.args[0])['current_conversation'][0]['validation_error']
-        self.assertEqual((note['path'], note['validator']), ('arguments.target', 'type'))
+        self.assertEqual(note['path'], 'arguments.target')
+        self.assertIn('is not of type', note['message'])
         self.assertEqual(await self.run_provider(['not json', final()]), 'done')
         note = json.loads(self.transport.request.call_args.args[0])['current_conversation'][0]['validation_error']
         self.assertTrue(note['message'].startswith('JSONDecodeError'))
@@ -86,8 +87,26 @@ class CodexProviderTests(unittest.IsolatedAsyncioTestCase):
             await self.run_provider([call(target=7), final()])
         [(_, fields)] = [e for e in events if e[0] == 'codex.decision.rejected']
         self.assertEqual((fields['path'], fields['validator'], fields['error_type']),
-                         ('arguments.target', 'type', 'ValidationError'))
+                         ('arguments.target', 'type', '_ArgumentsInvalid'))
         self.assertNotIn('message', fields)
+
+    async def test_a_key_the_schema_does_not_name_is_shown_to_the_model_but_not_logged(self):
+        """An enemy's skills map takes any skill name: the retry names it, the event only says there was a key."""
+        from app import observability
+        skills = {'name': 'register', 'description': 'register', 'input_schema': {'type': 'object', 'properties': {
+            'enemies': {'type': 'array', 'items': {'type': 'object', 'properties': {
+                'skills': {'type': 'object', 'additionalProperties': {'type': 'integer'}}}}}}}}
+        bad = json.dumps({'decision': {'type': 'tool_call', 'name': 'register', 'arguments_json': json.dumps(
+            {'enemies': [{'skills': {'Secret Name': 'high'}}]})}})
+        events = []
+        self.transport.request.side_effect = [bad, final()]
+        with patch.object(observability, 'event', side_effect=lambda name, **fields: events.append((name, fields))):
+            await cp.run_conversation('static', 'state', [skills], [], 'go', self.tool, 6)
+        note = json.loads(self.transport.request.call_args.args[0])['current_conversation'][0]['validation_error']
+        self.assertEqual(note['path'], 'arguments.enemies.0.skills.Secret Name')
+        [(_, fields)] = [e for e in events if e[0] == 'codex.decision.rejected']
+        self.assertEqual(fields['path'], 'arguments.enemies.0.skills.*')
+        self.assertNotIn('Secret', json.dumps(fields))
 
     async def test_unknown_tool_and_invalid_arguments_are_not_dispatched(self):
         for data in [call(name='shell'), call(target=7), '{"decision":{"type":"final","content":""}}']:

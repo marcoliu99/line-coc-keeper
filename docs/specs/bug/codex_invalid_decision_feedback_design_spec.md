@@ -13,11 +13,11 @@ The first fight of the run: the Executor looked up the enemy, rolled Sanity for 
 `codex_provider.run_conversation`, in the rejection branch only:
 
 - the validator's own message and the path of the wrong field (`arguments.enemies.0.source`, with `arguments` marking a tool's own arguments as against the decision envelope) go into the repair note as `validation_error` (message cut at 300 characters), and the instruction tells the model to fix what it names. A non-schema failure (broken JSON, a duplicate key, an empty final) gives its error class and text;
-- the `codex.decision.rejected` event gains `error_type`, `path` and `validator` (the field and the rule, never the model's content);
+- the `codex.decision.rejected` event gains `error_type`, `path` and `validator` (the field and the rule, never the model's content). The retry sees the full path; the event's path has every object key the schema does not name (an enemy's `skills` map takes any skill) replaced by `*`, so the model's own words never reach a log;
 - nothing else changes: still one repair, then `codex_invalid_decision`; no tool is run for a rejected decision.
 
 Whether the rejected decision in turn 29 was an `initialize_combat` whose optional `source` lacked one of its five required fields is a guess from the schema; the raw output was not logged. The new fields will say.
 
 ## Verification
 
-`tests/test_codex_provider.py`: a decision missing a required argument gives the retry `validation_error` with the path and the "required property" message; a wrong type names `arguments.target` and rule `type`, broken JSON names its error class; the log event carries path, rule and error type and no message. All three fail without the change.
+`tests/test_codex_provider.py`: a decision missing a required argument gives the retry `validation_error` with the path and the "required property" message; a wrong type names `arguments.target` and rule `type`, broken JSON names its error class; the log event carries path, rule and error type and no message; a key the schema does not name is shown to the model but logged as `*`. All four fail without the change.
