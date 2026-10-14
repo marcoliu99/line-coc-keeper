@@ -355,6 +355,29 @@ def test_an_index_extracted_from_text_that_changed_meanwhile_is_not_applied():
     assert "又變動了" in replies[-1] and "/coc index" in replies[-1]
 
 
+def test_a_scenario_loaded_between_the_repair_and_the_refresh_keeps_its_own_index():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+    replies: list[str] = []
+
+    async def reply(message):
+        replies.append(message)
+        if len(replies) == 1:  # the player switches scenario right after the repair is confirmed
+            other = group_state.load_state("g")
+            other.scenario_text = "--- 第 1 頁 ---\nanother scenario"
+            other.scenario_npc_index = [{"name": "other", "hp": 2}]
+            state_transaction.commit_snapshot(other)
+
+    replace_state(state)
+    with patch.object(scenario_index, "extract_scenario_index", return_value=_index(2, 1)):
+        asyncio.run(scenario_ingestion.handle_page_repair_upload("g", reply, page(2, "new two"), "repair_x.md"))
+    saved = group_state.load_state("g")
+    assert saved.scenario_text.endswith("another scenario") and [n["name"] for n in saved.scenario_npc_index] == ["other"]
+    assert "又變動了" in replies[-1]
+
+
 def test_an_incomplete_index_is_not_written_over_the_old_one():
     from unittest.mock import patch
 

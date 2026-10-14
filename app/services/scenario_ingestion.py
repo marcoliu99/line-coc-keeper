@@ -652,7 +652,7 @@ async def handle_page_repair_upload(
     if lost:
         await reply(_lost_numbers_notice(lost))
     if now:
-        await _refresh_index_after_repair(conversation_id, reply)
+        await _refresh_index_after_repair(conversation_id, repaired, reply)
 
 
 def _lost_numbers_notice(lost: dict[int, list[str]]) -> str:
@@ -662,13 +662,13 @@ def _lost_numbers_notice(lost: dict[int, list[str]]) -> str:
             + "\n".join(lines))
 
 
-async def _refresh_index_after_repair(conversation_id: str, reply: Reply) -> None:
+async def _refresh_index_after_repair(conversation_id: str, text: str, reply: Reply) -> None:
     """Rebuild the NPC/location index from the repaired text, the way /coc index does, so a corrected stat block or
     location is what play refers to without a manual command. Nothing here may undo the repair: any failure leaves the
     old index and says so. The extraction runs outside the lock (a provider call), so the result is applied to the
-    latest state, and only while the scenario text is still the one it was extracted from."""
+    latest state, and only while the scenario text is still the repaired one it was extracted from (a scenario loaded
+    in between is never indexed from this text)."""
     try:
-        text = load_state(conversation_id).scenario_text
         index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
         if "terms" not in index:  # extraction's failure result: a successful one always carries its terms
             await reply("頁面已替換，但這次重新抽取沒有結果（可能是服務暫時失敗），已保留上一版索引。可以再用 /coc index 重建。")
