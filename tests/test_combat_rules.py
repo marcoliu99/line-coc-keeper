@@ -49,6 +49,18 @@ def test_reviewed_representative_values(reference, damage, db, impaling):
     assert definition.catalog_version == 'coc7-reviewed-2026-10-08'
 
 
+@pytest.mark.parametrize('reference', ['Hatchet', 'Sickle', 'sickle', 'Hatchet/Sickle', '手斧', '鐮刀'])
+def test_hatchet_and_sickle_are_one_weapon_fought_with_the_axe_skill(reference):
+    definition = weapon(reference)
+    assert definition.id == 'i.weapon.hatchet-sickle' and definition.skill_id == 'fighting-axe'
+
+
+def test_the_large_club_is_fought_with_brawl_and_its_comma_name_resolves():
+    definition = weapon('Club, Large')
+    assert definition.id == 'i.weapon.club-large' and definition.skill_id == 'fighting-brawl'
+    assert weapon('large club').id == definition.id
+
+
 def test_aliases_are_exact_and_ambiguity_retains_candidates():
     assert weapon('  LARGE CLUB ').id == 'i.weapon.club-large'
     assert weapon('手斧').id == 'i.weapon.hatchet-sickle'
