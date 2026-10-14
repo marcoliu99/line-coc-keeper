@@ -193,6 +193,25 @@ def test_a_library_source_that_is_not_the_games_is_recorded_and_changes_nothing(
     assert fields['library_source_hash'] == MANIFEST['content_hash'][:12]
 
 
+def test_a_game_on_another_source_is_recorded_even_when_the_index_comes_from_the_shared_cache(prepared):
+    """The cache key holds neither the group nor its source hash, so a game that hits an index another game warmed must
+    still be reported."""
+    from app import observability
+    state, _, _ = prepared
+    templates.approve('sample', state.scenario_variant_id, reviewer_id='keeper')
+    state.active_scenario_source_hash = MANIFEST['content_hash']
+    templates._selection_cache.clear()
+    templates.index_for_state(state)  # another game warms the cache
+    state.active_scenario_source_hash = 'e' * 64
+    events = []
+    with patch.object(observability, 'event', side_effect=lambda name, **fields: events.append((name, fields))):
+        metrics = {}
+        templates.index_for_state(state, metrics)
+    assert metrics['template_cache'] == 'memory'
+    [(_, fields)] = [e for e in events if e[0] == 'scenario.index.source_mismatch']
+    assert fields['game_source_hash'] == 'e' * 12
+
+
 def test_an_unreadable_library_entry_is_not_reported_as_a_source_mismatch(prepared):
     from app import observability
     state, root, _ = prepared

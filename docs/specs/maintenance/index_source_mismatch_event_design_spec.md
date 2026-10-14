@@ -10,7 +10,7 @@ Status: **implemented**. Base: `main_v2` at `c6512c4`. Found in the 2026-10-14 a
 
 ## Change
 
-`_note_source_mismatch` logs a `scenario.index.source_mismatch` WARNING (scenario id, the two hashes' first 12 characters, a hashed group id) when the game's hash and the library's differ. It runs where the variant is read (a cache miss) and where the variant gives way as invalid or stale. It only records: no retrieval, fallback or reply changes, so play is exactly as before. With no game hash (an older state), an unreadable library entry or equal hashes, nothing is logged.
+`_note_source_mismatch` logs a `scenario.index.source_mismatch` WARNING (scenario id, the two hashes' first 12 characters, a hashed group id) when the game's hash and the library's differ. It runs on a shared-cache hit (the cache key holds no group or source hash), where the variant is read (a cache miss) and where the variant gives way as invalid or stale. It only records: no retrieval, fallback or reply changes, so play is exactly as before. With no game hash (an older state), an unreadable library entry or equal hashes, nothing is logged.
 
 ## Verification
 

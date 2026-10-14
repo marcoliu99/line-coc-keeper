@@ -744,6 +744,7 @@ def index_for_state(state: Any, metrics: dict[str, Any] | None = None) -> scenar
             stamp = _selection_stamp(scenario_id, variant_id)
             cached = _selection_cache.get(key)
             if cached is not None and cached[0] == stamp:
+                _note_source_mismatch(state, scenario_id)
                 diagnostics.update(effective_variant=variant_id, variant_fallback="none", template_cache="memory")
                 diagnostics["projection_version"] = _V4_COMPILER if cached[1].record_store is not None else scenario_projection.VERSION
                 cached[1].index_cache = "memory"
