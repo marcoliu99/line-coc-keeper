@@ -665,25 +665,30 @@ def _lost_numbers_notice(lost: dict[int, list[str]]) -> str:
 async def _refresh_index_after_repair(conversation_id: str, reply: Reply) -> None:
     """Rebuild the NPC/location index from the repaired text, the way /coc index does, so a corrected stat block or
     location is what play refers to without a manual command. Nothing here may undo the repair: any failure leaves the
-    old index and says so."""
+    old index and says so. The extraction runs outside the lock (a provider call), so the result is applied to the
+    latest state, and only while the scenario text is still the one it was extracted from."""
     try:
-        state = load_state(conversation_id)
-        index = await asyncio.to_thread(scenario_index.extract_scenario_index, state.scenario_text)
+        text = load_state(conversation_id).scenario_text
+        index = await asyncio.to_thread(scenario_index.extract_scenario_index, text)
         if "terms" not in index:  # extraction's failure result: a successful one always carries its terms
             await reply("頁面已替換，但這次重新抽取沒有結果（可能是服務暫時失敗），已保留上一版索引。可以再用 /coc index 重建。")
             return
-        underflow = scenario_index.location_index_underflow(
-            state.scenario_text, index["locations"],
-            previous_count=len(state.scenario_location_index), source="page_repair",
-        )
-        if underflow is not None:
-            await reply(f"頁面已替換，但劇本索引沒有更新：重新抽取的地點比劇本文字的編號地點少（{underflow[1]}／{underflow[0]}），已保留上一版。可以再用 /coc index 重建。")
-            return
-        index["locations"] = scenario_index.merge_scene_map_locations(index["locations"], state.scene_maps)
-        state.scenario_npc_index = index["npcs"]
-        state.scenario_location_index = index["locations"]
-        state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, index.get("terms", []))
-        state_transaction.commit_snapshot(state)
+        async with locks.get_conversation_lock(conversation_id):
+            state = load_state(conversation_id)
+            if state.scenario_text != text:
+                await reply("頁面已替換，但劇本在重建索引期間又變動了，索引沒有更新。可以再用 /coc index 重建。")
+                return
+            underflow = scenario_index.location_index_underflow(
+                text, index["locations"], previous_count=len(state.scenario_location_index), source="page_repair",
+            )
+            if underflow is not None:
+                await reply(f"頁面已替換，但劇本索引沒有更新：重新抽取的地點比劇本文字的編號地點少（{underflow[1]}／{underflow[0]}），已保留上一版。可以再用 /coc index 重建。")
+                return
+            index["locations"] = scenario_index.merge_scene_map_locations(index["locations"], state.scene_maps)
+            state.scenario_npc_index = index["npcs"]
+            state.scenario_location_index = index["locations"]
+            state.scenario_glossary = scenario_index.merge_glossary(state.scenario_glossary, index.get("terms", []))
+            state_transaction.commit_snapshot(state)
         await reply(f"已依修復後的頁面重新建立劇本索引：{len(index['npcs'])} 個 NPC／怪物、{len(index['locations'])} 個地點。")
     except asyncio.CancelledError:
         raise

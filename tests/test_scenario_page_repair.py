@@ -7,7 +7,7 @@ import pytest
 
 from app import scenario_page_repair as repair
 from app.models import GroupState
-from app.repositories import group_state
+from app.repositories import group_state, state_transaction
 from app.services import scenario_ingestion
 from tests.state_store import replace_state
 
@@ -314,6 +314,45 @@ def test_a_successful_extraction_that_finds_nothing_does_replace_the_old_index()
         replies = upload(page(2, "new two"), state=state)
     assert group_state.load_state("g").scenario_npc_index == []
     assert "0 個 NPC／怪物、0 個地點" in replies[-1]
+
+
+def test_a_turn_that_commits_while_the_index_is_extracted_does_not_lose_the_refresh():
+    """The extraction is a provider call outside the lock: play goes on meanwhile, and the index lands on the latest
+    state instead of failing on a stale revision."""
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+
+    def extract_while_play_goes_on(text):
+        newer = group_state.load_state("g")
+        newer.game_started = True  # another turn's commit moves the revision on
+        state_transaction.commit_snapshot(newer)
+        return _index(2, 1)
+
+    with patch.object(scenario_index, "extract_scenario_index", side_effect=extract_while_play_goes_on):
+        replies = upload(page(2, "new two"), state=state)
+    saved = group_state.load_state("g")
+    assert [n["name"] for n in saved.scenario_npc_index] == ["N0", "N1"] and saved.game_started
+    assert "2 個 NPC／怪物、1 個地點" in replies[-1]
+
+
+def test_an_index_extracted_from_text_that_changed_meanwhile_is_not_applied():
+    from unittest.mock import patch
+
+    from app import scenario_index
+    state = GroupState("g", scenario_text=TEXT, scenario_npc_index=[{"name": "old", "hp": 1}])
+
+    def extract_while_the_text_changes(text):
+        newer = group_state.load_state("g")
+        newer.scenario_text += "\nmore"
+        state_transaction.commit_snapshot(newer)
+        return _index(2, 1)
+
+    with patch.object(scenario_index, "extract_scenario_index", side_effect=extract_while_the_text_changes):
+        replies = upload(page(2, "new two"), state=state)
+    assert [n["name"] for n in group_state.load_state("g").scenario_npc_index] == ["old"]
+    assert "又變動了" in replies[-1] and "/coc index" in replies[-1]
 
 
 def test_an_incomplete_index_is_not_written_over_the_old_one():
