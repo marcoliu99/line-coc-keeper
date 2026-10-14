@@ -248,3 +248,12 @@ def test_autoroll_plan_runs_restricted_narrator_without_releasing_mutation_lock(
         asyncio.run(supervisor.run_turn(game, 'u1', 'Alicia', '我要閃避', None, 'player', game.group_id, handoff=handoff))
     assert group_state.load_state(game.group_id).characters['u1'].hp == 6
     handoff.to_narration.assert_not_called()
+
+
+def test_a_resolved_check_follow_up_chains_sanity_and_damage_but_not_free_hp_or_new_rolls():
+    """What a roll may set off immediately is the authorised consequence tools plus a Sanity roll; free-form HP changes
+    and new skill rolls stay out (a stray 「adjust_character」 after a roll was the failure this keeps from returning)."""
+    from app.keeper_tools import registry
+    allowed = registry.RESOLVED_CHECK_FOLLOWUP_TOOL_NAMES
+    assert {'sanity_check', 'apply_resolved_check_damage', 'create_triggered_check'} <= set(allowed)
+    assert not {'adjust_character', 'skill_check', 'npc_skill_check', 'offer_check_choice'} & set(allowed)
